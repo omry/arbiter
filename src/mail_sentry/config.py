@@ -160,6 +160,7 @@ class ImapAccessPolicyConfig:
 
 @dataclass
 class AccountAccessProfileConfig:
+    read_only: bool = False
     allow_smtp_send: bool = True
     imap: ImapAccessPolicyConfig = field(default_factory=ImapAccessPolicyConfig)
     smtp_audit: SmtpAuditConfig = field(default_factory=SmtpAuditConfig)
@@ -413,7 +414,10 @@ def validate_app_config(config: AppConfig) -> None:
             validate_imap_config(account.imap)
 
 
-_CONFIG_SCHEMA_NAME = "mail_sentry_app_config_schema"
+_CONFIG_SCHEMA_NAMES = (
+    "mail_sentry_app_config_schema",
+    "mailgateway_app_config_schema",
+)
 _CONFIG_REGISTERED = False
 _RESOLVERS_REGISTERED = False
 
@@ -447,5 +451,6 @@ def register_configs() -> None:
         return
 
     cs = ConfigStore.instance()
-    cs.store(name=_CONFIG_SCHEMA_NAME, node=AppConfig)
+    for schema_name in _CONFIG_SCHEMA_NAMES:
+        cs.store(name=schema_name, node=AppConfig)
     _CONFIG_REGISTERED = True

@@ -1,27 +1,64 @@
 defaults:
-  - mail_sentry_app_config_schema
+  - mailgateway_app_config_schema
   - _self_
 
 server:
-  name: mail-sentry
+  name: mailgateway-mcp
   transport: streamable-http
-  host: ${oc.env:MAIL_SENTRY_SERVER_HOST,127.0.0.1}
-  port: ${oc.env:MAIL_SENTRY_SERVER_PORT,8025}
-  path: ${oc.env:MAIL_SENTRY_SERVER_PATH,/mcp}
+  host: ${oc.env:MAILGATEWAY_SERVER_HOST,127.0.0.1}
+  port: ${oc.env:MAILGATEWAY_SERVER_PORT,8025}
+  path: ${oc.env:MAILGATEWAY_SERVER_PATH,/mcp}
   stateless_http: true
   json_response: true
 
 mail:
+  account_access_profiles:
+    bot:
+      read_only: false
+    personal:
+      read_only: false
+
   accounts:
     primary:
+      description: Bot account for automated email tasks
+      account_access_profile: bot
+      sensitivity_tier: standard
       smtp:
-        host: ${oc.env:MAIL_SENTRY_SMTP_HOST}
-        port: ${oc.env:MAIL_SENTRY_SMTP_PORT,587}
-        authenticate: ${oc.env:MAIL_SENTRY_SMTP_AUTHENTICATE,true}
-        username: ${oc.env:MAIL_SENTRY_SMTP_USERNAME}
-        password: ${oc.env:MAIL_SENTRY_SMTP_PASSWORD}
-        from_email: ${oc.env:MAIL_SENTRY_SMTP_FROM_EMAIL}
-        from_name: ${oc.env:MAIL_SENTRY_SMTP_FROM_NAME,Mail Sentry}
-        tls: ${oc.env:MAIL_SENTRY_SMTP_TLS,starttls}
-        verify_peer: ${oc.env:MAIL_SENTRY_SMTP_VERIFY_PEER,true}
-        timeout_seconds: ${oc.env:MAIL_SENTRY_SMTP_TIMEOUT_SECONDS,30.0}
+        host: ${oc.env:MAILGATEWAY_BOT_SMTP_HOST}
+        port: ${oc.env:MAILGATEWAY_BOT_SMTP_PORT,587}
+        authenticate: ${oc.env:MAILGATEWAY_BOT_SMTP_AUTHENTICATE,true}
+        username: ${oc.env:MAILGATEWAY_BOT_SMTP_USERNAME}
+        password: ${oc.env:MAILGATEWAY_BOT_SMTP_PASSWORD}
+        from_email: ${oc.env:MAILGATEWAY_BOT_SMTP_FROM_EMAIL}
+        from_name: ${oc.env:MAILGATEWAY_BOT_SMTP_FROM_NAME,MailGateway Bot}
+        tls: ${oc.env:MAILGATEWAY_BOT_SMTP_TLS,starttls}
+        verify_peer: ${oc.env:MAILGATEWAY_BOT_SMTP_VERIFY_PEER,true}
+        timeout_seconds: ${oc.env:MAILGATEWAY_BOT_SMTP_TIMEOUT_SECONDS,30.0}
+      imap:
+        host: ${oc.env:MAILGATEWAY_BOT_IMAP_HOST}
+        port: ${oc.env:MAILGATEWAY_BOT_IMAP_PORT,993}
+        username: ${oc.env:MAILGATEWAY_BOT_IMAP_USERNAME}
+        password: ${oc.env:MAILGATEWAY_BOT_IMAP_PASSWORD}
+        tls: ${oc.env:MAILGATEWAY_BOT_IMAP_TLS,implicit}
+        verify_peer: ${oc.env:MAILGATEWAY_BOT_IMAP_VERIFY_PEER,true}
+        timeout_seconds: ${oc.env:MAILGATEWAY_BOT_IMAP_TIMEOUT_SECONDS,30.0}
+        default_folder: INBOX
+        folders:
+          INBOX:
+            description: Bot inbox.
+
+    personal:
+      description: Personal account
+      account_access_profile: personal
+      sensitivity_tier: sensitive
+      smtp:
+        host: ${oc.env:MAILGATEWAY_PERSONAL_SMTP_HOST}
+        port: ${oc.env:MAILGATEWAY_PERSONAL_SMTP_PORT,587}
+        authenticate: ${oc.env:MAILGATEWAY_PERSONAL_SMTP_AUTHENTICATE,true}
+        username: ${oc.env:MAILGATEWAY_PERSONAL_SMTP_USERNAME}
+        password: ${oc.env:MAILGATEWAY_PERSONAL_SMTP_PASSWORD}
+        from_email: ${oc.env:MAILGATEWAY_PERSONAL_SMTP_FROM_EMAIL}
+        from_name: ${oc.env:MAILGATEWAY_PERSONAL_SMTP_FROM_NAME,Omry}
+        tls: ${oc.env:MAILGATEWAY_PERSONAL_SMTP_TLS,starttls}
+        verify_peer: ${oc.env:MAILGATEWAY_PERSONAL_SMTP_VERIFY_PEER,true}
+        timeout_seconds: ${oc.env:MAILGATEWAY_PERSONAL_SMTP_TIMEOUT_SECONDS,30.0}

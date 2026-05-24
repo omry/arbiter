@@ -5,15 +5,30 @@ services:
     restart: unless-stopped
     env_file:
       - ./mail-sentry.env
+    environment:
+      # Bind to all container interfaces so Docker's host-loopback port publish can
+      # reach the service. The service stays host-local because ports publish
+      # only on 127.0.0.1.
+      MAILGATEWAY_SERVER_HOST: 0.0.0.0
+      MAIL_SENTRY_INSTALL_TARGET: ${MAIL_SENTRY_CONTAINER_INSTALL_TARGET:?set MAIL_SENTRY_CONTAINER_INSTALL_TARGET}
     volumes:
       - ./config.yaml:/config/config.yaml:ro
+      - ${MAIL_SENTRY_LOCAL_SOURCE_DIR:-./empty-source}:/source/mail-sentry:ro
     ports:
       - "127.0.0.1:8025:8025"
     networks:
       - mail-sentry
     command: >
       sh -lc
-      'python -m pip install --no-cache-dir "mail-sentry==$${MAIL_SENTRY_PACKAGE_VERSION}" &&
+      'install_target="$${MAIL_SENTRY_INSTALL_TARGET}" &&
+      if [ "$$install_target" = /source/mail-sentry ]; then
+        rm -rf /tmp/mail-sentry-source &&
+        mkdir -p /tmp/mail-sentry-source &&
+        cp -a /source/mail-sentry/pyproject.toml /source/mail-sentry/README.md /source/mail-sentry/src /tmp/mail-sentry-source/ &&
+        find /tmp/mail-sentry-source -type d \( -name "*.egg-info" -o -name "__pycache__" \) -prune -exec rm -rf {} + &&
+        install_target=/tmp/mail-sentry-source;
+      fi &&
+      python -m pip install --no-cache-dir "$$install_target" &&
       exec mail-sentry --config-path /config --config-name config'
 
 networks:

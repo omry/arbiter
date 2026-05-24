@@ -2,9 +2,9 @@
 
 This deployment path uses Docker Compose and does not require building a custom image.
 
-It runs the stock `python:3.11-slim` image, installs the requested Mail Sentry package version from PyPI at container startup, and keeps deployment-specific config and secrets on the host.
+It runs the stock `python:3.11-slim` image, installs the requested Mail Sentry package target at container startup, and keeps deployment-specific config and secrets on the host.
 
-The mounted config is generic and resolves its server and SMTP settings from the host-side env file.
+The mounted config is generic and resolves its server and mail account settings from the host-side env file.
 
 ## Security model
 
@@ -12,11 +12,12 @@ The recommended host layout is operator-editable but root-owned:
 
 - `compose.yaml` and `config.yaml` are owned by `root:root` and mode `0444`
 - `mail-sentry.env` is owned by `root:root` and mode `0600`
-- edits go through `sudoedit`
+- edits go through `mail-sentryctl`, which opens a private temp copy with
+  `MAIL_SENTRY_EDITOR` or `vim` and then installs it back with `sudo`
 - Docker commands go through `sudo docker compose`
 
 This keeps an ordinary host agent from casually changing the gateway policy,
-SMTP settings, or secrets. It is not a boundary against `root`, passwordless
+mail settings, or secrets. It is not a boundary against `root`, passwordless
 `sudo`, or membership in the `docker` group. Treat the Docker socket and Docker
 group as root-equivalent. If a coding agent should not be able to manipulate the
 deployment, run that agent as a user without `sudo` and without Docker socket
@@ -38,14 +39,62 @@ instead of replacing local policy or secrets.
 From this repository:
 
 ```bash
-./deploy/mail-sentryctl install
+./deploy/mail-sentryctl install --install-target mail-sentry==0.1.1
 ```
+
+For a local source checkout on the host, use an absolute host path:
+
+```bash
+./deploy/mail-sentryctl install --install-target /home/omry/dev/mail-sentry
+```
+
+If you intentionally changed the source deployment config and want to replace
+the installed config, use:
+
+```bash
+./deploy/mail-sentryctl install --force --install-target /home/omry/dev/mail-sentry
+```
+
+`--force` backs up the installed config, env file, and install target; replaces
+the installed config from the source config; updates the install target from the
+command line; and regenerates the env file from the installed config's
+`${oc.env:...}` references while preserving existing values for matching
+variable names.
+
+The env file is generated from the installed `config.yaml`; there is no separate
+checked-in env example to keep in sync with the hierarchical account config. To
+create a missing env file or add newly required variables after editing the
+installed config, run:
+
+```bash
+mail-sentryctl sync-env
+```
+
+If `mail-sentry.env` already exists, `sync-env` preserves values for matching
+variable names and writes a timestamped backup beside it. The generated Docker
+deployment env always sets `MAILGATEWAY_SERVER_HOST=0.0.0.0` because the service
+must listen on the container interface for Docker's host-loopback port publish
+to reach it; `compose.yaml` still publishes only on host `127.0.0.1`.
 
 Then edit the operator-owned files with:
 
 ```bash
 mail-sentryctl edit-env
 mail-sentryctl edit-config
+```
+
+The helper defaults to a plain Vim session without user vimrc/plugins and with
+insert-mode cursor-shape terminal sequences disabled. Check the installed edit
+backend with:
+
+```bash
+mail-sentryctl doctor
+```
+
+To use another editor:
+
+```bash
+MAIL_SENTRY_EDITOR='vim -n' mail-sentryctl edit-env
 ```
 
 Apply edits by recreating the container:
@@ -70,8 +119,10 @@ mail-sentryctl protect
 
 ## Host layout
 
-The helper is the preferred setup path. This section is the equivalent manual
-layout if you do not want to use `mail-sentryctl`.
+The helper is the preferred setup path. This section shows the underlying host
+layout for manual review or partial manual setup. Env generation still goes
+through `mail-sentryctl sync-env` so the flat env file stays derived from the
+hierarchical `config.yaml`.
 
 Create the host directory:
 
@@ -86,10 +137,19 @@ sudo install -o root -g root -m 0444 /path/to/mail-sentry/deploy/compose.yaml /o
 sudo install -o root -g root -m 0444 /path/to/mail-sentry/deploy/config.yaml /opt/mail-sentry/config.yaml
 ```
 
-Create the env file from the example:
+Create the install target file:
 
 ```bash
-sudo install -o root -g root -m 0600 /path/to/mail-sentry/deploy/mail-sentry.env.example /opt/mail-sentry/mail-sentry.env
+printf '%s\n' 'mail-sentry==0.1.1' | sudo tee /opt/mail-sentry/install-target >/dev/null
+sudo chown root:root /opt/mail-sentry/install-target
+sudo chmod 0444 /opt/mail-sentry/install-target
+```
+
+Create the env file from the config's `${oc.env:...}` references. The helper
+generates placeholders and defaults that match the currently installed config:
+
+```bash
+mail-sentryctl sync-env
 ```
 
 The resulting layout is:
@@ -99,40 +159,62 @@ The resulting layout is:
   compose.yaml
   config.yaml
   mail-sentry.env
+  install-target
 ```
 
-Then edit `/opt/mail-sentry/mail-sentry.env` and `/opt/mail-sentry/config.yaml`
-with `sudoedit`:
+Then edit `/opt/mail-sentry/mail-sentry.env` and `/opt/mail-sentry/config.yaml`.
+The helper implements this as a copy-to-temp, edit, install-back workflow:
 
 ```bash
-sudoedit /opt/mail-sentry/mail-sentry.env
-sudoedit /opt/mail-sentry/config.yaml
+mail-sentryctl edit-env
+mail-sentryctl edit-config
 ```
 
 Set at least:
 
-- `MAIL_SENTRY_PACKAGE_VERSION`
-- the real SMTP values
+- the real SMTP and IMAP values
 - any non-default server values
 
 ## Run the service
 
-This keeps the service on VM loopback at `http://127.0.0.1:8025/mcp` with the defaults shown in the example env file.
+This keeps the service on VM loopback at `http://127.0.0.1:8025/mcp` with the generated env defaults.
 
 ```bash
 mail-sentryctl up
 ```
 
-Manual equivalent:
+Manual equivalent for package targets such as `mail-sentry==0.1.1`:
 
 ```bash
 cd /opt/mail-sentry
-sudo docker compose --env-file /opt/mail-sentry/mail-sentry.env -f /opt/mail-sentry/compose.yaml up -d
+sudo env MAIL_SENTRY_CONTAINER_INSTALL_TARGET="$(sudo sed -n '1p' /opt/mail-sentry/install-target)" \
+  docker compose --env-file /opt/mail-sentry/mail-sentry.env -f /opt/mail-sentry/compose.yaml up -d
 ```
+
+For local source checkout targets, use `mail-sentryctl up`; the helper supplies
+the extra read-only bind mount that maps the host checkout into the container.
+
+The install target is a pip install target. For a published package, install
+with:
+
+```bash
+./deploy/mail-sentryctl install --install-target mail-sentry==0.1.1
+```
+
+For a local source checkout on the host, install with:
+
+```bash
+./deploy/mail-sentryctl install --install-target /home/omry/dev/mail-sentry
+```
+
+When the target is an existing host directory, `mail-sentryctl` bind-mounts it
+read-only into the container. The container copies the package files into a
+writable temp directory before running `pip`, so the host checkout remains
+stationary and build metadata is not written back into the source tree.
 
 The Compose service:
 
-- installs the requested package version from PyPI
+- installs the requested package target with `pip`
 - starts the Mail Sentry server with the mounted `config.yaml`
 - binds the container to `0.0.0.0` internally and publishes it only on host loopback via `127.0.0.1:8025:8025`
 - uses a deterministic Docker bridge by default so host firewall rules can target a stable interface and subnet
@@ -178,26 +260,29 @@ Confirm the container is running:
 mail-sentryctl ps
 ```
 
-OpenClaw should then use:
+Codex or another MCP client should then use:
 
 ```text
 http://127.0.0.1:8025/mcp
 ```
 
-If you change `MAIL_SENTRY_SERVER_PORT` or `MAIL_SENTRY_SERVER_PATH` in the env file, keep the Docker port mapping and OpenClaw endpoint in sync.
+If you change `MAILGATEWAY_SERVER_PORT` or `MAILGATEWAY_SERVER_PATH` in the env file, keep the Docker port mapping and MCP client endpoint in sync.
 
-If you change `MAIL_SENTRY_PACKAGE_VERSION`, recreate the container so it installs the new version on startup:
+If you change the install target, recreate the container so it installs the new target on startup:
 
 ```bash
+mail-sentryctl install --force --install-target /home/omry/dev/mail-sentry
 mail-sentryctl restart
 ```
 
 ## Update the deployment
 
-To update the deployed Mail Sentry version:
+To update the deployed Mail Sentry package target:
 
 ```bash
 mail-sentryctl restart
 ```
 
-The only required host-side change for a package update is editing `MAIL_SENTRY_PACKAGE_VERSION` in the env file before recreating the container.
+The only required host-side change for a package update is replacing
+`/opt/mail-sentry/install-target` with `mail-sentryctl install --force
+--install-target ...` before recreating the container.

@@ -92,6 +92,82 @@ def test_hydra_config_preserves_lazy_interpolations() -> None:
     assert app_config.mail.accounts.primary.smtp.from_name == "mail-sentry"
 
 
+def test_mailgateway_schema_alias_composes(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        """
+defaults:
+  - mailgateway_app_config_schema
+  - _self_
+
+server:
+  name: mailgateway-mcp
+mail:
+  account_access_profiles:
+    bot:
+      read_only: false
+      allow_smtp_send: true
+      imap:
+        allow_read: true
+        allow_search: true
+        allow_move: true
+        allow_delete: true
+  accounts:
+    primary:
+      description: Bot account.
+      account_access_profile: bot
+      smtp:
+        host: localhost
+        authenticate: false
+        username: ""
+        password: ""
+        from_email: bot@example.com
+""",
+        encoding="utf-8",
+    )
+
+    register_configs()
+    with initialize_config_dir(version_base=None, config_dir=str(tmp_path)):
+        cfg = compose(config_name="config")
+
+    assert cfg.server.name == "mailgateway-mcp"
+    assert cfg.mail.account_access_profiles.bot.read_only is False
+    assert cfg.mail.accounts.primary.smtp.from_email == "bot@example.com"
+
+
+def test_standard_deployment_config_composes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MAILGATEWAY_BOT_SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("MAILGATEWAY_BOT_SMTP_USERNAME", "bot@example.com")
+    monkeypatch.setenv("MAILGATEWAY_BOT_SMTP_PASSWORD", "secret")
+    monkeypatch.setenv("MAILGATEWAY_BOT_SMTP_FROM_EMAIL", "bot@example.com")
+    monkeypatch.setenv("MAILGATEWAY_BOT_IMAP_HOST", "imap.example.com")
+    monkeypatch.setenv("MAILGATEWAY_BOT_IMAP_USERNAME", "bot@example.com")
+    monkeypatch.setenv("MAILGATEWAY_BOT_IMAP_PASSWORD", "secret")
+    monkeypatch.setenv("MAILGATEWAY_PERSONAL_SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("MAILGATEWAY_PERSONAL_SMTP_USERNAME", "omry@example.com")
+    monkeypatch.setenv("MAILGATEWAY_PERSONAL_SMTP_PASSWORD", "secret")
+    monkeypatch.setenv("MAILGATEWAY_PERSONAL_SMTP_FROM_EMAIL", "omry@example.com")
+
+    deploy_config_dir = Path(__file__).parents[2] / "deploy"
+    register_configs()
+    with initialize_config_dir(
+        version_base=None,
+        config_dir=str(deploy_config_dir),
+    ):
+        cfg = compose(config_name="config")
+
+    assert cfg.server.name == "mailgateway-mcp"
+    assert cfg.mail.account_access_profiles.bot.read_only is False
+    assert cfg.mail.account_access_profiles.personal.read_only is False
+    assert set(cfg.mail.accounts) == {"primary", "personal"}
+    assert cfg.mail.accounts.primary.smtp.host == "smtp.example.com"
+    assert cfg.mail.accounts.primary.imap.host == "imap.example.com"
+    assert cfg.mail.accounts.primary.imap.default_folder == "INBOX"
+    assert cfg.mail.accounts.personal.smtp.from_name == "Omry"
+
+
 def test_secret_file_resolver_reads_secret_file(tmp_path) -> None:
     secret = tmp_path / "imap_password"
     secret.write_text("super-secret\n", encoding="utf-8")
