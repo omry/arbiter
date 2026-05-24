@@ -8,3 +8,10 @@ dist/
 outputs/
 src/mail_sentry/conf/real_config.yaml
 docs/mail_sentry_design_docs.md
+
+# Local Docker deployment files. These may contain secrets or host-specific
+# commands and should not be committed.
+deploy/mail-sentry.env
+deploy/gateway-config.yaml
+deploy/compose.local.yaml
+deploy/run-local.sh
