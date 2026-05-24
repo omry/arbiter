@@ -1,0 +1,21 @@
+{
+  "templates": {
+    "ops-alert": {
+      "account": "primary",
+      "subject": "Alert: {title}",
+      "text_body": "Severity: {severity}\n\n{summary}",
+      "html_body": "<p><strong>Severity:</strong> {severity}</p><p>{summary}</p>",
+      "to": ["ops@example.com"],
+      "cc": [],
+      "bcc": [],
+      "allowed_params": ["severity", "summary", "title"]
+    },
+    "personal-followup": {
+      "account": "personal",
+      "subject": "Follow-up: {topic}",
+      "text_body": "{body}",
+      "to": ["{recipient}"],
+      "allowed_params": ["topic", "body", "recipient"]
+    }
+  }
+}

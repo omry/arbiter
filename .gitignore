@@ -1,0 +1,10 @@
+__pycache__/
+.pytest_cache/
+*.py[cod]
+*.egg
+*.egg-info/
+build/
+dist/
+outputs/
+src/mail_sentry/conf/real_config.yaml
+docs/mail_sentry_design_docs.md

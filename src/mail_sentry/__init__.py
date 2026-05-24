@@ -1,0 +1,1 @@
+"""Mail Sentry server package."""

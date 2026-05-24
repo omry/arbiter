@@ -1,0 +1,108 @@
+# Testing Backlog
+
+## Purpose
+
+Keep the remaining test work small, explicit, and prioritized.
+
+This file tracks the highest-value gaps between:
+
+- the current Mail Sentry implementation
+- the documented SMTP contract
+- the tests already in place
+
+## Status legend
+
+- `done`: implemented and covered by tests
+- `todo`: agreed gap, not implemented yet
+- `blocked`: needs an implementation seam or design decision first
+
+## P0
+
+- TLS handshake failure is surfaced during SMTP submission
+  - Why: fail-closed transport security
+  - Level: integration
+  - Status: `done`
+  - Coverage: `tests/integration/test_smtp_integration.py`
+
+- SMTP authentication failure is surfaced cleanly
+  - Why: core submission behavior
+  - Level: unit + integration
+  - Status: `done`
+  - Coverage: `tests/unit/test_smtp.py`, `tests/integration/test_smtp_integration.py`
+
+- Server unavailable / connection failure is surfaced
+  - Why: common operational failure mode
+  - Level: unit + integration
+  - Status: `done`
+  - Coverage: `tests/unit/test_smtp.py`, `tests/integration/test_smtp_integration.py`
+
+- SMTP rejection after `RCPT TO` or `DATA`
+  - Why: needed to distinguish submission rejection from connection failure
+  - Level: integration
+  - Status: `done`
+  - Coverage: `tests/integration/test_smtp_integration.py`
+
+- Submission status unknown after partial SMTP progress
+  - Why: needed for retry/idempotency semantics
+  - Level: integration
+  - Status: `done`
+  - Coverage: `tests/integration/test_smtp_integration.py`
+
+## P1
+
+- `verify_peer=true` succeeds against a trusted local CA
+  - Why: complete the TLS success-path contract
+  - Level: integration
+  - Status: `blocked`
+  - Note: current client has no custom CA injection seam
+
+- Invalid SMTP config combinations are rejected
+  - Why: avoid ambiguous runtime behavior
+  - Level: unit
+  - Status: `done`
+  - Coverage: `tests/unit/test_config.py`, `tests/unit/test_smtp.py`
+  - Examples: `use_ssl=true` with `starttls=true`, username without password
+
+- HTML-only message serialization
+  - Why: MIME behavior is user-visible
+  - Level: unit + integration
+  - Status: `done`
+  - Coverage: `tests/unit/test_app.py`, `tests/integration/test_smtp_integration.py`
+
+- Non-ASCII subject and display-name handling
+  - Why: common real-world interoperability case
+  - Level: unit + integration
+  - Status: `done`
+  - Coverage: `tests/unit/test_app.py`, `tests/integration/test_smtp_integration.py`
+
+## P2
+
+- Recipient refusal policy at SMTP layer
+  - Why: improves transport diagnostics
+  - Level: unit + integration
+  - Status: `done`
+  - Coverage: `tests/unit/test_smtp.py`, `tests/integration/test_smtp_integration.py`
+
+- Logging coverage for connection attempt, submission result, and failure paths
+  - Why: operational debugging and auditability
+  - Level: unit
+  - Status: `blocked`
+  - Note: logging contract is documented but not implemented yet
+
+- Normalized error-code mapping tests
+  - Why: locks down external API semantics
+  - Level: unit + integration
+  - Status: `blocked`
+  - Note: docs define the error model, but the implementation still surfaces raw exceptions
+
+- Idempotency replay and conflict behavior
+  - Why: retry safety
+  - Level: unit + integration
+  - Status: `blocked`
+  - Note: documented contract exists, implementation does not yet
+
+- Rate limiting, recipient-count limits, and allow/deny list enforcement
+  - Why: policy correctness
+  - Level: unit + integration
+  - Status: `blocked`
+  - Note: policy model is documented, not implemented yet

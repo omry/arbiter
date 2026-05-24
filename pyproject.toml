@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mail-sentry"
+version = "0.1.1.dev1"
+description = "Policy-controlled MCP mail gateway"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "Omry Yadan", email = "omry@yadan.net" },
+]
+maintainers = [
+  { name = "Omry Yadan", email = "omry@yadan.net" },
+]
+keywords = ["email", "mcp", "mail", "smtp", "imap", "openclaw", "security"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Communications :: Email",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+  "hydra-core>=1.3,<2.0",
+  "mcp>=1.9.4,<2.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/omry/mail-sentry"
+Repository = "https://github.com/omry/mail-sentry"
+
+[project.optional-dependencies]
+dev = [
+  "nox>=2024.10,<2026.0",
+  "aiosmtpd>=1.4.6,<2.0",
+  "black>=25.0,<26.0",
+  "mypy>=1.11,<2.0",
+  "pytest>=7.4,<9.0",
+  "trustme>=1.2,<2.0",
+]
+
+[project.scripts]
+mail-sentry = "mail_sentry.main:main"
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_unreachable = true
+
+[tool.black]
+target-version = ["py310"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"mail_sentry" = ["py.typed"]
+"mail_sentry.conf" = ["*.yaml"]

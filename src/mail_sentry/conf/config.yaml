@@ -1,0 +1,47 @@
+defaults:
+  - mail_sentry_app_config_schema
+  - _self_
+
+server:
+  name: mail-sentry
+  transport: streamable-http
+  host: 127.0.0.1
+  port: 8000
+  path: /mcp
+  stateless_http: true
+  json_response: true
+
+mail:
+  account_access_profiles:
+    bot:
+      # This example profile is intentionally permissive because the bot is
+      # operating on its own mailbox and may need to change message flags.
+      allow_smtp_send: true
+      imap:
+        allow_read: true
+        allow_search: true
+        allow_move: true
+        allow_delete: true
+        system_flags:
+          seen: read_write
+          flagged: read_write
+          answered: read_write
+          deleted: read_write
+          draft: read_write
+        user_flags: {}
+  accounts:
+    primary:
+      description: Bot-owned account for automated email tasks.
+      account_access_profile: bot
+      sensitivity_tier: standard
+      smtp:
+        host: localhost
+        port: 587
+        authenticate: false
+        username: ""
+        password: ""
+        from_email: agent@example.com
+        from_name: Mail Sentry
+        tls: starttls
+        verify_peer: true
+        timeout_seconds: 30.0

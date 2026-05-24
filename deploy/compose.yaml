@@ -1,0 +1,28 @@
+services:
+  mail-sentry:
+    image: python:3.11-slim
+    container_name: mail-sentry
+    restart: unless-stopped
+    env_file:
+      - ./mail-sentry.env
+    volumes:
+      - ./config.yaml:/config/config.yaml:ro
+    ports:
+      - "127.0.0.1:8025:8025"
+    networks:
+      - mail-sentry
+    command: >
+      sh -lc
+      'python -m pip install --no-cache-dir "mail-sentry==$${MAIL_SENTRY_PACKAGE_VERSION}" &&
+      exec mail-sentry --config-path /config --config-name config'
+
+networks:
+  mail-sentry:
+    name: mail-sentry
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: "${MAIL_SENTRY_DOCKER_BRIDGE_NAME:-mail-sentry0}"
+    ipam:
+      config:
+        # Override only if the default subnet conflicts with another host network.
+        - subnet: "${MAIL_SENTRY_DOCKER_SUBNET:-172.31.250.0/24}"
