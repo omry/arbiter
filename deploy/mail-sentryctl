@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+deploy_dir="${MAIL_SENTRY_DEPLOY_DIR:-/opt/mail-sentry}"
+source_dir="${MAIL_SENTRY_SOURCE_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)}"
+
+compose_file="$deploy_dir/compose.yaml"
+config_file="$deploy_dir/config.yaml"
+env_file="$deploy_dir/mail-sentry.env"
+
+usage() {
+  cat <<'EOF'
+Usage: mail-sentryctl COMMAND
+
+Commands:
+  install       Install root-owned deployment files under /opt/mail-sentry
+  edit-config   Edit /opt/mail-sentry/config.yaml with sudoedit
+  edit-env      Edit /opt/mail-sentry/mail-sentry.env with sudoedit
+  protect       Reapply root ownership and restrictive file modes
+  up            Start or update the Docker Compose service
+  restart       Recreate the Docker Compose service
+  down          Stop and remove the Docker Compose service
+  ps            Show Docker Compose service status
+  logs          Follow Docker Compose logs
+
+Environment:
+  MAIL_SENTRY_DEPLOY_DIR   Deployment directory, default /opt/mail-sentry
+  MAIL_SENTRY_SOURCE_DIR   Source deploy directory for install, default script dir
+EOF
+}
+
+require_source_file() {
+  local path="$1"
+  [[ -f "$path" ]] || {
+    printf 'error: missing source file: %s\n' "$path" >&2
+    printf 'hint: run install from the repository deploy directory or set MAIL_SENTRY_SOURCE_DIR.\n' >&2
+    exit 1
+  }
+}
+
+require_deploy_file() {
+  local path="$1"
+  if sudo test -L "$path"; then
+    printf 'error: refusing symlink deployment file: %s\n' "$path" >&2
+    exit 1
+  fi
+  sudo test -f "$path" || {
+    printf 'error: missing deployment file: %s\n' "$path" >&2
+    printf 'hint: run: %s install\n' "$0" >&2
+    exit 1
+  }
+}
+
+require_deploy_dir() {
+  if sudo test -L "$deploy_dir"; then
+    printf 'error: refusing symlink deployment directory: %s\n' "$deploy_dir" >&2
+    exit 1
+  fi
+  sudo test -d "$deploy_dir" || {
+    printf 'error: missing deployment directory: %s\n' "$deploy_dir" >&2
+    printf 'hint: run: %s install\n' "$0" >&2
+    exit 1
+  }
+}
+
+protect_files() {
+  require_deploy_dir
+  require_deploy_file "$compose_file"
+  require_deploy_file "$config_file"
+  require_deploy_file "$env_file"
+  sudo chown root:root "$deploy_dir" "$compose_file" "$config_file" "$env_file"
+  sudo chmod 0755 "$deploy_dir"
+  sudo chmod 0444 "$compose_file" "$config_file"
+  sudo chmod 0600 "$env_file"
+}
+
+install_layout() {
+  require_source_file "$source_dir/compose.yaml"
+  require_source_file "$source_dir/config.yaml"
+  require_source_file "$source_dir/mail-sentry.env.example"
+
+  if sudo test -L "$deploy_dir"; then
+    printf 'error: refusing symlink deployment directory: %s\n' "$deploy_dir" >&2
+    exit 1
+  fi
+  sudo install -d -o root -g root -m 0755 "$deploy_dir"
+  if sudo test -L "$compose_file"; then
+    printf 'error: refusing symlink deployment file: %s\n' "$compose_file" >&2
+    exit 1
+  fi
+  sudo install -o root -g root -m 0444 "$source_dir/compose.yaml" "$compose_file"
+
+  if sudo test -e "$config_file"; then
+    require_deploy_file "$config_file"
+    printf 'preserving existing config file: %s\n' "$config_file"
+  else
+    sudo install -o root -g root -m 0444 "$source_dir/config.yaml" "$config_file"
+  fi
+
+  if sudo test -e "$env_file"; then
+    require_deploy_file "$env_file"
+    printf 'preserving existing env file: %s\n' "$env_file"
+  else
+    sudo install -o root -g root -m 0600 \
+      "$source_dir/mail-sentry.env.example" "$env_file"
+  fi
+
+  protect_files
+  if [[ "$0" != "/usr/local/sbin/mail-sentryctl" ]]; then
+    sudo install -o root -g root -m 0755 "$0" /usr/local/sbin/mail-sentryctl
+  fi
+}
+
+edit_deploy_file() {
+  local path="$1"
+  require_deploy_file "$path"
+  sudoedit "$path"
+  protect_files
+}
+
+compose() {
+  require_deploy_file "$compose_file"
+  require_deploy_file "$config_file"
+  require_deploy_file "$env_file"
+  cd "$deploy_dir"
+  sudo docker compose --env-file "$env_file" -f "$compose_file" "$@"
+}
+
+command="${1:-}"
+case "$command" in
+  install)
+    install_layout
+    ;;
+  edit-config)
+    edit_deploy_file "$config_file"
+    ;;
+  edit-env)
+    edit_deploy_file "$env_file"
+    ;;
+  protect)
+    require_deploy_file "$compose_file"
+    require_deploy_file "$config_file"
+    require_deploy_file "$env_file"
+    protect_files
+    ;;
+  up)
+    compose up -d
+    ;;
+  restart)
+    compose up -d --force-recreate
+    ;;
+  down)
+    compose down
+    ;;
+  ps)
+    compose ps
+    ;;
+  logs)
+    compose logs -f
+    ;;
+  "" | -h | --help | help)
+    usage
+    ;;
+  *)
+    printf 'error: unknown command: %s\n\n' "$command" >&2
+    usage >&2
+    exit 2
+    ;;
+esac
