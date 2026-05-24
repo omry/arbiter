@@ -159,7 +159,7 @@ def build_server(cfg: AppConfig) -> "FastMCP":
         description=(
             "Return the configured accounts available to the caller, along with "
             "lightweight metadata needed to choose an account for later SMTP or "
-            "future IMAP operations."
+            "IMAP operations."
         )
     )
     def list_accounts() -> dict[str, object]:

@@ -14,17 +14,19 @@ Current implications:
 - callers may explicitly select any configured account
 - at this stage, policy enforcement is configuration-driven rather than caller-identity-driven
 
-## Baseline v1 policies
+## Current Runtime Policies
 
 - The caller may choose recipients, subject, and body.
 - The caller must choose a configured account explicitly for `send_email`.
 - The caller may not override SMTP transport settings.
 - The caller may not override the `From` address.
 - The caller may not override `Reply-To` in v1.
-- The server should validate recipient counts and address syntax.
-- The server should enforce configured outbound send rate limits before attempting SMTP submission.
-- The server should maintain operational debug logs separately from the durable audit log.
-- The server should log attempts and results with sensitive fields redacted where appropriate.
+- The server validates basic recipient shape, but configured recipient-count limits are not enforced yet.
+- The server enforces `allow_smtp_send` before SMTP submission.
+- The server enforces IMAP read/search/move/delete gates before IMAP operations.
+- `mark_message_read` requires `read_write` access to the standard `seen` flag.
+- IMAP operations are scoped to configured accounts and configured folders.
+- Operational debug logs and durable audit records are still design contracts.
 
 ## Audit policy
 
@@ -103,9 +105,12 @@ The durable audit log should be treated as a distinct storage and retention conc
 
 ## Rate limits and safety limits
 
-- Enforce `mail.accounts.<account>.smtp.limits.max_messages_per_minute` before attempting SMTP submission.
-- Support `mail.accounts.<account>.smtp.limits.max_recipients_per_message` as a guardrail against accidental fan-out.
-- Enforce recipient-policy allowlists and denylists when configured.
+The config schema includes these SMTP safety controls, but runtime enforcement remains open work:
+
+- `mail.accounts.<account>.smtp.limits.max_messages_per_minute`
+- `mail.accounts.<account>.smtp.limits.max_recipients_per_message`
+- `mail.accounts.<account>.smtp.recipient_policy.allowed_domains`
+- `mail.accounts.<account>.smtp.recipient_policy.blocked_domains`
 
 ## Future policy tightening
 
@@ -166,7 +171,7 @@ Standard `system_flags` keys:
 - only listed keywords are visible to tools
 - only listed keywords may be mutated
 
-Future IMAP tools should follow these rules:
+IMAP tools follow these rules:
 
 - content read/search permissions come from the coarse IMAP policy, not from flag policy
 - hidden flags should be omitted from tool-visible message responses

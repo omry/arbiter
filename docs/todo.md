@@ -20,14 +20,6 @@ Protocol:
     2. Consider whether shared defaults, inheritance, or a smaller audit schema would cover the real use cases with less repetition.
     3. Propose a redesign that reduces audit-related config surface without weakening the safety and review story.
 
-- Review the full documentation set for config and policy alignment
-  - Why: the access-policy changes have updated the main contract, and the rest of the docs should be checked for stale language, stale examples, or mismatches with the implemented behavior
-  - Status: `todo`
-  - Steps:
-    1. Review all Mail Sentry docs against the current code and config contract.
-    2. Correct stale examples, response shapes, and policy descriptions.
-    3. Remove outdated terms that no longer match the implementation.
-
 - Add optional bot-signing behavior for personal-account sends
   - Why: when sending through a personal account, the operator may want the body to disclose that the bot drafted or sent the message
   - Status: `todo`
@@ -58,7 +50,7 @@ Protocol:
     1. Define the initial action vocabulary for confirmation decisions, such as `smtp_send`, `imap_read`, `imap_search`, `imap_move`, and `imap_delete`.
     2. Replace account-level `sensitivity_tier` in config, docs, and `list_accounts` output with a set-style confirmation field.
     3. Update interactive send behavior to use the new confirmation field instead of `sensitivity_tier`.
-    4. Decide which IMAP actions, if any, should require confirmation by default for the initial IMAP rollout.
+    4. Decide which IMAP actions, if any, should require confirmation by default for the current IMAP tools.
     5. Sweep the docs for stale `sensitivity_tier`, `standard`, and `sensitive` language once the replacement contract is finalized.
 
 - Improve the OpenClaw skill installer with file-change visibility

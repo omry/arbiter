@@ -26,7 +26,7 @@ Do not embed Mail Sentry-specific sending logic directly into OpenClaw prompts.
 
 Implement only a narrow Mail Sentry-specific MCP subset needed for the current OpenClaw integration.
 
-Design that shim around Mail Sentry tool invocation rather than SMTP-only special cases so future Mail Sentry IMAP tools can be added without a second integration redesign.
+Design that shim around Mail Sentry tool invocation rather than SMTP-only special cases so other Mail Sentry tools can be added without a second integration redesign.
 
 Do not build a generic MCP client.
 
@@ -49,7 +49,7 @@ This decision scales better than a dummy HTTP surface if Mail Sentry later needs
 
 This decision still keeps the interim integration intentionally low-scope. The shim is narrow, Mail Sentry-specific, and temporary rather than a reusable MCP client investment.
 
-This decision also leaves room for the planned Mail Sentry IMAP stage. The shim can remain Mail Sentry-specific while still being structured to add future IMAP tool calls instead of being tightly coupled to the initial SMTP send flow.
+This decision also leaves room for Mail Sentry's IMAP tools. The shim can remain Mail Sentry-specific while still being structured to add IMAP tool calls instead of being tightly coupled to the initial SMTP send flow.
 
 This decision provides a clean migration path. Once OpenClaw supports native MCP, OpenClaw can call Mail Sentry directly and the temporary shim can be removed:
 
@@ -74,7 +74,7 @@ This places temporary protocol logic in the OpenClaw integration layer instead o
 
 The shim is intentionally Mail Sentry-specific and is not reusable infrastructure for arbitrary MCP servers.
 
-The shim therefore needs a small internal structure that can grow from the initial SMTP tools to future Mail Sentry IMAP tools without becoming a generic MCP framework.
+The shim therefore needs a small internal structure that can grow from the initial SMTP tools to other Mail Sentry tools without becoming a generic MCP framework.
 
 Interactive and unattended sending will need separate operational and documentation treatment because they are intentionally separate skill surfaces.
 

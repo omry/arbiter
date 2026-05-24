@@ -20,7 +20,7 @@ The OpenClaw skill runtime should speak a minimal Mail Sentry-specific MCP subse
 
 This is intentionally a narrow shim rather than a generic MCP client layer, and it avoids introducing a separate temporary Mail Sentry business API that would also need to be retired later.
 
-The shim should still be structured with upcoming Mail Sentry IMAP support in mind. It should stay Mail Sentry-specific, but its internal shape should allow additional Mail Sentry tools to be added later without redesigning the entire OpenClaw integration around SMTP-only assumptions.
+The shim should stay Mail Sentry-specific, but its internal shape should allow additional Mail Sentry tools to be added without redesigning the entire OpenClaw integration around SMTP-only assumptions.
 
 ## Planned skill split
 
@@ -31,7 +31,7 @@ The temporary OpenClaw integration should use two separate wrapper skill surface
 
 This split keeps attended and unattended behavior separate instead of relying on one mixed skill to infer the correct safety mode.
 
-Those send skills are only the first OpenClaw-facing use of the shim. The shim should be able to absorb future Mail Sentry IMAP tool calls when that stage is implemented.
+Those send skills are currently the only OpenClaw-facing use of the shim. Mail Sentry now exposes IMAP tools, but the temporary OpenClaw wrapper skills do not cover them yet.
 
 ## Temporary status
 

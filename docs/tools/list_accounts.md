@@ -7,11 +7,11 @@
 
 ## Purpose
 
-Return the configured accounts available to the caller, along with lightweight metadata needed to choose an account for later SMTP or IMAP operations.
+Return the configured accounts available to the caller, along with lightweight metadata needed to choose an account for SMTP or IMAP operations.
 
 ## Intended usage
 
-Use this when the caller needs to discover which accounts exist before selecting one explicitly for `send_email` or future IMAP tools.
+Use this when the caller needs to discover which accounts exist before selecting one explicitly for `send_email` or an IMAP tool.
 
 ## Input shape
 

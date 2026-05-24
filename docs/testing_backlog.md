@@ -7,7 +7,7 @@ Keep the remaining test work small, explicit, and prioritized.
 This file tracks the highest-value gaps between:
 
 - the current Mail Sentry implementation
-- the documented SMTP contract
+- the documented SMTP and IMAP contracts
 - the tests already in place
 
 ## Status legend
@@ -61,7 +61,7 @@ This file tracks the highest-value gaps between:
   - Level: unit
   - Status: `done`
   - Coverage: `tests/unit/test_config.py`, `tests/unit/test_smtp.py`
-  - Examples: `use_ssl=true` with `starttls=true`, username without password
+  - Examples: unknown TLS mode, auth enabled without both username and password, credentials set while auth is disabled
 
 - HTML-only message serialization
   - Why: MIME behavior is user-visible
@@ -105,4 +105,4 @@ This file tracks the highest-value gaps between:
   - Why: policy correctness
   - Level: unit + integration
   - Status: `blocked`
-  - Note: policy model is documented, not implemented yet
+  - Note: config fields exist, but SMTP safety-policy enforcement is not implemented yet

@@ -1,16 +1,15 @@
-# Tool Family: Future IMAP Extension
+# Tool Family: IMAP
 
 ## Status
 
-- Stage: `stage 2`
+- Stage: `implemented initial tool family`
 - Owner: `Mail Sentry server`
-- Rollout gate: begin IMAP only after the SMTP send flow is stable
 
 ## Purpose
 
-Define the planned IMAP tool family and the shared constraints that apply once IMAP implementation begins.
+Define the current IMAP tool family and the shared constraints that apply to IMAP operations.
 
-## Planned tools
+## Tools
 
 - `list_messages`
 - `get_message`
@@ -21,27 +20,28 @@ Define the planned IMAP tool family and the shared constraints that apply once I
 
 ## Common input rules
 
-- Every IMAP tool must take `account` as a mandatory input.
+- Every IMAP tool takes `account` as a mandatory input.
 - That `account` must reference an account with IMAP enabled.
 - IMAP tools may take `folder` explicitly or default to `mail.accounts.<account>.imap.default_folder` when omitted.
+- `message_id` values are IMAP UIDs returned by `list_messages` or `search_messages`; they are scoped to the selected account and folder.
 
 ## Shared behavior constraints
 
 - operations are scoped to a single selected account
 - folder names are interpreted within that selected account only
-- cross-account search is out of scope for the initial IMAP release
-- cross-account moves are out of scope for the initial IMAP release
+- folder names must be present in the selected account's configured `imap.folders` map
+- cross-account search is out of scope
+- cross-account moves are out of scope
 
 ## IMAP-specific design constraints
 
-- support write-capable IMAP operations from the first IMAP implementation
 - model accounts and folders explicitly
 - keep destructive actions opt-in and separately gated
 - preserve stable message identifiers where possible, while accounting for IMAP UID and folder scoping realities
 
 ## Configuration notes
 
-The IMAP config is organized under an account. Within an account, tools should refer to configured folder names rather than raw user-provided folder strings.
+The IMAP config is organized under an account. Within an account, tools refer to configured folder names rather than arbitrary folder strings.
 
 Each IMAP-enabled account should define at least:
 
@@ -55,16 +55,13 @@ Each configured folder should define at least:
 - a stable folder name via the map key
 - an optional description
 
-Access profiles establish default policy:
+Access profiles establish policy. Account names such as `bot`, `personal`, or `alerts_readonly` are deployment-owned conventions, and accounts reference them through `account_access_profile`.
 
-- `bot`: defaults come from `mail.account_access_profiles.bot`
-- `personal`: defaults come from `mail.account_access_profiles.personal`
-
-When IMAP is added, write-capable behavior should still be controlled by `account_access_profile` policy and any future guardrails for sensitive accounts.
+Write-capable behavior is controlled by `account_access_profile` policy and any client-side guardrails for sensitive accounts.
 
 Confirmed policy model:
 
-- replace the coarse profile-level `read_only` flag with explicit IMAP policy gates for `read`, `search`, `move`, and `delete`
+- explicit IMAP policy gates for `read`, `search`, `move`, and `delete`
 - model IMAP flag access separately from content access
 - split IMAP flag policy into:
   - `system_flags` for standard IMAP flags
@@ -84,18 +81,23 @@ Confirmed policy model:
 
 ## Audit behavior
 
+The config includes IMAP audit settings under `mail.account_access_profiles.<profile>.imap_audit`, but durable audit storage is not implemented yet.
+
+The target audit model is:
+
 - apply durable IMAP audit behavior from `mail.account_access_profiles.<profile>.imap_audit`
 - audit state-changing operations such as flag changes, message moves, and deletes by default
 - always audit destructive operations such as delete when enabled
 - support separate configuration for read-access and search-query auditing because those can generate much higher event volume
 
-## Out of scope for the initial IMAP release
+## Out of Scope
 
 - cross-account message operations
 - folder-specific policy overrides
 - folder-specific audit overrides
 
-## Follow-up needed before implementation
+## Follow-up
 
 - write one tool document per IMAP operation
 - decide what approval hook, if any, is required before connecting a personal account
+- add OpenClaw wrapper coverage for IMAP tools if OpenClaw should use them before native MCP support exists

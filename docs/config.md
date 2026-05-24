@@ -218,7 +218,8 @@ Relevant IMAP settings for an account with IMAP enabled:
 
 ## Configuration evolution notes
 
-- The initial config shape already includes both SMTP and IMAP, even though IMAP implementation is deferred to stage 2.
-- Account-level policy and audit are defined through `account_access_profile`.
+- The config shape includes both SMTP and IMAP, and the current server implements both protocol families.
+- Account-level access policy and audit settings are defined through `account_access_profile`.
 - Account sensitivity is defined per account rather than per access profile because interactive sender-choice and confirmation behavior depend on the specific account being used.
 - Folder-specific policy and audit overrides are intentionally out of scope for the default shape.
+- SMTP safety settings such as rate limits, recipient limits, recipient allowlists/denylists, and idempotency retention are represented in config but still need runtime enforcement.

@@ -4,6 +4,10 @@
 
 Define the stable error contract shared by the Mail Sentry server.
 
+## Status
+
+This is the target error contract. The current implementation still surfaces raw Python/MCP errors for many failures rather than normalizing every failure into this response shape.
+
 ## Error response shape
 
 ```json

@@ -23,7 +23,7 @@ Both skills should:
 - call `send_email` for the actual submission
 - return a normalized short result to OpenClaw rather than raw MCP transport details
 - stay Mail Sentry-specific instead of trying to behave like a generic MCP client
-- be structured so future Mail Sentry IMAP tools can be added to the same shim
+- be structured so other Mail Sentry tools can be added to the same shim
 
 Both skills must not:
 
@@ -174,7 +174,7 @@ The temporary MCP-over-HTTP shim should support the minimum Mail Sentry flow nee
 2. call `send_email`
 3. normalize tool responses into a shape the skills can consume without embedding protocol details into prompts
 
-The shim should be designed around Mail Sentry tool invocation rather than SMTP-specific shortcuts so that planned IMAP tools can later reuse the same internal structure.
+The shim should be designed around Mail Sentry tool invocation rather than SMTP-specific shortcuts so that IMAP tools can reuse the same internal structure if they are exposed through OpenClaw wrapper skills later.
 
 ## Migration note
 

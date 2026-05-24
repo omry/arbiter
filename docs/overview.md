@@ -4,35 +4,39 @@
 - Version: `0.1.1.dev1`
 - Status: `Draft`
 - Authors: `Codex`, `Omry Yadan`
-- Last Updated: `2026-03-07`
+- Last Updated: `2026-05-24`
 - Intended Use: implementation-driving overview for the Mail Sentry server
 
 ## Purpose
 
 Define a Model Context Protocol server that gives an agent controlled access to email capabilities.
 
-The first implementation focuses on outbound SMTP mail submission. The design also defines a future IMAP-based inbox capability that will be implemented in a second stage.
+The current implementation supports outbound SMTP mail submission and a first IMAP tool family for explicitly configured accounts and folders.
 
-The initial deployment target is a bot operating on its own private email account. The design keeps a path open for a later deployment against a personal account with stricter guardrails.
+The default deployment target is a bot or gateway account with deployment-owned credentials. A separate read-only IMAP deployment variant exists for testing a real inbox with stricter guardrails.
 
 ## Scope
 
 The server is a single MCP service that exposes multiple tools over a shared configuration, policy, and transport layer.
 
-The initial tool set is:
+The current tool set is:
 
 - `list_accounts`
 - `send_email`
-
-The next major stage is IMAP support for reading and manipulating folders and messages on explicitly selected configured accounts.
+- `list_messages`
+- `get_message`
+- `search_messages`
+- `move_message`
+- `mark_message_read`
+- `delete_message`
 
 ## Goals
 
 - Expose email capabilities through a narrow MCP surface
-- Start with reliable SMTP message submission
+- Support SMTP message submission
+- Support IMAP folder/message operations only for configured accounts and folders
 - Support multiple configured email accounts
 - Keep transport configuration and credentials outside tool inputs
-- Make it easy to add IMAP read and folder actions later
 - Preserve strong safety boundaries for credentials, recipients, account scope, and access policy
 
 ## Non-goals for v1
@@ -40,18 +44,19 @@ The next major stage is IMAP support for reading and manipulating folders and me
 - Full mail client behavior
 - Bulk email or campaign workflows
 - Attachment handling
-- Inbox search, read, delete, or move operations
 - Per-call transport parameter overrides such as host, port, TLS mode, credentials, or sender identity
+- Open-ended access to arbitrary IMAP folders outside the configured folder map
+- Native OpenClaw MCP integration
 
 ## Core design principles
 
 ### 1. Capability-first interface
 
-The server exposes message-level, account-level, and later folder-level operations such as `send_email`, `list_messages`, and `get_message`, while keeping SMTP and IMAP session management internal.
+The server exposes message-level, account-level, and folder-level operations such as `send_email`, `list_messages`, and `get_message`, while keeping SMTP and IMAP session management internal.
 
 ### 2. Deployment-owned configuration
 
-SMTP and future IMAP settings belong to server configuration, not tool payloads. The caller does not choose hosts, ports, TLS modes, or credentials.
+SMTP and IMAP settings belong to server configuration, not tool payloads. The caller does not choose hosts, ports, TLS modes, or credentials.
 
 ### 3. Future personal inbox guardrails
 
@@ -66,7 +71,7 @@ Questions to resolve before supporting a personal inbox:
 
 ### 4. Small, explicit surface area
 
-Add capabilities incrementally. The initial implementation should expose a minimal tool set: account discovery plus a single mail submission tool. IMAP is designed in this document set, but implementation belongs to a second stage rather than a partial v1 rollout.
+Add capabilities incrementally. The implemented surface is still intentionally small: account discovery, one SMTP send operation, and folder-scoped IMAP message operations.
 
 ### 5. Auditable behavior
 
@@ -96,31 +101,29 @@ Implications of the current trust model:
 - callers may explicitly select any configured account
 - caller authentication between the bot and the MCP server is out of scope for the current design
 
-## Rollout stages
+## Current Implementation Status
 
-### Stage 1
-
-Implement:
+Implemented:
 
 - shared configuration loading
-- policy enforcement
-- logging and audit handling
+- access-profile enforcement for SMTP send and IMAP read/search/move/delete
+- IMAP flag visibility and `seen` mutation policy
 - `list_accounts`
 - `send_email`
-
-### Stage 2
-
-Implement IMAP on top of the same service, config, and policy model.
-Begin this stage only after the SMTP send flow is stable.
-
-Planned IMAP capabilities:
-
 - `list_messages`
 - `get_message`
 - `search_messages`
 - `move_message`
 - `mark_message_read`
 - `delete_message`
+
+Still open:
+
+- structured operational logging
+- durable audit storage
+- normalized error-code responses
+- SMTP rate limiting and recipient allow/deny enforcement
+- idempotency replay and conflict handling
 
 ## Open design decisions
 
@@ -131,16 +134,4 @@ Planned IMAP capabilities:
 
 ## Recommended next step
 
-After this design is accepted, create a minimal MCP server skeleton with these initial tools:
-
-- `list_accounts`
-- `send_email`
-
-That first implementation should wire together:
-
-- config loading
-- account discovery from config
-- schema validation
-- MIME message assembly
-- SMTP submission
-- normalized error handling
+Prioritize the remaining runtime hardening pieces that are already represented in the config and docs: normalized errors, durable audit records, SMTP safety-policy enforcement, and idempotency.

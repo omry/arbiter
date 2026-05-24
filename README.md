@@ -2,6 +2,24 @@
 
 Mail Sentry is a policy-controlled MCP mail gateway for sending mail and reading IMAP folders through explicit account policies.
 
+## Project Status
+
+Current implementation status:
+
+- MCP server over stdio, SSE, or streamable HTTP via FastMCP
+- account discovery with SMTP and IMAP capability metadata
+- SMTP submission with configured sender identity, TLS/auth settings, text/HTML bodies, and Bcc kept out of message headers
+- IMAP list/get/search/move/mark-read/delete tools scoped to configured accounts and folders
+- account access profiles for SMTP send permission, IMAP read/search/move/delete gates, and IMAP flag visibility/write policy
+- Docker deployment files for a standard SMTP gateway and a hardened read-only IMAP variant
+- temporary OpenClaw wrapper skills for SMTP send flows
+
+Known open gaps:
+
+- configured SMTP rate limits, recipient-count limits, recipient allowlists/denylists, and idempotency are not enforced yet
+- durable audit storage and normalized error-code responses are still design contracts, while the implementation currently surfaces Python/MCP errors
+- OpenClaw wrapper skills currently cover SMTP send flows, not the IMAP tools
+
 ## Development
 
 Run the test suite from the repo root with:
