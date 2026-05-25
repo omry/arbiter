@@ -1,3 +1,9 @@
+## Local Instructions
+
+If `LOCAL-AGENTS.md` exists at the repository root, treat it as additional
+local instructions for this checkout. Use it for machine- or user-specific
+preferences that should not be committed to the repository.
+
 This is a Sapling repository. Use `sl status` to check the worktree state; do not assume plain `git status` works in this checkout.
 Never run `git push --force` or `git push --force-with-lease` unless I explicitly request it and then confirm again after you explain that it will rewrite remote history.
 Never run `git reset --hard` unless I explicitly request it in that turn.
