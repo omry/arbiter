@@ -20,9 +20,8 @@ policy object attached to accounts through
 
 Two surrounding areas are still only partially implemented:
 
-- SMTP rate limiting and idempotency config are reserved for future runtime
-  work. The current server fails closed at startup if those unsupported fields
-  are configured.
+- SMTP idempotency config is reserved for future runtime work. The current
+  server fails closed at startup if those unsupported fields are configured.
 - Durable audit storage is still a design contract even though audit settings
   are already represented in the profile config.
 
@@ -78,6 +77,7 @@ mail:
         smtp:
           require_confirmation: false
           limits:
+            max_messages_per_minute: 30
             max_recipients_per_message: 20
           recipient_policy:
             allowed_recipients:
@@ -121,6 +121,7 @@ mail:
         smtp:
           require_confirmation: true
           limits:
+            max_messages_per_minute: 5
             max_recipients_per_message: 5
           recipient_policy:
             allowed_recipients:
@@ -153,8 +154,8 @@ multiple configured accounts.
 - service blocks are optional by omission at the profile level
 - an account may only enable a protocol when the referenced profile also has a
   matching service-policy block
-- unsupported SMTP config such as rate limiting or idempotency currently fails
-  closed during startup validation instead of being silently ignored
+- unsupported SMTP idempotency config currently fails closed during startup
+  validation instead of being silently ignored
 
 ### SMTP service policy
 
@@ -162,8 +163,8 @@ multiple configured accounts.
 
 - `require_confirmation`: whether callers should require explicit confirmation
   before sending from accounts that use this profile
-- `limits.max_messages_per_minute`: reserved for future rate limiting; startup
-  rejects configs that set it today
+- `limits.max_messages_per_minute`: enforced as a per-account, per-process
+  rolling 60-second submission cap
 - `limits.max_recipients_per_message`: enforced per submission
 - `idempotency.expiration_days`: reserved for future idempotency retention;
   startup rejects configs that customize it today
@@ -244,7 +245,8 @@ Relevant SMTP policy settings:
 - `mail.account_access_profiles.<profile>.services.smtp.require_confirmation`:
   optional boolean
 - `mail.account_access_profiles.<profile>.services.smtp.limits.max_messages_per_minute`:
-  reserved for future outbound rate limiting; startup currently rejects it
+  optional outbound rate limit; when set, the current server enforces it as a
+  per-account, per-process rolling 60-second limit
 - `mail.account_access_profiles.<profile>.services.smtp.limits.max_recipients_per_message`:
   optional per-message recipient cap
 - `mail.account_access_profiles.<profile>.services.smtp.idempotency.expiration_days`:
@@ -346,5 +348,7 @@ Relevant IMAP policy settings:
 - Folder-specific policy and audit overrides are intentionally out of scope for
   the default shape.
 - SMTP recipient policy and `max_recipients_per_message` are enforced.
-- SMTP rate limiting and idempotency retention are represented in config but
-  still need runtime enforcement beyond validation.
+- SMTP rate limiting, recipient policy, and `max_recipients_per_message` are
+  enforced.
+- SMTP idempotency retention is represented in config but still needs runtime
+  enforcement beyond validation.

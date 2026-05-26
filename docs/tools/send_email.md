@@ -117,9 +117,10 @@ replay/conflict behavior is implemented.
 
 - the selected account must exist and have SMTP enabled
 - recipient address syntax is validated with a basic `@` check
+- configured `max_messages_per_minute` is enforced as a per-account,
+  per-process rolling 60-second limit
 - configured `max_recipients_per_message` is enforced
 - configured exact-recipient and domain-pattern allow/block rules are enforced
-- startup rejects configured `max_messages_per_minute`
 - startup rejects non-default SMTP idempotency config
 - the caller may not override SMTP transport settings, `From`, or `Reply-To`
 
@@ -160,6 +161,7 @@ The target audit model is:
 - request without `text_body` and `html_body` fails validation
 - `bcc` is excluded from serialized headers
 - selected account must have SMTP enabled
+- configured `max_messages_per_minute` is enforced
 - configured `max_recipients_per_message` is enforced
 - exact-recipient and domain-pattern recipient policy is enforced
-- startup rejects unsupported rate-limit and idempotency SMTP config
+- startup rejects unsupported idempotency SMTP config

@@ -16,9 +16,8 @@ Current implementation status:
 
 Known open gaps:
 
-- SMTP rate limiting and idempotency configs are reserved for future work; the
-  server now fails closed at startup if those unsupported options are
-  configured
+- SMTP idempotency config is reserved for future work; the server fails closed
+  at startup if unsupported idempotency options are configured
 - durable audit storage and normalized error-code responses are still design contracts, while the implementation currently surfaces Python/MCP errors
 - OpenClaw wrapper skills currently cover SMTP send flows, not the IMAP tools
 

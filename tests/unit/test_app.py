@@ -119,6 +119,17 @@ class RecordingImapClientFactory:
         return client
 
 
+class FakeClock:
+    def __init__(self, now: float = 0.0) -> None:
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
 def _mail_config() -> MailConfig:
     return MailConfig(
         accounts={
@@ -744,6 +755,91 @@ def test_send_email_rejects_recipient_count_over_policy_limit() -> None:
             subject="Hello",
             text_body="Plain text body",
         )
+
+
+def test_send_email_rejects_rate_limit_exceeded() -> None:
+    clock = FakeClock()
+    mail_config = MailConfig(
+        accounts={
+            "primary": AccountConfig(
+                description="Primary SMTP account",
+                account_access_profile="bot",
+                smtp=SmtpConfig(),
+            )
+        },
+        account_access_profiles={
+            "bot": AccountAccessProfileConfig(
+                services=AccountServicesConfig(
+                    smtp=SmtpServicePolicyConfig(
+                        limits=SmtpLimitsConfig(max_messages_per_minute=1)
+                    )
+                )
+            )
+        },
+    )
+    app = MailSentryApp(
+        mail_config,
+        smtp_client_factory=lambda config: FakeSmtpClient(),
+        time_provider=clock,
+    )
+
+    app.send_email(
+        account="primary",
+        to=["one@example.com"],
+        subject="Hello",
+        text_body="Plain text body",
+    )
+
+    with pytest.raises(ValueError, match="max_messages_per_minute"):
+        app.send_email(
+            account="primary",
+            to=["two@example.com"],
+            subject="Hello again",
+            text_body="Plain text body",
+        )
+
+
+def test_send_email_allows_rate_limited_account_after_window_expires() -> None:
+    clock = FakeClock()
+    mail_config = MailConfig(
+        accounts={
+            "primary": AccountConfig(
+                description="Primary SMTP account",
+                account_access_profile="bot",
+                smtp=SmtpConfig(),
+            )
+        },
+        account_access_profiles={
+            "bot": AccountAccessProfileConfig(
+                services=AccountServicesConfig(
+                    smtp=SmtpServicePolicyConfig(
+                        limits=SmtpLimitsConfig(max_messages_per_minute=1)
+                    )
+                )
+            )
+        },
+    )
+    app = MailSentryApp(
+        mail_config,
+        smtp_client_factory=lambda config: FakeSmtpClient(),
+        time_provider=clock,
+    )
+
+    app.send_email(
+        account="primary",
+        to=["one@example.com"],
+        subject="Hello",
+        text_body="Plain text body",
+    )
+
+    clock.advance(60.0)
+
+    app.send_email(
+        account="primary",
+        to=["two@example.com"],
+        subject="Hello again",
+        text_body="Plain text body",
+    )
 
 
 def test_send_email_uses_selected_account_smtp_config() -> None:

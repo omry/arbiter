@@ -104,5 +104,6 @@ This file tracks the highest-value gaps between:
 - Rate limiting enforcement
   - Why: policy correctness
   - Level: unit + integration
-  - Status: `blocked`
-  - Note: recipient-count limits and recipient policy are implemented, but time-based rate limiting is not
+  - Status: `done`
+  - Coverage: `tests/unit/test_app.py`
+  - Note: unit coverage is in place for the current per-process sliding-window implementation; add integration coverage if a transport-level seam becomes useful

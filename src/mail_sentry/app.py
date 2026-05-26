@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from email.message import EmailMessage
 from email.utils import formataddr, make_msgid
+from time import monotonic
 from typing import Callable, Protocol
 
 from .config import (
@@ -54,6 +55,7 @@ class ImapClientLike(Protocol):
 
 
 ImapClientFactory = Callable[[ImapConfigLike], ImapClientLike]
+TimeProvider = Callable[[], float]
 
 
 class MailSentryApp:
@@ -64,10 +66,13 @@ class MailSentryApp:
         mail_config: MailConfig,
         smtp_client_factory: SmtpClientFactory,
         imap_client_factory: ImapClientFactory | None = None,
+        time_provider: TimeProvider = monotonic,
     ) -> None:
         self._mail_config = mail_config
         self._smtp_client_factory = smtp_client_factory
         self._imap_client_factory = imap_client_factory
+        self._time_provider = time_provider
+        self._smtp_attempt_timestamps: dict[str, list[float]] = {}
 
     def tool_names(self) -> list[str]:
         return [
@@ -158,6 +163,7 @@ class MailSentryApp:
 
         envelope_recipients = recipients_to + recipients_cc + recipients_bcc
         self._enforce_smtp_policy(account, smtp_policy, envelope_recipients)
+        self._consume_smtp_rate_limit(account, smtp_policy)
         smtp_client = self._smtp_client_factory(smtp_config)
         smtp_client.send(
             message,
@@ -482,6 +488,28 @@ class MailSentryApp:
                 raise ValueError(
                     f"send_email recipient is not allowed by policy: {recipient}"
                 )
+
+    def _consume_smtp_rate_limit(
+        self, account_name: str, smtp_policy: SmtpServicePolicyConfig
+    ) -> None:
+        max_messages = smtp_policy.limits.max_messages_per_minute
+        if max_messages is None:
+            return
+
+        now = self._time_provider()
+        window_start = now - 60.0
+        active_attempts = [
+            timestamp
+            for timestamp in self._smtp_attempt_timestamps.get(account_name, [])
+            if timestamp > window_start
+        ]
+        if len(active_attempts) >= max_messages:
+            raise ValueError(
+                f"send_email exceeds max_messages_per_minute for account: {account_name}"
+            )
+
+        active_attempts.append(now)
+        self._smtp_attempt_timestamps[account_name] = active_attempts
 
     def _imap_message_summary(
         self, imap_policy: ImapAccessPolicyConfig

@@ -124,7 +124,6 @@ Still open:
 - structured operational logging
 - durable audit storage
 - normalized error-code responses
-- SMTP rate limiting
 - idempotency replay and conflict handling
 - deciding whether access profiles should remain the long-term home for audit settings
 
@@ -138,4 +137,4 @@ Still open:
 
 ## Recommended next step
 
-Prioritize the remaining runtime-hardening work around the now-implemented policy contract: unsupported SMTP safety controls, durable audit records, normalized errors, and idempotency.
+Prioritize the remaining runtime-hardening work around the now-implemented policy contract: durable audit records, normalized errors, and idempotency.

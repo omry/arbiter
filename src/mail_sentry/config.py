@@ -449,9 +449,12 @@ def validate_smtp_service_policy(config: SmtpServicePolicyConfigLike) -> None:
 
     unsupported_fields: list[str] = []
 
-    if config.limits.max_messages_per_minute is not None:
-        unsupported_fields.append(
-            "mail.account_access_profiles.<profile>.services.smtp.limits.max_messages_per_minute"
+    if (
+        config.limits.max_messages_per_minute is not None
+        and config.limits.max_messages_per_minute < 1
+    ):
+        raise ValueError(
+            "smtp service policy limits.max_messages_per_minute must be at least 1"
         )
 
     if config.idempotency != SmtpIdempotencyConfig():

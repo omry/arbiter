@@ -123,7 +123,8 @@ Current runtime status:
 
 - recipient policy is enforced
 - `max_recipients_per_message` is enforced
-- startup rejects configs that set `max_messages_per_minute`
+- `max_messages_per_minute` is enforced as a per-account, per-process rolling
+  60-second limit
 - startup rejects non-default `idempotency.expiration_days` because
   replay/conflict handling is not implemented yet
 
