@@ -123,8 +123,9 @@ Current runtime status:
 
 - recipient policy is enforced
 - `max_recipients_per_message` is enforced
-- `max_messages_per_minute` is not enforced yet
-- idempotency replay/conflict handling is not implemented yet
+- startup rejects configs that set `max_messages_per_minute`
+- startup rejects non-default `idempotency.expiration_days` because
+  replay/conflict handling is not implemented yet
 
 Caller confirmation policy is configured through:
 

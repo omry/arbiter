@@ -19,6 +19,8 @@ from mail_sentry.config import (
     MailConfig,
     resolve_imap_flag_mode,
     SmtpConfig,
+    SmtpIdempotencyConfig,
+    SmtpLimitsConfig,
     SmtpRecipientPolicyConfig,
     SmtpServicePolicyConfig,
     validate_app_config,
@@ -577,3 +579,63 @@ def test_app_config_accepts_smtp_account_with_recipient_policy() -> None:
             )
         )
     )
+
+
+def test_app_config_rejects_unimplemented_smtp_rate_limit() -> None:
+    with pytest.raises(
+        ValueError,
+        match="services\\.smtp\\.limits\\.max_messages_per_minute",
+    ):
+        validate_app_config(
+            AppConfig(
+                mail=MailConfig(
+                    accounts={
+                        "primary": AccountConfig(
+                            description="SMTP account",
+                            account_access_profile="bot",
+                            smtp=SmtpConfig(),
+                        )
+                    },
+                    account_access_profiles={
+                        "bot": AccountAccessProfileConfig(
+                            services=AccountServicesConfig(
+                                smtp=SmtpServicePolicyConfig(
+                                    limits=SmtpLimitsConfig(max_messages_per_minute=5)
+                                ),
+                                imap=ImapAccessPolicyConfig(),
+                            )
+                        )
+                    },
+                )
+            )
+        )
+
+
+def test_app_config_rejects_unimplemented_smtp_idempotency_config() -> None:
+    with pytest.raises(
+        ValueError,
+        match="services\\.smtp\\.idempotency\\.expiration_days",
+    ):
+        validate_app_config(
+            AppConfig(
+                mail=MailConfig(
+                    accounts={
+                        "primary": AccountConfig(
+                            description="SMTP account",
+                            account_access_profile="bot",
+                            smtp=SmtpConfig(),
+                        )
+                    },
+                    account_access_profiles={
+                        "bot": AccountAccessProfileConfig(
+                            services=AccountServicesConfig(
+                                smtp=SmtpServicePolicyConfig(
+                                    idempotency=SmtpIdempotencyConfig(expiration_days=3)
+                                ),
+                                imap=ImapAccessPolicyConfig(),
+                            )
+                        )
+                    },
+                )
+            )
+        )

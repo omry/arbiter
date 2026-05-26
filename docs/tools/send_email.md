@@ -108,9 +108,10 @@ Header and envelope rules:
 - the caller may not provide a `Reply-To` override in v1
 - the caller must select a configured account explicitly
 
-Idempotency is represented in config as
-`mail.account_access_profiles.<profile>.services.smtp.idempotency.expiration_days`,
-but replay/conflict behavior is not implemented yet.
+Idempotency is reserved in config as
+`mail.account_access_profiles.<profile>.services.smtp.idempotency.expiration_days`.
+The current server rejects non-default values for that field at startup until
+replay/conflict behavior is implemented.
 
 ## Policy checks
 
@@ -118,7 +119,8 @@ but replay/conflict behavior is not implemented yet.
 - recipient address syntax is validated with a basic `@` check
 - configured `max_recipients_per_message` is enforced
 - configured exact-recipient and domain-pattern allow/block rules are enforced
-- configured rate limits and idempotency remain open implementation work
+- startup rejects configured `max_messages_per_minute`
+- startup rejects non-default SMTP idempotency config
 - the caller may not override SMTP transport settings, `From`, or `Reply-To`
 
 ## Audit behavior
@@ -160,4 +162,4 @@ The target audit model is:
 - selected account must have SMTP enabled
 - configured `max_recipients_per_message` is enforced
 - exact-recipient and domain-pattern recipient policy is enforced
-- configured rate limits and idempotency remain open test/implementation gaps
+- startup rejects unsupported rate-limit and idempotency SMTP config

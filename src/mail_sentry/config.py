@@ -447,6 +447,25 @@ def validate_smtp_recipient_policy(config: SmtpRecipientPolicyConfigLike) -> Non
 def validate_smtp_service_policy(config: SmtpServicePolicyConfigLike) -> None:
     validate_smtp_recipient_policy(config.recipient_policy)
 
+    unsupported_fields: list[str] = []
+
+    if config.limits.max_messages_per_minute is not None:
+        unsupported_fields.append(
+            "mail.account_access_profiles.<profile>.services.smtp.limits.max_messages_per_minute"
+        )
+
+    if config.idempotency != SmtpIdempotencyConfig():
+        unsupported_fields.append(
+            "mail.account_access_profiles.<profile>.services.smtp.idempotency.expiration_days"
+        )
+
+    if unsupported_fields:
+        rendered_fields = ", ".join(unsupported_fields)
+        raise ValueError(
+            "smtp service policy configures runtime options that are not implemented yet; "
+            f"remove these fields until support lands: {rendered_fields}"
+        )
+
 
 def validate_imap_config(config: ImapConfigLike) -> None:
     _coerce_tls_mode(config.tls, "imap config tls")

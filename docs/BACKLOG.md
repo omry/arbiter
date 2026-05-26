@@ -21,16 +21,6 @@ This file is the day-to-day queue for design and implementation gaps.
 
 ## Now
 
-- [ ] `P1` Fail closed or emit a startup warning when unsupported SMTP safety
-      controls are configured.
-      Rate limiting and idempotency appear in config and sample deployment
-      files today, but runtime enforcement is still missing.
-      That is dangerous because operators can believe the server is protecting
-      them when it is not.
-      Acceptance checks: startup behavior clearly surfaces unsupported
-      configured controls; the warning or failure names the exact fields in
-      play; and the docs no longer leave room to assume silent enforcement.
-
 - [ ] `P1` Decide whether audit config should stay operator-facing before
       durable audit storage exists.
       The current audit blocks add a lot of config surface even though durable
