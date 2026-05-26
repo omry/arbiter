@@ -47,7 +47,7 @@ Each IMAP-enabled account should define at least:
 
 - an `imap` config block
 - a human-readable account description
-- one account-level `account_access_profile` reference
+- an `account_access_profile` reference
 - a `folders` mapping keyed by stable folder names
 
 Each configured folder should define at least:
@@ -55,9 +55,14 @@ Each configured folder should define at least:
 - a stable folder name via the map key
 - an optional description
 
-Access profiles establish policy. Account names such as `bot`, `personal`, or `alerts_readonly` are deployment-owned conventions, and accounts reference them through `account_access_profile`.
+The current implementation uses `account_access_profile.services.imap` as the
+shared IMAP policy shape for access gates, confirmation requirements, and audit
+settings.
+Account names such as `bot`, `personal`, or `alerts_readonly` are
+deployment-owned conventions.
 
-Write-capable behavior is controlled by `account_access_profile` policy and any client-side guardrails for sensitive accounts.
+Write-capable behavior follows the selected profile's IMAP policy plus any
+caller-side confirmation rules for actions listed in `confirmation_required`.
 
 Confirmed policy model:
 
@@ -81,11 +86,13 @@ Confirmed policy model:
 
 ## Audit behavior
 
-The config includes IMAP audit settings under `mail.account_access_profiles.<profile>.imap_audit`, but durable audit storage is not implemented yet.
+The current config carries IMAP audit settings under
+`mail.account_access_profiles.<profile>.services.imap.audit`, but durable audit
+storage is not implemented yet.
 
 The target audit model is:
 
-- apply durable IMAP audit behavior from `mail.account_access_profiles.<profile>.imap_audit`
+- apply durable IMAP audit behavior from `mail.account_access_profiles.<profile>.services.imap.audit`
 - audit state-changing operations such as flag changes, message moves, and deletes by default
 - always audit destructive operations such as delete when enabled
 - support separate configuration for read-access and search-query auditing because those can generate much higher event volume

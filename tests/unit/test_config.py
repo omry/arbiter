@@ -7,16 +7,20 @@ from typing import Any, cast
 from mail_sentry.config import (
     AccountConfig,
     AccountAccessProfileConfig,
-    AccountSensitivityTier,
+    AccountServicesConfig,
     AppConfig,
     ImapAccessPolicyConfig,
+    ImapConfirmationAction,
     ImapConfig,
     ImapFlagMode,
     ImapFolderConfig,
+    ImapSystemFlagsPolicyConfig,
     MailTlsMode,
     MailConfig,
     resolve_imap_flag_mode,
     SmtpConfig,
+    SmtpRecipientPolicyConfig,
+    SmtpServicePolicyConfig,
     validate_app_config,
     register_configs,
 )
@@ -40,16 +44,16 @@ def test_compose_config_returns_hydra_config() -> None:
     assert cfg.mail.accounts.primary.smtp.host == "localhost"
     assert cfg.mail.accounts.primary.smtp.port == 587
     assert cfg.mail.accounts.primary.smtp.from_email == "agent@example.com"
-    assert cfg.mail.accounts.primary.sensitivity_tier == AccountSensitivityTier.standard
     assert cfg.mail.accounts.primary.smtp.tls == MailTlsMode.starttls
     assert cfg.mail.accounts.primary.smtp.verify_peer is True
-    assert cfg.mail.account_access_profiles.bot.allow_smtp_send is True
-    assert cfg.mail.account_access_profiles.bot.imap.allow_read is True
-    assert cfg.mail.account_access_profiles.bot.imap.allow_search is True
-    assert cfg.mail.account_access_profiles.bot.imap.allow_move is True
-    assert cfg.mail.account_access_profiles.bot.imap.allow_delete is True
+    assert cfg.mail.account_access_profiles.bot.services.smtp.require_confirmation is False
+    assert cfg.mail.account_access_profiles.bot.services.imap.confirmation_required == []
+    assert cfg.mail.account_access_profiles.bot.services.imap.allow_read is True
+    assert cfg.mail.account_access_profiles.bot.services.imap.allow_search is True
+    assert cfg.mail.account_access_profiles.bot.services.imap.allow_move is True
+    assert cfg.mail.account_access_profiles.bot.services.imap.allow_delete is True
     assert (
-        cfg.mail.account_access_profiles.bot.imap.system_flags.seen
+        cfg.mail.account_access_profiles.bot.services.imap.system_flags.seen
         == ImapFlagMode.read_write
     )
 
@@ -64,8 +68,8 @@ def test_compose_config_applies_overrides() -> None:
             "mail.accounts.primary.smtp.from_name=Agent Team",
             "mail.accounts.primary.smtp.tls=implicit",
             "mail.accounts.primary.smtp.verify_peer=false",
-            "mail.account_access_profiles.bot.allow_smtp_send=false",
-            "mail.account_access_profiles.bot.imap.system_flags.seen=read_write",
+            "mail.account_access_profiles.bot.services.smtp.require_confirmation=true",
+            "mail.account_access_profiles.bot.services.imap.system_flags.seen=read_write",
         ]
     )
 
@@ -76,9 +80,9 @@ def test_compose_config_applies_overrides() -> None:
     assert cfg.mail.accounts.primary.smtp.from_name == "Agent Team"
     assert cfg.mail.accounts.primary.smtp.tls == MailTlsMode.implicit
     assert cfg.mail.accounts.primary.smtp.verify_peer is False
-    assert cfg.mail.account_access_profiles.bot.allow_smtp_send is False
+    assert cfg.mail.account_access_profiles.bot.services.smtp.require_confirmation is True
     assert (
-        cfg.mail.account_access_profiles.bot.imap.system_flags.seen
+        cfg.mail.account_access_profiles.bot.services.imap.system_flags.seen
         == ImapFlagMode.read_write
     )
 
@@ -105,13 +109,14 @@ server:
 mail:
   account_access_profiles:
     bot:
-      read_only: false
-      allow_smtp_send: true
-      imap:
-        allow_read: true
-        allow_search: true
-        allow_move: true
-        allow_delete: true
+      services:
+        smtp:
+          require_confirmation: false
+        imap:
+          allow_read: true
+          allow_search: true
+          allow_move: true
+          allow_delete: true
   accounts:
     primary:
       description: Bot account.
@@ -131,7 +136,7 @@ mail:
         cfg = compose(config_name="config")
 
     assert cfg.server.name == "mailgateway-mcp"
-    assert cfg.mail.account_access_profiles.bot.read_only is False
+    assert cfg.mail.account_access_profiles.bot.services.smtp.require_confirmation is False
     assert cfg.mail.accounts.primary.smtp.from_email == "bot@example.com"
 
 
@@ -159,8 +164,8 @@ def test_standard_deployment_config_composes(
         cfg = compose(config_name="config")
 
     assert cfg.server.name == "mailgateway-mcp"
-    assert cfg.mail.account_access_profiles.bot.read_only is False
-    assert cfg.mail.account_access_profiles.personal.read_only is False
+    assert cfg.mail.account_access_profiles.bot.services.smtp.require_confirmation is False
+    assert cfg.mail.account_access_profiles.personal.services.smtp.require_confirmation is True
     assert set(cfg.mail.accounts) == {"primary", "personal"}
     assert cfg.mail.accounts.primary.smtp.host == "smtp.example.com"
     assert cfg.mail.accounts.primary.imap.host == "imap.example.com"
@@ -185,12 +190,13 @@ def test_readonly_imap_account_policy_limits_mutation_and_folder() -> None:
         mail=MailConfig(
             account_access_profiles={
                 "alerts_readonly": AccountAccessProfileConfig(
-                    allow_smtp_send=False,
-                    imap=ImapAccessPolicyConfig(
-                        allow_read=True,
-                        allow_search=True,
-                        allow_move=False,
-                        allow_delete=False,
+                    services=AccountServicesConfig(
+                        imap=ImapAccessPolicyConfig(
+                            allow_read=True,
+                            allow_search=True,
+                            allow_move=False,
+                            allow_delete=False,
+                        )
                     ),
                 )
             },
@@ -198,7 +204,6 @@ def test_readonly_imap_account_policy_limits_mutation_and_folder() -> None:
                 "primary": AccountConfig(
                     description="Read-only alerts",
                     account_access_profile="alerts_readonly",
-                    sensitivity_tier=AccountSensitivityTier.sensitive,
                     imap=ImapConfig(
                         host="imap.example.com",
                         username="user@example.com",
@@ -212,7 +217,7 @@ def test_readonly_imap_account_policy_limits_mutation_and_folder() -> None:
     )
 
     account = cfg.mail.accounts["primary"]
-    policy = cfg.mail.account_access_profiles["alerts_readonly"].imap
+    policy = cfg.mail.account_access_profiles["alerts_readonly"].services.imap
 
     assert account.smtp is None
     assert account.imap is not None
@@ -249,7 +254,7 @@ def test_readonly_imap_deployment_config_composes(
         cfg = compose(config_name="config")
 
     account = cfg.mail.accounts.primary
-    policy = cfg.mail.account_access_profiles.alerts_readonly.imap
+    policy = cfg.mail.account_access_profiles.alerts_readonly.services.imap
 
     assert cfg.server.host == "0.0.0.0"
     assert account.smtp is None
@@ -368,6 +373,39 @@ def test_imap_access_policy_requires_read_for_delete() -> None:
         )
 
 
+def test_account_access_profile_rejects_confirmation_for_disallowed_action() -> None:
+    with pytest.raises(
+        ValueError, match="confirmation_required contains an action that is not allowed"
+    ):
+        ImapAccessPolicyConfig(
+            allow_read=False,
+            allow_search=False,
+            allow_move=False,
+            allow_delete=False,
+            confirmation_required=[ImapConfirmationAction.read],
+        )
+
+
+def test_account_access_profile_rejects_mark_read_confirmation_without_seen_write() -> (
+    None
+):
+    with pytest.raises(
+        ValueError, match="confirmation_required contains an action that is not allowed"
+    ):
+        ImapAccessPolicyConfig(
+            confirmation_required=[ImapConfirmationAction.mark_read],
+        )
+
+
+def test_imap_access_policy_accepts_mark_read_confirmation_with_seen_write() -> None:
+    policy = ImapAccessPolicyConfig(
+        confirmation_required=[ImapConfirmationAction.mark_read],
+        system_flags=ImapSystemFlagsPolicyConfig(seen=ImapFlagMode.read_write),
+    )
+
+    assert policy.confirmation_required == [ImapConfirmationAction.mark_read]
+
+
 def test_imap_access_policy_rejects_unknown_user_flag_mode() -> None:
     with pytest.raises(ValueError, match="imap user_flags.bot.followed_up"):
         ImapAccessPolicyConfig(user_flags={"bot.followed_up": cast(Any, "bogus")})
@@ -457,7 +495,11 @@ def test_app_config_accepts_imap_only_account() -> None:
                         ),
                     )
                 },
-                account_access_profiles={"bot": AccountAccessProfileConfig()},
+                account_access_profiles={
+                    "bot": AccountAccessProfileConfig(
+                        services=AccountServicesConfig(smtp=None, imap=ImapAccessPolicyConfig())
+                    )
+                },
             )
         )
     )
@@ -484,7 +526,29 @@ def test_app_config_accepts_account_with_both_protocols() -> None:
     )
 
 
-def test_app_config_accepts_disabled_smtp_send_policy() -> None:
+def test_app_config_rejects_smtp_account_without_smtp_service_policy() -> None:
+    with pytest.raises(ValueError, match="has no smtp service policy"):
+        validate_app_config(
+            AppConfig(
+                mail=MailConfig(
+                    accounts={
+                        "primary": AccountConfig(
+                            description="SMTP account",
+                            account_access_profile="bot",
+                            smtp=SmtpConfig(),
+                        )
+                    },
+                    account_access_profiles={
+                        "bot": AccountAccessProfileConfig(
+                            services=AccountServicesConfig(smtp=None, imap=ImapAccessPolicyConfig())
+                        )
+                    },
+                )
+            )
+        )
+
+
+def test_app_config_accepts_smtp_account_with_recipient_policy() -> None:
     validate_app_config(
         AppConfig(
             mail=MailConfig(
@@ -496,7 +560,19 @@ def test_app_config_accepts_disabled_smtp_send_policy() -> None:
                     )
                 },
                 account_access_profiles={
-                    "bot": AccountAccessProfileConfig(allow_smtp_send=False)
+                    "bot": AccountAccessProfileConfig(
+                        services=AccountServicesConfig(
+                            smtp=SmtpServicePolicyConfig(
+                                recipient_policy=SmtpRecipientPolicyConfig(
+                                    allowed_recipients=["ops@example.com"],
+                                    allowed_domain_patterns=["example.com", "*.example.org"],
+                                    blocked_recipients=["ceo@example.com"],
+                                    blocked_domain_patterns=["*.blocked.example"],
+                                )
+                            ),
+                            imap=ImapAccessPolicyConfig(),
+                        )
+                    )
                 },
             )
         )

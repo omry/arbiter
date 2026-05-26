@@ -179,18 +179,15 @@ def test_interactive_list_smtp_accounts_filters_disallowed_smtp_entries() -> Non
             "accounts": [
                 {
                     "name": "primary",
-                    "smtp": {"send": "allowed"},
-                    "sensitivity_tier": "standard",
+                    "smtp": {"send": "allowed", "require_confirmation": False},
                 },
                 {
                     "name": "personal",
-                    "smtp": {"send": "unavailable"},
-                    "sensitivity_tier": "sensitive",
+                    "smtp": {"send": "unavailable", "require_confirmation": True},
                 },
                 {
                     "name": "secondary",
-                    "smtp": {"send": "disabled"},
-                    "sensitivity_tier": "sensitive",
+                    "smtp": {"send": "unavailable", "require_confirmation": True},
                 },
             ]
         }
@@ -200,8 +197,7 @@ def test_interactive_list_smtp_accounts_filters_disallowed_smtp_entries() -> Non
     assert module.list_smtp_accounts(object()) == [
         {
             "name": "primary",
-            "smtp": {"send": "allowed"},
-            "sensitivity_tier": "standard",
+            "smtp": {"send": "allowed", "require_confirmation": False},
         }
     ]
 
@@ -216,13 +212,11 @@ def test_interactive_list_smtp_accounts_rejects_invalid_account_shapes() -> None
             "accounts": [
                 {
                     "name": "primary",
-                    "smtp": {"send": "allowed"},
-                    "sensitivity_tier": "standard",
+                    "smtp": {"send": "allowed", "require_confirmation": False},
                 },
                 {
                     "name": "broken",
                     "smtp": "allowed",
-                    "sensitivity_tier": "standard",
                 },
             ]
         }
@@ -238,10 +232,14 @@ def test_interactive_select_account_requires_explicit_choice_when_multiple_accou
 ):
     module = _load_module(INTERACTIVE_PATH, "interactive_skill_script_multi_accounts")
     accounts = [
-        {"name": "primary", "sensitivity_tier": "standard", "description": "Bot"},
+        {
+            "name": "primary",
+            "smtp": {"require_confirmation": False},
+            "description": "Bot",
+        },
         {
             "name": "personal",
-            "sensitivity_tier": "sensitive",
+            "smtp": {"require_confirmation": True},
             "description": "Personal",
         },
     ]
@@ -257,7 +255,11 @@ def test_interactive_select_account_allows_single_smtp_account_without_explicit_
 ):
     module = _load_module(INTERACTIVE_PATH, "interactive_skill_script_single_account")
     accounts = [
-        {"name": "primary", "sensitivity_tier": "standard", "description": "Bot"},
+        {
+            "name": "primary",
+            "smtp": {"require_confirmation": False},
+            "description": "Bot",
+        },
     ]
 
     assert module.select_account(None, accounts) == accounts[0]
@@ -279,7 +281,7 @@ def test_interactive_run_passes_selected_account(
         html_stdin = False
         cc = None
         bcc = None
-        confirm_sensitive_account = False
+        confirm_smtp_send = False
 
     captured: dict[str, object] = {}
 
@@ -288,7 +290,11 @@ def test_interactive_run_passes_selected_account(
         module,
         "list_smtp_accounts",
         lambda config: [
-            {"name": "primary", "sensitivity_tier": "standard", "description": "Bot"}
+            {
+                "name": "primary",
+                "smtp": {"require_confirmation": False},
+                "description": "Bot",
+            }
         ],
     )
 
@@ -318,11 +324,11 @@ def test_interactive_run_passes_selected_account(
         "ok": True,
         "account": "primary",
         "account_description": "Bot",
-        "account_sensitivity_tier": "standard",
+        "account_smtp_requires_confirmation": False,
     }
 
 
-def test_interactive_run_requires_confirmation_for_sensitive_account(
+def test_interactive_run_requires_confirmation_for_confirmed_smtp_send_profile(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _load_module(
@@ -340,7 +346,7 @@ def test_interactive_run_requires_confirmation_for_sensitive_account(
         html_stdin = False
         cc = None
         bcc = None
-        confirm_sensitive_account = False
+        confirm_smtp_send = False
 
     monkeypatch.setattr(module, "config_from_env", lambda: object())
     monkeypatch.setattr(
@@ -349,14 +355,15 @@ def test_interactive_run_requires_confirmation_for_sensitive_account(
         lambda config: [
             {
                 "name": "personal",
-                "sensitivity_tier": "sensitive",
+                "smtp": {"require_confirmation": True},
                 "description": "Personal",
             }
         ],
     )
 
     with pytest.raises(
-        ValueError, match=r"selected account personal \(Personal\) is sensitive"
+        ValueError,
+        match=r"selected account personal \(Personal\) requires explicit confirmation for SMTP send",
     ):
         module.run(
             Args(),
@@ -381,14 +388,18 @@ def test_interactive_run_lists_accounts_when_requested(
         html_stdin = False
         cc = None
         bcc = None
-        confirm_sensitive_account = False
+        confirm_smtp_send = False
 
     monkeypatch.setattr(module, "config_from_env", lambda: object())
     monkeypatch.setattr(
         module,
         "list_smtp_accounts",
         lambda config: [
-            {"name": "primary", "sensitivity_tier": "standard", "description": "Bot"}
+            {
+                "name": "primary",
+                "smtp": {"require_confirmation": False},
+                "description": "Bot",
+            }
         ],
     )
 
@@ -398,7 +409,11 @@ def test_interactive_run_lists_accounts_when_requested(
         stdin_is_tty=True,
     ) == {
         "accounts": [
-            {"name": "primary", "sensitivity_tier": "standard", "description": "Bot"}
+            {
+                "name": "primary",
+                "smtp": {"require_confirmation": False},
+                "description": "Bot",
+            }
         ]
     }
 

@@ -16,3 +16,9 @@ Recommended coverage:
 - `list_accounts` behavior
 - `send_email` behavior
 - logging and audit side effects
+
+Run tests from the repo-local virtualenv when working directly in this checkout:
+
+- `python3 -m venv .venv`
+- `.venv/bin/python -m pip install -e ".[dev]"`
+- `.venv/bin/python -m pytest`

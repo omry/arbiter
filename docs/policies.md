@@ -14,6 +14,9 @@ Current implications:
 - callers may explicitly select any configured account
 - at this stage, policy enforcement is configuration-driven rather than caller-identity-driven
 
+The current implementation uses `account_access_profile` as the shared policy
+object for per-service SMTP and IMAP policy.
+
 ## Current Runtime Policies
 
 - The caller may choose recipients, subject, and body.
@@ -21,10 +24,11 @@ Current implications:
 - The caller may not override SMTP transport settings.
 - The caller may not override the `From` address.
 - The caller may not override `Reply-To` in v1.
-- The server validates basic recipient shape, but configured recipient-count limits are not enforced yet.
-- The server enforces `allow_smtp_send` before SMTP submission.
+- The server validates basic recipient shape.
+- The server enforces configured SMTP recipient policy and `max_recipients_per_message` before submission.
 - The server enforces IMAP read/search/move/delete gates before IMAP operations.
 - `mark_message_read` requires `read_write` access to the standard `seen` flag.
+- `list_accounts` exposes SMTP `require_confirmation` and IMAP `confirmation_required` metadata for each account.
 - IMAP operations are scoped to configured accounts and configured folders.
 - Operational debug logs and durable audit records are still design contracts.
 
@@ -70,9 +74,9 @@ The durable audit log should:
 
 Protocol-specific audit policy:
 
-- audit behavior is configured under `mail.account_access_profiles`
-- SMTP audit settings are read from `mail.account_access_profiles.<profile>.smtp_audit`
-- IMAP audit settings are read from `mail.account_access_profiles.<profile>.imap_audit`
+- the current implementation carries audit behavior under `mail.account_access_profiles.<profile>.services`
+- SMTP audit settings are currently read from `mail.account_access_profiles.<profile>.services.smtp.audit`
+- IMAP audit settings are currently read from `mail.account_access_profiles.<profile>.services.imap.audit`
 - there is no per-account audit override in the current design
 - IMAP state-changing operations such as flag changes, message moves, and deletes should generate durable audit records by default
 - destructive IMAP operations such as delete should always produce durable audit records when the operation is enabled
@@ -105,12 +109,27 @@ The durable audit log should be treated as a distinct storage and retention conc
 
 ## Rate limits and safety limits
 
-The config schema includes these SMTP safety controls, but runtime enforcement remains open work:
+The config schema includes these SMTP safety controls:
 
-- `mail.accounts.<account>.smtp.limits.max_messages_per_minute`
-- `mail.accounts.<account>.smtp.limits.max_recipients_per_message`
-- `mail.accounts.<account>.smtp.recipient_policy.allowed_domains`
-- `mail.accounts.<account>.smtp.recipient_policy.blocked_domains`
+- `mail.account_access_profiles.<profile>.services.smtp.limits.max_messages_per_minute`
+- `mail.account_access_profiles.<profile>.services.smtp.limits.max_recipients_per_message`
+- `mail.account_access_profiles.<profile>.services.smtp.recipient_policy.allowed_recipients`
+- `mail.account_access_profiles.<profile>.services.smtp.recipient_policy.blocked_recipients`
+- `mail.account_access_profiles.<profile>.services.smtp.recipient_policy.allowed_domain_patterns`
+- `mail.account_access_profiles.<profile>.services.smtp.recipient_policy.blocked_domain_patterns`
+- `mail.account_access_profiles.<profile>.services.smtp.idempotency.expiration_days`
+
+Current runtime status:
+
+- recipient policy is enforced
+- `max_recipients_per_message` is enforced
+- `max_messages_per_minute` is not enforced yet
+- idempotency replay/conflict handling is not implemented yet
+
+Caller confirmation policy is configured through:
+
+- `mail.account_access_profiles.<profile>.services.smtp.require_confirmation`
+- `mail.account_access_profiles.<profile>.services.imap.confirmation_required`
 
 ## Future policy tightening
 
@@ -124,18 +143,16 @@ Before supporting a personal inbox, revisit at least these questions:
 - whether destructive IMAP operations should be disabled by default
 - what approval hook is required before supporting a personal inbox
 
-## Confirmed: split IMAP flag policy
+## Current IMAP flag policy
 
-The current `account_access_profile.read_only` model is replaced by explicit protocol policy and split IMAP flag policy.
-
-The accepted replacement is:
+The current profile model uses explicit protocol gates plus split IMAP flag
+policy:
 
 - keep coarse protocol gates for:
-  - `allow_smtp_send`
-  - `imap.allow_read`
-  - `imap.allow_search`
-  - `imap.allow_move`
-  - `imap.allow_delete`
+  - `services.imap.allow_read`
+  - `services.imap.allow_search`
+  - `services.imap.allow_move`
+  - `services.imap.allow_delete`
 - replace coarse IMAP write gating with two flag-policy groups:
   - `system_flags`
   - `user_flags`

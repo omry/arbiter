@@ -75,20 +75,21 @@ Add capabilities incrementally. The implemented surface is still intentionally s
 
 ### 5. Auditable behavior
 
-Every tool call should produce structured logs and normalized results so automated actions can be inspected later. Durable audit behavior is defined separately for SMTP and IMAP and is driven by the selected account access profile.
+Every tool call should produce structured logs and normalized results so automated actions can be inspected later. Durable audit behavior is configured separately for SMTP and IMAP under account access profiles, but storage and recording are still open implementation work.
 
 ## Terminology
 
 - `account`: the credential and identity boundary used for SMTP submission and IMAP access
 - `folder`: an IMAP folder within an account, such as `INBOX` or `Alerts`
-- `account_access_profile`: a policy profile applied at the account level; the initial profile types are `bot` and `personal`
+- `account_access_profile`: the shared policy profile attached to an account and used for per-service SMTP and IMAP policy
 
 This document uses these terms deliberately:
 
 - SMTP is tied to an `account`
 - IMAP is tied to an `account`
 - IMAP operations target a `folder`
-- sensitive behavior is controlled by the account's configured `account_access_profile`
+- current access control still comes from the account's configured `account_access_profile`
+- caller confirmation metadata comes from SMTP `require_confirmation` and IMAP `confirmation_required`
 - multiple configured accounts may coexist in one server deployment
 
 ## Trust model
@@ -106,7 +107,8 @@ Implications of the current trust model:
 Implemented:
 
 - shared configuration loading
-- access-profile enforcement for SMTP send and IMAP read/search/move/delete
+- profile-based enforcement for SMTP recipient policy, `max_recipients_per_message`, and IMAP read/search/move/delete
+- profile-based confirmation metadata through service-local SMTP and IMAP fields
 - IMAP flag visibility and `seen` mutation policy
 - `list_accounts`
 - `send_email`
@@ -122,16 +124,18 @@ Still open:
 - structured operational logging
 - durable audit storage
 - normalized error-code responses
-- SMTP rate limiting and recipient allow/deny enforcement
+- SMTP rate limiting
 - idempotency replay and conflict handling
+- deciding whether access profiles should remain the long-term home for audit settings
 
 ## Open design decisions
 
 - Whether to expose MCP resources in addition to tools
 - Whether message drafts should exist as a separate future tool
 - Whether attachments belong in v2 or later
+- Whether account access profiles should continue to own audit settings as well as access and confirmation policy
 - What approval hook is required before supporting a personal inbox
 
 ## Recommended next step
 
-Prioritize the remaining runtime hardening pieces that are already represented in the config and docs: normalized errors, durable audit records, SMTP safety-policy enforcement, and idempotency.
+Prioritize the remaining runtime-hardening work around the now-implemented policy contract: unsupported SMTP safety controls, durable audit records, normalized errors, and idempotency.

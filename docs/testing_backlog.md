@@ -101,8 +101,8 @@ This file tracks the highest-value gaps between:
   - Status: `blocked`
   - Note: documented contract exists, implementation does not yet
 
-- Rate limiting, recipient-count limits, and allow/deny list enforcement
+- Rate limiting enforcement
   - Why: policy correctness
   - Level: unit + integration
   - Status: `blocked`
-  - Note: config fields exist, but SMTP safety-policy enforcement is not implemented yet
+  - Note: recipient-count limits and recipient policy are implemented, but time-based rate limiting is not

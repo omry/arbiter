@@ -11,6 +11,7 @@ from .config import (
     ImapConfigLike,
     ImapFlagMode,
     MailConfig,
+    SmtpServicePolicyConfig,
     SmtpConfigLike,
     resolve_imap_flag_mode,
     resolve_system_flag_key,
@@ -87,10 +88,17 @@ class MailSentryApp:
             profile = self._mail_config.account_access_profiles[
                 account.account_access_profile
             ]
-            smtp_send_state = self._smtp_send_state(account, profile.allow_smtp_send)
+            smtp_policy = profile.services.smtp
+            imap_policy = profile.services.imap
+            smtp_send_state = self._smtp_send_state(account)
             imap_enabled = account.imap is not None
             smtp_summary: dict[str, object] = {
                 "send": smtp_send_state,
+                "require_confirmation": bool(
+                    account.smtp is not None
+                    and smtp_policy is not None
+                    and smtp_policy.require_confirmation
+                ),
             }
             imap_summary: dict[str, object] = {
                 "enabled": imap_enabled,
@@ -99,12 +107,14 @@ class MailSentryApp:
                 "name": account_name,
                 "description": account.description,
                 "account_access_profile": account.account_access_profile,
-                "sensitivity_tier": account.sensitivity_tier.value,
                 "smtp": smtp_summary,
                 "imap": imap_summary,
             }
-            if imap_enabled:
-                imap_summary["message"] = self._imap_message_summary(profile.imap)
+            if imap_enabled and imap_policy is not None:
+                imap_summary["confirmation_required"] = [
+                    action.value for action in imap_policy.confirmation_required
+                ]
+                imap_summary["message"] = self._imap_message_summary(imap_policy)
             summaries.append(summary)
         return summaries
 
@@ -118,7 +128,7 @@ class MailSentryApp:
         cc: list[str] | None = None,
         bcc: list[str] | None = None,
     ) -> SendEmailResult:
-        smtp_config = self._resolve_smtp_config(account)
+        smtp_config, smtp_policy = self._resolve_smtp_context(account)
         recipients_to = self._normalize_recipients("to", to)
         recipients_cc = self._normalize_recipients("cc", cc or [])
         recipients_bcc = self._normalize_recipients("bcc", bcc or [])
@@ -147,6 +157,7 @@ class MailSentryApp:
             message.set_content(html_body or "", subtype="html")
 
         envelope_recipients = recipients_to + recipients_cc + recipients_bcc
+        self._enforce_smtp_policy(account, smtp_policy, envelope_recipients)
         smtp_client = self._smtp_client_factory(smtp_config)
         smtp_client.send(
             message,
@@ -346,7 +357,9 @@ class MailSentryApp:
         _, _, domain = smtp_config.from_email.partition("@")
         return domain or "localhost"
 
-    def _resolve_smtp_config(self, account_name: str) -> SmtpConfigLike:
+    def _resolve_smtp_context(
+        self, account_name: str
+    ) -> tuple[SmtpConfigLike, SmtpServicePolicyConfig]:
         account = self._mail_config.accounts.get(account_name)
         if account is None:
             raise ValueError(f"send_email received an unknown account: {account_name}")
@@ -356,13 +369,14 @@ class MailSentryApp:
                 f"send_email requires an SMTP-enabled account: {account_name}"
             )
 
-        profile = self._mail_config.account_access_profiles[
-            account.account_access_profile
-        ]
-        if not profile.allow_smtp_send:
-            raise ValueError(f"send_email is not allowed for account: {account_name}")
+        profile = self._mail_config.account_access_profiles[account.account_access_profile]
+        smtp_policy = profile.services.smtp
+        if smtp_policy is None:
+            raise ValueError(
+                f"send_email requires an SMTP service policy for account: {account_name}"
+            )
 
-        return account.smtp
+        return account.smtp, smtp_policy
 
     def _resolve_imap_context(
         self, tool_name: str, account_name: str, folder: str | None
@@ -382,7 +396,11 @@ class MailSentryApp:
         folder_name = self._resolve_optional_imap_folder(
             tool_name, account.imap, folder
         )
-        return account.imap, profile.imap, folder_name
+        if profile.services.imap is None:
+            raise ValueError(
+                f"{tool_name} requires an IMAP service policy for account: {account_name}"
+            )
+        return account.imap, profile.services.imap, folder_name
 
     def _resolve_optional_imap_folder(
         self,
@@ -415,12 +433,55 @@ class MailSentryApp:
             raise RuntimeError("IMAP client factory is not configured")
         return self._imap_client_factory(imap_config)
 
-    def _smtp_send_state(self, account: AccountConfig, allow_smtp_send: bool) -> str:
+    def _smtp_send_state(self, account: AccountConfig) -> str:
         if account.smtp is None:
             return "unavailable"
-        if allow_smtp_send:
-            return "allowed"
-        return "disabled"
+        return "allowed"
+
+    def _enforce_smtp_policy(
+        self,
+        account_name: str,
+        smtp_policy: SmtpServicePolicyConfig,
+        recipients: list[str],
+    ) -> None:
+        max_recipients = smtp_policy.limits.max_recipients_per_message
+        if max_recipients is not None and len(recipients) > max_recipients:
+            raise ValueError(
+                f"send_email exceeds max_recipients_per_message for account: {account_name}"
+            )
+
+        recipient_policy = smtp_policy.recipient_policy
+        for recipient in recipients:
+            normalized_recipient = recipient.strip().lower()
+            _, _, domain = normalized_recipient.partition("@")
+            if self._recipient_matches_list(
+                normalized_recipient, recipient_policy.blocked_recipients
+            ):
+                raise ValueError(
+                    f"send_email recipient is blocked by exact address policy: {recipient}"
+                )
+            if self._domain_matches_any_pattern(
+                domain, recipient_policy.blocked_domain_patterns
+            ):
+                raise ValueError(
+                    f"send_email recipient is blocked by domain policy: {recipient}"
+                )
+
+            has_allowlist = bool(
+                recipient_policy.allowed_recipients
+                or recipient_policy.allowed_domain_patterns
+            )
+            if has_allowlist and not (
+                self._recipient_matches_list(
+                    normalized_recipient, recipient_policy.allowed_recipients
+                )
+                or self._domain_matches_any_pattern(
+                    domain, recipient_policy.allowed_domain_patterns
+                )
+            ):
+                raise ValueError(
+                    f"send_email recipient is not allowed by policy: {recipient}"
+                )
 
     def _imap_message_summary(
         self, imap_policy: ImapAccessPolicyConfig
@@ -456,6 +517,27 @@ class MailSentryApp:
             flags["user"] = user_flags
 
         return flags
+
+    def _recipient_matches_list(
+        self, recipient: str, configured_recipients: list[str]
+    ) -> bool:
+        normalized = recipient.lower()
+        return any(normalized == value.strip().lower() for value in configured_recipients)
+
+    def _domain_matches_any_pattern(
+        self, domain: str, patterns: list[str]
+    ) -> bool:
+        normalized_domain = domain.lower()
+        for pattern in patterns:
+            normalized_pattern = pattern.strip().lower()
+            if normalized_pattern.startswith("*."):
+                suffix = normalized_pattern[2:]
+                if normalized_domain.endswith(f".{suffix}"):
+                    return True
+                continue
+            if normalized_domain == normalized_pattern:
+                return True
+        return False
 
     def _normalize_limit(self, limit: int) -> int:
         if limit < 1:

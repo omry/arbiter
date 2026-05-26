@@ -8,6 +8,7 @@ outfile=${1:-"$script_dir/mail_sentry_design_docs.md"}
 docs=(
   "$script_dir/overview.md"
   "$script_dir/architecture.md"
+  "$script_dir/BACKLOG.md"
   "$script_dir/openclaw-integration/README.md"
   "$script_dir/openclaw-integration/wrapper-skill-decision.md"
   "$script_dir/openclaw-integration/send-email-skills.md"

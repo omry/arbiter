@@ -36,7 +36,7 @@ Do not treat this shim as native OpenClaw MCP support.
 
 For account handling:
 
-- `send-email-interactive` should discover accounts through `list_accounts`, choose an explicit account at runtime, and use the returned `sensitivity_tier` to enforce stricter confirmation for sensitive accounts
+- `send-email-interactive` should discover accounts through `list_accounts`, choose an explicit account at runtime, and use `smtp.require_confirmation` metadata to enforce stricter confirmation when the selected account requires it
 - `send-email-predefined` should remain fixed-account and use the account attached to the selected template rather than dynamic runtime account choice
 
 ## Motivation
@@ -80,7 +80,8 @@ Interactive and unattended sending will need separate operational and documentat
 
 Interactive sending now depends on `list_accounts` as a first-class discovery step rather than a deployment-fixed account binding.
 
-Per-account sensitivity becomes part of the Mail Sentry contract because the interactive skill uses it to decide when stronger confirmation is required.
+Per-account confirmation metadata is part of the Mail Sentry contract because
+the interactive skill uses it to decide when stronger confirmation is required.
 
 ## Deferred future change
 
@@ -96,7 +97,7 @@ Even after native MCP support exists, the wrapper skills are still expected to r
 
 - interactive vs unattended behavior
 - dynamic vs fixed account selection
-- confirmation rules, including sensitive-account handling
+- confirmation rules, including account-specific SMTP confirmation
 
 The long-term target is:
 

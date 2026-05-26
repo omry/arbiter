@@ -10,11 +10,6 @@ from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
 
 
-class AccountSensitivityTier(str, Enum):
-    standard = "standard"
-    sensitive = "sensitive"
-
-
 class MailTlsMode(str, Enum):
     none = "none"
     starttls = "starttls"
@@ -25,6 +20,14 @@ class ImapFlagMode(str, Enum):
     hidden = "hidden"
     read_only = "read_only"
     read_write = "read_write"
+
+
+class ImapConfirmationAction(str, Enum):
+    read = "read"
+    search = "search"
+    move = "move"
+    mark_read = "mark_read"
+    delete = "delete"
 
 
 @dataclass
@@ -50,9 +53,14 @@ class SmtpIdempotencyConfig:
 
 
 @dataclass
-class RecipientPolicyConfig:
-    allowed_domains: list[str] = field(default_factory=list)
-    blocked_domains: list[str] = field(default_factory=list)
+class SmtpRecipientPolicyConfig:
+    allowed_recipients: list[str] = field(default_factory=list)
+    blocked_recipients: list[str] = field(default_factory=list)
+    allowed_domain_patterns: list[str] = field(default_factory=list)
+    blocked_domain_patterns: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        validate_smtp_recipient_policy(self)
 
 
 @dataclass
@@ -67,11 +75,6 @@ class SmtpConfig:
     tls: MailTlsMode = MailTlsMode.starttls
     verify_peer: bool = True
     timeout_seconds: float = 30.0
-    limits: SmtpLimitsConfig = field(default_factory=SmtpLimitsConfig)
-    idempotency: SmtpIdempotencyConfig = field(default_factory=SmtpIdempotencyConfig)
-    recipient_policy: RecipientPolicyConfig = field(
-        default_factory=RecipientPolicyConfig
-    )
 
     def __post_init__(self) -> None:
         self.tls = _coerce_tls_mode(self.tls, "smtp config tls")
@@ -145,33 +148,66 @@ class ImapAccessPolicyConfig:
     allow_search: bool = True
     allow_move: bool = True
     allow_delete: bool = True
+    confirmation_required: list[ImapConfirmationAction] = field(default_factory=list)
     system_flags: ImapSystemFlagsPolicyConfig = field(
         default_factory=ImapSystemFlagsPolicyConfig
     )
     user_flags: dict[str, ImapFlagMode] = field(default_factory=dict)
+    audit: ImapAuditConfig = field(default_factory=ImapAuditConfig)
 
     def __post_init__(self) -> None:
         self.user_flags = {
             flag: _coerce_imap_flag_mode(mode, f"imap user_flags.{flag}")
             for flag, mode in self.user_flags.items()
         }
+        self.confirmation_required = [
+            _coerce_imap_confirmation_action(
+                action, f"imap confirmation_required[{index}]"
+            )
+            for index, action in enumerate(self.confirmation_required)
+        ]
         validate_imap_access_policy(self)
 
 
 @dataclass
+class SmtpServicePolicyConfig:
+    require_confirmation: bool = False
+    limits: SmtpLimitsConfig = field(default_factory=SmtpLimitsConfig)
+    idempotency: SmtpIdempotencyConfig = field(default_factory=SmtpIdempotencyConfig)
+    recipient_policy: SmtpRecipientPolicyConfig = field(
+        default_factory=SmtpRecipientPolicyConfig
+    )
+    audit: SmtpAuditConfig = field(default_factory=SmtpAuditConfig)
+
+    def __post_init__(self) -> None:
+        validate_smtp_service_policy(self)
+
+
+@dataclass
+class AccountServicesConfig:
+    smtp: SmtpServicePolicyConfig | None = None
+    imap: ImapAccessPolicyConfig | None = None
+
+
+def _default_profile_services() -> AccountServicesConfig:
+    return AccountServicesConfig(
+        smtp=SmtpServicePolicyConfig(),
+        imap=ImapAccessPolicyConfig(),
+    )
+
+
+@dataclass
 class AccountAccessProfileConfig:
-    read_only: bool = False
-    allow_smtp_send: bool = True
-    imap: ImapAccessPolicyConfig = field(default_factory=ImapAccessPolicyConfig)
-    smtp_audit: SmtpAuditConfig = field(default_factory=SmtpAuditConfig)
-    imap_audit: ImapAuditConfig = field(default_factory=ImapAuditConfig)
+    services: AccountServicesConfig = field(default_factory=_default_profile_services)
+
+    def __post_init__(self) -> None:
+        validate_account_access_profile(self)
 
 
 @dataclass
 class AccountConfig:
     description: str = ""
     account_access_profile: str = "bot"
-    sensitivity_tier: AccountSensitivityTier = AccountSensitivityTier.standard
     smtp: SmtpConfig | None = None
     imap: ImapConfig | None = None
 
@@ -245,14 +281,32 @@ class ImapConfigLike(Protocol):
 class AccountConfigLike(Protocol):
     description: str
     account_access_profile: str
-    sensitivity_tier: AccountSensitivityTier
     smtp: SmtpConfigLike | None
     imap: ImapConfigLike | None
 
 
 class AccountAccessProfileConfigLike(Protocol):
-    allow_smtp_send: bool
-    imap: "ImapAccessPolicyConfigLike"
+    services: "AccountServicesConfigLike"
+
+
+class SmtpRecipientPolicyConfigLike(Protocol):
+    allowed_recipients: list[str]
+    blocked_recipients: list[str]
+    allowed_domain_patterns: list[str]
+    blocked_domain_patterns: list[str]
+
+
+class SmtpServicePolicyConfigLike(Protocol):
+    require_confirmation: bool
+    limits: SmtpLimitsConfig
+    idempotency: SmtpIdempotencyConfig
+    recipient_policy: SmtpRecipientPolicyConfigLike
+    audit: SmtpAuditConfig
+
+
+class AccountServicesConfigLike(Protocol):
+    smtp: SmtpServicePolicyConfigLike | None
+    imap: "ImapAccessPolicyConfigLike" | None
 
 
 class ImapSystemFlagsPolicyConfigLike(Protocol):
@@ -268,8 +322,10 @@ class ImapAccessPolicyConfigLike(Protocol):
     allow_search: bool
     allow_move: bool
     allow_delete: bool
+    confirmation_required: list[ImapConfirmationAction]
     system_flags: ImapSystemFlagsPolicyConfigLike
     user_flags: Mapping[str, ImapFlagMode]
+    audit: ImapAuditConfig
 
 
 class MailConfigLike(Protocol):
@@ -321,6 +377,23 @@ def _coerce_imap_flag_mode(value: ImapFlagMode | str, context: str) -> ImapFlagM
     raise ValueError(f"{context} must be one of: hidden, read_only, read_write")
 
 
+def _coerce_imap_confirmation_action(
+    value: ImapConfirmationAction | str, context: str
+) -> ImapConfirmationAction:
+    if isinstance(value, ImapConfirmationAction):
+        return value
+
+    if isinstance(value, str):
+        try:
+            return ImapConfirmationAction(value)
+        except ValueError as exc:
+            raise ValueError(
+                f"{context} must be one of: read, search, move, mark_read, delete"
+            ) from exc
+
+    raise ValueError(f"{context} must be one of: read, search, move, mark_read, delete")
+
+
 def validate_smtp_config(config: SmtpConfigLike) -> None:
     _coerce_tls_mode(config.tls, "smtp config tls")
 
@@ -336,6 +409,43 @@ def validate_smtp_config(config: SmtpConfigLike) -> None:
         raise ValueError(
             "smtp config requires username and password to be unset when authenticate is false"
         )
+
+
+def _is_basic_email_address(value: str) -> bool:
+    local_part, separator, domain = value.partition("@")
+    return bool(separator and local_part and domain)
+
+
+def _is_valid_domain_pattern(value: str) -> bool:
+    if not value or "@" in value or value.startswith(".") or value.endswith("."):
+        return False
+    if value.startswith("*."):
+        suffix = value[2:]
+        return bool(suffix) and "*" not in suffix
+    return "*" not in value
+
+
+def validate_smtp_recipient_policy(config: SmtpRecipientPolicyConfigLike) -> None:
+    for field_name in ("allowed_recipients", "blocked_recipients"):
+        recipients = getattr(config, field_name)
+        for recipient in recipients:
+            if not _is_basic_email_address(recipient.strip()):
+                raise ValueError(
+                    f"smtp recipient policy {field_name} must contain valid email addresses"
+                )
+
+    for field_name in ("allowed_domain_patterns", "blocked_domain_patterns"):
+        patterns = getattr(config, field_name)
+        for pattern in patterns:
+            if not _is_valid_domain_pattern(pattern.strip().lower()):
+                raise ValueError(
+                    "smtp recipient policy "
+                    f"{field_name} must contain exact domains or leading '*.' patterns"
+                )
+
+
+def validate_smtp_service_policy(config: SmtpServicePolicyConfigLike) -> None:
+    validate_smtp_recipient_policy(config.recipient_policy)
 
 
 def validate_imap_config(config: ImapConfigLike) -> None:
@@ -360,6 +470,45 @@ def validate_imap_access_policy(config: ImapAccessPolicyConfig) -> None:
 
     if config.allow_delete and not config.allow_read:
         raise ValueError("imap access policy allow_delete requires allow_read")
+
+    for action in config.confirmation_required:
+        if not _imap_policy_allows_confirmation_action(config, action):
+            raise ValueError(
+                "imap access policy confirmation_required contains an action "
+                f"that is not allowed: {action.value}"
+            )
+
+
+def _imap_policy_allows_confirmation_action(
+    policy: ImapAccessPolicyConfigLike,
+    action: ImapConfirmationAction,
+) -> bool:
+    if action is ImapConfirmationAction.read:
+        return policy.allow_read
+    if action is ImapConfirmationAction.search:
+        return policy.allow_search
+    if action is ImapConfirmationAction.move:
+        return policy.allow_move
+    if action is ImapConfirmationAction.mark_read:
+        return (
+            policy.allow_read and policy.system_flags.seen is ImapFlagMode.read_write
+        )
+    if action is ImapConfirmationAction.delete:
+        return policy.allow_delete
+    return False
+
+
+def validate_account_access_profile(config: AccountAccessProfileConfig) -> None:
+    if config.services.smtp is None and config.services.imap is None:
+        raise ValueError(
+            "account access profile requires at least one configured service policy"
+        )
+
+    if config.services.smtp is not None:
+        validate_smtp_service_policy(config.services.smtp)
+
+    if config.services.imap is not None:
+        validate_imap_access_policy(config.services.imap)
 
 
 def resolve_system_flag_key(flag_name: str) -> str | None:
@@ -394,7 +543,7 @@ def validate_app_config(config: AppConfig) -> None:
         raise ValueError("mail config requires at least one account access profile")
 
     for profile in config.mail.account_access_profiles.values():
-        validate_imap_access_policy(profile.imap)
+        validate_account_access_profile(profile)
 
     for account_name, account in config.mail.accounts.items():
         if account.account_access_profile not in config.mail.account_access_profiles:
@@ -402,15 +551,25 @@ def validate_app_config(config: AppConfig) -> None:
                 f"mail account {account_name} references an unknown account_access_profile"
             )
 
+        profile = config.mail.account_access_profiles[account.account_access_profile]
+
         if account.smtp is None and account.imap is None:
             raise ValueError(
                 f"mail account {account_name} must enable smtp, imap, or both"
             )
 
         if account.smtp is not None:
+            if profile.services.smtp is None:
+                raise ValueError(
+                    f"mail account {account_name} enables smtp but its account_access_profile has no smtp service policy"
+                )
             validate_smtp_config(account.smtp)
 
         if account.imap is not None:
+            if profile.services.imap is None:
+                raise ValueError(
+                    f"mail account {account_name} enables imap but its account_access_profile has no imap service policy"
+                )
             validate_imap_config(account.imap)
 
 

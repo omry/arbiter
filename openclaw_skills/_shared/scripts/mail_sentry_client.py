@@ -9,9 +9,6 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
-from mcp.client.session import ClientSession
-from mcp.client.streamable_http import streamable_http_client
-from mcp.types import Implementation
 
 
 @dataclass(frozen=True)
@@ -77,6 +74,10 @@ async def call_tool(
     tool_name: str,
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
+    from mcp.client.session import ClientSession
+    from mcp.client.streamable_http import streamable_http_client
+    from mcp.types import Implementation
+
     headers: dict[str, str] = {}
     if config.bearer_token:
         headers["Authorization"] = f"Bearer {config.bearer_token}"

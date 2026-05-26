@@ -14,15 +14,25 @@ server:
 mail:
   account_access_profiles:
     bot:
-      read_only: false
+      services:
+        smtp:
+          require_confirmation: false
+        imap:
+          allow_read: true
+          allow_search: true
+          allow_move: true
+          allow_delete: true
+          confirmation_required: []
+          user_flags: {}
     personal:
-      read_only: false
+      services:
+        smtp:
+          require_confirmation: true
 
   accounts:
     primary:
       description: Bot account for automated email tasks
       account_access_profile: bot
-      sensitivity_tier: standard
       smtp:
         host: ${oc.env:MAILGATEWAY_BOT_SMTP_HOST}
         port: ${oc.env:MAILGATEWAY_BOT_SMTP_PORT,587}
@@ -50,7 +60,6 @@ mail:
     personal:
       description: Personal account
       account_access_profile: personal
-      sensitivity_tier: sensitive
       smtp:
         host: ${oc.env:MAILGATEWAY_PERSONAL_SMTP_HOST}
         port: ${oc.env:MAILGATEWAY_PERSONAL_SMTP_PORT,587}

@@ -21,24 +21,24 @@ server:
 mail:
   account_access_profiles:
     alerts_readonly:
-      allow_smtp_send: false
-      imap:
-        allow_read: true
-        allow_search: true
-        allow_move: false
-        allow_delete: false
-        system_flags:
-          seen: read_only
-          flagged: read_only
-          answered: read_only
-          deleted: read_only
-          draft: read_only
-        user_flags: {}
+      services:
+        imap:
+          allow_read: true
+          allow_search: true
+          allow_move: false
+          allow_delete: false
+          confirmation_required: []
+          system_flags:
+            seen: read_only
+            flagged: read_only
+            answered: read_only
+            deleted: read_only
+            draft: read_only
+          user_flags: {}
   accounts:
     primary:
       description: Read-only view of a selected alert folder.
       account_access_profile: alerts_readonly
-      sensitivity_tier: sensitive
       smtp: null
       imap:
         host: ${oc.env:MAIL_SENTRY_IMAP_HOST}

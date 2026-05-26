@@ -108,14 +108,17 @@ Header and envelope rules:
 - the caller may not provide a `Reply-To` override in v1
 - the caller must select a configured account explicitly
 
-Idempotency is represented in config as `smtp.idempotency.expiration_days`, but replay/conflict behavior is not implemented yet.
+Idempotency is represented in config as
+`mail.account_access_profiles.<profile>.services.smtp.idempotency.expiration_days`,
+but replay/conflict behavior is not implemented yet.
 
 ## Policy checks
 
 - the selected account must exist and have SMTP enabled
 - recipient address syntax is validated with a basic `@` check
-- `mail.account_access_profiles.<profile>.allow_smtp_send` must be true
-- recipient counts, configured allowlists/denylists, and configured send-rate limits are not enforced yet
+- configured `max_recipients_per_message` is enforced
+- configured exact-recipient and domain-pattern allow/block rules are enforced
+- configured rate limits and idempotency remain open implementation work
 - the caller may not override SMTP transport settings, `From`, or `Reply-To`
 
 ## Audit behavior
@@ -125,7 +128,7 @@ Structured debug logs and durable SMTP audit records are target behavior, not cu
 The target audit model is:
 
 - emit debug logs for tool invocation, validation failure, SMTP connection attempt, SMTP submission result, and unexpected exception
-- apply durable SMTP audit behavior from `mail.account_access_profiles.<profile>.smtp_audit`
+- apply durable SMTP audit behavior from `mail.account_access_profiles.<profile>.services.smtp.audit`
 
 ## Errors
 
@@ -155,5 +158,6 @@ The target audit model is:
 - request without `text_body` and `html_body` fails validation
 - `bcc` is excluded from serialized headers
 - selected account must have SMTP enabled
-- selected account must allow SMTP send through its access profile
-- configured rate limits, recipient policy, and idempotency remain open test/implementation gaps
+- configured `max_recipients_per_message` is enforced
+- exact-recipient and domain-pattern recipient policy is enforced
+- configured rate limits and idempotency remain open test/implementation gaps

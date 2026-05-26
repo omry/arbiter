@@ -4,8 +4,8 @@ from email.message import EmailMessage
 from mail_sentry.app import MailSentryApp
 from mail_sentry.config import (
     AccountAccessProfileConfig,
+    AccountServicesConfig,
     AccountConfig,
-    AccountSensitivityTier,
     ImapAccessPolicyConfig,
     ImapConfigLike,
     ImapConfig,
@@ -15,6 +15,9 @@ from mail_sentry.config import (
     MailConfig,
     SmtpConfigLike,
     SmtpConfig,
+    SmtpLimitsConfig,
+    SmtpRecipientPolicyConfig,
+    SmtpServicePolicyConfig,
 )
 from mail_sentry.imap import FetchedImapMessage
 
@@ -127,7 +130,6 @@ def _mail_config() -> MailConfig:
             "personal": AccountConfig(
                 description="Personal IMAP account",
                 account_access_profile="personal",
-                sensitivity_tier=AccountSensitivityTier.sensitive,
                 imap=ImapConfig(
                     default_folder="INBOX",
                     folders={"INBOX": ImapFolderConfig(description="Inbox")},
@@ -137,9 +139,12 @@ def _mail_config() -> MailConfig:
         account_access_profiles={
             "bot": AccountAccessProfileConfig(),
             "personal": AccountAccessProfileConfig(
-                imap=ImapAccessPolicyConfig(
-                    allow_move=False,
-                    allow_delete=False,
+                services=AccountServicesConfig(
+                    smtp=SmtpServicePolicyConfig(require_confirmation=True),
+                    imap=ImapAccessPolicyConfig(
+                        allow_move=False,
+                        allow_delete=False,
+                    ),
                 )
             ),
         },
@@ -173,12 +178,13 @@ def test_list_accounts_returns_normalized_account_summaries() -> None:
             "name": "personal",
             "description": "Personal IMAP account",
             "account_access_profile": "personal",
-            "sensitivity_tier": "sensitive",
             "smtp": {
                 "send": "unavailable",
+                "require_confirmation": False,
             },
             "imap": {
                 "enabled": True,
+                "confirmation_required": [],
                 "message": {
                     "read_allowed": True,
                     "move_allowed": False,
@@ -197,14 +203,51 @@ def test_list_accounts_returns_normalized_account_summaries() -> None:
             "name": "primary",
             "description": "Primary SMTP account",
             "account_access_profile": "bot",
-            "sensitivity_tier": "standard",
             "smtp": {
                 "send": "allowed",
+                "require_confirmation": False,
             },
             "imap": {
                 "enabled": False,
             },
         },
+    ]
+
+
+def test_list_accounts_reports_smtp_confirmation_requirement() -> None:
+    mail_config = MailConfig(
+        accounts={
+            "personal": AccountConfig(
+                description="Personal SMTP account",
+                account_access_profile="personal",
+                smtp=SmtpConfig(),
+            )
+        },
+        account_access_profiles={
+            "personal": AccountAccessProfileConfig(
+                services=AccountServicesConfig(
+                    smtp=SmtpServicePolicyConfig(require_confirmation=True),
+                )
+            )
+        },
+    )
+    app = MailSentryApp(
+        mail_config, smtp_client_factory=lambda config: FakeSmtpClient()
+    )
+
+    assert app.list_accounts() == [
+        {
+            "name": "personal",
+            "description": "Personal SMTP account",
+            "account_access_profile": "personal",
+            "smtp": {
+                "send": "allowed",
+                "require_confirmation": True,
+            },
+            "imap": {
+                "enabled": False,
+            },
+        }
     ]
 
 
@@ -214,7 +257,6 @@ def test_list_accounts_reports_writable_imap_account() -> None:
             "alerts": AccountConfig(
                 description="Alerts account",
                 account_access_profile="bot",
-                sensitivity_tier=AccountSensitivityTier.standard,
                 imap=ImapConfig(
                     default_folder="INBOX",
                     folders={"INBOX": ImapFolderConfig(description="Inbox")},
@@ -234,12 +276,13 @@ def test_list_accounts_reports_writable_imap_account() -> None:
             "name": "alerts",
             "description": "Alerts account",
             "account_access_profile": "bot",
-            "sensitivity_tier": "standard",
             "smtp": {
                 "send": "unavailable",
+                "require_confirmation": False,
             },
             "imap": {
                 "enabled": True,
+                "confirmation_required": [],
                 "message": {
                     "read_allowed": True,
                     "move_allowed": True,
@@ -263,7 +306,6 @@ def test_list_accounts_reports_account_with_both_protocols() -> None:
             "primary": AccountConfig(
                 description="Primary full account",
                 account_access_profile="bot",
-                sensitivity_tier=AccountSensitivityTier.standard,
                 smtp=SmtpConfig(),
                 imap=ImapConfig(
                     default_folder="INBOX",
@@ -284,12 +326,13 @@ def test_list_accounts_reports_account_with_both_protocols() -> None:
             "name": "primary",
             "description": "Primary full account",
             "account_access_profile": "bot",
-            "sensitivity_tier": "standard",
             "smtp": {
                 "send": "allowed",
+                "require_confirmation": False,
             },
             "imap": {
                 "enabled": True,
+                "confirmation_required": [],
                 "message": {
                     "read_allowed": True,
                     "move_allowed": True,
@@ -313,7 +356,6 @@ def test_list_accounts_reports_configured_user_flag_access() -> None:
             "personal": AccountConfig(
                 description="Personal account",
                 account_access_profile="personal",
-                sensitivity_tier=AccountSensitivityTier.sensitive,
                 imap=ImapConfig(
                     default_folder="INBOX",
                     folders={"INBOX": ImapFolderConfig(description="Inbox")},
@@ -322,14 +364,16 @@ def test_list_accounts_reports_configured_user_flag_access() -> None:
         },
         account_access_profiles={
             "personal": AccountAccessProfileConfig(
-                imap=ImapAccessPolicyConfig(
-                    allow_move=False,
-                    allow_delete=False,
-                    user_flags={
-                        "bot.followed_up": ImapFlagMode.read_write,
-                        "triaged": ImapFlagMode.read_only,
-                        "internal_only": ImapFlagMode.hidden,
-                    },
+                services=AccountServicesConfig(
+                    imap=ImapAccessPolicyConfig(
+                        allow_move=False,
+                        allow_delete=False,
+                        user_flags={
+                            "bot.followed_up": ImapFlagMode.read_write,
+                            "triaged": ImapFlagMode.read_only,
+                            "internal_only": ImapFlagMode.hidden,
+                        },
+                    )
                 )
             ),
         },
@@ -343,12 +387,13 @@ def test_list_accounts_reports_configured_user_flag_access() -> None:
             "name": "personal",
             "description": "Personal account",
             "account_access_profile": "personal",
-            "sensitivity_tier": "sensitive",
             "smtp": {
                 "send": "unavailable",
+                "require_confirmation": False,
             },
             "imap": {
                 "enabled": True,
+                "confirmation_required": [],
                 "message": {
                     "read_allowed": True,
                     "move_allowed": False,
@@ -376,7 +421,6 @@ def test_list_accounts_reports_all_system_flags() -> None:
             "personal": AccountConfig(
                 description="Personal account",
                 account_access_profile="personal",
-                sensitivity_tier=AccountSensitivityTier.sensitive,
                 imap=ImapConfig(
                     default_folder="INBOX",
                     folders={"INBOX": ImapFolderConfig(description="Inbox")},
@@ -385,14 +429,16 @@ def test_list_accounts_reports_all_system_flags() -> None:
         },
         account_access_profiles={
             "personal": AccountAccessProfileConfig(
-                imap=ImapAccessPolicyConfig(
-                    allow_move=False,
-                    allow_delete=False,
-                    system_flags=ImapSystemFlagsPolicyConfig(
-                        seen=ImapFlagMode.read_write,
-                        flagged=ImapFlagMode.read_write,
-                        deleted=ImapFlagMode.hidden,
-                    ),
+                services=AccountServicesConfig(
+                    imap=ImapAccessPolicyConfig(
+                        allow_move=False,
+                        allow_delete=False,
+                        system_flags=ImapSystemFlagsPolicyConfig(
+                            seen=ImapFlagMode.read_write,
+                            flagged=ImapFlagMode.read_write,
+                            deleted=ImapFlagMode.hidden,
+                        ),
+                    )
                 )
             ),
         },
@@ -406,12 +452,13 @@ def test_list_accounts_reports_all_system_flags() -> None:
             "name": "personal",
             "description": "Personal account",
             "account_access_profile": "personal",
-            "sensitivity_tier": "sensitive",
             "smtp": {
                 "send": "unavailable",
+                "require_confirmation": False,
             },
             "imap": {
                 "enabled": True,
+                "confirmation_required": [],
                 "message": {
                     "read_allowed": True,
                     "move_allowed": False,
@@ -429,7 +476,7 @@ def test_list_accounts_reports_all_system_flags() -> None:
     ]
 
 
-def test_list_accounts_reports_disabled_smtp_account() -> None:
+def test_list_accounts_reports_smtp_account_without_confirmation() -> None:
     mail_config = MailConfig(
         accounts={
             "secondary": AccountConfig(
@@ -439,7 +486,11 @@ def test_list_accounts_reports_disabled_smtp_account() -> None:
             )
         },
         account_access_profiles={
-            "personal": AccountAccessProfileConfig(allow_smtp_send=False),
+            "personal": AccountAccessProfileConfig(
+                services=AccountServicesConfig(
+                    smtp=SmtpServicePolicyConfig(require_confirmation=False)
+                )
+            ),
         },
     )
     app = MailSentryApp(
@@ -451,9 +502,9 @@ def test_list_accounts_reports_disabled_smtp_account() -> None:
             "name": "secondary",
             "description": "Secondary SMTP account",
             "account_access_profile": "personal",
-            "sensitivity_tier": "standard",
             "smtp": {
-                "send": "disabled",
+                "send": "allowed",
+                "require_confirmation": False,
             },
             "imap": {
                 "enabled": False,
@@ -539,7 +590,6 @@ def test_send_email_preserves_non_ascii_subject_and_display_name() -> None:
             "primary": AccountConfig(
                 description="Primary SMTP account",
                 account_access_profile="bot",
-                sensitivity_tier=AccountSensitivityTier.standard,
                 smtp=SmtpConfig(
                     from_email="agent@example.com",
                     from_name="Jöhn Döe",
@@ -596,7 +646,7 @@ def test_send_email_rejects_imap_only_account() -> None:
         )
 
 
-def test_send_email_rejects_account_with_disabled_send_policy() -> None:
+def test_send_email_rejects_recipient_blocked_by_exact_address_policy() -> None:
     mail_config = MailConfig(
         accounts={
             "primary": AccountConfig(
@@ -606,17 +656,91 @@ def test_send_email_rejects_account_with_disabled_send_policy() -> None:
             )
         },
         account_access_profiles={
-            "bot": AccountAccessProfileConfig(allow_smtp_send=False)
+            "bot": AccountAccessProfileConfig(
+                services=AccountServicesConfig(
+                    smtp=SmtpServicePolicyConfig(
+                        recipient_policy=SmtpRecipientPolicyConfig(
+                            blocked_recipients=["to@example.com"]
+                        )
+                    )
+                )
+            )
         },
     )
     app = MailSentryApp(
         mail_config, smtp_client_factory=lambda config: FakeSmtpClient()
     )
 
-    with pytest.raises(ValueError, match="not allowed for account: primary"):
+    with pytest.raises(ValueError, match="blocked by exact address policy"):
         app.send_email(
             account="primary",
             to=["to@example.com"],
+            subject="Hello",
+            text_body="Plain text body",
+        )
+
+
+def test_send_email_rejects_recipient_outside_allowlist() -> None:
+    mail_config = MailConfig(
+        accounts={
+            "primary": AccountConfig(
+                description="Primary SMTP account",
+                account_access_profile="bot",
+                smtp=SmtpConfig(),
+            )
+        },
+        account_access_profiles={
+            "bot": AccountAccessProfileConfig(
+                services=AccountServicesConfig(
+                    smtp=SmtpServicePolicyConfig(
+                        recipient_policy=SmtpRecipientPolicyConfig(
+                            allowed_domain_patterns=["example.com"]
+                        )
+                    )
+                )
+            )
+        },
+    )
+    app = MailSentryApp(
+        mail_config, smtp_client_factory=lambda config: FakeSmtpClient()
+    )
+
+    with pytest.raises(ValueError, match="recipient is not allowed by policy"):
+        app.send_email(
+            account="primary",
+            to=["to@other.com"],
+            subject="Hello",
+            text_body="Plain text body",
+        )
+
+
+def test_send_email_rejects_recipient_count_over_policy_limit() -> None:
+    mail_config = MailConfig(
+        accounts={
+            "primary": AccountConfig(
+                description="Primary SMTP account",
+                account_access_profile="bot",
+                smtp=SmtpConfig(),
+            )
+        },
+        account_access_profiles={
+            "bot": AccountAccessProfileConfig(
+                services=AccountServicesConfig(
+                    smtp=SmtpServicePolicyConfig(
+                        limits=SmtpLimitsConfig(max_recipients_per_message=1)
+                    )
+                )
+            )
+        },
+    )
+    app = MailSentryApp(
+        mail_config, smtp_client_factory=lambda config: FakeSmtpClient()
+    )
+
+    with pytest.raises(ValueError, match="max_recipients_per_message"):
+        app.send_email(
+            account="primary",
+            to=["one@example.com", "two@example.com"],
             subject="Hello",
             text_body="Plain text body",
         )
@@ -629,7 +753,6 @@ def test_send_email_uses_selected_account_smtp_config() -> None:
             "primary": AccountConfig(
                 description="Primary SMTP account",
                 account_access_profile="bot",
-                sensitivity_tier=AccountSensitivityTier.standard,
                 smtp=SmtpConfig(
                     from_email="agent@example.com",
                     from_name="Primary Sender",
@@ -638,7 +761,6 @@ def test_send_email_uses_selected_account_smtp_config() -> None:
             "alerts": AccountConfig(
                 description="Alerts SMTP account",
                 account_access_profile="bot",
-                sensitivity_tier=AccountSensitivityTier.sensitive,
                 smtp=SmtpConfig(
                     from_email="alerts@example.com",
                     from_name="Alerts Sender",
@@ -680,11 +802,13 @@ def test_list_messages_uses_default_folder_and_filters_hidden_flags() -> None:
         },
         account_access_profiles={
             "personal": AccountAccessProfileConfig(
-                imap=ImapAccessPolicyConfig(
-                    system_flags=ImapSystemFlagsPolicyConfig(
-                        deleted=ImapFlagMode.hidden,
-                    ),
-                    user_flags={"bot.followed_up": ImapFlagMode.read_write},
+                services=AccountServicesConfig(
+                    imap=ImapAccessPolicyConfig(
+                        system_flags=ImapSystemFlagsPolicyConfig(
+                            deleted=ImapFlagMode.hidden,
+                        ),
+                        user_flags={"bot.followed_up": ImapFlagMode.read_write},
+                    )
                 )
             )
         },
@@ -749,11 +873,13 @@ def test_search_messages_requires_search_policy() -> None:
         },
         account_access_profiles={
             "personal": AccountAccessProfileConfig(
-                imap=ImapAccessPolicyConfig(
-                    allow_read=True,
-                    allow_search=False,
-                    allow_move=False,
-                    allow_delete=False,
+                services=AccountServicesConfig(
+                    imap=ImapAccessPolicyConfig(
+                        allow_read=True,
+                        allow_search=False,
+                        allow_move=False,
+                        allow_delete=False,
+                    )
                 )
             )
         },
@@ -870,9 +996,11 @@ def test_mark_message_read_calls_imap_client_when_seen_flag_is_writable() -> Non
         },
         account_access_profiles={
             "bot": AccountAccessProfileConfig(
-                imap=ImapAccessPolicyConfig(
-                    system_flags=ImapSystemFlagsPolicyConfig(
-                        seen=ImapFlagMode.read_write,
+                services=AccountServicesConfig(
+                    imap=ImapAccessPolicyConfig(
+                        system_flags=ImapSystemFlagsPolicyConfig(
+                            seen=ImapFlagMode.read_write,
+                        )
                     )
                 )
             )

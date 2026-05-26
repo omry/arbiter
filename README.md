@@ -10,29 +10,41 @@ Current implementation status:
 - account discovery with SMTP and IMAP capability metadata
 - SMTP submission with configured sender identity, TLS/auth settings, text/HTML bodies, and Bcc kept out of message headers
 - IMAP list/get/search/move/mark-read/delete tools scoped to configured accounts and folders
-- account access profiles for SMTP send permission, IMAP read/search/move/delete gates, and IMAP flag visibility/write policy
+- `account_access_profile` as the current shared policy object for per-service SMTP and IMAP policy
 - Docker deployment files for a standard SMTP gateway and a hardened read-only IMAP variant
 - temporary OpenClaw wrapper skills for SMTP send flows
 
 Known open gaps:
 
-- configured SMTP rate limits, recipient-count limits, recipient allowlists/denylists, and idempotency are not enforced yet
+- configured SMTP rate limiting and idempotency are not enforced yet
 - durable audit storage and normalized error-code responses are still design contracts, while the implementation currently surfaces Python/MCP errors
 - OpenClaw wrapper skills currently cover SMTP send flows, not the IMAP tools
 
 ## Development
 
+Create and use the repo-local virtualenv with:
+
+- `python3 -m venv .venv`
+- `.venv/bin/python -m pip install --upgrade pip`
+- `.venv/bin/python -m pip install -e ".[dev]"`
+
 Run the test suite from the repo root with:
 
-- `python -m nox -s tests`
-- `python -m nox -s lint`
+- `.venv/bin/python -m nox -s tests`
+- `.venv/bin/python -m nox -s lint`
 
 The `lint` session runs both `black --check` and the Mail Sentry `mypy` passes.
+
+For focused local runs without `nox`, use the same environment directly, for example:
+
+- `.venv/bin/python -m pytest tests/unit/test_config.py`
+- `.venv/bin/python -m pytest tests/unit/test_app.py`
 
 The design is documented in the `docs/` structure used by the MCP server template:
 
 - [docs/overview.md](docs/overview.md)
 - [docs/architecture.md](docs/architecture.md)
+- [docs/BACKLOG.md](docs/BACKLOG.md)
 - [docs/openclaw-integration/README.md](docs/openclaw-integration/README.md)
 - [docs/openclaw-integration/wrapper-skill-decision.md](docs/openclaw-integration/wrapper-skill-decision.md)
 - [docs/openclaw-integration/send-email-skills.md](docs/openclaw-integration/send-email-skills.md)
@@ -73,19 +85,25 @@ server:
 mail:
   account_access_profiles:
     bot:
-      allow_smtp_send: true
-      imap:
-        allow_read: true
-        allow_search: true
-        allow_move: true
-        allow_delete: false
-        system_flags:
-          seen: read_write
-          flagged: read_only
-          answered: read_only
-          deleted: read_only
-          draft: read_only
-        user_flags: {}
+      services:
+        smtp:
+          require_confirmation: false
+          recipient_policy:
+            allowed_domain_patterns:
+              - example.com
+        imap:
+          allow_read: true
+          allow_search: true
+          allow_move: true
+          allow_delete: false
+          confirmation_required: []
+          system_flags:
+            seen: read_write
+            flagged: read_only
+            answered: read_only
+            deleted: read_only
+            draft: read_only
+          user_flags: {}
   accounts:
     primary:
       description: Local bot mailbox.

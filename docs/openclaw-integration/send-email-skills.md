@@ -67,7 +67,7 @@ The skill should:
    - the message body was materially inferred or expanded by the model
    - recipients were inferred rather than directly provided
    - the action looks higher risk than a straightforward user-directed send
-   - the selected account has `sensitivity_tier: sensitive`
+   - the selected account's `smtp.require_confirmation` is `true`
 7. Call `send_email` only after the interactive skill's conditional confirmation rule is satisfied.
 
 ### Confirmation policy
@@ -83,12 +83,12 @@ The skill may submit without an extra confirmation only when all of these are tr
 
 Otherwise, the skill should stop and ask for explicit final confirmation before calling `send_email`.
 
-Sensitive accounts are stricter than the base rule:
+Accounts that require SMTP confirmation are stricter than the base rule:
 
 - the confirmation should name the selected account and include its human-readable `description`, such as a bot-owned or personal account label
-- if the selected account has `sensitivity_tier: sensitive`, explicit final confirmation is always required
+- if the selected account's `smtp.require_confirmation` is `true`, explicit final confirmation is always required
 - the helper/runtime should enforce that stricter gate rather than relying only on prompt wording
-- the sensitivity tier comes from Mail Sentry `list_accounts`, not from OpenClaw-local metadata
+- the confirmation requirement comes from Mail Sentry `list_accounts`, not from OpenClaw-local metadata
 
 ### Output to OpenClaw
 

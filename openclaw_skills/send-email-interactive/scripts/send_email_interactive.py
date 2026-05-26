@@ -128,18 +128,31 @@ def _format_account_choices(accounts: list[dict[str, object]]) -> str:
     formatted: list[str] = []
     for account in accounts:
         name = str(account.get("name", "<unknown>"))
-        tier = str(account.get("sensitivity_tier", "standard"))
+        require_confirmation = _smtp_requires_confirmation(account)
         description = str(account.get("description", "")).strip()
+        confirmation_label = ""
+        if require_confirmation:
+            confirmation_label = " [confirmation: smtp send]"
         if description:
-            formatted.append(f"{name} ({tier}) - {description}")
+            formatted.append(f"{name}{confirmation_label} - {description}")
         else:
-            formatted.append(f"{name} ({tier})")
+            formatted.append(f"{name}{confirmation_label}")
     return "; ".join(formatted)
 
 
 def _account_description(account: dict[str, object]) -> str | None:
     description = str(account.get("description", "")).strip()
     return description or None
+
+
+def _smtp_requires_confirmation(account: dict[str, object]) -> bool:
+    smtp = account.get("smtp")
+    if not isinstance(smtp, dict):
+        raise ValueError("list_accounts returned an invalid response")
+    require_confirmation = smtp.get("require_confirmation")
+    if not isinstance(require_confirmation, bool):
+        raise ValueError("list_accounts returned an invalid response")
+    return require_confirmation
 
 
 def select_account(
@@ -191,9 +204,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cc", help="Optional comma-separated CC recipient list.")
     parser.add_argument("--bcc", help="Optional comma-separated BCC recipient list.")
     parser.add_argument(
-        "--confirm-sensitive-account",
+        "--confirm-smtp-send",
         action="store_true",
-        help="Required when sending from a sensitive account after explicit user confirmation.",
+        help="Required when the selected account profile requires SMTP confirmation.",
     )
     return parser
 
@@ -224,13 +237,14 @@ def run(
 
     selected_account = select_account(args.account, accounts)
     selected_account_name = str(selected_account["name"])
-    sensitivity_tier = str(selected_account.get("sensitivity_tier", "standard"))
+    require_confirmation = _smtp_requires_confirmation(selected_account)
     description = _account_description(selected_account)
-    if sensitivity_tier == "sensitive" and not args.confirm_sensitive_account:
+    if require_confirmation and not args.confirm_smtp_send:
         descriptor = f" ({description})" if description else ""
         raise ValueError(
-            f"selected account {selected_account_name}{descriptor} is sensitive; "
-            "require explicit confirmation and --confirm-sensitive-account before sending"
+            f"selected account {selected_account_name}{descriptor} requires "
+            "explicit confirmation for SMTP send; require explicit confirmation "
+            "and --confirm-smtp-send before sending"
         )
 
     result = call_tool_sync(
@@ -246,7 +260,7 @@ def run(
     result.setdefault("account", selected_account_name)
     if description is not None:
         result.setdefault("account_description", description)
-    result.setdefault("account_sensitivity_tier", sensitivity_tier)
+    result.setdefault("account_smtp_requires_confirmation", require_confirmation)
     return result
 
 
