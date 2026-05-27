@@ -23,24 +23,14 @@ This file is the day-to-day queue for design and implementation gaps.
 
 ## Now
 
-- [ ] `P1` Align docs, schema defaults, and sample configs on what is actually
-      required versus what is only defaulted implicitly.
-      Right now the docs often say "required" while the dataclass schema and
-      sample configs rely on defaults. That makes the contract harder to trust
-      and increases the cost of future cleanup.
-      Acceptance checks: the docs and sample configs match the real schema
-      story; "required" means the same thing everywhere; and deployers can tell
-      which fields are essential, optional, provisional, or defaulted.
+- [ ] `P1` Prepare release packaging and version readiness.
+      The v1 contract is now clearer, but the package/release surface still
+      needs one explicit readiness pass before initial release.
+      Acceptance checks: the intended version target is chosen; package
+      metadata and install-target docs agree; release notes and status notes
+      are current; and a build/install smoke path is verified.
 
-- [ ] `P1` Add startup logging for the Mail Sentry version and a non-sensitive
-      config summary.
-      Operators need a quick sanity check that the expected build, transport,
-      and account layout are actually running, especially once config cleanup
-      starts changing the surface area.
-      Acceptance checks: startup logs include version plus a safe summary such
-      as transport, bind address, account names, and enabled protocol families;
-      no secrets or raw env values are emitted; and the log wording remains
-      useful for real deployments rather than only for local debugging.
+## Post-v1
 
 - [ ] `P2` Decide whether shared policy profiles should remain the long-term
       home for access gates and caller confirmation.
@@ -61,23 +51,18 @@ This file is the day-to-day queue for design and implementation gaps.
       updated; output stays concise by default; and normal installs provide a
       readable change summary rather than dumping full file contents.
 
-## Post-v1
-
-- [ ] `P2` Design and implement durable audit storage.
+- [ ] `P2` Design durable audit storage and its policy home.
       Audit is parked for post-v1. The v1 release should not ask operators to
-      configure audit behavior that the runtime cannot yet honor.
+      configure audit behavior that the runtime cannot yet honor. V1 removed
+      SMTP and IMAP audit blocks from the operator-facing schema, so future
+      audit work should define both durable storage and where audit settings
+      belong.
       Acceptance checks: audit storage, retention, event shape, and privacy
       defaults are defined; SMTP and IMAP audit events are emitted through one
-      durable path; and docs distinguish audit records from operational logs.
-
-- [ ] `P2` Decide where audit settings should live in the policy model.
-      V1 removed SMTP and IMAP audit blocks from the operator-facing schema.
-      Before audit ships, decide whether audit belongs in shared account access
-      profiles, a separate audit policy block, or another clearer home.
-      Acceptance checks: the redesign identifies which audit controls truly
-      need per-protocol or per-profile variation; shared defaults or a smaller
-      schema are considered; and the resulting shape is materially lighter for
-      operators.
+      durable path; docs distinguish audit records from operational logs; the
+      design decides whether audit belongs in shared account access profiles, a
+      separate audit policy block, or another clearer home; and the resulting
+      config shape is materially lighter for operators.
 
 - [ ] `P2` Design bot-to-Sentry caller authentication or authorization.
       V1 assumes the caller is trusted once connected. Future hardening may use
