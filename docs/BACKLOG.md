@@ -20,6 +20,9 @@ This file is the day-to-day queue for design and implementation gaps.
   internal refactors.
 - After each release-prep phase, run a focused review of the phase diff and
   commit the ready changes before starting the next phase.
+- At every phase boundary or pause, state the current action, why work is
+  stopping, and whether the next step needs user review, approval, input, or no
+  user action.
 
 ## Now
 
