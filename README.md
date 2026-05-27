@@ -18,7 +18,10 @@ Known open gaps:
 
 - SMTP idempotency config is reserved for future work; the server fails closed
   at startup if unsupported idempotency options are configured
-- durable audit storage and normalized error-code responses are still design contracts, while the implementation currently surfaces Python/MCP errors
+- durable audit storage is parked for post-v1, while startup/runtime logging is
+  the v1 observability focus
+- normalized error-code responses are still a design contract, while the
+  implementation currently surfaces Python/MCP errors
 - OpenClaw wrapper skills currently cover SMTP send flows, not the IMAP tools
 
 ## Development

@@ -126,12 +126,12 @@ replay/conflict behavior is implemented.
 
 ## Audit behavior
 
-Structured debug logs and durable SMTP audit records are target behavior, not current implementation behavior.
+Structured debug logs are v1 hardening work. Durable SMTP audit records are
+parked for post-v1.
 
-The target audit model is:
+The v1 logging target is:
 
 - emit debug logs for tool invocation, validation failure, SMTP connection attempt, SMTP submission result, and unexpected exception
-- apply durable SMTP audit behavior from `mail.account_access_profiles.<profile>.services.smtp.audit`
 
 ## Errors
 

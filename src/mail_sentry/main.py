@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING, Annotated, Literal, cast
 
 import hydra
@@ -14,6 +16,7 @@ if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
 
+LOGGER = logging.getLogger(__name__)
 TransportMode = Literal["stdio", "sse", "streamable-http"]
 
 
@@ -139,6 +142,44 @@ def build_app(cfg: AppConfig) -> MailSentryApp:
         cfg.mail,
         smtp_client_factory=SmtpSubmissionClient,
         imap_client_factory=ImapClient,
+    )
+
+
+def package_version() -> str:
+    try:
+        return version("mail-sentry")
+    except PackageNotFoundError:
+        return "unknown"
+
+
+def _csv_or_none(values: list[str]) -> str:
+    return ",".join(values) if values else "none"
+
+
+def log_startup_summary(cfg: AppConfig) -> None:
+    accounts = sorted(cfg.mail.accounts)
+    smtp_accounts = [
+        account_name
+        for account_name in accounts
+        if cfg.mail.accounts[account_name].smtp is not None
+    ]
+    imap_accounts = [
+        account_name
+        for account_name in accounts
+        if cfg.mail.accounts[account_name].imap is not None
+    ]
+
+    LOGGER.info(
+        "Mail Sentry starting version=%s transport=%s bind=%s:%s%s "
+        "accounts=%s smtp_accounts=%s imap_accounts=%s",
+        package_version(),
+        cfg.server.transport,
+        cfg.server.host,
+        cfg.server.port,
+        cfg.server.path,
+        _csv_or_none(accounts),
+        _csv_or_none(smtp_accounts),
+        _csv_or_none(imap_accounts),
     )
 
 
@@ -307,6 +348,8 @@ register_configs()
 
 @hydra.main(version_base=None, config_path="conf", config_name="config")
 def _main(cfg: AppConfig) -> None:
+    logging.basicConfig(level=logging.INFO)
+    log_startup_summary(cfg)
     server = build_server(cfg)
     server.run(transport=cast(TransportMode, cfg.server.transport))
 

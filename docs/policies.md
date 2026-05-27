@@ -2,17 +2,24 @@
 
 ## Purpose
 
-Define cross-cutting safety, access, logging, and audit rules shared across tools.
+Define cross-cutting safety, access, and logging rules shared across tools.
 
 ## Trust and access policy
 
-The current design assumes the caller is trusted once connected to the MCP server. Caller authentication between the bot and the MCP server is out of scope for now.
+The current design assumes the caller is trusted once connected to the MCP
+server. Caller authentication between the bot and the MCP server is out of
+scope for v1.
 
 Current implications:
 
 - `list_accounts` returns all configured accounts
 - callers may explicitly select any configured account
 - at this stage, policy enforcement is configuration-driven rather than caller-identity-driven
+- Mail Sentry is the authority boundary: the bot can access whatever Mail
+  Sentry exposes through configured accounts, enabled services, and policy
+  profiles
+- account names and descriptions, including labels such as `personal`, are
+  advisory context for caller behavior, not built-in enforcement tiers
 
 The current implementation uses `account_access_profile` as the shared policy
 object for per-service SMTP and IMAP policy.
@@ -30,15 +37,12 @@ object for per-service SMTP and IMAP policy.
 - `mark_message_read` requires `read_write` access to the standard `seen` flag.
 - `list_accounts` exposes SMTP `require_confirmation` and IMAP `confirmation_required` metadata for each account.
 - IMAP operations are scoped to configured accounts and configured folders.
-- Operational debug logs and durable audit records are still design contracts.
+- Operational logging is v1 hardening work.
+- Durable audit records are parked for post-v1.
 
-## Audit policy
+## Logging policy
 
-The server distinguishes between operational debug logs and a durable audit log.
-
-### Debug logs
-
-Debug logs are for troubleshooting and operational visibility.
+Operational logs are for troubleshooting and deployment visibility.
 
 The server should emit structured debug logs for:
 
@@ -58,11 +62,15 @@ Recommended debug-log fields:
 - error code
 - retryable
 
-Debug logs should have shorter retention than the audit log and should not include message bodies or secrets by default.
+Operational logs should not include message bodies or secrets by default.
 
-### Durable audit log
+## Post-v1 Audit Policy
 
-The durable audit log is for accountability, later review, and sensitive-account governance.
+Durable audit storage is not part of v1. It is parked for post-v1 so v1 does
+not ask operators to configure audit behavior that the runtime cannot honor.
+
+The future durable audit log is for accountability, later review, and
+sensitive-account governance.
 
 The durable audit log should:
 
@@ -72,11 +80,11 @@ The durable audit log should:
 - avoid storing message bodies by default
 - record state-changing actions and policy-relevant decisions
 
-Protocol-specific audit policy:
+Future protocol-specific audit policy:
 
-- the current implementation carries audit behavior under `mail.account_access_profiles.<profile>.services`
-- SMTP audit settings are currently read from `mail.account_access_profiles.<profile>.services.smtp.audit`
-- IMAP audit settings are currently read from `mail.account_access_profiles.<profile>.services.imap.audit`
+- decide whether audit belongs under `mail.account_access_profiles.<profile>.services` or a separate policy block
+- define the final SMTP audit settings shape
+- define the final IMAP audit settings shape
 - there is no per-account audit override in the current design
 - IMAP state-changing operations such as flag changes, message moves, and deletes should generate durable audit records by default
 - destructive IMAP operations such as delete should always produce durable audit records when the operation is enabled
@@ -133,17 +141,18 @@ Caller confirmation policy is configured through:
 - `mail.account_access_profiles.<profile>.services.smtp.require_confirmation`
 - `mail.account_access_profiles.<profile>.services.imap.confirmation_required`
 
-## Future policy tightening
+## Future boundary hardening
 
-Before supporting a personal inbox, revisit at least these questions:
+Before broadening deployment, revisit at least these questions:
 
 - whether sending should be restricted to approved recipient domains or exact addresses
 - whether first-contact messages should require a separate approval step
 - whether sending should be restricted to known correspondents
 - whether inbox access should start as read-only before any write or delete operations are allowed
-- what audit trail is required for message access, message sending, and destructive folder actions
 - whether destructive IMAP operations should be disabled by default
-- what approval hook is required before supporting a personal inbox
+- whether the bot-to-Sentry MCP connection needs caller authentication or
+  authorization, such as a shared secret, bearer token, password, client
+  certificate, or mTLS/PKI
 
 ## Current IMAP flag policy
 
@@ -199,9 +208,10 @@ IMAP tools follow these rules:
 ## Security considerations
 
 - Store credentials outside source control.
-- Treat personal account access as a separate trust tier.
+- Treat account names and descriptions as advisory labels only.
+- Put every must-enforce access decision in Mail Sentry config.
 - Fail closed on TLS validation errors.
 - Avoid exposing raw protocol errors that may leak secrets.
 - Enforce outbound rate limits to reduce abuse, loops, and accidental message storms.
 - Keep durable audit data metadata-only by default and make retention configurable.
-- Consider additional per-call safety checks before allowing broader usage.
+- Consider bot-to-Sentry authentication before allowing broader usage.

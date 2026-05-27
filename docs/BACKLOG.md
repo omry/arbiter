@@ -18,18 +18,10 @@ This file is the day-to-day queue for design and implementation gaps.
 - Move completed items out instead of keeping a long archive here.
 - Treat config and policy items as operator-facing product work, not only as
   internal refactors.
+- After each release-prep phase, run a focused review of the phase diff and
+  commit the ready changes before starting the next phase.
 
 ## Now
-
-- [ ] `P1` Decide whether audit config should stay operator-facing before
-      durable audit storage exists.
-      The current audit blocks add a lot of config surface even though durable
-      audit behavior is still a design contract. The question is whether to
-      keep these knobs visible now, or demote them into explicit future-design
-      docs until the runtime can honor them.
-      Acceptance checks: one clear direction is chosen; docs and samples follow
-      that direction consistently; and operators can tell whether audit config
-      is live runtime behavior or future intent.
 
 - [ ] `P1` Align docs, schema defaults, and sample configs on what is actually
       required versus what is only defaulted implicitly.
@@ -50,36 +42,15 @@ This file is the day-to-day queue for design and implementation gaps.
       no secrets or raw env values are emitted; and the log wording remains
       useful for real deployments rather than only for local debugging.
 
-- [ ] `P1` Decide whether personal-account sends should support optional
-      bot-signing.
-      This is a policy and product question, not just a text-template tweak.
-      If the bot drafts or sends through a personal account, the deployment may
-      want explicit disclosure in the message body.
-      Acceptance checks: the policy decision is recorded; if enabled, the
-      config knob and text/HTML injection behavior are defined; and the
-      interactive send flow and docs explain when the signature is or is not
-      applied.
-
 - [ ] `P2` Decide whether shared policy profiles should remain the long-term
-      home for both access gates and audit settings.
-      The current implementation now uses shared profiles for access gates,
-      caller confirmation, and audit settings. That may still be the right
-      abstraction, but it is also plausible that access control, audit, and
-      caller confirmation should not all live in the same container.
+      home for access gates and caller confirmation.
+      The current implementation now uses shared profiles for access gates and
+      caller confirmation. That may still be the right abstraction, but it is
+      also plausible that access control and caller confirmation should not
+      live in the same container.
       Acceptance checks: the design notes compare at least the current shared
       profile approach against one or two clearer alternatives; tradeoffs are
       recorded; and the chosen direction informs the next config cleanup pass.
-
-- [ ] `P2` Reduce duplicated audit-config surface after the future policy model
-      is settled.
-      The current SMTP and IMAP audit blocks are verbose and repeated across
-      profile examples. That may be acceptable if the knobs prove necessary,
-      but it should not be cleaned up before the broader audit and profile
-      direction is clearer.
-      Acceptance checks: the redesign identifies which audit controls truly
-      need per-protocol or per-profile variation; shared defaults or a smaller
-      schema are considered; and the resulting shape is materially lighter for
-      operators.
 
 - [ ] `P2` Improve the OpenClaw skill installer with dry-run file-change
       visibility.
@@ -89,3 +60,29 @@ This file is the day-to-day queue for design and implementation gaps.
       Acceptance checks: the installer can report which files would be added or
       updated; output stays concise by default; and normal installs provide a
       readable change summary rather than dumping full file contents.
+
+## Post-v1
+
+- [ ] `P2` Design and implement durable audit storage.
+      Audit is parked for post-v1. The v1 release should not ask operators to
+      configure audit behavior that the runtime cannot yet honor.
+      Acceptance checks: audit storage, retention, event shape, and privacy
+      defaults are defined; SMTP and IMAP audit events are emitted through one
+      durable path; and docs distinguish audit records from operational logs.
+
+- [ ] `P2` Decide where audit settings should live in the policy model.
+      V1 removed SMTP and IMAP audit blocks from the operator-facing schema.
+      Before audit ships, decide whether audit belongs in shared account access
+      profiles, a separate audit policy block, or another clearer home.
+      Acceptance checks: the redesign identifies which audit controls truly
+      need per-protocol or per-profile variation; shared defaults or a smaller
+      schema are considered; and the resulting shape is materially lighter for
+      operators.
+
+- [ ] `P2` Design bot-to-Sentry caller authentication or authorization.
+      V1 assumes the caller is trusted once connected. Future hardening may use
+      a shared secret, bearer token, password, client certificate, or mTLS/PKI
+      so deployments can prevent unsafe access to the Mail Sentry MCP boundary.
+      Acceptance checks: candidate mechanisms are compared; the chosen model
+      works for local OpenClaw/Codex use and Docker deployments; and failure
+      modes are fail-closed without leaking credentials.

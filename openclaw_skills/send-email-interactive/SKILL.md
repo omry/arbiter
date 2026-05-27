@@ -32,7 +32,8 @@ Workflow:
 5. Apply conditional confirmation:
    - confirm before sending if recipients or message content were materially inferred, expanded, or transformed
    - confirmation is not required only for straightforward user-directed sends with explicit recipients and explicit message content
-   - use the selected account's name and `description` in that confirmation so the user can tell whether it is a bot-owned or personal account
+   - use the selected account's name and `description` in that confirmation so the user can see the operator-provided account context
+   - treat account names and descriptions as advisory context; the enforceable boundary is the Mail Sentry policy for the selected account
    - if the selected account's `smtp.require_confirmation` is `true`, require explicit final confirmation before sending
 6. Run the helper script with explicit arguments for account, recipients, and subject, and pass the body through stdin.
    Use exactly one of `--text-stdin` or `--html-stdin` to declare the body type.

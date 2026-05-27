@@ -375,7 +375,9 @@ class MailSentryApp:
                 f"send_email requires an SMTP-enabled account: {account_name}"
             )
 
-        profile = self._mail_config.account_access_profiles[account.account_access_profile]
+        profile = self._mail_config.account_access_profiles[
+            account.account_access_profile
+        ]
         smtp_policy = profile.services.smtp
         if smtp_policy is None:
             raise ValueError(
@@ -550,11 +552,11 @@ class MailSentryApp:
         self, recipient: str, configured_recipients: list[str]
     ) -> bool:
         normalized = recipient.lower()
-        return any(normalized == value.strip().lower() for value in configured_recipients)
+        return any(
+            normalized == value.strip().lower() for value in configured_recipients
+        )
 
-    def _domain_matches_any_pattern(
-        self, domain: str, patterns: list[str]
-    ) -> bool:
+    def _domain_matches_any_pattern(self, domain: str, patterns: list[str]) -> bool:
         normalized_domain = domain.lower()
         for pattern in patterns:
             normalized_pattern = pattern.strip().lower()

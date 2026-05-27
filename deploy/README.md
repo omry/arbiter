@@ -72,7 +72,7 @@ mail-sentryctl sync-env
 
 If `mail-sentry.env` already exists, `sync-env` preserves values for matching
 variable names and writes a timestamped backup beside it. The generated Docker
-deployment env always sets `MAILGATEWAY_SERVER_HOST=0.0.0.0` because the service
+deployment env always sets `MAIL_SENTRY_SERVER_HOST=0.0.0.0` because the service
 must listen on the container interface for Docker's host-loopback port publish
 to reach it; `compose.yaml` still publishes only on host `127.0.0.1`.
 
@@ -266,7 +266,7 @@ Codex or another MCP client should then use:
 http://127.0.0.1:8025/mcp
 ```
 
-If you change `MAILGATEWAY_SERVER_PORT` or `MAILGATEWAY_SERVER_PATH` in the env file, keep the Docker port mapping and MCP client endpoint in sync.
+If you change `MAIL_SENTRY_SERVER_PORT` or `MAIL_SENTRY_SERVER_PATH` in the env file, keep the Docker port mapping and MCP client endpoint in sync.
 
 If you change the install target, recreate the container so it installs the new target on startup:
 

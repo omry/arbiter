@@ -172,7 +172,7 @@ write_env_template() {
 
     while IFS=$'\t' read -r name default_value; do
       [[ -n "$name" ]] || continue
-      if [[ "$name" == "MAILGATEWAY_SERVER_HOST" ]]; then
+      if [[ "$name" == "MAIL_SENTRY_SERVER_HOST" ]]; then
         printf '# Docker must bind this service to 0.0.0.0 inside the container so the host can connect.\n'
         printf '# deploy/compose.yaml still publishes only on host 127.0.0.1, so it is not reachable off-host.\n'
       fi
@@ -180,7 +180,7 @@ write_env_template() {
       if [[ -n "$existing_env_path" ]] && env_value="$(env_file_value "$existing_env_path" "$name")"; then
         value="$env_value"
       fi
-      if [[ "$name" == "MAILGATEWAY_SERVER_HOST" ]]; then
+      if [[ "$name" == "MAIL_SENTRY_SERVER_HOST" ]]; then
         value="0.0.0.0"
       fi
       printf '%s=%s\n' "$name" "$value"

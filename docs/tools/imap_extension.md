@@ -56,8 +56,7 @@ Each configured folder should define at least:
 - an optional description
 
 The current implementation uses `account_access_profile.services.imap` as the
-shared IMAP policy shape for access gates, confirmation requirements, and audit
-settings.
+shared IMAP policy shape for access gates and confirmation requirements.
 Account names such as `bot`, `personal`, or `alerts_readonly` are
 deployment-owned conventions.
 
@@ -86,13 +85,11 @@ Confirmed policy model:
 
 ## Audit behavior
 
-The current config carries IMAP audit settings under
-`mail.account_access_profiles.<profile>.services.imap.audit`, but durable audit
-storage is not implemented yet.
+Durable IMAP audit storage and audit policy configuration are parked for
+post-v1.
 
-The target audit model is:
+The future audit model is:
 
-- apply durable IMAP audit behavior from `mail.account_access_profiles.<profile>.services.imap.audit`
 - audit state-changing operations such as flag changes, message moves, and deletes by default
 - always audit destructive operations such as delete when enabled
 - support separate configuration for read-access and search-query auditing because those can generate much higher event volume
@@ -106,5 +103,6 @@ The target audit model is:
 ## Follow-up
 
 - write one tool document per IMAP operation
-- decide what approval hook, if any, is required before connecting a personal account
+- decide what caller authentication or authorization model, if any, should
+  protect the bot-to-Sentry MCP connection
 - add OpenClaw wrapper coverage for IMAP tools if OpenClaw should use them before native MCP support exists

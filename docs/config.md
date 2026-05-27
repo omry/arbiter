@@ -22,8 +22,8 @@ Two surrounding areas are still only partially implemented:
 
 - SMTP idempotency config is reserved for future runtime work. The current
   server fails closed at startup if those unsupported fields are configured.
-- Durable audit storage is still a design contract even though audit settings
-  are already represented in the profile config.
+- Durable audit storage and audit policy configuration are parked for post-v1.
+  V1 examples avoid audit knobs because the runtime does not honor them yet.
 
 ## Illustrative config shape
 
@@ -87,11 +87,6 @@ mail:
               - example.com
               - "*.example.org"
             blocked_domain_patterns: []
-          audit:
-            enabled: true
-            retention_days: 365
-            store_message_metadata: true
-            store_message_body: false
         imap:
           allow_read: true
           allow_search: true
@@ -105,16 +100,6 @@ mail:
             deleted: read_write
             draft: read_write
           user_flags: {}
-          audit:
-            enabled: true
-            retention_days: 365
-            store_message_metadata: true
-            store_message_body: false
-            audit_read_access: false
-            audit_search_queries: false
-            audit_message_state_changes: true
-            audit_message_moves: true
-            audit_message_deletes: true
 
     personal:
       services:
@@ -132,11 +117,6 @@ mail:
               - example.com
             blocked_domain_patterns:
               - "*.external.example.net"
-          audit:
-            enabled: true
-            retention_days: 365
-            store_message_metadata: true
-            store_message_body: false
 ```
 
 In this illustrative example, account transport config stays under `accounts`,
@@ -169,7 +149,6 @@ multiple configured accounts.
 - `idempotency.expiration_days`: reserved for future idempotency retention;
   startup rejects configs that customize it today
 - `recipient_policy`: outbound recipient guardrails
-- `audit`: SMTP audit settings
 
 Recipient-policy semantics:
 
@@ -193,7 +172,6 @@ Recipient-policy semantics:
 - `confirmation_required`: action list scoped to IMAP only
 - `system_flags`
 - `user_flags`
-- `audit`
 
 Current IMAP confirmation action vocabulary:
 
@@ -216,29 +194,45 @@ Flag semantics:
 
 ## Relevant settings
 
-- `mail.accounts`: required mapping of configured accounts
-- `mail.accounts.<account>.description`: required human-readable account purpose
-- `mail.accounts.<account>.account_access_profile`: required reference to a
-  profile under `mail.account_access_profiles`
-- `mail.account_access_profiles`: required mapping of shared account access
-  profile definitions
-- `mail.account_access_profiles.<profile>.services.smtp`: optional SMTP service
-  policy
-- `mail.account_access_profiles.<profile>.services.imap`: optional IMAP service
-  policy
+This section uses three terms deliberately:
+
+- `schema-required`: a valid runtime config must provide a value
+- `schema-defaulted`: the dataclass schema supplies a default when omitted
+- `deployment-required`: a real deployment normally needs an explicit value
+  even though the schema has a placeholder default
+
+Top-level mail settings:
+
+- `mail.accounts`: schema-defaulted to one `primary` SMTP account, but
+  deployment-required for real credentials and account purpose
+- `mail.accounts.<account>.description`: schema-defaulted to `""`, but
+  deployment-required for operator clarity
+- `mail.accounts.<account>.account_access_profile`: schema-defaulted to `bot`;
+  must reference a configured profile
+- `mail.account_access_profiles`: schema-defaulted to one `bot` profile, but
+  deployment-required for real access policy
+- `mail.account_access_profiles.<profile>.services.smtp`: optional by omission;
+  required when an account enables SMTP
+- `mail.account_access_profiles.<profile>.services.imap`: optional by omission;
+  required when an account enables IMAP
 
 Relevant SMTP transport settings for an account with SMTP enabled:
 
-- `mail.accounts.<account>.smtp.host`: required
-- `mail.accounts.<account>.smtp.port`: required
-- `mail.accounts.<account>.smtp.authenticate`: required
-- `mail.accounts.<account>.smtp.username`: optional
-- `mail.accounts.<account>.smtp.password`: optional secret
-- `mail.accounts.<account>.smtp.tls`: required; valid values: `none`,
-  `starttls`, `implicit`
-- `mail.accounts.<account>.smtp.verify_peer`: required when TLS is enabled
-- `mail.accounts.<account>.smtp.from_email`: required
-- `mail.accounts.<account>.smtp.from_name`: optional
+- `mail.accounts.<account>.smtp.host`: schema-defaulted to `localhost`, but
+  deployment-required for real SMTP submission
+- `mail.accounts.<account>.smtp.port`: schema-defaulted to `587`
+- `mail.accounts.<account>.smtp.authenticate`: schema-defaulted to `false`
+- `mail.accounts.<account>.smtp.username`: optional unless `authenticate` is
+  `true`
+- `mail.accounts.<account>.smtp.password`: optional secret unless
+  `authenticate` is `true`
+- `mail.accounts.<account>.smtp.tls`: schema-defaulted to `starttls`; valid
+  values: `none`, `starttls`, `implicit`
+- `mail.accounts.<account>.smtp.verify_peer`: schema-defaulted to `true`
+- `mail.accounts.<account>.smtp.from_email`: schema-defaulted to
+  `agent@example.com`, but deployment-required for real SMTP submission
+- `mail.accounts.<account>.smtp.from_name`: schema-defaulted to `Mail Sentry`
+- `mail.accounts.<account>.smtp.timeout_seconds`: schema-defaulted to `30.0`
 
 Relevant SMTP policy settings:
 
@@ -260,33 +254,44 @@ Relevant SMTP policy settings:
   optional domain-pattern allowlist
 - `mail.account_access_profiles.<profile>.services.smtp.recipient_policy.blocked_domain_patterns`:
   optional domain-pattern denylist
-- `mail.account_access_profiles.<profile>.services.smtp.audit`: SMTP audit config
 
 Relevant IMAP settings for an account with IMAP enabled:
 
-- `mail.accounts.<account>.imap.host`: required
-- `mail.accounts.<account>.imap.port`: required
-- `mail.accounts.<account>.imap.username`: optional
-- `mail.accounts.<account>.imap.password`: optional secret
-- `mail.accounts.<account>.imap.tls`: required; valid values: `none`,
-  `starttls`, `implicit`
-- `mail.accounts.<account>.imap.verify_peer`: required when TLS is enabled
+- `mail.accounts.<account>.imap.host`: schema-defaulted to `localhost`, but
+  deployment-required for real IMAP access
+- `mail.accounts.<account>.imap.port`: schema-defaulted to `993`
+- `mail.accounts.<account>.imap.username`: optional unless the IMAP server
+  requires authentication
+- `mail.accounts.<account>.imap.password`: optional secret unless username is
+  set
+- `mail.accounts.<account>.imap.tls`: schema-defaulted to `implicit`; valid
+  values: `none`, `starttls`, `implicit`
+- `mail.accounts.<account>.imap.verify_peer`: schema-defaulted to `true`
+- `mail.accounts.<account>.imap.timeout_seconds`: schema-defaulted to `30.0`
 - `mail.accounts.<account>.imap.default_folder`: optional folder name used when
   a tool does not specify one
-- `mail.accounts.<account>.imap.folders`: required mapping keyed by folder name
-- `mail.accounts.<account>.imap.folders.<folder>.description`: optional
-  human-readable folder purpose
+- `mail.accounts.<account>.imap.folders`: schema-defaulted to `{}`, but
+  deployment-required for useful IMAP tools because operations are limited to
+  configured folders
+- `mail.accounts.<account>.imap.folders.<folder>.description`: schema-defaulted
+  to `""`
 
 Relevant IMAP policy settings:
 
-- `mail.account_access_profiles.<profile>.services.imap.allow_read`
-- `mail.account_access_profiles.<profile>.services.imap.allow_search`
-- `mail.account_access_profiles.<profile>.services.imap.allow_move`
-- `mail.account_access_profiles.<profile>.services.imap.allow_delete`
-- `mail.account_access_profiles.<profile>.services.imap.confirmation_required`
-- `mail.account_access_profiles.<profile>.services.imap.system_flags.<flag>`
-- `mail.account_access_profiles.<profile>.services.imap.user_flags.<keyword>`
-- `mail.account_access_profiles.<profile>.services.imap.audit`
+- `mail.account_access_profiles.<profile>.services.imap.allow_read`:
+  schema-defaulted to `true`
+- `mail.account_access_profiles.<profile>.services.imap.allow_search`:
+  schema-defaulted to `true`
+- `mail.account_access_profiles.<profile>.services.imap.allow_move`:
+  schema-defaulted to `true`
+- `mail.account_access_profiles.<profile>.services.imap.allow_delete`:
+  schema-defaulted to `true`
+- `mail.account_access_profiles.<profile>.services.imap.confirmation_required`:
+  schema-defaulted to `[]`
+- `mail.account_access_profiles.<profile>.services.imap.system_flags.<flag>`:
+  schema-defaulted to `read_only`
+- `mail.account_access_profiles.<profile>.services.imap.user_flags.<keyword>`:
+  optional and hidden by omission
 
 ## Validation rules
 
@@ -344,9 +349,11 @@ Relevant IMAP policy settings:
 - The config shape includes both SMTP and IMAP, and the current server
   implements both protocol families.
 - `account_access_profile` is the active shared policy model for service-level
-  access, confirmation, and audit settings.
-- Folder-specific policy and audit overrides are intentionally out of scope for
-  the default shape.
+  access and confirmation settings.
+- Durable audit storage and audit configuration are post-v1 work and are not
+  part of the v1 config schema.
+- Folder-specific policy overrides are intentionally out of scope for the
+  default shape.
 - SMTP recipient policy and `max_recipients_per_message` are enforced.
 - SMTP rate limiting, recipient policy, and `max_recipients_per_message` are
   enforced.

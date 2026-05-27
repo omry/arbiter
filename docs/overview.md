@@ -58,24 +58,28 @@ The server exposes message-level, account-level, and folder-level operations suc
 
 SMTP and IMAP settings belong to server configuration, not tool payloads. The caller does not choose hosts, ports, TLS modes, or credentials.
 
-### 3. Future personal inbox guardrails
+### 3. Configuration is the authority boundary
 
-The initial target is a private account used by the bot itself, but future access to a personal inbox needs stricter guardrails.
+Mail Sentry enforces what the configured account and policy allow. Account
+names and descriptions may guide voluntary caller behavior, but labels such as
+`personal` are not built-in enforcement tiers.
 
-Questions to resolve before supporting a personal inbox:
+Questions to resolve before broader or more sensitive deployments:
 
-- whether sending should be restricted to approved recipients or known correspondents
-- whether first-contact messages should require a separate approval step
-- whether inbox access should start as read-only before any write or delete operations are allowed
-- what audit trail is required for message access, message sending, and destructive folder actions
+- whether the account's configured SMTP recipient policy is narrow enough
+- whether the account's configured IMAP policy should start read-only
+- whether destructive IMAP operations should be disabled
+- whether the bot-to-Sentry MCP connection needs caller authentication or
+  authorization, such as a shared secret, bearer token, password, client
+  certificate, or mTLS/PKI
 
 ### 4. Small, explicit surface area
 
 Add capabilities incrementally. The implemented surface is still intentionally small: account discovery, one SMTP send operation, and folder-scoped IMAP message operations.
 
-### 5. Auditable behavior
+### 5. Observable behavior
 
-Every tool call should produce structured logs and normalized results so automated actions can be inspected later. Durable audit behavior is configured separately for SMTP and IMAP under account access profiles, but storage and recording are still open implementation work.
+Every tool call should produce structured operational logs and normalized results so automated actions can be inspected later. Durable audit storage and audit policy configuration are parked for post-v1.
 
 ## Terminology
 
@@ -101,6 +105,7 @@ Implications of the current trust model:
 - `list_accounts` returns all configured accounts
 - callers may explicitly select any configured account
 - caller authentication between the bot and the MCP server is out of scope for the current design
+- Mail Sentry config is the enforcement boundary for v1
 
 ## Current Implementation Status
 
@@ -122,19 +127,19 @@ Implemented:
 Still open:
 
 - structured operational logging
-- durable audit storage
 - normalized error-code responses
 - idempotency replay and conflict handling
-- deciding whether access profiles should remain the long-term home for audit settings
+- durable audit storage and audit policy configuration, after v1
 
 ## Open design decisions
 
 - Whether to expose MCP resources in addition to tools
 - Whether message drafts should exist as a separate future tool
 - Whether attachments belong in v2 or later
-- Whether account access profiles should continue to own audit settings as well as access and confirmation policy
-- What approval hook is required before supporting a personal inbox
+- Whether account access profiles should continue to own confirmation policy as well as access policy
+- What caller authentication or authorization model, if any, should protect
+  the bot-to-Sentry MCP connection
 
 ## Recommended next step
 
-Prioritize the remaining runtime-hardening work around the now-implemented policy contract: durable audit records, normalized errors, and idempotency.
+Prioritize the remaining v1 hardening work around the now-implemented policy contract: startup/runtime logging, normalized errors, and idempotency guardrails.

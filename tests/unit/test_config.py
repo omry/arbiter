@@ -48,8 +48,12 @@ def test_compose_config_returns_hydra_config() -> None:
     assert cfg.mail.accounts.primary.smtp.from_email == "agent@example.com"
     assert cfg.mail.accounts.primary.smtp.tls == MailTlsMode.starttls
     assert cfg.mail.accounts.primary.smtp.verify_peer is True
-    assert cfg.mail.account_access_profiles.bot.services.smtp.require_confirmation is False
-    assert cfg.mail.account_access_profiles.bot.services.imap.confirmation_required == []
+    assert (
+        cfg.mail.account_access_profiles.bot.services.smtp.require_confirmation is False
+    )
+    assert (
+        cfg.mail.account_access_profiles.bot.services.imap.confirmation_required == []
+    )
     assert cfg.mail.account_access_profiles.bot.services.imap.allow_read is True
     assert cfg.mail.account_access_profiles.bot.services.imap.allow_search is True
     assert cfg.mail.account_access_profiles.bot.services.imap.allow_move is True
@@ -82,7 +86,9 @@ def test_compose_config_applies_overrides() -> None:
     assert cfg.mail.accounts.primary.smtp.from_name == "Agent Team"
     assert cfg.mail.accounts.primary.smtp.tls == MailTlsMode.implicit
     assert cfg.mail.accounts.primary.smtp.verify_peer is False
-    assert cfg.mail.account_access_profiles.bot.services.smtp.require_confirmation is True
+    assert (
+        cfg.mail.account_access_profiles.bot.services.smtp.require_confirmation is True
+    )
     assert (
         cfg.mail.account_access_profiles.bot.services.imap.system_flags.seen
         == ImapFlagMode.read_write
@@ -107,7 +113,7 @@ defaults:
   - _self_
 
 server:
-  name: mailgateway-mcp
+  name: mail-sentry-mcp
 mail:
   account_access_profiles:
     bot:
@@ -137,25 +143,27 @@ mail:
     with initialize_config_dir(version_base=None, config_dir=str(tmp_path)):
         cfg = compose(config_name="config")
 
-    assert cfg.server.name == "mailgateway-mcp"
-    assert cfg.mail.account_access_profiles.bot.services.smtp.require_confirmation is False
+    assert cfg.server.name == "mail-sentry-mcp"
+    assert (
+        cfg.mail.account_access_profiles.bot.services.smtp.require_confirmation is False
+    )
     assert cfg.mail.accounts.primary.smtp.from_email == "bot@example.com"
 
 
 def test_standard_deployment_config_composes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("MAILGATEWAY_BOT_SMTP_HOST", "smtp.example.com")
-    monkeypatch.setenv("MAILGATEWAY_BOT_SMTP_USERNAME", "bot@example.com")
-    monkeypatch.setenv("MAILGATEWAY_BOT_SMTP_PASSWORD", "secret")
-    monkeypatch.setenv("MAILGATEWAY_BOT_SMTP_FROM_EMAIL", "bot@example.com")
-    monkeypatch.setenv("MAILGATEWAY_BOT_IMAP_HOST", "imap.example.com")
-    monkeypatch.setenv("MAILGATEWAY_BOT_IMAP_USERNAME", "bot@example.com")
-    monkeypatch.setenv("MAILGATEWAY_BOT_IMAP_PASSWORD", "secret")
-    monkeypatch.setenv("MAILGATEWAY_PERSONAL_SMTP_HOST", "smtp.example.com")
-    monkeypatch.setenv("MAILGATEWAY_PERSONAL_SMTP_USERNAME", "omry@example.com")
-    monkeypatch.setenv("MAILGATEWAY_PERSONAL_SMTP_PASSWORD", "secret")
-    monkeypatch.setenv("MAILGATEWAY_PERSONAL_SMTP_FROM_EMAIL", "omry@example.com")
+    monkeypatch.setenv("MAIL_SENTRY_BOT_SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("MAIL_SENTRY_BOT_SMTP_USERNAME", "bot@example.com")
+    monkeypatch.setenv("MAIL_SENTRY_BOT_SMTP_PASSWORD", "secret")
+    monkeypatch.setenv("MAIL_SENTRY_BOT_SMTP_FROM_EMAIL", "bot@example.com")
+    monkeypatch.setenv("MAIL_SENTRY_BOT_IMAP_HOST", "imap.example.com")
+    monkeypatch.setenv("MAIL_SENTRY_BOT_IMAP_USERNAME", "bot@example.com")
+    monkeypatch.setenv("MAIL_SENTRY_BOT_IMAP_PASSWORD", "secret")
+    monkeypatch.setenv("MAIL_SENTRY_PERSONAL_SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("MAIL_SENTRY_PERSONAL_SMTP_USERNAME", "omry@example.com")
+    monkeypatch.setenv("MAIL_SENTRY_PERSONAL_SMTP_PASSWORD", "secret")
+    monkeypatch.setenv("MAIL_SENTRY_PERSONAL_SMTP_FROM_EMAIL", "omry@example.com")
 
     deploy_config_dir = Path(__file__).parents[2] / "deploy"
     register_configs()
@@ -165,9 +173,14 @@ def test_standard_deployment_config_composes(
     ):
         cfg = compose(config_name="config")
 
-    assert cfg.server.name == "mailgateway-mcp"
-    assert cfg.mail.account_access_profiles.bot.services.smtp.require_confirmation is False
-    assert cfg.mail.account_access_profiles.personal.services.smtp.require_confirmation is True
+    assert cfg.server.name == "mail-sentry-mcp"
+    assert (
+        cfg.mail.account_access_profiles.bot.services.smtp.require_confirmation is False
+    )
+    assert (
+        cfg.mail.account_access_profiles.personal.services.smtp.require_confirmation
+        is True
+    )
     assert set(cfg.mail.accounts) == {"primary", "personal"}
     assert cfg.mail.accounts.primary.smtp.host == "smtp.example.com"
     assert cfg.mail.accounts.primary.imap.host == "imap.example.com"
@@ -223,6 +236,7 @@ def test_readonly_imap_account_policy_limits_mutation_and_folder() -> None:
 
     assert account.smtp is None
     assert account.imap is not None
+    assert policy is not None
     assert account.imap.default_folder == folder
     assert list(account.imap.folders) == [folder]
     assert policy.allow_read is True
@@ -499,7 +513,9 @@ def test_app_config_accepts_imap_only_account() -> None:
                 },
                 account_access_profiles={
                     "bot": AccountAccessProfileConfig(
-                        services=AccountServicesConfig(smtp=None, imap=ImapAccessPolicyConfig())
+                        services=AccountServicesConfig(
+                            smtp=None, imap=ImapAccessPolicyConfig()
+                        )
                     )
                 },
             )
@@ -542,7 +558,9 @@ def test_app_config_rejects_smtp_account_without_smtp_service_policy() -> None:
                     },
                     account_access_profiles={
                         "bot": AccountAccessProfileConfig(
-                            services=AccountServicesConfig(smtp=None, imap=ImapAccessPolicyConfig())
+                            services=AccountServicesConfig(
+                                smtp=None, imap=ImapAccessPolicyConfig()
+                            )
                         )
                     },
                 )
@@ -567,7 +585,10 @@ def test_app_config_accepts_smtp_account_with_recipient_policy() -> None:
                             smtp=SmtpServicePolicyConfig(
                                 recipient_policy=SmtpRecipientPolicyConfig(
                                     allowed_recipients=["ops@example.com"],
-                                    allowed_domain_patterns=["example.com", "*.example.org"],
+                                    allowed_domain_patterns=[
+                                        "example.com",
+                                        "*.example.org",
+                                    ],
                                     blocked_recipients=["ceo@example.com"],
                                     blocked_domain_patterns=["*.blocked.example"],
                                 )

@@ -17,7 +17,7 @@ Those tools should share the same:
 
 - deployment-owned account configuration
 - policy checks
-- logging and audit behavior once implemented
+- operational logging once implemented
 - normalized error handling once the error model is implemented
 
 The point of the implementation is not to build a generic mail framework. It is to provide a small, explicit server that can discover configured accounts, submit SMTP mail, and operate on configured IMAP folders safely.
@@ -27,13 +27,13 @@ The point of the implementation is not to build a generic mail framework. It is 
 - MCP handlers:
   accept tool calls, validate input, and return the documented response shapes
 - Config loading:
-  load configured accounts, sender identities, limits, recipient policy, and audit settings
+  load configured accounts, sender identities, limits, and recipient policy
 - Send-email flow:
   resolve the selected account, apply policy checks, build the RFC 5322/MIME message, and submit it over SMTP
 - IMAP flow:
   resolve the selected account and configured folder, apply read/search/move/delete/flag policy, and execute the operation over IMAP
 - Shared result handling:
-  normalize failures into stable error codes and emit debug and audit records once those hardening pieces are implemented
+  normalize failures into stable error codes and emit operational logs once those hardening pieces are implemented
 
 ## Request lifecycle
 
@@ -43,7 +43,7 @@ The point of the implementation is not to build a generic mail framework. It is 
 4. Access-policy checks applied
 5. Service operation executed through the relevant transport adapter
 6. Tool result assembled for the MCP response
-7. Future hardening: normalized errors, debug logs, and durable audit records
+7. V1 hardening: normalized errors and operational logs
 8. Response returned
 
 ## Repository shape
@@ -76,5 +76,6 @@ mail-sentry/
 - Keep MCP tool handlers thin.
 - Keep SMTP and IMAP session handling out of tool handlers.
 - Keep account/folder access policy in the application layer rather than transport adapters.
-- Centralize logging, audit, and error normalization when those hardening pieces are implemented.
+- Centralize logging and error normalization when those hardening pieces are implemented.
+- Keep durable audit storage and audit policy configuration as post-v1 work.
 - Implement one shared server that exposes multiple tools over the same config.

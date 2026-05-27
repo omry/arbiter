@@ -85,7 +85,8 @@ Otherwise, the skill should stop and ask for explicit final confirmation before 
 
 Accounts that require SMTP confirmation are stricter than the base rule:
 
-- the confirmation should name the selected account and include its human-readable `description`, such as a bot-owned or personal account label
+- the confirmation should name the selected account and include its human-readable `description`
+- account names and descriptions, such as bot-owned or personal labels, are advisory context for user and agent caution; the enforceable boundary is the Mail Sentry policy for the selected account
 - if the selected account's `smtp.require_confirmation` is `true`, explicit final confirmation is always required
 - the helper/runtime should enforce that stricter gate rather than relying only on prompt wording
 - the confirmation requirement comes from Mail Sentry `list_accounts`, not from OpenClaw-local metadata

@@ -1,3 +1,4 @@
+import logging
 import sys
 from collections.abc import Callable
 from types import ModuleType
@@ -8,7 +9,7 @@ import pytest
 from omegaconf import OmegaConf
 
 from mail_sentry.config import AppConfig
-from mail_sentry.main import build_app, build_server
+from mail_sentry.main import build_app, build_server, log_startup_summary
 
 
 def test_build_app_accepts_hydra_config() -> None:
@@ -47,6 +48,30 @@ def test_build_app_list_accounts_uses_real_config_shape() -> None:
             },
         }
     ]
+
+
+def test_log_startup_summary_includes_safe_runtime_context(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = AppConfig()
+    assert cfg.mail.accounts["primary"].smtp is not None
+    cfg.mail.accounts["primary"].smtp.password = "super-secret"
+
+    monkeypatch.setattr("mail_sentry.main.package_version", lambda: "1.2.3")
+    caplog.set_level(logging.INFO, logger="mail_sentry.main")
+
+    log_startup_summary(cfg)
+
+    message = caplog.messages[0]
+    assert "Mail Sentry starting version=1.2.3" in message
+    assert "transport=streamable-http" in message
+    assert "bind=127.0.0.1:8000/mcp" in message
+    assert "accounts=primary" in message
+    assert "smtp_accounts=primary" in message
+    assert "imap_accounts=none" in message
+    assert "super-secret" not in message
+    assert "agent@example.com" not in message
 
 
 def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:

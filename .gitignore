@@ -16,3 +16,6 @@ deploy/mail-sentry.env
 deploy/gateway-config.yaml
 deploy/compose.local.yaml
 deploy/run-local.sh
+
+# Local AWD runtime state and other scratch artifacts.
+temp/

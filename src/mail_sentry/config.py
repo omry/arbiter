@@ -104,27 +104,6 @@ class ImapConfig:
 
 
 @dataclass
-class SmtpAuditConfig:
-    enabled: bool = True
-    retention_days: int = 365
-    store_message_metadata: bool = True
-    store_message_body: bool = False
-
-
-@dataclass
-class ImapAuditConfig:
-    enabled: bool = True
-    retention_days: int = 365
-    store_message_metadata: bool = True
-    store_message_body: bool = False
-    audit_read_access: bool = False
-    audit_search_queries: bool = False
-    audit_message_state_changes: bool = True
-    audit_message_moves: bool = True
-    audit_message_deletes: bool = True
-
-
-@dataclass
 class ImapSystemFlagsPolicyConfig:
     seen: ImapFlagMode = ImapFlagMode.read_only
     flagged: ImapFlagMode = ImapFlagMode.read_only
@@ -153,7 +132,6 @@ class ImapAccessPolicyConfig:
         default_factory=ImapSystemFlagsPolicyConfig
     )
     user_flags: dict[str, ImapFlagMode] = field(default_factory=dict)
-    audit: ImapAuditConfig = field(default_factory=ImapAuditConfig)
 
     def __post_init__(self) -> None:
         self.user_flags = {
@@ -177,7 +155,6 @@ class SmtpServicePolicyConfig:
     recipient_policy: SmtpRecipientPolicyConfig = field(
         default_factory=SmtpRecipientPolicyConfig
     )
-    audit: SmtpAuditConfig = field(default_factory=SmtpAuditConfig)
 
     def __post_init__(self) -> None:
         validate_smtp_service_policy(self)
@@ -301,7 +278,6 @@ class SmtpServicePolicyConfigLike(Protocol):
     limits: SmtpLimitsConfig
     idempotency: SmtpIdempotencyConfig
     recipient_policy: SmtpRecipientPolicyConfigLike
-    audit: SmtpAuditConfig
 
 
 class AccountServicesConfigLike(Protocol):
@@ -325,7 +301,6 @@ class ImapAccessPolicyConfigLike(Protocol):
     confirmation_required: list[ImapConfirmationAction]
     system_flags: ImapSystemFlagsPolicyConfigLike
     user_flags: Mapping[str, ImapFlagMode]
-    audit: ImapAuditConfig
 
 
 class MailConfigLike(Protocol):
@@ -444,7 +419,7 @@ def validate_smtp_recipient_policy(config: SmtpRecipientPolicyConfigLike) -> Non
                 )
 
 
-def validate_smtp_service_policy(config: SmtpServicePolicyConfigLike) -> None:
+def validate_smtp_service_policy(config: SmtpServicePolicyConfig) -> None:
     validate_smtp_recipient_policy(config.recipient_policy)
 
     unsupported_fields: list[str] = []
@@ -502,7 +477,7 @@ def validate_imap_access_policy(config: ImapAccessPolicyConfig) -> None:
 
 
 def _imap_policy_allows_confirmation_action(
-    policy: ImapAccessPolicyConfigLike,
+    policy: ImapAccessPolicyConfig,
     action: ImapConfirmationAction,
 ) -> bool:
     if action is ImapConfirmationAction.read:
@@ -512,12 +487,9 @@ def _imap_policy_allows_confirmation_action(
     if action is ImapConfirmationAction.move:
         return policy.allow_move
     if action is ImapConfirmationAction.mark_read:
-        return (
-            policy.allow_read and policy.system_flags.seen is ImapFlagMode.read_write
-        )
+        return policy.allow_read and policy.system_flags.seen is ImapFlagMode.read_write
     if action is ImapConfirmationAction.delete:
         return policy.allow_delete
-    return False
 
 
 def validate_account_access_profile(config: AccountAccessProfileConfig) -> None:
