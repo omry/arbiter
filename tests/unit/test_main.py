@@ -8,7 +8,13 @@ from typing import Any, cast
 import pytest
 from omegaconf import OmegaConf
 
-from mail_sentry.config import AppConfig
+from mail_sentry.config import (
+    AppConfig,
+    IMAPConfig,
+    IMAPFolderConfig,
+    IMAPServiceConfig,
+    ServicesConfig,
+)
 from mail_sentry.main import build_app, build_server, log_startup_summary
 from mail_sentry.plugins import discover_service_plugins
 from mail_sentry.plugins.imap import IMAPRuntime, IMAPServicePlugin
@@ -21,9 +27,9 @@ from mail_sentry.services import (
 
 
 def test_build_app_accepts_hydra_config() -> None:
-    cfg = OmegaConf.structured(AppConfig())
+    cfg = OmegaConf.structured(_app_config_with_smtp_imap())
 
-    app = build_app(cfg)
+    app = build_app(cfg, service_plugins=_test_service_plugins())
 
     assert app.tool_names() == [
         "list_accounts",
@@ -40,19 +46,19 @@ def test_build_app_accepts_hydra_config() -> None:
 def test_build_app_list_accounts_uses_real_config_shape() -> None:
     cfg = OmegaConf.structured(AppConfig())
 
-    app = build_app(cfg)
+    app = build_app(cfg, service_plugins=_test_service_plugins())
 
     assert app.list_accounts() == [
         {
             "name": "primary",
             "description": "Bot-owned account for automated email tasks.",
             "account_access_profile": "bot",
-            "smtp": {
-                "send": "allowed",
-                "require_confirmation": False,
-            },
-            "imap": {
-                "enabled": False,
+            "services": {
+                "smtp": {
+                    "enabled": True,
+                    "send": "allowed",
+                    "require_confirmation": False,
+                },
             },
         }
     ]
@@ -64,6 +70,12 @@ def test_discover_service_plugins_loads_entry_point_factories(
     class FakePlugin:
         def __init__(self, name: str) -> None:
             self.name = name
+
+        def build_runtime(self, config: object, context: object) -> object:
+            return object()
+
+        def register_tools(self, server: object, context: object) -> None:
+            return None
 
     smtp_plugin = FakePlugin("smtp")
     imap_plugin = FakePlugin("imap")
@@ -100,13 +112,28 @@ def _test_service_plugins() -> list[ServicePlugin]:
     ]
 
 
+def _app_config_with_smtp_imap() -> AppConfig:
+    return AppConfig(
+        services=ServicesConfig(
+            imap=IMAPServiceConfig(
+                accounts={
+                    "primary": IMAPConfig(
+                        default_folder="INBOX",
+                        folders={"INBOX": IMAPFolderConfig(description="Inbox")},
+                    )
+                }
+            )
+        )
+    )
+
+
 def test_log_startup_summary_includes_safe_runtime_context(
     caplog: pytest.LogCaptureFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cfg = AppConfig()
-    assert cfg.mail.accounts["primary"].smtp is not None
-    cfg.mail.accounts["primary"].smtp.password = "super-secret"
+    assert cfg.services.smtp is not None
+    cfg.services.smtp.accounts["primary"].password = "super-secret"
 
     monkeypatch.setattr("mail_sentry.main.package_version", lambda: "1.2.3")
     caplog.set_level(logging.INFO, logger="mail_sentry.main")
@@ -118,6 +145,7 @@ def test_log_startup_summary_includes_safe_runtime_context(
     assert "transport=streamable-http" in message
     assert "bind=127.0.0.1:8000/mcp" in message
     assert "accounts=primary" in message
+    assert "services=smtp" in message
     assert "smtp_accounts=primary" in message
     assert "imap_accounts=none" in message
     assert "super-secret" not in message
@@ -134,6 +162,11 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     move_message_calls: list[dict[str, object]] = []
     mark_message_read_calls: list[dict[str, object]] = []
     delete_message_calls: list[dict[str, object]] = []
+    fake_cfg = _app_config_with_smtp_imap()
+    smtp_service_config = cast(Any, fake_cfg.services.smtp)
+    imap_service_config = cast(Any, fake_cfg.services.imap)
+    assert smtp_service_config is not None
+    assert imap_service_config is not None
 
     class FakeSMTPRuntime(SMTPRuntime):
         def send_email(
@@ -257,10 +290,11 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
         runtime_registry = RuntimeRegistry(
             {
                 "smtp": FakeSMTPRuntime(
-                    AppConfig().mail,
+                    fake_cfg.mail,
+                    smtp_service_config,
                     smtp_client_factory=lambda config: cast(Any, object()),
                 ),
-                "imap": FakeIMAPRuntime(AppConfig().mail),
+                "imap": FakeIMAPRuntime(fake_cfg.mail, imap_service_config),
             }
         )
 
@@ -272,12 +306,15 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
                     "name": "primary",
                     "description": "Primary account",
                     "account_access_profile": "bot",
-                    "smtp": {
-                        "send": "allowed",
-                        "require_confirmation": False,
-                    },
-                    "imap": {
-                        "enabled": False,
+                    "services": {
+                        "smtp": {
+                            "enabled": True,
+                            "send": "allowed",
+                            "require_confirmation": False,
+                        },
+                        "imap": {
+                            "enabled": True,
+                        },
                     },
                 }
             ]
@@ -442,9 +479,12 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "mcp", mcp_module)
     monkeypatch.setitem(sys.modules, "mcp.server", server_module)
     monkeypatch.setitem(sys.modules, "mcp.server.fastmcp", fastmcp_module)
-    monkeypatch.setattr("mail_sentry.main.build_app", lambda cfg: FakeApp())
+    monkeypatch.setattr(
+        "mail_sentry.main.build_app",
+        lambda cfg, service_plugins=None, runtime_dependencies=None: FakeApp(),
+    )
 
-    cfg = OmegaConf.structured(AppConfig())
+    cfg = OmegaConf.structured(fake_cfg)
 
     server = cast(Any, build_server(cfg, service_plugins=_test_service_plugins()))
 
@@ -471,12 +511,15 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
                 "name": "primary",
                 "description": "Primary account",
                 "account_access_profile": "bot",
-                "smtp": {
-                    "send": "allowed",
-                    "require_confirmation": False,
-                },
-                "imap": {
-                    "enabled": False,
+                "services": {
+                    "smtp": {
+                        "enabled": True,
+                        "send": "allowed",
+                        "require_confirmation": False,
+                    },
+                    "imap": {
+                        "enabled": True,
+                    },
                 },
             }
         ]
@@ -583,7 +626,7 @@ def test_build_server_describes_send_email_tool_schema() -> None:
     server = cast(
         Any,
         build_server(
-            OmegaConf.structured(AppConfig()),
+            OmegaConf.structured(_app_config_with_smtp_imap()),
             service_plugins=_test_service_plugins(),
         ),
     )

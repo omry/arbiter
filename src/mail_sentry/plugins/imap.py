@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Annotated, Callable, Protocol
+from typing import Annotated, Callable, Protocol, cast
 
 from pydantic import Field
 
@@ -9,12 +9,13 @@ from ..config import (
     IMAPAccessPolicyConfig,
     IMAPConfigLike,
     IMAPFlagMode,
+    IMAPServiceConfig,
     MailConfig,
     resolve_imap_flag_mode,
     resolve_system_flag_key,
 )
 from ..imap import FetchedIMAPMessage
-from ..services import ServicePluginContext, ToolServer
+from ..services import ServicePluginContext, ServiceRuntimeContext, ToolServer
 
 
 class IMAPClientLike(Protocol):
@@ -52,17 +53,20 @@ class IMAPRuntime:
     def __init__(
         self,
         mail_config: MailConfig,
+        service_config: IMAPServiceConfig,
         imap_client_factory: IMAPClientFactory | None = None,
     ) -> None:
         self._mail_config = mail_config
+        self._service_config = service_config
         self._imap_client_factory = imap_client_factory
 
     def account_summary(
         self,
+        account_name: str,
         account: AccountConfig,
         imap_policy: IMAPAccessPolicyConfig | None,
     ) -> dict[str, object]:
-        imap_enabled = account.imap is not None
+        imap_enabled = account_name in self._service_config.accounts
         summary: dict[str, object] = {
             "enabled": imap_enabled,
         }
@@ -252,7 +256,8 @@ class IMAPRuntime:
         if account is None:
             raise ValueError(f"{tool_name} received an unknown account: {account_name}")
 
-        if account.imap is None:
+        imap_config = self._service_config.accounts.get(account_name)
+        if imap_config is None:
             raise ValueError(
                 f"{tool_name} requires an IMAP-enabled account: {account_name}"
             )
@@ -260,12 +265,12 @@ class IMAPRuntime:
         profile = self._mail_config.account_access_profiles[
             account.account_access_profile
         ]
-        folder_name = self._resolve_optional_folder(tool_name, account.imap, folder)
+        folder_name = self._resolve_optional_folder(tool_name, imap_config, folder)
         if profile.services.imap is None:
             raise ValueError(
                 f"{tool_name} requires an IMAP service policy for account: {account_name}"
             )
-        return account.imap, profile.services.imap, folder_name
+        return imap_config, profile.services.imap, folder_name
 
     def _resolve_optional_folder(
         self,
@@ -456,6 +461,23 @@ IMAPMessageLimit = Annotated[
 
 class IMAPServicePlugin:
     name = "imap"
+
+    def build_runtime(
+        self,
+        config: object,
+        context: ServiceRuntimeContext,
+    ) -> object:
+        from ..imap import IMAPClient
+
+        imap_client_factory = cast(
+            IMAPClientFactory,
+            context.dependencies.get("imap_client_factory", IMAPClient),
+        )
+        return IMAPRuntime(
+            cast(MailConfig, context.mail_config),
+            cast(IMAPServiceConfig, config),
+            imap_client_factory=imap_client_factory,
+        )
 
     def register_tools(
         self,

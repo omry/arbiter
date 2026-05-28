@@ -14,14 +14,17 @@ from mail_sentry.config import (
     IMAPConfig,
     IMAPFlagMode,
     IMAPFolderConfig,
+    IMAPServiceConfig,
     IMAPSystemFlagsPolicyConfig,
     MailTlsMode,
     MailConfig,
     resolve_imap_flag_mode,
+    ServicesConfig,
     SMTPConfig,
     SMTPIdempotencyConfig,
     SMTPLimitsConfig,
     SMTPRecipientPolicyConfig,
+    SMTPServiceConfig,
     SMTPServicePolicyConfig,
     validate_app_config,
     register_configs,
@@ -43,11 +46,13 @@ def test_compose_config_returns_hydra_config() -> None:
     assert cfg.server.host == "127.0.0.1"
     assert cfg.server.port == 8000
     assert cfg.server.path == "/mcp"
-    assert cfg.mail.accounts.primary.smtp.host == "localhost"
-    assert cfg.mail.accounts.primary.smtp.port == 587
-    assert cfg.mail.accounts.primary.smtp.from_email == "agent@example.com"
-    assert cfg.mail.accounts.primary.smtp.tls == MailTlsMode.starttls
-    assert cfg.mail.accounts.primary.smtp.verify_peer is True
+    assert cfg.services.smtp.accounts.primary.host == "localhost"
+    assert cfg.services.smtp.accounts.primary.port == 587
+    assert cfg.services.smtp.accounts.primary.from_email == "agent@example.com"
+    assert cfg.services.smtp.accounts.primary.tls == MailTlsMode.starttls
+    assert cfg.services.smtp.accounts.primary.verify_peer is True
+    assert cfg.services.imap is None
+    assert cfg.etc == {}
     assert (
         cfg.mail.account_access_profiles.bot.services.smtp.require_confirmation is False
     )
@@ -69,11 +74,11 @@ def test_compose_config_applies_overrides() -> None:
         [
             "server.transport=stdio",
             "server.port=9000",
-            "mail.accounts.primary.smtp.host=smtp.example.com",
-            "mail.accounts.primary.smtp.port=2525",
-            "mail.accounts.primary.smtp.from_name=Agent Team",
-            "mail.accounts.primary.smtp.tls=implicit",
-            "mail.accounts.primary.smtp.verify_peer=false",
+            "services.smtp.accounts.primary.host=smtp.example.com",
+            "services.smtp.accounts.primary.port=2525",
+            "services.smtp.accounts.primary.from_name=Agent Team",
+            "services.smtp.accounts.primary.tls=implicit",
+            "services.smtp.accounts.primary.verify_peer=false",
             "mail.account_access_profiles.bot.services.smtp.require_confirmation=true",
             "mail.account_access_profiles.bot.services.imap.system_flags.seen=read_write",
         ]
@@ -81,11 +86,11 @@ def test_compose_config_applies_overrides() -> None:
 
     assert cfg.server.transport == "stdio"
     assert cfg.server.port == 9000
-    assert cfg.mail.accounts.primary.smtp.host == "smtp.example.com"
-    assert cfg.mail.accounts.primary.smtp.port == 2525
-    assert cfg.mail.accounts.primary.smtp.from_name == "Agent Team"
-    assert cfg.mail.accounts.primary.smtp.tls == MailTlsMode.implicit
-    assert cfg.mail.accounts.primary.smtp.verify_peer is False
+    assert cfg.services.smtp.accounts.primary.host == "smtp.example.com"
+    assert cfg.services.smtp.accounts.primary.port == 2525
+    assert cfg.services.smtp.accounts.primary.from_name == "Agent Team"
+    assert cfg.services.smtp.accounts.primary.tls == MailTlsMode.implicit
+    assert cfg.services.smtp.accounts.primary.verify_peer is False
     assert (
         cfg.mail.account_access_profiles.bot.services.smtp.require_confirmation is True
     )
@@ -97,11 +102,11 @@ def test_compose_config_applies_overrides() -> None:
 
 def test_hydra_config_preserves_lazy_interpolations() -> None:
     app_config = _compose_config(
-        ["mail.accounts.primary.smtp.from_name=${server.name}"]
+        ["services.smtp.accounts.primary.from_name=${server.name}"]
     )
 
     assert app_config.server.name == "mail-sentry"
-    assert app_config.mail.accounts.primary.smtp.from_name == "mail-sentry"
+    assert app_config.services.smtp.accounts.primary.from_name == "mail-sentry"
 
 
 def test_mailgateway_schema_alias_composes(tmp_path: Path) -> None:
@@ -129,7 +134,11 @@ mail:
     primary:
       description: Bot account.
       account_access_profile: bot
-      smtp:
+
+services:
+  smtp:
+    accounts:
+      primary:
         host: localhost
         authenticate: false
         username: ""
@@ -147,7 +156,7 @@ mail:
     assert (
         cfg.mail.account_access_profiles.bot.services.smtp.require_confirmation is False
     )
-    assert cfg.mail.accounts.primary.smtp.from_email == "bot@example.com"
+    assert cfg.services.smtp.accounts.primary.from_email == "bot@example.com"
 
 
 def test_standard_deployment_config_composes(
@@ -182,10 +191,10 @@ def test_standard_deployment_config_composes(
         is True
     )
     assert set(cfg.mail.accounts) == {"primary", "personal"}
-    assert cfg.mail.accounts.primary.smtp.host == "smtp.example.com"
-    assert cfg.mail.accounts.primary.imap.host == "imap.example.com"
-    assert cfg.mail.accounts.primary.imap.default_folder == "INBOX"
-    assert cfg.mail.accounts.personal.smtp.from_name == "Omry"
+    assert cfg.services.smtp.accounts.primary.host == "smtp.example.com"
+    assert cfg.services.imap.accounts.primary.host == "imap.example.com"
+    assert cfg.services.imap.accounts.primary.default_folder == "INBOX"
+    assert cfg.services.smtp.accounts.personal.from_name == "Omry"
 
 
 def test_secret_file_resolver_reads_secret_file(tmp_path) -> None:
@@ -219,26 +228,35 @@ def test_readonly_imap_account_policy_limits_mutation_and_folder() -> None:
                 "primary": AccountConfig(
                     description="Read-only alerts",
                     account_access_profile="alerts_readonly",
-                    imap=IMAPConfig(
+                )
+            },
+        ),
+        services=ServicesConfig(
+            smtp=None,
+            imap=IMAPServiceConfig(
+                accounts={
+                    "primary": IMAPConfig(
                         host="imap.example.com",
                         username="user@example.com",
                         password="secret",
                         default_folder=folder,
                         folders={folder: IMAPFolderConfig(description="Alerts")},
-                    ),
-                )
-            },
-        )
+                    )
+                }
+            ),
+        ),
     )
 
     account = cfg.mail.accounts["primary"]
+    assert cfg.services.imap is not None
+    imap_account = cfg.services.imap.accounts["primary"]
     policy = cfg.mail.account_access_profiles["alerts_readonly"].services.imap
 
-    assert account.smtp is None
-    assert account.imap is not None
+    assert account.description == "Read-only alerts"
+    assert cfg.services.smtp is None
     assert policy is not None
-    assert account.imap.default_folder == folder
-    assert list(account.imap.folders) == [folder]
+    assert imap_account.default_folder == folder
+    assert list(imap_account.folders) == [folder]
     assert policy.allow_read is True
     assert policy.allow_search is True
     assert policy.allow_move is False
@@ -273,12 +291,13 @@ def test_readonly_imap_deployment_config_composes(
     policy = cfg.mail.account_access_profiles.alerts_readonly.services.imap
 
     assert cfg.server.host == "0.0.0.0"
-    assert account.smtp is None
-    assert account.imap.host == "imap.example.com"
-    assert account.imap.username == "user@example.com"
-    assert account.imap.password == "secret"
-    assert account.imap.default_folder == "TARGET_IMAP_FOLDER"
-    assert list(account.imap.folders) == ["TARGET_IMAP_FOLDER"]
+    assert account.description == "Read-only view of a selected alert folder."
+    assert cfg.services.smtp is None
+    assert cfg.services.imap.accounts.primary.host == "imap.example.com"
+    assert cfg.services.imap.accounts.primary.username == "user@example.com"
+    assert cfg.services.imap.accounts.primary.password == "secret"
+    assert cfg.services.imap.accounts.primary.default_folder == "TARGET_IMAP_FOLDER"
+    assert list(cfg.services.imap.accounts.primary.folders) == ["TARGET_IMAP_FOLDER"]
     assert policy.allow_read is True
     assert policy.allow_search is True
     assert policy.allow_move is False
@@ -293,7 +312,6 @@ def test_app_config_rejects_unknown_account_access_profile() -> None:
                     "primary": AccountConfig(
                         description="Primary account",
                         account_access_profile="missing",
-                        smtp=SMTPConfig(),
                     )
                 },
                 account_access_profiles={"bot": AccountAccessProfileConfig()},
@@ -465,18 +483,26 @@ def test_resolve_imap_flag_mode_returns_explicit_hidden_user_flag_mode() -> None
     assert resolve_imap_flag_mode(policy, "bot.followed_up") is IMAPFlagMode.hidden
 
 
-def test_app_config_rejects_account_without_any_protocols() -> None:
-    with pytest.raises(ValueError, match="must enable smtp, imap, or both"):
+def test_app_config_rejects_account_without_any_services() -> None:
+    with pytest.raises(ValueError, match="must configure at least one service"):
         AppConfig(
             mail=MailConfig(
                 accounts={
                     "primary": AccountConfig(
                         description="Primary account",
                         account_access_profile="bot",
-                    )
+                    ),
+                    "secondary": AccountConfig(
+                        description="Secondary account",
+                        account_access_profile="bot",
+                    ),
                 },
                 account_access_profiles={"bot": AccountAccessProfileConfig()},
-            )
+            ),
+            services=ServicesConfig(
+                smtp=SMTPServiceConfig(accounts={"secondary": SMTPConfig()}),
+                imap=None,
+            ),
         )
 
 
@@ -488,7 +514,6 @@ def test_app_config_accepts_smtp_only_account() -> None:
                     "primary": AccountConfig(
                         description="SMTP account",
                         account_access_profile="bot",
-                        smtp=SMTPConfig(),
                     )
                 },
                 account_access_profiles={"bot": AccountAccessProfileConfig()},
@@ -505,10 +530,6 @@ def test_app_config_accepts_imap_only_account() -> None:
                     "primary": AccountConfig(
                         description="IMAP account",
                         account_access_profile="bot",
-                        imap=IMAPConfig(
-                            default_folder="INBOX",
-                            folders={"INBOX": IMAPFolderConfig(description="Inbox")},
-                        ),
                     )
                 },
                 account_access_profiles={
@@ -518,7 +539,18 @@ def test_app_config_accepts_imap_only_account() -> None:
                         )
                     )
                 },
-            )
+            ),
+            services=ServicesConfig(
+                smtp=None,
+                imap=IMAPServiceConfig(
+                    accounts={
+                        "primary": IMAPConfig(
+                            default_folder="INBOX",
+                            folders={"INBOX": IMAPFolderConfig(description="Inbox")},
+                        )
+                    }
+                ),
+            ),
         )
     )
 
@@ -531,15 +563,21 @@ def test_app_config_accepts_account_with_both_protocols() -> None:
                     "primary": AccountConfig(
                         description="Full account",
                         account_access_profile="bot",
-                        smtp=SMTPConfig(),
-                        imap=IMAPConfig(
-                            default_folder="INBOX",
-                            folders={"INBOX": IMAPFolderConfig(description="Inbox")},
-                        ),
                     )
                 },
                 account_access_profiles={"bot": AccountAccessProfileConfig()},
-            )
+            ),
+            services=ServicesConfig(
+                smtp=SMTPServiceConfig(accounts={"primary": SMTPConfig()}),
+                imap=IMAPServiceConfig(
+                    accounts={
+                        "primary": IMAPConfig(
+                            default_folder="INBOX",
+                            folders={"INBOX": IMAPFolderConfig(description="Inbox")},
+                        )
+                    }
+                ),
+            ),
         )
     )
 
@@ -553,7 +591,6 @@ def test_app_config_rejects_smtp_account_without_smtp_service_policy() -> None:
                         "primary": AccountConfig(
                             description="SMTP account",
                             account_access_profile="bot",
-                            smtp=SMTPConfig(),
                         )
                     },
                     account_access_profiles={
@@ -563,7 +600,11 @@ def test_app_config_rejects_smtp_account_without_smtp_service_policy() -> None:
                             )
                         )
                     },
-                )
+                ),
+                services=ServicesConfig(
+                    smtp=SMTPServiceConfig(accounts={"primary": SMTPConfig()}),
+                    imap=None,
+                ),
             )
         )
 
@@ -576,7 +617,6 @@ def test_app_config_accepts_smtp_account_with_recipient_policy() -> None:
                     "primary": AccountConfig(
                         description="SMTP account",
                         account_access_profile="bot",
-                        smtp=SMTPConfig(),
                     )
                 },
                 account_access_profiles={
@@ -597,7 +637,11 @@ def test_app_config_accepts_smtp_account_with_recipient_policy() -> None:
                         )
                     )
                 },
-            )
+            ),
+            services=ServicesConfig(
+                smtp=SMTPServiceConfig(accounts={"primary": SMTPConfig()}),
+                imap=None,
+            ),
         )
     )
 
@@ -610,7 +654,6 @@ def test_app_config_accepts_implemented_smtp_rate_limit() -> None:
                     "primary": AccountConfig(
                         description="SMTP account",
                         account_access_profile="bot",
-                        smtp=SMTPConfig(),
                     )
                 },
                 account_access_profiles={
@@ -623,7 +666,11 @@ def test_app_config_accepts_implemented_smtp_rate_limit() -> None:
                         )
                     )
                 },
-            )
+            ),
+            services=ServicesConfig(
+                smtp=SMTPServiceConfig(accounts={"primary": SMTPConfig()}),
+                imap=None,
+            ),
         )
     )
 
@@ -640,7 +687,6 @@ def test_app_config_rejects_non_positive_smtp_rate_limit() -> None:
                         "primary": AccountConfig(
                             description="SMTP account",
                             account_access_profile="bot",
-                            smtp=SMTPConfig(),
                         )
                     },
                     account_access_profiles={
@@ -653,7 +699,11 @@ def test_app_config_rejects_non_positive_smtp_rate_limit() -> None:
                             )
                         )
                     },
-                )
+                ),
+                services=ServicesConfig(
+                    smtp=SMTPServiceConfig(accounts={"primary": SMTPConfig()}),
+                    imap=None,
+                ),
             )
         )
 
@@ -670,7 +720,6 @@ def test_app_config_rejects_unimplemented_smtp_idempotency_config() -> None:
                         "primary": AccountConfig(
                             description="SMTP account",
                             account_access_profile="bot",
-                            smtp=SMTPConfig(),
                         )
                     },
                     account_access_profiles={
@@ -683,6 +732,10 @@ def test_app_config_rejects_unimplemented_smtp_idempotency_config() -> None:
                             )
                         )
                     },
-                )
+                ),
+                services=ServicesConfig(
+                    smtp=SMTPServiceConfig(accounts={"primary": SMTPConfig()}),
+                    imap=None,
+                ),
             )
         )

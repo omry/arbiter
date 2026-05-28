@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from email.message import EmailMessage
 from email.utils import formataddr, make_msgid
 from time import monotonic
-from typing import Annotated, Callable, Protocol
+from typing import Annotated, Callable, Protocol, cast
 
 from pydantic import Field
 
@@ -12,9 +12,10 @@ from ..config import (
     AccountConfig,
     MailConfig,
     SMTPConfigLike,
+    SMTPServiceConfig,
     SMTPServicePolicyConfig,
 )
-from ..services import ServicePluginContext, ToolServer
+from ..services import ServicePluginContext, ServiceRuntimeContext, ToolServer
 
 
 @dataclass(frozen=True)
@@ -43,23 +44,28 @@ class SMTPRuntime:
     def __init__(
         self,
         mail_config: MailConfig,
+        service_config: SMTPServiceConfig,
         smtp_client_factory: SMTPClientFactory,
         time_provider: TimeProvider = monotonic,
     ) -> None:
         self._mail_config = mail_config
+        self._service_config = service_config
         self._smtp_client_factory = smtp_client_factory
         self._time_provider = time_provider
         self._attempt_timestamps: dict[str, list[float]] = {}
 
     def account_summary(
         self,
+        account_name: str,
         account: AccountConfig,
         smtp_policy: SMTPServicePolicyConfig | None,
     ) -> dict[str, object]:
+        smtp_enabled = account_name in self._service_config.accounts
         return {
-            "send": self._send_state(account),
+            "enabled": smtp_enabled,
+            "send": "allowed" if smtp_enabled else "unavailable",
             "require_confirmation": bool(
-                account.smtp is not None
+                smtp_enabled
                 and smtp_policy is not None
                 and smtp_policy.require_confirmation
             ),
@@ -127,7 +133,8 @@ class SMTPRuntime:
         if account is None:
             raise ValueError(f"send_email received an unknown account: {account_name}")
 
-        if account.smtp is None:
+        smtp_config = self._service_config.accounts.get(account_name)
+        if smtp_config is None:
             raise ValueError(
                 f"send_email requires an SMTP-enabled account: {account_name}"
             )
@@ -141,7 +148,7 @@ class SMTPRuntime:
                 f"send_email requires an SMTP service policy for account: {account_name}"
             )
 
-        return account.smtp, smtp_policy
+        return smtp_config, smtp_policy
 
     def _normalize_recipients(
         self,
@@ -163,11 +170,6 @@ class SMTPRuntime:
     def _sender_domain(self, smtp_config: SMTPConfigLike) -> str:
         _, _, domain = smtp_config.from_email.partition("@")
         return domain or "localhost"
-
-    def _send_state(self, account: AccountConfig) -> str:
-        if account.smtp is None:
-            return "unavailable"
-        return "allowed"
 
     def _enforce_policy(
         self,
@@ -318,6 +320,28 @@ HtmlBody = Annotated[
 
 class SMTPServicePlugin:
     name = "smtp"
+
+    def build_runtime(
+        self,
+        config: object,
+        context: ServiceRuntimeContext,
+    ) -> object:
+        from ..smtp import SMTPSubmissionClient
+
+        smtp_client_factory = cast(
+            SMTPClientFactory,
+            context.dependencies.get("smtp_client_factory", SMTPSubmissionClient),
+        )
+        time_provider = cast(
+            TimeProvider,
+            context.dependencies.get("time_provider", monotonic),
+        )
+        return SMTPRuntime(
+            cast(MailConfig, context.mail_config),
+            cast(SMTPServiceConfig, config),
+            smtp_client_factory=smtp_client_factory,
+            time_provider=time_provider,
+        )
 
     def register_tools(
         self,

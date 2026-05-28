@@ -13,7 +13,16 @@ import pytest
 import trustme
 
 from mail_sentry.app import MailSentryApp
-from mail_sentry.config import AccountConfig, MailConfig, MailTlsMode, SMTPConfig
+from mail_sentry.config import (
+    AccountConfig,
+    MailConfig,
+    MailTlsMode,
+    ServicesConfig,
+    SMTPConfig,
+    SMTPServiceConfig,
+)
+from mail_sentry.plugins.smtp import SMTPRuntime
+from mail_sentry.services import RuntimeRegistry
 from mail_sentry.smtp import SMTPSubmissionClient
 
 
@@ -96,17 +105,30 @@ def _smtp_config(
 
 
 def _build_app(smtp_config: SMTPConfig) -> MailSentryApp:
+    mail_config = MailConfig(
+        accounts={
+            "primary": AccountConfig(
+                description="Primary test account",
+                account_access_profile="bot",
+            )
+        }
+    )
+    services_config = ServicesConfig(
+        smtp=SMTPServiceConfig(accounts={"primary": smtp_config}),
+        imap=None,
+    )
+    assert services_config.smtp is not None
     return MailSentryApp(
-        MailConfig(
-            accounts={
-                "primary": AccountConfig(
-                    description="Primary test account",
-                    account_access_profile="bot",
-                    smtp=smtp_config,
+        mail_config,
+        RuntimeRegistry(
+            {
+                "smtp": SMTPRuntime(
+                    mail_config,
+                    services_config.smtp,
+                    smtp_client_factory=SMTPSubmissionClient,
                 )
             }
         ),
-        smtp_client_factory=SMTPSubmissionClient,
     )
 
 

@@ -33,20 +33,54 @@ mail:
     primary:
       description: Bot account for automated email tasks
       account_access_profile: bot
-      smtp:
-        host: ${oc.env:MAIL_SENTRY_BOT_SMTP_HOST}
-        port: ${oc.env:MAIL_SENTRY_BOT_SMTP_PORT,587}
+    personal:
+      description: Personal account
+      account_access_profile: personal
+
+etc:
+  bot_mailserver:
+    smtp_host: ${oc.env:MAIL_SENTRY_BOT_SMTP_HOST}
+    smtp_port: ${oc.env:MAIL_SENTRY_BOT_SMTP_PORT,587}
+    imap_host: ${oc.env:MAIL_SENTRY_BOT_IMAP_HOST}
+    imap_port: ${oc.env:MAIL_SENTRY_BOT_IMAP_PORT,993}
+    username: ${oc.env:MAIL_SENTRY_BOT_SMTP_USERNAME}
+    password: ${oc.env:MAIL_SENTRY_BOT_SMTP_PASSWORD}
+  personal_mailserver:
+    smtp_host: ${oc.env:MAIL_SENTRY_PERSONAL_SMTP_HOST}
+    smtp_port: ${oc.env:MAIL_SENTRY_PERSONAL_SMTP_PORT,587}
+    username: ${oc.env:MAIL_SENTRY_PERSONAL_SMTP_USERNAME}
+    password: ${oc.env:MAIL_SENTRY_PERSONAL_SMTP_PASSWORD}
+
+services:
+  smtp:
+    accounts:
+      primary:
+        host: ${etc.bot_mailserver.smtp_host}
+        port: ${etc.bot_mailserver.smtp_port}
         authenticate: ${oc.env:MAIL_SENTRY_BOT_SMTP_AUTHENTICATE,true}
-        username: ${oc.env:MAIL_SENTRY_BOT_SMTP_USERNAME}
-        password: ${oc.env:MAIL_SENTRY_BOT_SMTP_PASSWORD}
+        username: ${etc.bot_mailserver.username}
+        password: ${etc.bot_mailserver.password}
         from_email: ${oc.env:MAIL_SENTRY_BOT_SMTP_FROM_EMAIL}
         from_name: ${oc.env:MAIL_SENTRY_BOT_SMTP_FROM_NAME,Mail Sentry Bot}
         tls: ${oc.env:MAIL_SENTRY_BOT_SMTP_TLS,starttls}
         verify_peer: ${oc.env:MAIL_SENTRY_BOT_SMTP_VERIFY_PEER,true}
         timeout_seconds: ${oc.env:MAIL_SENTRY_BOT_SMTP_TIMEOUT_SECONDS,30.0}
-      imap:
-        host: ${oc.env:MAIL_SENTRY_BOT_IMAP_HOST}
-        port: ${oc.env:MAIL_SENTRY_BOT_IMAP_PORT,993}
+      personal:
+        host: ${etc.personal_mailserver.smtp_host}
+        port: ${etc.personal_mailserver.smtp_port}
+        authenticate: ${oc.env:MAIL_SENTRY_PERSONAL_SMTP_AUTHENTICATE,true}
+        username: ${etc.personal_mailserver.username}
+        password: ${etc.personal_mailserver.password}
+        from_email: ${oc.env:MAIL_SENTRY_PERSONAL_SMTP_FROM_EMAIL}
+        from_name: ${oc.env:MAIL_SENTRY_PERSONAL_SMTP_FROM_NAME,Omry}
+        tls: ${oc.env:MAIL_SENTRY_PERSONAL_SMTP_TLS,starttls}
+        verify_peer: ${oc.env:MAIL_SENTRY_PERSONAL_SMTP_VERIFY_PEER,true}
+        timeout_seconds: ${oc.env:MAIL_SENTRY_PERSONAL_SMTP_TIMEOUT_SECONDS,30.0}
+  imap:
+    accounts:
+      primary:
+        host: ${etc.bot_mailserver.imap_host}
+        port: ${etc.bot_mailserver.imap_port}
         username: ${oc.env:MAIL_SENTRY_BOT_IMAP_USERNAME}
         password: ${oc.env:MAIL_SENTRY_BOT_IMAP_PASSWORD}
         tls: ${oc.env:MAIL_SENTRY_BOT_IMAP_TLS,implicit}
@@ -56,18 +90,3 @@ mail:
         folders:
           INBOX:
             description: Bot inbox.
-
-    personal:
-      description: Personal account
-      account_access_profile: personal
-      smtp:
-        host: ${oc.env:MAIL_SENTRY_PERSONAL_SMTP_HOST}
-        port: ${oc.env:MAIL_SENTRY_PERSONAL_SMTP_PORT,587}
-        authenticate: ${oc.env:MAIL_SENTRY_PERSONAL_SMTP_AUTHENTICATE,true}
-        username: ${oc.env:MAIL_SENTRY_PERSONAL_SMTP_USERNAME}
-        password: ${oc.env:MAIL_SENTRY_PERSONAL_SMTP_PASSWORD}
-        from_email: ${oc.env:MAIL_SENTRY_PERSONAL_SMTP_FROM_EMAIL}
-        from_name: ${oc.env:MAIL_SENTRY_PERSONAL_SMTP_FROM_NAME,Omry}
-        tls: ${oc.env:MAIL_SENTRY_PERSONAL_SMTP_TLS,starttls}
-        verify_peer: ${oc.env:MAIL_SENTRY_PERSONAL_SMTP_VERIFY_PEER,true}
-        timeout_seconds: ${oc.env:MAIL_SENTRY_PERSONAL_SMTP_TIMEOUT_SECONDS,30.0}

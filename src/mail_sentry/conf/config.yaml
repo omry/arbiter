@@ -36,7 +36,11 @@ mail:
     primary:
       description: Bot-owned account for automated email tasks.
       account_access_profile: bot
-      smtp:
+
+services:
+  smtp:
+    accounts:
+      primary:
         host: localhost
         port: 587
         authenticate: false
@@ -47,3 +51,5 @@ mail:
         tls: starttls
         verify_peer: true
         timeout_seconds: 30.0
+
+etc: {}

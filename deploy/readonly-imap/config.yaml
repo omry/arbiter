@@ -39,12 +39,23 @@ mail:
     primary:
       description: Read-only view of a selected alert folder.
       account_access_profile: alerts_readonly
-      smtp: null
-      imap:
-        host: ${oc.env:MAIL_SENTRY_IMAP_HOST}
-        port: ${oc.env:MAIL_SENTRY_IMAP_PORT,993}
-        username: ${secret_file:${oc.env:MAIL_SENTRY_IMAP_USERNAME_FILE,/run/secrets/imap_username}}
-        password: ${secret_file:${oc.env:MAIL_SENTRY_IMAP_PASSWORD_FILE,/run/secrets/imap_password}}
+
+etc:
+  mailserver:
+    host: ${oc.env:MAIL_SENTRY_IMAP_HOST}
+    port: ${oc.env:MAIL_SENTRY_IMAP_PORT,993}
+    username: ${secret_file:${oc.env:MAIL_SENTRY_IMAP_USERNAME_FILE,/run/secrets/imap_username}}
+    password: ${secret_file:${oc.env:MAIL_SENTRY_IMAP_PASSWORD_FILE,/run/secrets/imap_password}}
+
+services:
+  smtp: null
+  imap:
+    accounts:
+      primary:
+        host: ${etc.mailserver.host}
+        port: ${etc.mailserver.port}
+        username: ${etc.mailserver.username}
+        password: ${etc.mailserver.password}
         tls: ${oc.env:MAIL_SENTRY_IMAP_TLS,implicit}
         verify_peer: ${oc.env:MAIL_SENTRY_IMAP_VERIFY_PEER,true}
         timeout_seconds: ${oc.env:MAIL_SENTRY_IMAP_TIMEOUT_SECONDS,30.0}

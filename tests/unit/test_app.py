@@ -11,15 +11,21 @@ from mail_sentry.config import (
     IMAPConfig,
     IMAPFlagMode,
     IMAPFolderConfig,
+    IMAPServiceConfig,
     IMAPSystemFlagsPolicyConfig,
     MailConfig,
+    ServicesConfig,
     SMTPConfigLike,
     SMTPConfig,
+    SMTPServiceConfig,
     SMTPLimitsConfig,
     SMTPRecipientPolicyConfig,
     SMTPServicePolicyConfig,
 )
 from mail_sentry.imap import FetchedIMAPMessage
+from mail_sentry.plugins.imap import IMAPClientFactory, IMAPRuntime
+from mail_sentry.plugins.smtp import SMTPClientFactory, SMTPRuntime, TimeProvider
+from mail_sentry.services import RuntimeRegistry
 
 
 class FakeSMTPClient:
@@ -130,21 +136,61 @@ class FakeClock:
         self.now += seconds
 
 
+def _services_config(
+    *,
+    smtp_accounts: dict[str, SMTPConfig] | None = None,
+    imap_accounts: dict[str, IMAPConfig] | None = None,
+) -> ServicesConfig:
+    return ServicesConfig(
+        smtp=(
+            SMTPServiceConfig(accounts=smtp_accounts)
+            if smtp_accounts is not None
+            else None
+        ),
+        imap=(
+            IMAPServiceConfig(accounts=imap_accounts)
+            if imap_accounts is not None
+            else None
+        ),
+    )
+
+
+def _app(
+    mail_config: MailConfig,
+    services_config: ServicesConfig,
+    *,
+    smtp_client_factory: SMTPClientFactory | None = None,
+    imap_client_factory: IMAPClientFactory | None = None,
+    time_provider: TimeProvider | None = None,
+) -> MailSentryApp:
+    runtimes: dict[str, object] = {}
+    if services_config.smtp is not None:
+        assert smtp_client_factory is not None
+        runtimes["smtp"] = SMTPRuntime(
+            mail_config,
+            services_config.smtp,
+            smtp_client_factory=smtp_client_factory,
+            **({"time_provider": time_provider} if time_provider is not None else {}),
+        )
+    if services_config.imap is not None:
+        runtimes["imap"] = IMAPRuntime(
+            mail_config,
+            services_config.imap,
+            imap_client_factory=imap_client_factory,
+        )
+    return MailSentryApp(mail_config, RuntimeRegistry(runtimes))
+
+
 def _mail_config() -> MailConfig:
     return MailConfig(
         accounts={
             "primary": AccountConfig(
                 description="Primary SMTP account",
                 account_access_profile="bot",
-                smtp=SMTPConfig(),
             ),
             "personal": AccountConfig(
                 description="Personal IMAP account",
                 account_access_profile="personal",
-                imap=IMAPConfig(
-                    default_folder="INBOX",
-                    folders={"INBOX": IMAPFolderConfig(description="Inbox")},
-                ),
             ),
         },
         account_access_profiles={
@@ -162,9 +208,23 @@ def _mail_config() -> MailConfig:
     )
 
 
+def _default_services_config() -> ServicesConfig:
+    return _services_config(
+        smtp_accounts={"primary": SMTPConfig()},
+        imap_accounts={
+            "personal": IMAPConfig(
+                default_folder="INBOX",
+                folders={"INBOX": IMAPFolderConfig(description="Inbox")},
+            )
+        },
+    )
+
+
 def test_tool_names_contains_list_accounts_and_send_email() -> None:
-    app = MailSentryApp(
-        _mail_config(), smtp_client_factory=lambda config: FakeSMTPClient()
+    app = _app(
+        _mail_config(),
+        _default_services_config(),
+        smtp_client_factory=lambda config: FakeSMTPClient(),
     )
 
     assert app.tool_names() == [
@@ -180,8 +240,10 @@ def test_tool_names_contains_list_accounts_and_send_email() -> None:
 
 
 def test_list_accounts_returns_normalized_account_summaries() -> None:
-    app = MailSentryApp(
-        _mail_config(), smtp_client_factory=lambda config: FakeSMTPClient()
+    app = _app(
+        _mail_config(),
+        _default_services_config(),
+        smtp_client_factory=lambda config: FakeSMTPClient(),
     )
 
     assert app.list_accounts() == [
@@ -189,24 +251,27 @@ def test_list_accounts_returns_normalized_account_summaries() -> None:
             "name": "personal",
             "description": "Personal IMAP account",
             "account_access_profile": "personal",
-            "smtp": {
-                "send": "unavailable",
-                "require_confirmation": False,
-            },
-            "imap": {
-                "enabled": True,
-                "confirmation_required": [],
-                "message": {
-                    "read_allowed": True,
-                    "move_allowed": False,
-                    "delete_allowed": False,
-                    "flags": {
-                        "seen": "read_only",
-                        "flagged": "read_only",
-                        "answered": "read_only",
-                        "deleted": "read_only",
-                        "draft": "read_only",
+            "services": {
+                "imap": {
+                    "enabled": True,
+                    "confirmation_required": [],
+                    "message": {
+                        "read_allowed": True,
+                        "move_allowed": False,
+                        "delete_allowed": False,
+                        "flags": {
+                            "seen": "read_only",
+                            "flagged": "read_only",
+                            "answered": "read_only",
+                            "deleted": "read_only",
+                            "draft": "read_only",
+                        },
                     },
+                },
+                "smtp": {
+                    "enabled": False,
+                    "send": "unavailable",
+                    "require_confirmation": False,
                 },
             },
         },
@@ -214,12 +279,15 @@ def test_list_accounts_returns_normalized_account_summaries() -> None:
             "name": "primary",
             "description": "Primary SMTP account",
             "account_access_profile": "bot",
-            "smtp": {
-                "send": "allowed",
-                "require_confirmation": False,
-            },
-            "imap": {
-                "enabled": False,
+            "services": {
+                "imap": {
+                    "enabled": False,
+                },
+                "smtp": {
+                    "enabled": True,
+                    "send": "allowed",
+                    "require_confirmation": False,
+                },
             },
         },
     ]
@@ -231,7 +299,6 @@ def test_list_accounts_reports_smtp_confirmation_requirement() -> None:
             "personal": AccountConfig(
                 description="Personal SMTP account",
                 account_access_profile="personal",
-                smtp=SMTPConfig(),
             )
         },
         account_access_profiles={
@@ -242,8 +309,10 @@ def test_list_accounts_reports_smtp_confirmation_requirement() -> None:
             )
         },
     )
-    app = MailSentryApp(
-        mail_config, smtp_client_factory=lambda config: FakeSMTPClient()
+    app = _app(
+        mail_config,
+        _services_config(smtp_accounts={"personal": SMTPConfig()}),
+        smtp_client_factory=lambda config: FakeSMTPClient(),
     )
 
     assert app.list_accounts() == [
@@ -251,12 +320,12 @@ def test_list_accounts_reports_smtp_confirmation_requirement() -> None:
             "name": "personal",
             "description": "Personal SMTP account",
             "account_access_profile": "personal",
-            "smtp": {
-                "send": "allowed",
-                "require_confirmation": True,
-            },
-            "imap": {
-                "enabled": False,
+            "services": {
+                "smtp": {
+                    "enabled": True,
+                    "send": "allowed",
+                    "require_confirmation": True,
+                },
             },
         }
     ]
@@ -268,18 +337,23 @@ def test_list_accounts_reports_writable_imap_account() -> None:
             "alerts": AccountConfig(
                 description="Alerts account",
                 account_access_profile="bot",
-                imap=IMAPConfig(
-                    default_folder="INBOX",
-                    folders={"INBOX": IMAPFolderConfig(description="Inbox")},
-                ),
             )
         },
         account_access_profiles={
             "bot": AccountAccessProfileConfig(),
         },
     )
-    app = MailSentryApp(
-        mail_config, smtp_client_factory=lambda config: FakeSMTPClient()
+    app = _app(
+        mail_config,
+        _services_config(
+            imap_accounts={
+                "alerts": IMAPConfig(
+                    default_folder="INBOX",
+                    folders={"INBOX": IMAPFolderConfig(description="Inbox")},
+                )
+            }
+        ),
+        imap_client_factory=RecordingIMAPClientFactory(),
     )
 
     assert app.list_accounts() == [
@@ -287,23 +361,21 @@ def test_list_accounts_reports_writable_imap_account() -> None:
             "name": "alerts",
             "description": "Alerts account",
             "account_access_profile": "bot",
-            "smtp": {
-                "send": "unavailable",
-                "require_confirmation": False,
-            },
-            "imap": {
-                "enabled": True,
-                "confirmation_required": [],
-                "message": {
-                    "read_allowed": True,
-                    "move_allowed": True,
-                    "delete_allowed": True,
-                    "flags": {
-                        "seen": "read_only",
-                        "flagged": "read_only",
-                        "answered": "read_only",
-                        "deleted": "read_only",
-                        "draft": "read_only",
+            "services": {
+                "imap": {
+                    "enabled": True,
+                    "confirmation_required": [],
+                    "message": {
+                        "read_allowed": True,
+                        "move_allowed": True,
+                        "delete_allowed": True,
+                        "flags": {
+                            "seen": "read_only",
+                            "flagged": "read_only",
+                            "answered": "read_only",
+                            "deleted": "read_only",
+                            "draft": "read_only",
+                        },
                     },
                 },
             },
@@ -317,19 +389,24 @@ def test_list_accounts_reports_account_with_both_protocols() -> None:
             "primary": AccountConfig(
                 description="Primary full account",
                 account_access_profile="bot",
-                smtp=SMTPConfig(),
-                imap=IMAPConfig(
-                    default_folder="INBOX",
-                    folders={"INBOX": IMAPFolderConfig(description="Inbox")},
-                ),
             )
         },
         account_access_profiles={
             "bot": AccountAccessProfileConfig(),
         },
     )
-    app = MailSentryApp(
-        mail_config, smtp_client_factory=lambda config: FakeSMTPClient()
+    app = _app(
+        mail_config,
+        _services_config(
+            smtp_accounts={"primary": SMTPConfig()},
+            imap_accounts={
+                "primary": IMAPConfig(
+                    default_folder="INBOX",
+                    folders={"INBOX": IMAPFolderConfig(description="Inbox")},
+                )
+            },
+        ),
+        smtp_client_factory=lambda config: FakeSMTPClient(),
     )
 
     assert app.list_accounts() == [
@@ -337,24 +414,27 @@ def test_list_accounts_reports_account_with_both_protocols() -> None:
             "name": "primary",
             "description": "Primary full account",
             "account_access_profile": "bot",
-            "smtp": {
-                "send": "allowed",
-                "require_confirmation": False,
-            },
-            "imap": {
-                "enabled": True,
-                "confirmation_required": [],
-                "message": {
-                    "read_allowed": True,
-                    "move_allowed": True,
-                    "delete_allowed": True,
-                    "flags": {
-                        "seen": "read_only",
-                        "flagged": "read_only",
-                        "answered": "read_only",
-                        "deleted": "read_only",
-                        "draft": "read_only",
+            "services": {
+                "imap": {
+                    "enabled": True,
+                    "confirmation_required": [],
+                    "message": {
+                        "read_allowed": True,
+                        "move_allowed": True,
+                        "delete_allowed": True,
+                        "flags": {
+                            "seen": "read_only",
+                            "flagged": "read_only",
+                            "answered": "read_only",
+                            "deleted": "read_only",
+                            "draft": "read_only",
+                        },
                     },
+                },
+                "smtp": {
+                    "enabled": True,
+                    "send": "allowed",
+                    "require_confirmation": False,
                 },
             },
         }
@@ -367,10 +447,6 @@ def test_list_accounts_reports_configured_user_flag_access() -> None:
             "personal": AccountConfig(
                 description="Personal account",
                 account_access_profile="personal",
-                imap=IMAPConfig(
-                    default_folder="INBOX",
-                    folders={"INBOX": IMAPFolderConfig(description="Inbox")},
-                ),
             )
         },
         account_access_profiles={
@@ -389,8 +465,17 @@ def test_list_accounts_reports_configured_user_flag_access() -> None:
             ),
         },
     )
-    app = MailSentryApp(
-        mail_config, smtp_client_factory=lambda config: FakeSMTPClient()
+    app = _app(
+        mail_config,
+        _services_config(
+            imap_accounts={
+                "personal": IMAPConfig(
+                    default_folder="INBOX",
+                    folders={"INBOX": IMAPFolderConfig(description="Inbox")},
+                )
+            }
+        ),
+        imap_client_factory=RecordingIMAPClientFactory(),
     )
 
     assert app.list_accounts() == [
@@ -398,26 +483,24 @@ def test_list_accounts_reports_configured_user_flag_access() -> None:
             "name": "personal",
             "description": "Personal account",
             "account_access_profile": "personal",
-            "smtp": {
-                "send": "unavailable",
-                "require_confirmation": False,
-            },
-            "imap": {
-                "enabled": True,
-                "confirmation_required": [],
-                "message": {
-                    "read_allowed": True,
-                    "move_allowed": False,
-                    "delete_allowed": False,
-                    "flags": {
-                        "seen": "read_only",
-                        "flagged": "read_only",
-                        "answered": "read_only",
-                        "deleted": "read_only",
-                        "draft": "read_only",
-                        "user": {
-                            "bot.followed_up": "read_write",
-                            "triaged": "read_only",
+            "services": {
+                "imap": {
+                    "enabled": True,
+                    "confirmation_required": [],
+                    "message": {
+                        "read_allowed": True,
+                        "move_allowed": False,
+                        "delete_allowed": False,
+                        "flags": {
+                            "seen": "read_only",
+                            "flagged": "read_only",
+                            "answered": "read_only",
+                            "deleted": "read_only",
+                            "draft": "read_only",
+                            "user": {
+                                "bot.followed_up": "read_write",
+                                "triaged": "read_only",
+                            },
                         },
                     },
                 },
@@ -432,10 +515,6 @@ def test_list_accounts_reports_all_system_flags() -> None:
             "personal": AccountConfig(
                 description="Personal account",
                 account_access_profile="personal",
-                imap=IMAPConfig(
-                    default_folder="INBOX",
-                    folders={"INBOX": IMAPFolderConfig(description="Inbox")},
-                ),
             )
         },
         account_access_profiles={
@@ -454,8 +533,17 @@ def test_list_accounts_reports_all_system_flags() -> None:
             ),
         },
     )
-    app = MailSentryApp(
-        mail_config, smtp_client_factory=lambda config: FakeSMTPClient()
+    app = _app(
+        mail_config,
+        _services_config(
+            imap_accounts={
+                "personal": IMAPConfig(
+                    default_folder="INBOX",
+                    folders={"INBOX": IMAPFolderConfig(description="Inbox")},
+                )
+            }
+        ),
+        imap_client_factory=RecordingIMAPClientFactory(),
     )
 
     assert app.list_accounts() == [
@@ -463,23 +551,21 @@ def test_list_accounts_reports_all_system_flags() -> None:
             "name": "personal",
             "description": "Personal account",
             "account_access_profile": "personal",
-            "smtp": {
-                "send": "unavailable",
-                "require_confirmation": False,
-            },
-            "imap": {
-                "enabled": True,
-                "confirmation_required": [],
-                "message": {
-                    "read_allowed": True,
-                    "move_allowed": False,
-                    "delete_allowed": False,
-                    "flags": {
-                        "seen": "read_write",
-                        "flagged": "read_write",
-                        "answered": "read_only",
-                        "deleted": "hidden",
-                        "draft": "read_only",
+            "services": {
+                "imap": {
+                    "enabled": True,
+                    "confirmation_required": [],
+                    "message": {
+                        "read_allowed": True,
+                        "move_allowed": False,
+                        "delete_allowed": False,
+                        "flags": {
+                            "seen": "read_write",
+                            "flagged": "read_write",
+                            "answered": "read_only",
+                            "deleted": "hidden",
+                            "draft": "read_only",
+                        },
                     },
                 },
             },
@@ -493,7 +579,6 @@ def test_list_accounts_reports_smtp_account_without_confirmation() -> None:
             "secondary": AccountConfig(
                 description="Secondary SMTP account",
                 account_access_profile="personal",
-                smtp=SMTPConfig(),
             )
         },
         account_access_profiles={
@@ -504,8 +589,10 @@ def test_list_accounts_reports_smtp_account_without_confirmation() -> None:
             ),
         },
     )
-    app = MailSentryApp(
-        mail_config, smtp_client_factory=lambda config: FakeSMTPClient()
+    app = _app(
+        mail_config,
+        _services_config(smtp_accounts={"secondary": SMTPConfig()}),
+        smtp_client_factory=lambda config: FakeSMTPClient(),
     )
 
     assert app.list_accounts() == [
@@ -513,12 +600,12 @@ def test_list_accounts_reports_smtp_account_without_confirmation() -> None:
             "name": "secondary",
             "description": "Secondary SMTP account",
             "account_access_profile": "personal",
-            "smtp": {
-                "send": "allowed",
-                "require_confirmation": False,
-            },
-            "imap": {
-                "enabled": False,
+            "services": {
+                "smtp": {
+                    "enabled": True,
+                    "send": "allowed",
+                    "require_confirmation": False,
+                },
             },
         }
     ]
@@ -526,8 +613,9 @@ def test_list_accounts_reports_smtp_account_without_confirmation() -> None:
 
 def test_send_email_submits_message_and_excludes_bcc_header() -> None:
     smtp_factory = RecordingSMTPClientFactory()
-    app = MailSentryApp(
+    app = _app(
         _mail_config(),
+        _default_services_config(),
         smtp_client_factory=smtp_factory,
     )
 
@@ -561,8 +649,10 @@ def test_send_email_submits_message_and_excludes_bcc_header() -> None:
 
 
 def test_send_email_requires_body_content() -> None:
-    app = MailSentryApp(
-        _mail_config(), smtp_client_factory=lambda config: FakeSMTPClient()
+    app = _app(
+        _mail_config(),
+        _default_services_config(),
+        smtp_client_factory=lambda config: FakeSMTPClient(),
     )
 
     with pytest.raises(ValueError, match="text_body or html_body"):
@@ -575,8 +665,9 @@ def test_send_email_requires_body_content() -> None:
 
 def test_send_email_supports_html_only_body() -> None:
     smtp_factory = RecordingSMTPClientFactory()
-    app = MailSentryApp(
+    app = _app(
         _mail_config(),
+        _default_services_config(),
         smtp_client_factory=smtp_factory,
     )
 
@@ -601,18 +692,22 @@ def test_send_email_preserves_non_ascii_subject_and_display_name() -> None:
             "primary": AccountConfig(
                 description="Primary SMTP account",
                 account_access_profile="bot",
-                smtp=SMTPConfig(
-                    from_email="agent@example.com",
-                    from_name="Jöhn Döe",
-                ),
             ),
         },
         account_access_profiles={
             "bot": AccountAccessProfileConfig(),
         },
     )
-    app = MailSentryApp(
+    app = _app(
         mail_config,
+        _services_config(
+            smtp_accounts={
+                "primary": SMTPConfig(
+                    from_email="agent@example.com",
+                    from_name="Jöhn Döe",
+                )
+            }
+        ),
         smtp_client_factory=smtp_factory,
     )
 
@@ -630,8 +725,10 @@ def test_send_email_preserves_non_ascii_subject_and_display_name() -> None:
 
 
 def test_send_email_rejects_unknown_account() -> None:
-    app = MailSentryApp(
-        _mail_config(), smtp_client_factory=lambda config: FakeSMTPClient()
+    app = _app(
+        _mail_config(),
+        _default_services_config(),
+        smtp_client_factory=lambda config: FakeSMTPClient(),
     )
 
     with pytest.raises(ValueError, match="unknown account: missing"):
@@ -644,8 +741,10 @@ def test_send_email_rejects_unknown_account() -> None:
 
 
 def test_send_email_rejects_imap_only_account() -> None:
-    app = MailSentryApp(
-        _mail_config(), smtp_client_factory=lambda config: FakeSMTPClient()
+    app = _app(
+        _mail_config(),
+        _default_services_config(),
+        smtp_client_factory=lambda config: FakeSMTPClient(),
     )
 
     with pytest.raises(ValueError, match="SMTP-enabled account: personal"):
@@ -663,7 +762,6 @@ def test_send_email_rejects_recipient_blocked_by_exact_address_policy() -> None:
             "primary": AccountConfig(
                 description="Primary SMTP account",
                 account_access_profile="bot",
-                smtp=SMTPConfig(),
             )
         },
         account_access_profiles={
@@ -678,8 +776,10 @@ def test_send_email_rejects_recipient_blocked_by_exact_address_policy() -> None:
             )
         },
     )
-    app = MailSentryApp(
-        mail_config, smtp_client_factory=lambda config: FakeSMTPClient()
+    app = _app(
+        mail_config,
+        _services_config(smtp_accounts={"primary": SMTPConfig()}),
+        smtp_client_factory=lambda config: FakeSMTPClient(),
     )
 
     with pytest.raises(ValueError, match="blocked by exact address policy"):
@@ -697,7 +797,6 @@ def test_send_email_rejects_recipient_outside_allowlist() -> None:
             "primary": AccountConfig(
                 description="Primary SMTP account",
                 account_access_profile="bot",
-                smtp=SMTPConfig(),
             )
         },
         account_access_profiles={
@@ -712,8 +811,10 @@ def test_send_email_rejects_recipient_outside_allowlist() -> None:
             )
         },
     )
-    app = MailSentryApp(
-        mail_config, smtp_client_factory=lambda config: FakeSMTPClient()
+    app = _app(
+        mail_config,
+        _services_config(smtp_accounts={"primary": SMTPConfig()}),
+        smtp_client_factory=lambda config: FakeSMTPClient(),
     )
 
     with pytest.raises(ValueError, match="recipient is not allowed by policy"):
@@ -731,7 +832,6 @@ def test_send_email_rejects_recipient_count_over_policy_limit() -> None:
             "primary": AccountConfig(
                 description="Primary SMTP account",
                 account_access_profile="bot",
-                smtp=SMTPConfig(),
             )
         },
         account_access_profiles={
@@ -744,8 +844,10 @@ def test_send_email_rejects_recipient_count_over_policy_limit() -> None:
             )
         },
     )
-    app = MailSentryApp(
-        mail_config, smtp_client_factory=lambda config: FakeSMTPClient()
+    app = _app(
+        mail_config,
+        _services_config(smtp_accounts={"primary": SMTPConfig()}),
+        smtp_client_factory=lambda config: FakeSMTPClient(),
     )
 
     with pytest.raises(ValueError, match="max_recipients_per_message"):
@@ -764,7 +866,6 @@ def test_send_email_rejects_rate_limit_exceeded() -> None:
             "primary": AccountConfig(
                 description="Primary SMTP account",
                 account_access_profile="bot",
-                smtp=SMTPConfig(),
             )
         },
         account_access_profiles={
@@ -777,8 +878,9 @@ def test_send_email_rejects_rate_limit_exceeded() -> None:
             )
         },
     )
-    app = MailSentryApp(
+    app = _app(
         mail_config,
+        _services_config(smtp_accounts={"primary": SMTPConfig()}),
         smtp_client_factory=lambda config: FakeSMTPClient(),
         time_provider=clock,
     )
@@ -806,7 +908,6 @@ def test_send_email_allows_rate_limited_account_after_window_expires() -> None:
             "primary": AccountConfig(
                 description="Primary SMTP account",
                 account_access_profile="bot",
-                smtp=SMTPConfig(),
             )
         },
         account_access_profiles={
@@ -819,8 +920,9 @@ def test_send_email_allows_rate_limited_account_after_window_expires() -> None:
             )
         },
     )
-    app = MailSentryApp(
+    app = _app(
         mail_config,
+        _services_config(smtp_accounts={"primary": SMTPConfig()}),
         smtp_client_factory=lambda config: FakeSMTPClient(),
         time_provider=clock,
     )
@@ -849,25 +951,32 @@ def test_send_email_uses_selected_account_smtp_config() -> None:
             "primary": AccountConfig(
                 description="Primary SMTP account",
                 account_access_profile="bot",
-                smtp=SMTPConfig(
-                    from_email="agent@example.com",
-                    from_name="Primary Sender",
-                ),
             ),
             "alerts": AccountConfig(
                 description="Alerts SMTP account",
                 account_access_profile="bot",
-                smtp=SMTPConfig(
-                    from_email="alerts@example.com",
-                    from_name="Alerts Sender",
-                ),
             ),
         },
         account_access_profiles={
             "bot": AccountAccessProfileConfig(),
         },
     )
-    app = MailSentryApp(mail_config, smtp_client_factory=smtp_factory)
+    app = _app(
+        mail_config,
+        _services_config(
+            smtp_accounts={
+                "primary": SMTPConfig(
+                    from_email="agent@example.com",
+                    from_name="Primary Sender",
+                ),
+                "alerts": SMTPConfig(
+                    from_email="alerts@example.com",
+                    from_name="Alerts Sender",
+                ),
+            }
+        ),
+        smtp_client_factory=smtp_factory,
+    )
 
     app.send_email(
         account="alerts",
@@ -890,10 +999,6 @@ def test_list_messages_uses_default_folder_and_filters_hidden_flags() -> None:
             "personal": AccountConfig(
                 description="Personal IMAP account",
                 account_access_profile="personal",
-                imap=IMAPConfig(
-                    default_folder="INBOX",
-                    folders={"INBOX": IMAPFolderConfig(description="Inbox")},
-                ),
             )
         },
         account_access_profiles={
@@ -909,9 +1014,16 @@ def test_list_messages_uses_default_folder_and_filters_hidden_flags() -> None:
             )
         },
     )
-    app = MailSentryApp(
+    app = _app(
         mail_config,
-        smtp_client_factory=lambda config: FakeSMTPClient(),
+        _services_config(
+            imap_accounts={
+                "personal": IMAPConfig(
+                    default_folder="INBOX",
+                    folders={"INBOX": IMAPFolderConfig(description="Inbox")},
+                )
+            }
+        ),
         imap_client_factory=imap_factory,
     )
 
@@ -940,8 +1052,9 @@ def test_list_messages_uses_default_folder_and_filters_hidden_flags() -> None:
 
 def test_get_message_includes_bodies() -> None:
     imap_factory = RecordingIMAPClientFactory()
-    app = MailSentryApp(
+    app = _app(
         _mail_config(),
+        _default_services_config(),
         smtp_client_factory=lambda config: FakeSMTPClient(),
         imap_client_factory=imap_factory,
     )
@@ -961,10 +1074,6 @@ def test_search_messages_requires_search_policy() -> None:
             "personal": AccountConfig(
                 description="Personal IMAP account",
                 account_access_profile="personal",
-                imap=IMAPConfig(
-                    default_folder="INBOX",
-                    folders={"INBOX": IMAPFolderConfig(description="Inbox")},
-                ),
             )
         },
         account_access_profiles={
@@ -980,9 +1089,16 @@ def test_search_messages_requires_search_policy() -> None:
             )
         },
     )
-    app = MailSentryApp(
+    app = _app(
         mail_config,
-        smtp_client_factory=lambda config: FakeSMTPClient(),
+        _services_config(
+            imap_accounts={
+                "personal": IMAPConfig(
+                    default_folder="INBOX",
+                    folders={"INBOX": IMAPFolderConfig(description="Inbox")},
+                )
+            }
+        ),
         imap_client_factory=RecordingIMAPClientFactory(),
     )
 
@@ -997,17 +1113,20 @@ def test_move_message_requires_configured_destination_folder() -> None:
             "bot": AccountConfig(
                 description="Bot IMAP account",
                 account_access_profile="bot",
-                imap=IMAPConfig(
-                    default_folder="INBOX",
-                    folders={"INBOX": IMAPFolderConfig(description="Inbox")},
-                ),
             )
         },
         account_access_profiles={"bot": AccountAccessProfileConfig()},
     )
-    app = MailSentryApp(
+    app = _app(
         mail_config,
-        smtp_client_factory=lambda config: FakeSMTPClient(),
+        _services_config(
+            imap_accounts={
+                "bot": IMAPConfig(
+                    default_folder="INBOX",
+                    folders={"INBOX": IMAPFolderConfig(description="Inbox")},
+                )
+            }
+        ),
         imap_client_factory=imap_factory,
     )
 
@@ -1027,20 +1146,23 @@ def test_move_message_calls_imap_client_when_policy_allows() -> None:
             "bot": AccountConfig(
                 description="Bot IMAP account",
                 account_access_profile="bot",
-                imap=IMAPConfig(
+            )
+        },
+        account_access_profiles={"bot": AccountAccessProfileConfig()},
+    )
+    app = _app(
+        mail_config,
+        _services_config(
+            imap_accounts={
+                "bot": IMAPConfig(
                     default_folder="INBOX",
                     folders={
                         "INBOX": IMAPFolderConfig(description="Inbox"),
                         "Archive": IMAPFolderConfig(description="Archive"),
                     },
-                ),
-            )
-        },
-        account_access_profiles={"bot": AccountAccessProfileConfig()},
-    )
-    app = MailSentryApp(
-        mail_config,
-        smtp_client_factory=lambda config: FakeSMTPClient(),
+                )
+            }
+        ),
         imap_client_factory=imap_factory,
     )
 
@@ -1067,8 +1189,9 @@ def test_move_message_calls_imap_client_when_policy_allows() -> None:
 
 
 def test_mark_message_read_requires_seen_read_write_policy() -> None:
-    app = MailSentryApp(
+    app = _app(
         _mail_config(),
+        _default_services_config(),
         smtp_client_factory=lambda config: FakeSMTPClient(),
         imap_client_factory=RecordingIMAPClientFactory(),
     )
@@ -1084,10 +1207,6 @@ def test_mark_message_read_calls_imap_client_when_seen_flag_is_writable() -> Non
             "bot": AccountConfig(
                 description="Bot IMAP account",
                 account_access_profile="bot",
-                imap=IMAPConfig(
-                    default_folder="INBOX",
-                    folders={"INBOX": IMAPFolderConfig(description="Inbox")},
-                ),
             )
         },
         account_access_profiles={
@@ -1102,9 +1221,16 @@ def test_mark_message_read_calls_imap_client_when_seen_flag_is_writable() -> Non
             )
         },
     )
-    app = MailSentryApp(
+    app = _app(
         mail_config,
-        smtp_client_factory=lambda config: FakeSMTPClient(),
+        _services_config(
+            imap_accounts={
+                "bot": IMAPConfig(
+                    default_folder="INBOX",
+                    folders={"INBOX": IMAPFolderConfig(description="Inbox")},
+                )
+            }
+        ),
         imap_client_factory=imap_factory,
     )
 
@@ -1125,8 +1251,9 @@ def test_mark_message_read_calls_imap_client_when_seen_flag_is_writable() -> Non
 
 
 def test_delete_message_requires_delete_policy() -> None:
-    app = MailSentryApp(
+    app = _app(
         _mail_config(),
+        _default_services_config(),
         smtp_client_factory=lambda config: FakeSMTPClient(),
         imap_client_factory=RecordingIMAPClientFactory(),
     )
@@ -1136,8 +1263,9 @@ def test_delete_message_requires_delete_policy() -> None:
 
 
 def test_list_messages_rejects_unknown_imap_folder() -> None:
-    app = MailSentryApp(
+    app = _app(
         _mail_config(),
+        _default_services_config(),
         smtp_client_factory=lambda config: FakeSMTPClient(),
         imap_client_factory=RecordingIMAPClientFactory(),
     )

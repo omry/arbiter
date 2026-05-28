@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from time import monotonic
-
 from .config import MailConfig
-from .plugins.imap import IMAPClientFactory, IMAPRuntime
-from .plugins.smtp import SendEmailResult, SMTPClientFactory, SMTPRuntime, TimeProvider
+from .plugins.imap import IMAPRuntime
+from .plugins.smtp import SendEmailResult, SMTPRuntime
 from .services import RuntimeRegistry
 
 
@@ -14,38 +12,27 @@ class MailSentryApp:
     def __init__(
         self,
         mail_config: MailConfig,
-        smtp_client_factory: SMTPClientFactory,
-        imap_client_factory: IMAPClientFactory | None = None,
-        time_provider: TimeProvider = monotonic,
+        runtime_registry: RuntimeRegistry,
     ) -> None:
         self._mail_config = mail_config
-        self.smtp = SMTPRuntime(
-            mail_config,
-            smtp_client_factory=smtp_client_factory,
-            time_provider=time_provider,
-        )
-        self.imap = IMAPRuntime(
-            mail_config,
-            imap_client_factory=imap_client_factory,
-        )
-        self.runtime_registry = RuntimeRegistry(
-            {
-                self.smtp.service_name: self.smtp,
-                self.imap.service_name: self.imap,
-            }
-        )
+        self.runtime_registry = runtime_registry
 
     def tool_names(self) -> list[str]:
-        return [
-            "list_accounts",
-            "send_email",
-            "list_messages",
-            "get_message",
-            "search_messages",
-            "move_message",
-            "mark_message_read",
-            "delete_message",
-        ]
+        names = ["list_accounts"]
+        if "smtp" in self.runtime_registry.keys():
+            names.append("send_email")
+        if "imap" in self.runtime_registry.keys():
+            names.extend(
+                [
+                    "list_messages",
+                    "get_message",
+                    "search_messages",
+                    "move_message",
+                    "mark_message_read",
+                    "delete_message",
+                ]
+            )
+        return names
 
     def list_accounts(self) -> list[dict[str, object]]:
         summaries: list[dict[str, object]] = []
@@ -58,9 +45,23 @@ class MailSentryApp:
                 "name": account_name,
                 "description": account.description,
                 "account_access_profile": account.account_access_profile,
-                "smtp": self.smtp.account_summary(account, profile.services.smtp),
-                "imap": self.imap.account_summary(account, profile.services.imap),
+                "services": {},
             }
+            services = summary["services"]
+            assert isinstance(services, dict)
+            for service_name, runtime in sorted(self.runtime_registry.items()):
+                if service_name == "smtp":
+                    services[service_name] = self._smtp_runtime().account_summary(
+                        account_name,
+                        account,
+                        profile.services.smtp,
+                    )
+                elif service_name == "imap":
+                    services[service_name] = self._imap_runtime().account_summary(
+                        account_name,
+                        account,
+                        profile.services.imap,
+                    )
             summaries.append(summary)
         return summaries
 
@@ -74,7 +75,7 @@ class MailSentryApp:
         cc: list[str] | None = None,
         bcc: list[str] | None = None,
     ) -> SendEmailResult:
-        return self.smtp.send_email(
+        return self._smtp_runtime().send_email(
             account=account,
             to=to,
             subject=subject,
@@ -90,7 +91,11 @@ class MailSentryApp:
         folder: str | None = None,
         limit: int = 20,
     ) -> dict[str, object]:
-        return self.imap.list_messages(account=account, folder=folder, limit=limit)
+        return self._imap_runtime().list_messages(
+            account=account,
+            folder=folder,
+            limit=limit,
+        )
 
     def get_message(
         self,
@@ -98,7 +103,7 @@ class MailSentryApp:
         message_id: str,
         folder: str | None = None,
     ) -> dict[str, object]:
-        return self.imap.get_message(
+        return self._imap_runtime().get_message(
             account=account,
             message_id=message_id,
             folder=folder,
@@ -111,7 +116,7 @@ class MailSentryApp:
         folder: str | None = None,
         limit: int = 20,
     ) -> dict[str, object]:
-        return self.imap.search_messages(
+        return self._imap_runtime().search_messages(
             account=account,
             query=query,
             folder=folder,
@@ -125,7 +130,7 @@ class MailSentryApp:
         destination_folder: str,
         folder: str | None = None,
     ) -> dict[str, object]:
-        return self.imap.move_message(
+        return self._imap_runtime().move_message(
             account=account,
             message_id=message_id,
             destination_folder=destination_folder,
@@ -139,7 +144,7 @@ class MailSentryApp:
         folder: str | None = None,
         read: bool = True,
     ) -> dict[str, object]:
-        return self.imap.mark_message_read(
+        return self._imap_runtime().mark_message_read(
             account=account,
             message_id=message_id,
             folder=folder,
@@ -152,8 +157,14 @@ class MailSentryApp:
         message_id: str,
         folder: str | None = None,
     ) -> dict[str, object]:
-        return self.imap.delete_message(
+        return self._imap_runtime().delete_message(
             account=account,
             message_id=message_id,
             folder=folder,
         )
+
+    def _smtp_runtime(self) -> SMTPRuntime:
+        return self.runtime_registry.require("smtp", SMTPRuntime)
+
+    def _imap_runtime(self) -> IMAPRuntime:
+        return self.runtime_registry.require("imap", IMAPRuntime)

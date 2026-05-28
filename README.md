@@ -112,9 +112,20 @@ mail:
     primary:
       description: Local bot mailbox.
       account_access_profile: bot
-      smtp:
-        host: ${oc.env:MAIL_SENTRY_SMTP_HOST}
-        port: ${oc.env:MAIL_SENTRY_SMTP_PORT,587}
+
+etc:
+  mailserver:
+    smtp_host: ${oc.env:MAIL_SENTRY_SMTP_HOST}
+    smtp_port: ${oc.env:MAIL_SENTRY_SMTP_PORT,587}
+    imap_host: ${oc.env:MAIL_SENTRY_IMAP_HOST}
+    imap_port: ${oc.env:MAIL_SENTRY_IMAP_PORT,993}
+
+services:
+  smtp:
+    accounts:
+      primary:
+        host: ${etc.mailserver.smtp_host}
+        port: ${etc.mailserver.smtp_port}
         authenticate: true
         username: ${oc.env:MAIL_SENTRY_SMTP_USERNAME}
         password: ${oc.env:MAIL_SENTRY_SMTP_PASSWORD}
@@ -122,9 +133,11 @@ mail:
         from_name: ${oc.env:MAIL_SENTRY_SMTP_FROM_NAME,Mail Sentry}
         tls: ${oc.env:MAIL_SENTRY_SMTP_TLS,starttls}
         verify_peer: ${oc.env:MAIL_SENTRY_SMTP_VERIFY_PEER,true}
-      imap:
-        host: ${oc.env:MAIL_SENTRY_IMAP_HOST}
-        port: ${oc.env:MAIL_SENTRY_IMAP_PORT,993}
+  imap:
+    accounts:
+      primary:
+        host: ${etc.mailserver.imap_host}
+        port: ${etc.mailserver.imap_port}
         username: ${oc.env:MAIL_SENTRY_IMAP_USERNAME}
         password: ${oc.env:MAIL_SENTRY_IMAP_PASSWORD}
         tls: ${oc.env:MAIL_SENTRY_IMAP_TLS,implicit}

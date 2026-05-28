@@ -36,26 +36,14 @@ This file is the day-to-day queue for design and implementation gaps.
 
 ## Now
 
-- [ ] `P1` Introduce the `services.*` config shape and config-driven activation.
-      SMTP and IMAP now register through entry points and own service-specific
-      runtime objects. The next step is to move from the current mail-shaped
-      config root toward plugin-owned service config nodes, with config
-      presence activating each service.
-      Acceptance checks: the config schema has a first pass at `services.smtp`
-      and `services.imap`; plugin activation is derived from configured service
-      nodes instead of loading every installed service; shared operator-owned
-      interpolation space is represented as `etc`; docs and tests reflect the
-      new shape; and tests plus lint pass.
-
-## Post-v1
-
 - [ ] `P1` Prepare release packaging and version readiness.
-      The v1 contract is now clearer, but the package/release surface still
-      needs one explicit readiness pass before initial release. This is paused
-      until the plugin architecture reroute settles.
+      The service plugin/config reroute is in place, so the package/release
+      surface needs one explicit readiness pass before initial release.
       Acceptance checks: the intended version target is chosen; package
       metadata and install-target docs agree; release notes and status notes
       are current; and a build/install smoke path is verified.
+
+## Post-v1
 
 - [ ] `P2` Decide whether shared policy profiles should remain the long-term
       home for access gates and caller confirmation.

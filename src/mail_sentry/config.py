@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from enum import Enum
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol, cast
 
 from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
@@ -81,6 +81,15 @@ class SMTPConfig:
         validate_smtp_config(self)
 
 
+def _default_smtp_accounts() -> dict[str, SMTPConfig]:
+    return {"primary": SMTPConfig()}
+
+
+@dataclass
+class SMTPServiceConfig:
+    accounts: dict[str, SMTPConfig] = field(default_factory=_default_smtp_accounts)
+
+
 @dataclass
 class IMAPFolderConfig:
     description: str = ""
@@ -101,6 +110,11 @@ class IMAPConfig:
     def __post_init__(self) -> None:
         self.tls = _coerce_tls_mode(self.tls, "imap config tls")
         validate_imap_config(self)
+
+
+@dataclass
+class IMAPServiceConfig:
+    accounts: dict[str, IMAPConfig] = field(default_factory=dict)
 
 
 @dataclass
@@ -185,8 +199,6 @@ class AccountAccessProfileConfig:
 class AccountConfig:
     description: str = ""
     account_access_profile: str = "bot"
-    smtp: SMTPConfig | None = None
-    imap: IMAPConfig | None = None
 
 
 def _default_accounts() -> dict[str, AccountConfig]:
@@ -194,7 +206,6 @@ def _default_accounts() -> dict[str, AccountConfig]:
         "primary": AccountConfig(
             description="Bot-owned account for automated email tasks.",
             account_access_profile="bot",
-            smtp=SMTPConfig(),
         )
     }
 
@@ -212,9 +223,17 @@ class MailConfig:
 
 
 @dataclass
+class ServicesConfig:
+    smtp: SMTPServiceConfig | None = field(default_factory=SMTPServiceConfig)
+    imap: IMAPServiceConfig | None = None
+
+
+@dataclass
 class AppConfig:
     server: ServerConfig = field(default_factory=ServerConfig)
     mail: MailConfig = field(default_factory=MailConfig)
+    services: ServicesConfig = field(default_factory=ServicesConfig)
+    etc: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         validate_app_config(self)
@@ -258,8 +277,6 @@ class IMAPConfigLike(Protocol):
 class AccountConfigLike(Protocol):
     description: str
     account_access_profile: str
-    smtp: SMTPConfigLike | None
-    imap: IMAPConfigLike | None
 
 
 class AccountAccessProfileConfigLike(Protocol):
@@ -308,9 +325,24 @@ class MailConfigLike(Protocol):
     account_access_profiles: Mapping[str, AccountAccessProfileConfigLike]
 
 
+class SMTPServiceConfigLike(Protocol):
+    accounts: Mapping[str, SMTPConfigLike]
+
+
+class IMAPServiceConfigLike(Protocol):
+    accounts: Mapping[str, IMAPConfigLike]
+
+
+class ServicesConfigLike(Protocol):
+    smtp: SMTPServiceConfigLike | None
+    imap: IMAPServiceConfigLike | None
+
+
 class AppConfigLike(Protocol):
     server: ServerConfigLike
     mail: MailConfigLike
+    services: ServicesConfigLike
+    etc: Mapping[str, Any]
 
 
 SYSTEM_FLAG_NAME_MAP = {
@@ -529,6 +561,45 @@ def resolve_imap_flag_mode(
     return policy.user_flags.get(flag_name, IMAPFlagMode.hidden)
 
 
+def configured_service_names(services: Any) -> list[str]:
+    configured: list[str] = []
+    for service_field in fields(ServicesConfig):
+        if getattr(services, service_field.name) is not None:
+            configured.append(service_field.name)
+    return configured
+
+
+def service_config_for(
+    services: Any,
+    service_name: str,
+) -> object | None:
+    if service_name not in {field.name for field in fields(ServicesConfig)}:
+        return None
+    return cast(object | None, getattr(services, service_name))
+
+
+def _validate_smtp_service_config(config: SMTPServiceConfig) -> None:
+    for account in config.accounts.values():
+        validate_smtp_config(account)
+
+
+def _validate_imap_service_config(config: IMAPServiceConfig) -> None:
+    for account in config.accounts.values():
+        validate_imap_config(account)
+
+
+def _configured_account_services(
+    services: ServicesConfig,
+    account_name: str,
+) -> set[str]:
+    configured: set[str] = set()
+    if services.smtp is not None and account_name in services.smtp.accounts:
+        configured.add("smtp")
+    if services.imap is not None and account_name in services.imap.accounts:
+        configured.add("imap")
+    return configured
+
+
 def validate_app_config(config: AppConfig) -> None:
     if not config.mail.accounts:
         raise ValueError("mail config requires at least one account")
@@ -536,8 +607,30 @@ def validate_app_config(config: AppConfig) -> None:
     if not config.mail.account_access_profiles:
         raise ValueError("mail config requires at least one account access profile")
 
+    if not configured_service_names(config.services):
+        raise ValueError("services config requires at least one configured service")
+
+    if config.services.smtp is not None:
+        _validate_smtp_service_config(config.services.smtp)
+
+    if config.services.imap is not None:
+        _validate_imap_service_config(config.services.imap)
+
     for profile in config.mail.account_access_profiles.values():
         validate_account_access_profile(profile)
+
+    service_account_maps: dict[str, Mapping[str, object]] = {}
+    if config.services.smtp is not None:
+        service_account_maps["smtp"] = config.services.smtp.accounts
+    if config.services.imap is not None:
+        service_account_maps["imap"] = config.services.imap.accounts
+
+    for service_name, service_accounts in service_account_maps.items():
+        for account_name in service_accounts:
+            if account_name not in config.mail.accounts:
+                raise ValueError(
+                    f"services.{service_name} account {account_name} references an unknown mail account"
+                )
 
     for account_name, account in config.mail.accounts.items():
         if account.account_access_profile not in config.mail.account_access_profiles:
@@ -546,25 +639,24 @@ def validate_app_config(config: AppConfig) -> None:
             )
 
         profile = config.mail.account_access_profiles[account.account_access_profile]
+        account_services = _configured_account_services(config.services, account_name)
 
-        if account.smtp is None and account.imap is None:
+        if not account_services:
             raise ValueError(
-                f"mail account {account_name} must enable smtp, imap, or both"
+                f"mail account {account_name} must configure at least one service"
             )
 
-        if account.smtp is not None:
+        if "smtp" in account_services:
             if profile.services.smtp is None:
                 raise ValueError(
-                    f"mail account {account_name} enables smtp but its account_access_profile has no smtp service policy"
+                    f"mail account {account_name} configures smtp but its account_access_profile has no smtp service policy"
                 )
-            validate_smtp_config(account.smtp)
 
-        if account.imap is not None:
+        if "imap" in account_services:
             if profile.services.imap is None:
                 raise ValueError(
-                    f"mail account {account_name} enables imap but its account_access_profile has no imap service policy"
+                    f"mail account {account_name} configures imap but its account_access_profile has no imap service policy"
                 )
-            validate_imap_config(account.imap)
 
 
 _CONFIG_SCHEMA_NAMES = (

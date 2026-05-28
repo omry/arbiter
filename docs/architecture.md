@@ -2,7 +2,8 @@
 
 ## Current Shape
 
-The server is one MCP service exposing SMTP and IMAP tools over one deployment-owned configuration model:
+The server is one MCP service whose first-party SMTP and IMAP capabilities are
+loaded through service plugins and activated by `services.*` configuration:
 
 - `list_accounts`
 - `send_email`
@@ -24,8 +25,9 @@ The point of the implementation is not to build a generic mail framework. It is 
 
 The planned platform direction is captured in
 [ADR 0001: Service Plugin Architecture](adr/0001-service-plugin-architecture.md).
-SMTP and IMAP now register as separate first-party service plugins and own
-service-specific runtime objects. The unreleased package, config, and MCP
+SMTP and IMAP now register as separate first-party service plugins, own
+service-specific runtime objects, and receive service-owned account config from
+`services.smtp` or `services.imap`. The unreleased package, config, and MCP
 surface are still free to evolve before v1.
 
 ## Main responsibilities
@@ -33,7 +35,9 @@ surface are still free to evolve before v1.
 - MCP handlers:
   accept tool calls, validate input, and return the documented response shapes
 - Config loading:
-  load configured accounts, sender identities, limits, and recipient policy
+  load account metadata from `mail.accounts`, service-owned connection config
+  from `services.*`, operator interpolation values from `etc`, and access
+  policy from `mail.account_access_profiles`
 - Send-email flow:
   resolve the selected account, apply policy checks, build the RFC 5322/MIME message, and submit it through the SMTP runtime
 - IMAP flow:

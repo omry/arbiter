@@ -22,14 +22,16 @@ Define the current IMAP tool family and the shared constraints that apply to IMA
 
 - Every IMAP tool takes `account` as a mandatory input.
 - That `account` must reference an account with IMAP enabled.
-- IMAP tools may take `folder` explicitly or default to `mail.accounts.<account>.imap.default_folder` when omitted.
+- IMAP tools may take `folder` explicitly or default to
+  `services.imap.accounts.<account>.default_folder` when omitted.
 - `message_id` values are IMAP UIDs returned by `list_messages` or `search_messages`; they are scoped to the selected account and folder.
 
 ## Shared behavior constraints
 
 - operations are scoped to a single selected account
 - folder names are interpreted within that selected account only
-- folder names must be present in the selected account's configured `imap.folders` map
+- folder names must be present in the selected account's configured
+  `services.imap.accounts.<account>.folders` map
 - cross-account search is out of scope
 - cross-account moves are out of scope
 
@@ -41,11 +43,13 @@ Define the current IMAP tool family and the shared constraints that apply to IMA
 
 ## Configuration notes
 
-The IMAP config is organized under an account. Within an account, tools refer to configured folder names rather than arbitrary folder strings.
+The IMAP config is organized under `services.imap.accounts`. Within a service
+account, tools refer to configured folder names rather than arbitrary folder
+strings.
 
 Each IMAP-enabled account should define at least:
 
-- an `imap` config block
+- an entry under `services.imap.accounts`
 - a human-readable account description
 - an `account_access_profile` reference
 - a `folders` mapping keyed by stable folder names

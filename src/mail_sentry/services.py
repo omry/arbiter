@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, ItemsView, KeysView, Mapping
+from dataclasses import dataclass, field
 from typing import Any, Protocol, TypeVar
 
 
@@ -31,6 +31,18 @@ class RuntimeRegistry:
             raise RuntimeError(f"service runtime is not configured: {service_name}")
         return runtime
 
+    def items(self) -> ItemsView[str, object]:
+        return self.runtimes.items()
+
+    def keys(self) -> KeysView[str]:
+        return self.runtimes.keys()
+
+
+@dataclass(frozen=True)
+class ServiceRuntimeContext:
+    mail_config: Any
+    dependencies: Mapping[str, object] = field(default_factory=dict)
+
 
 @dataclass(frozen=True)
 class ServicePluginContext:
@@ -39,6 +51,12 @@ class ServicePluginContext:
 
 class ServicePlugin(Protocol):
     name: str
+
+    def build_runtime(
+        self,
+        config: object,
+        context: ServiceRuntimeContext,
+    ) -> object: ...
 
     def register_tools(
         self,

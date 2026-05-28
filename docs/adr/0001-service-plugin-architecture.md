@@ -146,8 +146,15 @@ The second extraction stage moved SMTP and IMAP operation behavior into
 service-specific runtime objects. `MailSentryApp` remains only as a transitional
 facade for account discovery and existing test helpers.
 
-Later stages should introduce the `services.*` config shape, add config-driven
-activation, and perform any chosen rename before release.
+The third extraction stage introduced the first `services.*` config shape.
+Account metadata remains under `mail.accounts`, service-owned account transport
+config moved under `services.smtp.accounts` and `services.imap.accounts`, `etc`
+exists as weakly structured operator-owned interpolation space, and configured
+service nodes now determine which installed plugins are activated.
+
+Later stages should continue shrinking `MailSentryApp`, decide whether shared
+access profiles remain the policy home, and perform any chosen rename before
+release.
 
 ## Consequences
 

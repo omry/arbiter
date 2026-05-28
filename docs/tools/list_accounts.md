@@ -34,25 +34,28 @@ selecting one explicitly for `send_email` or an IMAP tool.
       "name": "primary",
       "description": "Bot-owned account for automated email tasks",
       "account_access_profile": "bot",
-      "smtp": {
-        "send": "allowed",
-        "require_confirmation": false
-      },
-      "imap": {
-        "enabled": true,
-        "confirmation_required": ["delete"],
-        "message": {
-          "read_allowed": true,
-          "move_allowed": true,
-          "delete_allowed": true,
-          "flags": {
-            "seen": "read_only",
-            "flagged": "read_write",
-            "answered": "read_only",
-            "deleted": "hidden",
-            "draft": "hidden",
-            "user": {
-              "bot.followed_up": "read_write"
+      "services": {
+        "smtp": {
+          "enabled": true,
+          "send": "allowed",
+          "require_confirmation": false
+        },
+        "imap": {
+          "enabled": true,
+          "confirmation_required": ["delete"],
+          "message": {
+            "read_allowed": true,
+            "move_allowed": true,
+            "delete_allowed": true,
+            "flags": {
+              "seen": "read_only",
+              "flagged": "read_write",
+              "answered": "read_only",
+              "deleted": "hidden",
+              "draft": "hidden",
+              "user": {
+                "bot.followed_up": "read_write"
+              }
             }
           }
         }
@@ -62,14 +65,14 @@ selecting one explicitly for `send_email` or an IMAP tool.
 }
 ```
 
-Always return `smtp` and `imap` objects.
+Return one object per active service under `services`.
 
-`smtp.send` is a two-state availability enum in the current contract:
+`services.smtp.send` is a two-state availability enum in the current contract:
 
 - `allowed`: SMTP is configured and this account may be used for `send_email`
 - `unavailable`: this account does not have SMTP configured
 
-If `imap.enabled` is `false`, `imap.message` is omitted.
+If `services.imap.enabled` is `false`, `services.imap.message` is omitted.
 
 ## Operation details
 
@@ -86,42 +89,43 @@ For each account, return these base fields:
 - human-readable description
 - current `account_access_profile` name
 
-Return protocol capabilities under `smtp` and `imap`.
+Return protocol capabilities under `services.<service>`.
 
 ### SMTP
 
-- always include `smtp.send`
-- always include `smtp.require_confirmation`
-- `smtp.require_confirmation` reflects
+- include `services.smtp.enabled`
+- include `services.smtp.send`
+- include `services.smtp.require_confirmation`
+- `services.smtp.require_confirmation` reflects
   `mail.account_access_profiles.<profile>.services.smtp.require_confirmation`
   when the account has SMTP enabled; otherwise it is `false`
 
 ### IMAP
 
-- always include `imap.enabled`
-- when `imap.enabled` is `true`, return:
-  - `imap.confirmation_required`
-  - message capabilities under `imap.message`
-  - flag capabilities under `imap.message.flags`
+- include `services.imap.enabled`
+- when `services.imap.enabled` is `true`, return:
+  - `services.imap.confirmation_required`
+  - message capabilities under `services.imap.message`
+  - flag capabilities under `services.imap.message.flags`
 
 Message capabilities:
 
-- `imap.message.read_allowed`
-- `imap.message.move_allowed`
-- `imap.message.delete_allowed`
+- `services.imap.message.read_allowed`
+- `services.imap.message.move_allowed`
+- `services.imap.message.delete_allowed`
 
 #### Flag Exposure
 
 `list_accounts` exposes the effective IMAP flag capabilities for the account.
 
-Under `imap.message.flags`:
+Under `services.imap.message.flags`:
 
 - all standard system flags are always returned, with their effective mode
 - system flags may be `hidden`, `read_only`, or `read_write`
 - a system flag may still be returned as `hidden` so callers know it will not
   appear in later tool-visible message data
-- `imap.message.flags.user` contains all explicitly configured user flags, with
-  their effective mode
+- `services.imap.message.flags.user` contains all explicitly configured user
+  flags, with their effective mode
 - configured user flags may use `hidden`, `read_only`, or `read_write`
 - configured user flags with `hidden` are redundant and are not returned
 - unconfigured user flags are not returned and remain implicitly unavailable
@@ -131,8 +135,9 @@ Under `imap.message.flags`:
 - Return all configured accounts under the current trusted-caller model.
 - Do not expose credentials, transport configuration, recipient-policy
   configuration, audit configuration, or other sensitive internal settings.
-- Do expose `account_access_profile`, `smtp.require_confirmation`, and
-  `imap.confirmation_required` because callers use them for account selection
+- Do expose `account_access_profile`, `services.smtp.require_confirmation`, and
+  `services.imap.confirmation_required` because callers use them for account
+  selection
   and confirmation behavior.
 
 ## Audit behavior
@@ -155,11 +160,11 @@ Under `imap.message.flags`:
 ## Test checklist
 
 - returns all configured accounts
-- returns `smtp.require_confirmation` for SMTP-enabled accounts
+- returns `services.smtp.require_confirmation` for SMTP-enabled accounts
 - returns IMAP `confirmation_required` for IMAP-enabled accounts
 - returns hierarchical protocol capabilities under `smtp` and `imap`
-- returns `smtp.send` as `allowed` or `unavailable`
-- omits `imap.message` when IMAP is not enabled on an account
+- returns `services.smtp.send` as `allowed` or `unavailable`
+- omits `services.imap.message` when IMAP is not enabled on an account
 - exposes all standard IMAP system flags with their effective mode
 - exposes configured IMAP user flags with their effective mode
 - reflects the configured `account_access_profile`
