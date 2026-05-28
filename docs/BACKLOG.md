@@ -18,22 +18,44 @@ This file is the day-to-day queue for design and implementation gaps.
 - Move completed items out instead of keeping a long archive here.
 - Treat config and policy items as operator-facing product work, not only as
   internal refactors.
-- After each release-prep phase, run a focused review of the phase diff and
-  commit the ready changes before starting the next phase.
+- After each focused phase, run a focused review of the phase diff and commit
+  the ready changes before starting the next phase.
 - At every phase boundary or pause, state the current action, why work is
   stopping, and whether the next step needs user review, approval, input, or no
   user action.
 
+## Direction
+
+- Preferred platform name under consideration: `Oversight`.
+  Do not rename the repository, package, docs, deploy surface, or runtime
+  identifiers until a rename phase is explicitly approved.
+- Architecture direction: one service equals one plugin. SMTP and IMAP should
+  become separate first-party service plugins so future services such as
+  CalDAV, CardDAV, and Sieve can be added without forcing operators to carry
+  unused service code or configuration.
+
 ## Now
+
+- [ ] `P1` Extract a plugin-oriented service architecture without renaming.
+      The current implementation is still mail-shaped, but SMTP and IMAP should
+      move toward independently loadable service plugins while preserving the
+      existing public package name, config keys, and MCP tool names during the
+      first refactor phase.
+      Acceptance checks: a small core service-plugin contract exists; SMTP and
+      IMAP register MCP tools through separate first-party plugin modules; the
+      core server bootstrap does not need SMTP/IMAP-specific tool handlers; the
+      existing config and MCP surface remain compatible; and tests plus lint
+      pass.
+
+## Post-v1
 
 - [ ] `P1` Prepare release packaging and version readiness.
       The v1 contract is now clearer, but the package/release surface still
-      needs one explicit readiness pass before initial release.
+      needs one explicit readiness pass before initial release. This is paused
+      until the plugin architecture reroute settles.
       Acceptance checks: the intended version target is chosen; package
       metadata and install-target docs agree; release notes and status notes
       are current; and a build/install smoke path is verified.
-
-## Post-v1
 
 - [ ] `P2` Decide whether shared policy profiles should remain the long-term
       home for access gates and caller confirmation.
