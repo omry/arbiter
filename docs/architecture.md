@@ -22,6 +22,11 @@ Those tools should share the same:
 
 The point of the implementation is not to build a generic mail framework. It is to provide a small, explicit server that can discover configured accounts, submit SMTP mail, and operate on configured IMAP folders safely.
 
+The planned platform direction is captured in
+[ADR 0001: Service Plugin Architecture](adr/0001-service-plugin-architecture.md).
+That direction keeps the current public mail surface compatible for the next
+refactor while moving SMTP and IMAP toward separate first-party service plugins.
+
 ## Main responsibilities
 
 - MCP handlers:

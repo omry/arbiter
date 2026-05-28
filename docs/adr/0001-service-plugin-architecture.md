@@ -1,0 +1,148 @@
+# ADR 0001: Service Plugin Architecture
+
+## Status
+
+Proposed.
+
+## Context
+
+Mail Sentry began as one MCP server for mail operations. It currently exposes
+SMTP and IMAP tools over a shared mail-shaped configuration model.
+
+The broader product direction is a platform for controlled agent access to
+external services. Mail is the first domain, but the architecture should support
+additional services such as CalDAV, CardDAV, and Sieve without forcing every
+deployment to carry unused service configuration or runtime behavior.
+
+`Oversight` is the preferred platform name under consideration, but no package,
+repository, deployment, or runtime identifiers should be renamed until a rename
+phase is explicitly approved.
+
+## Decision
+
+Use a service plugin architecture on the Python side.
+
+Each service is represented by one plugin. SMTP and IMAP should become separate
+first-party plugins. Future services should follow the same model.
+
+The core platform is responsible for:
+
+- composing configuration with Hydra and OmegaConf
+- registering Structured Config schemas
+- discovering installed service plugins
+- activating configured services
+- bootstrapping the MCP server
+- providing narrow runtime context to plugins
+
+Each service plugin is responsible for:
+
+- its own Structured Config schema
+- validation of its own config node
+- service-specific runtime construction
+- its own MCP tools
+- service-specific API and policy semantics
+
+Plugins receive only their own composed config node. A plugin should not receive
+the whole application config by default.
+
+## Configuration Model
+
+Service activation is config-driven. Installed plugins are only available;
+configured service nodes activate them.
+
+Conceptually:
+
+```yaml
+services:
+  smtp:
+    accounts:
+      primary:
+        host: ${etc.mailserver.host}
+        port: ${etc.mailserver.smtp_port}
+        username: ${etc.mailserver.username}
+        password: ${etc.mailserver.password}
+        from_email: ${etc.mailserver.username}
+
+  imap:
+    accounts:
+      primary:
+        host: ${etc.mailserver.host}
+        port: ${etc.mailserver.imap_port}
+        username: ${etc.mailserver.username}
+        password: ${etc.mailserver.password}
+        default_folder: INBOX
+```
+
+Every key under `services` is a configured service. The core locates the plugin
+registered for that service key and passes `services.<service>` to it.
+
+Hydra composition should choose service defaults and variants. For example, a
+deployment may compose a Google-specific SMTP schema into `services.smtp`
+without changing the service identity from `smtp`.
+
+The `etc` node is weakly structured operator-owned configuration space. It is
+intended for composition and interpolation material such as shared hostnames,
+ports, usernames, secret references, and deployment constants.
+
+Example:
+
+```yaml
+etc:
+  mailserver:
+    host: mail.example.com
+    username: agent@example.com
+    password: ${secret_file:/run/secrets/mail_password}
+    smtp_port: 587
+    imap_port: 993
+```
+
+The core knows that `etc` exists, but should not assign product semantics to
+its contents. Typed service config remains under `services.*`.
+
+## Plugin Discovery
+
+Use Python package entry points for external plugin discovery.
+
+Conceptually:
+
+```toml
+[project.entry-points."oversight.services"]
+smtp = "oversight_smtp:plugin"
+imap = "oversight_imap:plugin"
+```
+
+Namespace packages are not required for discovery. Plugin distributions can be
+independent packages such as `oversight-smtp` with import packages such as
+`oversight_smtp`.
+
+Hydra config composition, not an explicit `provider` field, should select the
+implementation variant for a service in the common case.
+
+## Operator
+
+The operator is the human or team deploying and configuring the server. The
+operator decides which services and capabilities the agent can use through
+configuration and policy.
+
+## Compatibility Plan
+
+The first extraction phase should preserve the current public surface:
+
+- keep the `mail_sentry` Python package name
+- keep existing `mail.*` config keys
+- keep existing MCP tool names and schemas
+- keep `list_accounts` as the current discovery tool
+- move SMTP MCP registration into a first-party SMTP plugin module
+- move IMAP MCP registration into a first-party IMAP plugin module
+
+Later phases can split runtime behavior out of `MailSentryApp`, introduce
+`services.*` config, add entry point discovery, and perform any approved rename.
+
+## Consequences
+
+This approach keeps the first refactor small while creating pressure toward the
+broader platform shape.
+
+It does not provide plugin isolation. External plugins run in-process, so
+security boundaries must come from configuration, caller authentication,
+deployment isolation, or a future subprocess model.
