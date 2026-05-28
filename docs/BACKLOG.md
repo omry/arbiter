@@ -74,3 +74,15 @@ This file is the day-to-day queue for design and implementation gaps.
       Acceptance checks: candidate mechanisms are compared; the chosen model
       works for local OpenClaw/Codex use and Docker deployments; and failure
       modes are fail-closed without leaking credentials.
+
+- [ ] `P2` Generate baseline CLI parameters from MCP tool schemas.
+      The MCP surface already defines rich input shape metadata, and that
+      contract should become the default source for a generic CLI layer rather
+      than being re-declared by hand for each tool. Service-specific wrappers
+      can still add better UX on top.
+      Acceptance checks: a design or implementation path exists for deriving
+      CLI flags from MCP `inputSchema`; required, optional, list, enum, and
+      bounded scalar fields map predictably; generated invocations round-trip
+      into valid tool arguments; and the design clearly separates generic
+      schema-driven CLI generation from optional task-specific wrapper
+      behavior.
