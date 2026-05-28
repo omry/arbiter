@@ -38,8 +38,9 @@ This file is the day-to-day queue for design and implementation gaps.
 
 - [ ] `P1` Split SMTP and IMAP runtime ownership out of the monolithic app.
       The first plugin extraction moved MCP registration into separate
-      first-party SMTP and IMAP plugin modules. The next step is to move the
-      service runtime/application behavior behind those plugin boundaries while
+      first-party SMTP and IMAP plugin modules and replaced the central plugin
+      list with entry-point discovery. The next step is to move the service
+      runtime/application behavior behind those plugin boundaries while
       preserving the current public package name, config keys, and MCP tool
       names.
       Acceptance checks: SMTP and IMAP plugins own their service operation

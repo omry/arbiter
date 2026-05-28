@@ -10,7 +10,7 @@ import hydra
 from .app import MailSentryApp
 from .config import AppConfig, register_configs
 from .imap import ImapClient
-from .plugins import default_service_plugins
+from .plugins import discover_service_plugins
 from .services import ServicePlugin, ServicePluginContext
 from .smtp import SmtpSubmissionClient
 
@@ -109,7 +109,7 @@ def build_server(
     server.settings.streamable_http_path = cfg.server.path
 
     active_service_plugins = (
-        default_service_plugins() if service_plugins is None else service_plugins
+        discover_service_plugins() if service_plugins is None else service_plugins
     )
     _register_core_tools(server, app)
     _register_service_plugins(server, app, active_service_plugins)

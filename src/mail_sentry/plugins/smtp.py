@@ -102,3 +102,7 @@ class SmtpServicePlugin:
                 "message_id": result.message_id,
                 "recipient_count": result.recipient_count,
             }
+
+
+def plugin() -> SmtpServicePlugin:
+    return SmtpServicePlugin()

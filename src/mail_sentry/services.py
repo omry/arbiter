@@ -33,3 +33,7 @@ class ServicePlugin(Protocol):
         server: ToolServer,
         context: ServicePluginContext,
     ) -> None: ...
+
+
+ServicePluginFactory = Callable[[], ServicePlugin]
+SERVICE_PLUGIN_ENTRY_POINT_GROUP = "mail_sentry.services"

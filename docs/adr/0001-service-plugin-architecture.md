@@ -106,14 +106,18 @@ Use Python package entry points for external plugin discovery.
 Conceptually:
 
 ```toml
-[project.entry-points."oversight.services"]
-smtp = "oversight_smtp:plugin"
-imap = "oversight_imap:plugin"
+[project.entry-points."mail_sentry.services"]
+smtp = "mail_sentry.plugins.smtp:plugin"
+imap = "mail_sentry.plugins.imap:plugin"
 ```
 
 Namespace packages are not required for discovery. Plugin distributions can be
 independent packages such as `oversight-smtp` with import packages such as
 `oversight_smtp`.
+
+The entry point group should keep the current package namespace until a rename
+is explicitly approved. A future rename can move the group to
+`oversight.services`.
 
 Hydra config composition, not an explicit `provider` field, should select the
 implementation variant for a service in the common case.
@@ -132,11 +136,14 @@ The first extraction phase should preserve the current public surface:
 - keep existing `mail.*` config keys
 - keep existing MCP tool names and schemas
 - keep `list_accounts` as the current discovery tool
+- discover first-party service plugins through entry points rather than a
+  hard-coded central plugin list
 - move SMTP MCP registration into a first-party SMTP plugin module
 - move IMAP MCP registration into a first-party IMAP plugin module
 
 Later phases can split runtime behavior out of `MailSentryApp`, introduce
-`services.*` config, add entry point discovery, and perform any approved rename.
+`services.*` config, add config-driven activation, and perform any approved
+rename.
 
 ## Consequences
 

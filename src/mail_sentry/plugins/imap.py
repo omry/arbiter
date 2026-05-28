@@ -184,3 +184,7 @@ class ImapServicePlugin:
                 message_id=message_id,
                 folder=folder,
             )
+
+
+def plugin() -> ImapServicePlugin:
+    return ImapServicePlugin()

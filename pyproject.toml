@@ -46,6 +46,10 @@ dev = [
 [project.scripts]
 mail-sentry = "mail_sentry.main:main"
 
+[project.entry-points."mail_sentry.services"]
+imap = "mail_sentry.plugins.imap:plugin"
+smtp = "mail_sentry.plugins.smtp:plugin"
+
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"
 testpaths = ["tests"]

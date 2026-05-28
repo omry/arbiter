@@ -10,6 +10,10 @@ from omegaconf import OmegaConf
 
 from mail_sentry.config import AppConfig
 from mail_sentry.main import build_app, build_server, log_startup_summary
+from mail_sentry.plugins import discover_service_plugins
+from mail_sentry.plugins.imap import ImapServicePlugin
+from mail_sentry.plugins.smtp import SmtpServicePlugin
+from mail_sentry.services import SERVICE_PLUGIN_ENTRY_POINT_GROUP, ServicePlugin
 
 
 def test_build_app_accepts_hydra_config() -> None:
@@ -47,6 +51,48 @@ def test_build_app_list_accounts_uses_real_config_shape() -> None:
                 "enabled": False,
             },
         }
+    ]
+
+
+def test_discover_service_plugins_loads_entry_point_factories(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakePlugin:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    smtp_plugin = FakePlugin("smtp")
+    imap_plugin = FakePlugin("imap")
+
+    class FakeEntryPoint:
+        def __init__(self, plugin: FakePlugin) -> None:
+            self._plugin = plugin
+
+        def load(self) -> Callable[[], FakePlugin]:
+            return lambda: self._plugin
+
+    class FakeEntryPoints(list[FakeEntryPoint]):
+        def select(self, *, group: str) -> "FakeEntryPoints":
+            assert group == SERVICE_PLUGIN_ENTRY_POINT_GROUP
+            return self
+
+    monkeypatch.setattr(
+        "mail_sentry.plugins.entry_points",
+        lambda: FakeEntryPoints(
+            [
+                FakeEntryPoint(smtp_plugin),
+                FakeEntryPoint(imap_plugin),
+            ]
+        ),
+    )
+
+    assert [plugin.name for plugin in discover_service_plugins()] == ["imap", "smtp"]
+
+
+def _test_service_plugins() -> list[ServicePlugin]:
+    return [
+        SmtpServicePlugin(),
+        ImapServicePlugin(),
     ]
 
 
@@ -268,7 +314,7 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
 
     cfg = OmegaConf.structured(AppConfig())
 
-    server = cast(Any, build_server(cfg))
+    server = cast(Any, build_server(cfg, service_plugins=_test_service_plugins()))
 
     assert server.name == "mail-sentry"
     assert server.stateless_http is True
@@ -402,7 +448,13 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_build_server_describes_send_email_tool_schema() -> None:
-    server = cast(Any, build_server(OmegaConf.structured(AppConfig())))
+    server = cast(
+        Any,
+        build_server(
+            OmegaConf.structured(AppConfig()),
+            service_plugins=_test_service_plugins(),
+        ),
+    )
 
     list_accounts_tool = server._tool_manager._tools["list_accounts"]
     assert (
