@@ -36,16 +36,17 @@ This file is the day-to-day queue for design and implementation gaps.
 
 ## Now
 
-- [ ] `P1` Extract a plugin-oriented service architecture without renaming.
-      The current implementation is still mail-shaped, but SMTP and IMAP should
-      move toward independently loadable service plugins while preserving the
-      existing public package name, config keys, and MCP tool names during the
-      first refactor phase.
-      Acceptance checks: a small core service-plugin contract exists; SMTP and
-      IMAP register MCP tools through separate first-party plugin modules; the
-      core server bootstrap does not need SMTP/IMAP-specific tool handlers; the
-      existing config and MCP surface remain compatible; and tests plus lint
-      pass.
+- [ ] `P1` Split SMTP and IMAP runtime ownership out of the monolithic app.
+      The first plugin extraction moved MCP registration into separate
+      first-party SMTP and IMAP plugin modules. The next step is to move the
+      service runtime/application behavior behind those plugin boundaries while
+      preserving the current public package name, config keys, and MCP tool
+      names.
+      Acceptance checks: SMTP and IMAP plugins own their service operation
+      implementations or delegate through service-specific runtime objects; the
+      core app/server no longer exposes one monolithic SMTP+IMAP method surface
+      as the plugin context; existing config and MCP behavior remain
+      compatible; and tests plus lint pass.
 
 ## Post-v1
 
