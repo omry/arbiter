@@ -24,8 +24,8 @@ The point of the implementation is not to build a generic mail framework. It is 
 
 The planned platform direction is captured in
 [ADR 0001: Service Plugin Architecture](adr/0001-service-plugin-architecture.md).
-That direction keeps the current public mail surface compatible for the next
-refactor while moving SMTP and IMAP toward separate first-party service plugins.
+That direction moves SMTP and IMAP toward separate first-party service plugins
+while the unreleased package, config, and MCP surface are still free to evolve.
 
 ## Main responsibilities
 

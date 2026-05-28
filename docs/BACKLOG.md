@@ -40,14 +40,14 @@ This file is the day-to-day queue for design and implementation gaps.
       The first plugin extraction moved MCP registration into separate
       first-party SMTP and IMAP plugin modules and replaced the central plugin
       list with entry-point discovery. The next step is to move the service
-      runtime/application behavior behind those plugin boundaries while
-      preserving the current public package name, config keys, and MCP tool
-      names.
+      runtime/application behavior behind those plugin boundaries while keeping
+      the change reviewable. There is no released compatibility contract yet,
+      so package names, config keys, and MCP tool names may change before v1.
       Acceptance checks: SMTP and IMAP plugins own their service operation
       implementations or delegate through service-specific runtime objects; the
       core app/server no longer exposes one monolithic SMTP+IMAP method surface
-      as the plugin context; existing config and MCP behavior remain
-      compatible; and tests plus lint pass.
+      as the plugin context; any public-shape changes are reflected in docs and
+      tests; and tests plus lint pass.
 
 ## Post-v1
 

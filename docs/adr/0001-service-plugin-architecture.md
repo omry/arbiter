@@ -14,9 +14,9 @@ external services. Mail is the first domain, but the architecture should support
 additional services such as CalDAV, CardDAV, and Sieve without forcing every
 deployment to carry unused service configuration or runtime behavior.
 
-`Oversight` is the preferred platform name under consideration, but no package,
-repository, deployment, or runtime identifiers should be renamed until a rename
-phase is explicitly approved.
+`Oversight` is the preferred platform name under consideration. The project has
+not had an initial release yet, so package names, config keys, MCP tool names,
+and runtime identifiers are still open to change before release.
 
 ## Decision
 
@@ -128,22 +128,23 @@ The operator is the human or team deploying and configuring the server. The
 operator decides which services and capabilities the agent can use through
 configuration and policy.
 
-## Compatibility Plan
+## Implementation Staging
 
-The first extraction phase should preserve the current public surface:
+Because there is no released public contract yet, compatibility is not a
+permanent constraint. During refactoring, temporary compatibility can still be
+useful as a staging tool because it keeps tests focused and reduces the number
+of simultaneous moving parts.
 
-- keep the `mail_sentry` Python package name
-- keep existing `mail.*` config keys
-- keep existing MCP tool names and schemas
-- keep `list_accounts` as the current discovery tool
-- discover first-party service plugins through entry points rather than a
+The first extraction stage introduced a plugin registration boundary:
+
+- first-party service plugins are discovered through entry points rather than a
   hard-coded central plugin list
-- move SMTP MCP registration into a first-party SMTP plugin module
-- move IMAP MCP registration into a first-party IMAP plugin module
+- SMTP MCP registration lives in a first-party SMTP plugin module
+- IMAP MCP registration lives in a first-party IMAP plugin module
 
-Later phases can split runtime behavior out of `MailSentryApp`, introduce
-`services.*` config, add config-driven activation, and perform any approved
-rename.
+Later stages should move runtime behavior out of `MailSentryApp`, introduce the
+`services.*` config shape, add config-driven activation, and perform any chosen
+rename before release.
 
 ## Consequences
 
