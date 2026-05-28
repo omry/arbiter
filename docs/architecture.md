@@ -2,7 +2,7 @@
 
 ## Current Shape
 
-The server is one MCP service whose first-party SMTP and IMAP capabilities are
+The server is one MCP service whose current SMTP and IMAP capabilities are
 loaded through service plugins and activated by `services.*` configuration:
 
 - `list_accounts`
@@ -25,10 +25,11 @@ The point of the implementation is not to build a generic mail framework. It is 
 
 The planned platform direction is captured in
 [ADR 0001: Service Plugin Architecture](adr/0001-service-plugin-architecture.md).
-SMTP and IMAP now register as separate first-party service plugins, own
-service-specific runtime objects, and receive service-owned account config from
-`services.smtp` or `services.imap`. The unreleased package, config, and MCP
-surface are still free to evolve before v1.
+SMTP and IMAP now register through the plugin boundary, own service-specific
+runtime objects, and receive service-owned account config from `services.smtp`
+or `services.imap`. They are still temporarily in-tree; the target package
+shape is independently installable service plugins with no built-in service
+status in the core.
 
 ## Main responsibilities
 
@@ -59,7 +60,7 @@ surface are still free to evolve before v1.
 ## Repository shape
 
 ```text
-mail-sentry/
+agent-arbiter/
   README.md
   docs/
     overview.md
@@ -72,7 +73,7 @@ mail-sentry/
       send_email.md
       imap_extension.md
   src/
-    mail_sentry/
+    agent_arbiter/
       app.py       # transitional facade and account discovery
       config.py    # dataclass config schema and validation
       main.py      # FastMCP server bootstrap and core tool registration
@@ -92,4 +93,4 @@ mail-sentry/
 - Keep account/folder access policy in service runtimes rather than transport adapters.
 - Centralize logging and error normalization when those hardening pieces are implemented.
 - Keep durable audit storage and audit policy configuration as post-v1 work.
-- Keep `MailSentryApp` temporary; it should shrink as `services.*` config and service discovery mature.
+- Keep `AgentArbiterApp` temporary; it should shrink as `services.*` config and service discovery mature.

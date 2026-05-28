@@ -21,7 +21,7 @@ The predefined skill ships with a sample `templates.json` file next to the skill
 
 Rules:
 
-- `account` is required and must be a Mail Sentry account name
+- `account` is required and must be an Agent Arbiter account name
 - `subject` is required
 - at least one of `text_body` or `html_body` is required
 - `to` is required and must be a non-empty array

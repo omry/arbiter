@@ -11,8 +11,8 @@ from typing import Any, Callable
 _SHARED_SCRIPTS = Path(__file__).resolve().parents[2] / "_shared" / "scripts"
 sys.path.insert(0, str(_SHARED_SCRIPTS))
 
-from mail_sentry_client import (  # noqa: E402
-    MailSentryClientConfig,
+from agent_arbiter_client import (  # noqa: E402
+    AgentArbiterClientConfig,
     call_tool_sync,
     config_from_env,
 )
@@ -101,7 +101,7 @@ def build_arguments_with_bodies(
     return arguments
 
 
-def list_smtp_accounts(config: MailSentryClientConfig) -> list[dict[str, object]]:
+def list_smtp_accounts(config: AgentArbiterClientConfig) -> list[dict[str, object]]:
     result = call_tool_sync(config, "list_accounts", {})
     accounts = result.get("accounts")
     if not isinstance(accounts, list):
@@ -179,14 +179,14 @@ def select_account(
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Submit an interactive Mail Sentry send_email request."
+        description="Submit an interactive Agent Arbiter send_email request."
     )
     parser.add_argument(
         "--list-accounts",
         action="store_true",
-        help="List SMTP-enabled Mail Sentry accounts and exit.",
+        help="List SMTP-enabled Agent Arbiter accounts and exit.",
     )
-    parser.add_argument("--account", help="Mail Sentry account name.")
+    parser.add_argument("--account", help="Agent Arbiter account name.")
     parser.add_argument("--to", help="Comma-separated recipient list.")
     parser.add_argument("--subject", help="Email subject.")
     parser.add_argument("--text-body", help="Plain-text body.")

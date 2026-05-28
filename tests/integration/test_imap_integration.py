@@ -9,8 +9,8 @@ import threading
 
 import pytest
 
-from mail_sentry.config import IMAPConfig, MailTlsMode
-from mail_sentry.imap import IMAPClient, IMAPOperationError
+from agent_arbiter.config import IMAPConfig, MailTlsMode
+from agent_arbiter.imap import IMAPClient, IMAPOperationError
 
 
 def _message_bytes(uid: str) -> bytes:
@@ -117,7 +117,7 @@ class _LocalIMAPServerRunner:
                     self._handle_connection(connection)
 
     def _handle_connection(self, connection: socket.socket) -> None:
-        connection.sendall(b"* OK Mail Sentry test IMAP server ready\r\n")
+        connection.sendall(b"* OK Agent Arbiter test IMAP server ready\r\n")
         reader = connection.makefile("rb")
         while not self._stop.is_set():
             raw_line = reader.readline()

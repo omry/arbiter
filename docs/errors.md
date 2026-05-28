@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define the stable error contract shared by the Mail Sentry server.
+Define the stable error contract shared by the Agent Arbiter server.
 
 ## Status
 

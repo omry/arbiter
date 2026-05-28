@@ -4,7 +4,7 @@ set -euo pipefail
 DEFAULT_ACTION="install"
 DEFAULT_CONTAINER="openclaw"
 DEFAULT_SKILL_DIR="/home/node/.openclaw/skills"
-DEFAULT_GITHUB_REPO="omry/mail-sentry"
+DEFAULT_GITHUB_REPO="omry/agent-arbiter"
 DEFAULT_REF="main"
 DEFAULT_SOURCE_MODE="auto"
 
@@ -165,18 +165,18 @@ install_skills() {
   copy_skill_dir "$source_root" "send-email-interactive"
   copy_skill_dir "$source_root" "send-email-predefined"
 
-  docker_exec_node "test -f '$SKILL_DIR/_shared/scripts/mail_sentry_client.py'"
+  docker_exec_node "test -f '$SKILL_DIR/_shared/scripts/agent_arbiter_client.py'"
   docker_exec_node "test -f '$SKILL_DIR/send-email-interactive/SKILL.md'"
   docker_exec_node "test -f '$SKILL_DIR/send-email-predefined/SKILL.md'"
   trap - EXIT
 
-  echo "Installed Mail Sentry OpenClaw skills into ${CONTAINER_NAME}:${SKILL_DIR}"
+  echo "Installed Agent Arbiter OpenClaw skills into ${CONTAINER_NAME}:${SKILL_DIR}"
   echo "Built-in OpenClaw skills under /app/skills were not modified."
 }
 
 uninstall_skills() {
   docker_exec_node "rm -rf '$SKILL_DIR/_shared' '$SKILL_DIR/send-email-interactive' '$SKILL_DIR/send-email-predefined'"
-  echo "Removed Mail Sentry OpenClaw skill files from ${CONTAINER_NAME}:${SKILL_DIR}"
+  echo "Removed Agent Arbiter OpenClaw skill files from ${CONTAINER_NAME}:${SKILL_DIR}"
   echo "Python dependencies were left installed."
 }
 

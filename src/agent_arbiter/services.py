@@ -66,4 +66,4 @@ class ServicePlugin(Protocol):
 
 
 ServicePluginFactory = Callable[[], ServicePlugin]
-SERVICE_PLUGIN_ENTRY_POINT_GROUP = "mail_sentry.services"
+SERVICE_PLUGIN_ENTRY_POINT_GROUP = "agent_arbiter.services"

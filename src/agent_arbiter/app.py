@@ -6,7 +6,7 @@ from .plugins.smtp import SendEmailResult, SMTPRuntime
 from .services import RuntimeRegistry
 
 
-class MailSentryApp:
+class AgentArbiterApp:
     """Transitional facade while mail behavior moves behind service runtimes."""
 
     def __init__(

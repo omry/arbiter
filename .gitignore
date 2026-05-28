@@ -7,12 +7,12 @@ __pycache__/
 build/
 dist/
 outputs/
-src/mail_sentry/conf/real_config.yaml
-docs/mail_sentry_design_docs.md
+src/agent_arbiter/conf/real_config.yaml
+docs/agent_arbiter_design_docs.md
 
 # Local Docker deployment files. These may contain secrets or host-specific
 # commands and should not be committed.
-deploy/mail-sentry.env
+deploy/agent-arbiter.env
 deploy/gateway-config.yaml
 deploy/compose.local.yaml
 deploy/run-local.sh

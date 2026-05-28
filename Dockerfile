@@ -11,12 +11,12 @@ COPY src ./src
 RUN python -m pip install --no-cache-dir --upgrade pip \
     && python -m pip install --no-cache-dir .
 
-RUN addgroup --system --gid 10001 mail-sentry \
-    && adduser --system --uid 10001 --ingroup mail-sentry \
-        --home /nonexistent --no-create-home mail-sentry
+RUN addgroup --system --gid 10001 agent-arbiter \
+    && adduser --system --uid 10001 --ingroup agent-arbiter \
+        --home /nonexistent --no-create-home agent-arbiter
 
 USER 10001:10001
 EXPOSE 8025
 
-ENTRYPOINT ["mail-sentry"]
+ENTRYPOINT ["agent-arbiter"]
 CMD ["--config-path", "/config", "--config-name", "config"]

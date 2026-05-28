@@ -32,7 +32,7 @@ class IMAPConfirmationAction(str, Enum):
 
 @dataclass
 class ServerConfig:
-    name: str = "mail-sentry"
+    name: str = "agent-arbiter"
     transport: str = "streamable-http"
     host: str = "127.0.0.1"
     port: int = 8000
@@ -71,7 +71,7 @@ class SMTPConfig:
     username: str = ""
     password: str = ""
     from_email: str = "agent@example.com"
-    from_name: str = "Mail Sentry"
+    from_name: str = "Agent Arbiter"
     tls: MailTlsMode = MailTlsMode.starttls
     verify_peer: bool = True
     timeout_seconds: float = 30.0
@@ -660,7 +660,7 @@ def validate_app_config(config: AppConfig) -> None:
 
 
 _CONFIG_SCHEMA_NAMES = (
-    "mail_sentry_app_config_schema",
+    "agent_arbiter_app_config_schema",
     "mailgateway_app_config_schema",
 )
 _CONFIG_REGISTERED = False

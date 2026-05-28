@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Literal, cast
 
 import hydra
 
-from .app import MailSentryApp
+from .app import AgentArbiterApp
 from .config import (
     AppConfig,
     configured_service_names,
@@ -56,7 +56,7 @@ def build_app(
     cfg: AppConfig,
     service_plugins: Sequence[ServicePlugin] | None = None,
     runtime_dependencies: dict[str, object] | None = None,
-) -> MailSentryApp:
+) -> AgentArbiterApp:
     available_plugins = (
         discover_service_plugins() if service_plugins is None else service_plugins
     )
@@ -76,12 +76,12 @@ def build_app(
             service_config,
             runtime_context,
         )
-    return MailSentryApp(cfg.mail, RuntimeRegistry(runtimes))
+    return AgentArbiterApp(cfg.mail, RuntimeRegistry(runtimes))
 
 
 def package_version() -> str:
     try:
-        return version("mail-sentry")
+        return version("agent-arbiter")
     except PackageNotFoundError:
         return "unknown"
 
@@ -97,7 +97,7 @@ def log_startup_summary(cfg: AppConfig) -> None:
     imap_accounts = sorted(cfg.services.imap.accounts) if cfg.services.imap else []
 
     LOGGER.info(
-        "Mail Sentry starting version=%s transport=%s bind=%s:%s%s "
+        "Agent Arbiter starting version=%s transport=%s bind=%s:%s%s "
         "accounts=%s services=%s smtp_accounts=%s imap_accounts=%s",
         package_version(),
         cfg.server.transport,
@@ -111,7 +111,7 @@ def log_startup_summary(cfg: AppConfig) -> None:
     )
 
 
-def _register_core_tools(server: "FastMCP", app: MailSentryApp) -> None:
+def _register_core_tools(server: "FastMCP", app: AgentArbiterApp) -> None:
     @server.tool(
         description=(
             "Return the configured accounts available to the caller, along with "
@@ -127,7 +127,7 @@ def _register_core_tools(server: "FastMCP", app: MailSentryApp) -> None:
 
 def _register_service_plugins(
     server: "FastMCP",
-    app: MailSentryApp,
+    app: AgentArbiterApp,
     service_plugins: Sequence[ServicePlugin],
 ) -> None:
     context = ServicePluginContext(runtimes=app.runtime_registry)

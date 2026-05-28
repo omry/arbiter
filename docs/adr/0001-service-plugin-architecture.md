@@ -6,7 +6,7 @@ Proposed.
 
 ## Context
 
-Mail Sentry began as one MCP server for mail operations. It currently exposes
+Agent Arbiter began as one MCP server for mail operations. It currently exposes
 SMTP and IMAP tools over a shared mail-shaped configuration model.
 
 The broader product direction is a platform for controlled agent access to
@@ -14,16 +14,18 @@ external services. Mail is the first domain, but the architecture should support
 additional services such as CalDAV, CardDAV, and Sieve without forcing every
 deployment to carry unused service configuration or runtime behavior.
 
-`Oversight` is the preferred platform name under consideration. The project has
-not had an initial release yet, so package names, config keys, MCP tool names,
-and runtime identifiers are still open to change before release.
+`Agent Arbiter` is the current platform name. `Oversight` remains a possible
+future rename if the package name becomes available. The project has not had an
+initial release yet, so package names, config keys, MCP tool names, and runtime
+identifiers are still open to change before release.
 
 ## Decision
 
 Use a service plugin architecture on the Python side.
 
 Each service is represented by one plugin. SMTP and IMAP should become separate
-first-party plugins. Future services should follow the same model.
+plugin distributions. Future services should follow the same model, without the
+core treating any service plugin as built in.
 
 The core platform is responsible for:
 
@@ -106,18 +108,17 @@ Use Python package entry points for external plugin discovery.
 Conceptually:
 
 ```toml
-[project.entry-points."mail_sentry.services"]
-smtp = "mail_sentry.plugins.smtp:plugin"
-imap = "mail_sentry.plugins.imap:plugin"
+[project.entry-points."agent_arbiter.services"]
+smtp = "agent_arbiter.plugins.smtp:plugin"
+imap = "agent_arbiter.plugins.imap:plugin"
 ```
 
 Namespace packages are not required for discovery. Plugin distributions can be
-independent packages such as `oversight-smtp` with import packages such as
-`oversight_smtp`.
+independent packages such as `agent-arbiter-smtp` with import packages such as
+`agent_arbiter_smtp`.
 
-The entry point group should keep the current package namespace until a rename
-is explicitly approved. A future rename can move the group to
-`oversight.services`.
+The entry point group follows the current package namespace. A future rename can
+move the group to `oversight.services`.
 
 Hydra config composition, not an explicit `provider` field, should select the
 implementation variant for a service in the common case.
@@ -137,13 +138,13 @@ of simultaneous moving parts.
 
 The first extraction stage introduced a plugin registration boundary:
 
-- first-party service plugins are discovered through entry points rather than a
-  hard-coded central plugin list
-- SMTP MCP registration lives in a first-party SMTP plugin module
-- IMAP MCP registration lives in a first-party IMAP plugin module
+- service plugins are discovered through entry points rather than a hard-coded
+  central plugin list
+- SMTP MCP registration lives in a temporary in-tree SMTP plugin module
+- IMAP MCP registration lives in a temporary in-tree IMAP plugin module
 
 The second extraction stage moved SMTP and IMAP operation behavior into
-service-specific runtime objects. `MailSentryApp` remains only as a transitional
+service-specific runtime objects. `AgentArbiterApp` remains only as a transitional
 facade for account discovery and existing test helpers.
 
 The third extraction stage introduced the first `services.*` config shape.
@@ -152,7 +153,7 @@ config moved under `services.smtp.accounts` and `services.imap.accounts`, `etc`
 exists as weakly structured operator-owned interpolation space, and configured
 service nodes now determine which installed plugins are activated.
 
-Later stages should continue shrinking `MailSentryApp`, decide whether shared
+Later stages should continue shrinking `AgentArbiterApp`, decide whether shared
 access profiles remain the policy home, and perform any chosen rename before
 release.
 

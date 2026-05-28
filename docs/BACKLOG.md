@@ -1,9 +1,9 @@
-# Mail Sentry Backlog
+# Agent Arbiter Backlog
 
 ## Agent instructions
 
 When helping with backlog work, treat this file as the active planning
-surface for Mail Sentry. Keep it short, concrete, and easy to scan. Prefer
+surface for Agent Arbiter. Keep it short, concrete, and easy to scan. Prefer
 moving work between queues over growing process, and avoid inventing GitHub
 issues unless the user asks for them.
 
@@ -26,13 +26,14 @@ This file is the day-to-day queue for design and implementation gaps.
 
 ## Direction
 
-- Preferred platform name under consideration: `Oversight`.
-  Do not rename the repository, package, docs, deploy surface, or runtime
-  identifiers until a rename phase is explicitly approved.
-- Architecture direction: one service equals one plugin. SMTP and IMAP should
-  become separate first-party service plugins so future services such as
-  CalDAV, CardDAV, and Sieve can be added without forcing operators to carry
-  unused service code or configuration.
+- Current platform name: `Agent Arbiter`.
+  `Oversight` remains a possible future rename if the package name becomes
+  available.
+- Architecture direction: one service equals one independently installable
+  plugin. SMTP and IMAP should move out of the core package into separate
+  plugin distributions so future services such as CalDAV, CardDAV, and Sieve
+  can be added without forcing operators to carry unused service code or
+  configuration.
 
 ## Now
 
@@ -77,10 +78,10 @@ This file is the day-to-day queue for design and implementation gaps.
       separate audit policy block, or another clearer home; and the resulting
       config shape is materially lighter for operators.
 
-- [ ] `P2` Design bot-to-Sentry caller authentication or authorization.
+- [ ] `P2` Design bot-to-Agent Arbiter caller authentication or authorization.
       V1 assumes the caller is trusted once connected. Future hardening may use
       a shared secret, bearer token, password, client certificate, or mTLS/PKI
-      so deployments can prevent unsafe access to the Mail Sentry MCP boundary.
+      so deployments can prevent unsafe access to the Agent Arbiter MCP boundary.
       Acceptance checks: candidate mechanisms are compared; the chosen model
       works for local OpenClaw/Codex use and Docker deployments; and failure
       modes are fail-closed without leaking credentials.

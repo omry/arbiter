@@ -3,7 +3,7 @@
 ## Status
 
 - Stage: `implemented initial tool family`
-- Owner: `Mail Sentry server`
+- Owner: `Agent Arbiter server`
 
 ## Purpose
 
@@ -108,5 +108,5 @@ The future audit model is:
 
 - write one tool document per IMAP operation
 - decide what caller authentication or authorization model, if any, should
-  protect the bot-to-Sentry MCP connection
+  protect the bot-to-Agent Arbiter MCP connection
 - add OpenClaw wrapper coverage for IMAP tools if OpenClaw should use them before native MCP support exists

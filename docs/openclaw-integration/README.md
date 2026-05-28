@@ -2,25 +2,25 @@
 
 ## Purpose
 
-Document the interim integration path for using Mail Sentry from an OpenClaw installation before OpenClaw has native MCP support.
+Document the interim integration path for using Agent Arbiter from an OpenClaw installation before OpenClaw has native MCP support.
 
 ## Current gap
 
 OpenClaw is the intended consumer for this server, but it does not currently support MCP as a first-class integration surface.
 
-That means Mail Sentry needs a temporary compatibility layer if OpenClaw should use it before native MCP support is available.
+That means Agent Arbiter needs a temporary compatibility layer if OpenClaw should use it before native MCP support is available.
 
 ## Selected interim direction
 
 The selected path is:
 
-`OpenClaw wrapper skills -> Mail Sentry over HTTP`
+`OpenClaw wrapper skills -> Agent Arbiter over HTTP`
 
-The OpenClaw skill runtime should speak a minimal Mail Sentry-specific MCP subset over HTTP.
+The OpenClaw skill runtime should speak a minimal Agent Arbiter-specific MCP subset over HTTP.
 
-This is intentionally a narrow shim rather than a generic MCP client layer, and it avoids introducing a separate temporary Mail Sentry business API that would also need to be retired later.
+This is intentionally a narrow shim rather than a generic MCP client layer, and it avoids introducing a separate temporary Agent Arbiter business API that would also need to be retired later.
 
-The shim should stay Mail Sentry-specific, but its internal shape should allow additional Mail Sentry tools to be added without redesigning the entire OpenClaw integration around SMTP-only assumptions.
+The shim should stay Agent Arbiter-specific, but its internal shape should allow additional Agent Arbiter tools to be added without redesigning the entire OpenClaw integration around SMTP-only assumptions.
 
 ## Planned skill split
 
@@ -31,7 +31,7 @@ The temporary OpenClaw integration should use two separate wrapper skill surface
 
 This split keeps attended and unattended behavior separate instead of relying on one mixed skill to infer the correct safety mode.
 
-Those send skills are currently the only OpenClaw-facing use of the shim. Mail Sentry now exposes IMAP tools, but the temporary OpenClaw wrapper skills do not cover them yet.
+Those send skills are currently the only OpenClaw-facing use of the shim. Agent Arbiter now exposes IMAP tools, but the temporary OpenClaw wrapper skills do not cover them yet.
 
 ## Temporary status
 
@@ -39,7 +39,7 @@ The protocol shim is temporary:
 
 - the skill-local MCP-over-HTTP shim is temporary
 
-Once OpenClaw supports native MCP, OpenClaw should call Mail Sentry directly and the temporary shim should be retired.
+Once OpenClaw supports native MCP, OpenClaw should call Agent Arbiter directly and the temporary shim should be retired.
 
 The two skill modes may still remain useful after native MCP support exists:
 

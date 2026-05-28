@@ -20,7 +20,7 @@ SUPPLEMENTAL_MYPY_TARGETS = [
     "tests",
     "noxfile.py",
 ]
-SHARED_SKILL_MYPY_TARGETS = ["openclaw_skills/_shared/scripts/mail_sentry_client.py"]
+SHARED_SKILL_MYPY_TARGETS = ["openclaw_skills/_shared/scripts/agent_arbiter_client.py"]
 SKILL_SCRIPT_MYPY_TARGETS = [
     "openclaw_skills/send-email-interactive/scripts/send_email_interactive.py",
     "openclaw_skills/send-email-predefined/scripts/send_email_predefined.py",

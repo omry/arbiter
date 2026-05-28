@@ -1,5 +1,5 @@
 defaults:
-  - mail_sentry_app_config_schema
+  - agent_arbiter_app_config_schema
   - _self_
 
 hydra:
@@ -10,11 +10,11 @@ hydra:
     chdir: false
 
 server:
-  name: mail-sentry-readonly
+  name: agent-arbiter-readonly
   transport: streamable-http
-  host: ${oc.env:MAIL_SENTRY_SERVER_HOST,0.0.0.0}
-  port: ${oc.env:MAIL_SENTRY_SERVER_PORT,8025}
-  path: ${oc.env:MAIL_SENTRY_SERVER_PATH,/mcp}
+  host: ${oc.env:AGENT_ARBITER_SERVER_HOST,0.0.0.0}
+  port: ${oc.env:AGENT_ARBITER_SERVER_PORT,8025}
+  path: ${oc.env:AGENT_ARBITER_SERVER_PATH,/mcp}
   stateless_http: true
   json_response: true
 
@@ -42,10 +42,10 @@ mail:
 
 etc:
   mailserver:
-    host: ${oc.env:MAIL_SENTRY_IMAP_HOST}
-    port: ${oc.env:MAIL_SENTRY_IMAP_PORT,993}
-    username: ${secret_file:${oc.env:MAIL_SENTRY_IMAP_USERNAME_FILE,/run/secrets/imap_username}}
-    password: ${secret_file:${oc.env:MAIL_SENTRY_IMAP_PASSWORD_FILE,/run/secrets/imap_password}}
+    host: ${oc.env:AGENT_ARBITER_IMAP_HOST}
+    port: ${oc.env:AGENT_ARBITER_IMAP_PORT,993}
+    username: ${secret_file:${oc.env:AGENT_ARBITER_IMAP_USERNAME_FILE,/run/secrets/imap_username}}
+    password: ${secret_file:${oc.env:AGENT_ARBITER_IMAP_PASSWORD_FILE,/run/secrets/imap_password}}
 
 services:
   smtp: null
@@ -56,9 +56,9 @@ services:
         port: ${etc.mailserver.port}
         username: ${etc.mailserver.username}
         password: ${etc.mailserver.password}
-        tls: ${oc.env:MAIL_SENTRY_IMAP_TLS,implicit}
-        verify_peer: ${oc.env:MAIL_SENTRY_IMAP_VERIFY_PEER,true}
-        timeout_seconds: ${oc.env:MAIL_SENTRY_IMAP_TIMEOUT_SECONDS,30.0}
+        tls: ${oc.env:AGENT_ARBITER_IMAP_TLS,implicit}
+        verify_peer: ${oc.env:AGENT_ARBITER_IMAP_VERIFY_PEER,true}
+        timeout_seconds: ${oc.env:AGENT_ARBITER_IMAP_TIMEOUT_SECONDS,30.0}
         default_folder: TARGET_IMAP_FOLDER
         folders:
           TARGET_IMAP_FOLDER:

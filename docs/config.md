@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define the deployment-owned configuration contract for the Mail Sentry server.
+Define the deployment-owned configuration contract for the Agent Arbiter server.
 
 ## Configuration system
 
@@ -255,7 +255,7 @@ Relevant SMTP transport settings for an account with SMTP enabled:
 - `services.smtp.accounts.<account>.verify_peer`: schema-defaulted to `true`
 - `services.smtp.accounts.<account>.from_email`: schema-defaulted to
   `agent@example.com`, but deployment-required for real SMTP submission
-- `services.smtp.accounts.<account>.from_name`: schema-defaulted to `Mail Sentry`
+- `services.smtp.accounts.<account>.from_name`: schema-defaulted to `Agent Arbiter`
 - `services.smtp.accounts.<account>.timeout_seconds`: schema-defaulted to `30.0`
 
 Relevant SMTP policy settings:
@@ -378,7 +378,8 @@ Relevant IMAP policy settings:
 ## Configuration evolution notes
 
 - The config shape activates SMTP and IMAP independently through `services.*`;
-  the current server implements both first-party service plugins.
+  the current server still carries temporary in-tree implementations until SMTP
+  and IMAP move into separate plugin distributions.
 - `account_access_profile` is the active shared policy model for service-level
   access and confirmation settings.
 - Durable audit storage and audit configuration are post-v1 work and are not

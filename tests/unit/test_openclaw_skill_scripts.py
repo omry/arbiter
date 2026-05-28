@@ -15,7 +15,7 @@ INTERACTIVE_PATH = (
 PREDEFINED_PATH = (
     REPO_ROOT / "openclaw_skills/send-email-predefined/scripts/send_email_predefined.py"
 )
-SHARED_PATH = REPO_ROOT / "openclaw_skills/_shared/scripts/mail_sentry_client.py"
+SHARED_PATH = REPO_ROOT / "openclaw_skills/_shared/scripts/agent_arbiter_client.py"
 
 
 def _load_module(path: Path, module_name: str):

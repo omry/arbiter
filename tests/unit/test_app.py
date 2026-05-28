@@ -1,8 +1,8 @@
 import pytest
 from email.message import EmailMessage
 
-from mail_sentry.app import MailSentryApp
-from mail_sentry.config import (
+from agent_arbiter.app import AgentArbiterApp
+from agent_arbiter.config import (
     AccountAccessProfileConfig,
     AccountServicesConfig,
     AccountConfig,
@@ -22,10 +22,10 @@ from mail_sentry.config import (
     SMTPRecipientPolicyConfig,
     SMTPServicePolicyConfig,
 )
-from mail_sentry.imap import FetchedIMAPMessage
-from mail_sentry.plugins.imap import IMAPClientFactory, IMAPRuntime
-from mail_sentry.plugins.smtp import SMTPClientFactory, SMTPRuntime, TimeProvider
-from mail_sentry.services import RuntimeRegistry
+from agent_arbiter.imap import FetchedIMAPMessage
+from agent_arbiter.plugins.imap import IMAPClientFactory, IMAPRuntime
+from agent_arbiter.plugins.smtp import SMTPClientFactory, SMTPRuntime, TimeProvider
+from agent_arbiter.services import RuntimeRegistry
 
 
 class FakeSMTPClient:
@@ -162,7 +162,7 @@ def _app(
     smtp_client_factory: SMTPClientFactory | None = None,
     imap_client_factory: IMAPClientFactory | None = None,
     time_provider: TimeProvider | None = None,
-) -> MailSentryApp:
+) -> AgentArbiterApp:
     runtimes: dict[str, object] = {}
     if services_config.smtp is not None:
         assert smtp_client_factory is not None
@@ -178,7 +178,7 @@ def _app(
             services_config.imap,
             imap_client_factory=imap_client_factory,
         )
-    return MailSentryApp(mail_config, RuntimeRegistry(runtimes))
+    return AgentArbiterApp(mail_config, RuntimeRegistry(runtimes))
 
 
 def _mail_config() -> MailConfig:
@@ -641,7 +641,7 @@ def test_send_email_submits_message_and_excludes_bcc_header() -> None:
         "cc@example.com",
         "bcc@example.com",
     ]
-    assert smtp_client.message["From"] == "Mail Sentry <agent@example.com>"
+    assert smtp_client.message["From"] == "Agent Arbiter <agent@example.com>"
     assert smtp_client.message["To"] == "to@example.com"
     assert smtp_client.message["Cc"] == "cc@example.com"
     assert smtp_client.message["Subject"] == "Hello"

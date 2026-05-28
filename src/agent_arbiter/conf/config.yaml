@@ -1,9 +1,9 @@
 defaults:
-  - mail_sentry_app_config_schema
+  - agent_arbiter_app_config_schema
   - _self_
 
 server:
-  name: mail-sentry
+  name: agent-arbiter
   transport: streamable-http
   host: 127.0.0.1
   port: 8000
@@ -47,7 +47,7 @@ services:
         username: ""
         password: ""
         from_email: agent@example.com
-        from_name: Mail Sentry
+        from_name: Agent Arbiter
         tls: starttls
         verify_peer: true
         timeout_seconds: 30.0

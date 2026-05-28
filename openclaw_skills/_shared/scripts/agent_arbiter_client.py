@@ -12,26 +12,26 @@ import httpx
 
 
 @dataclass(frozen=True)
-class MailSentryClientConfig:
+class AgentArbiterClientConfig:
     url: str
     bearer_token: str | None = None
     timeout_seconds: float = 30.0
 
 
-def config_from_env() -> MailSentryClientConfig:
-    url = os.environ.get("MAIL_SENTRY_MCP_URL", "").strip()
+def config_from_env() -> AgentArbiterClientConfig:
+    url = os.environ.get("AGENT_ARBITER_MCP_URL", "").strip()
     if not url:
-        raise ValueError("MAIL_SENTRY_MCP_URL is required")
+        raise ValueError("AGENT_ARBITER_MCP_URL is required")
 
-    bearer_token = os.environ.get("MAIL_SENTRY_MCP_BEARER_TOKEN", "").strip() or None
-    timeout_raw = os.environ.get("MAIL_SENTRY_TIMEOUT_SECONDS", "30").strip()
+    bearer_token = os.environ.get("AGENT_ARBITER_MCP_BEARER_TOKEN", "").strip() or None
+    timeout_raw = os.environ.get("AGENT_ARBITER_TIMEOUT_SECONDS", "30").strip()
 
     try:
         timeout_seconds = float(timeout_raw)
     except ValueError as exc:
-        raise ValueError("MAIL_SENTRY_TIMEOUT_SECONDS must be numeric") from exc
+        raise ValueError("AGENT_ARBITER_TIMEOUT_SECONDS must be numeric") from exc
 
-    return MailSentryClientConfig(
+    return AgentArbiterClientConfig(
         url=url,
         bearer_token=bearer_token,
         timeout_seconds=timeout_seconds,
@@ -70,7 +70,7 @@ def normalize_tool_result(result: Any) -> dict[str, Any]:
 
 
 async def call_tool(
-    config: MailSentryClientConfig,
+    config: AgentArbiterClientConfig,
     tool_name: str,
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
@@ -92,7 +92,7 @@ async def call_tool(
                 read_stream,
                 write_stream,
                 client_info=Implementation(
-                    name="openclaw-mail-sentry-skill", version="0.1.0"
+                    name="openclaw-agent-arbiter-skill", version="0.1.0"
                 ),
             ) as session:
                 await session.initialize()
@@ -101,7 +101,7 @@ async def call_tool(
 
 
 def call_tool_sync(
-    config: MailSentryClientConfig,
+    config: AgentArbiterClientConfig,
     tool_name: str,
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
@@ -110,9 +110,9 @@ def call_tool_sync(
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Call a Mail Sentry tool over Streamable HTTP."
+        description="Call an Agent Arbiter tool over Streamable HTTP."
     )
-    parser.add_argument("tool_name", help="Mail Sentry tool name.")
+    parser.add_argument("tool_name", help="Agent Arbiter tool name.")
     parser.add_argument(
         "--arguments-json",
         required=True,

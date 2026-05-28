@@ -1,6 +1,6 @@
 # OpenClaw Skill Installation
 
-These files package the temporary OpenClaw wrapper skills for Mail Sentry:
+These files package the temporary OpenClaw wrapper skills for Agent Arbiter:
 
 - `send-email-interactive`
 - `send-email-predefined`
@@ -8,14 +8,14 @@ These files package the temporary OpenClaw wrapper skills for Mail Sentry:
 
 They are meant to be installed into the running `openclaw` container as user-managed skills under `/home/node/.openclaw/skills`.
 
-Built-in OpenClaw skills live separately under `/app/skills`. The Mail Sentry installer does not modify `/app/skills`.
+Built-in OpenClaw skills live separately under `/app/skills`. The Agent Arbiter installer does not modify `/app/skills`.
 
 ## Skill configuration
 
-Use the OpenClaw container env for the shared Mail Sentry endpoint:
+Use the OpenClaw container env for the shared Agent Arbiter endpoint:
 
 ```bash
-MAIL_SENTRY_MCP_URL=http://127.0.0.1:8025/mcp
+AGENT_ARBITER_MCP_URL=http://127.0.0.1:8025/mcp
 ```
 
 For the current VM setup, that is usually easiest to manage through:
@@ -26,7 +26,7 @@ For the current VM setup, that is usually easiest to manage through:
 
 Recommended split:
 
-- keep `MAIL_SENTRY_MCP_URL` in the shared container env
+- keep `AGENT_ARBITER_MCP_URL` in the shared container env
 - keep predefined account selection in the local template registry next to the predefined skill, typically `/home/node/.openclaw/skills/send-email-predefined/templates.json`
 - let the interactive skill choose the account dynamically at runtime
 
@@ -34,12 +34,12 @@ Recommended split:
 
 ### First installation
 
-1. Set the Mail Sentry endpoint in the host env file used by the `openclaw` container.
+1. Set the Agent Arbiter endpoint in the host env file used by the `openclaw` container.
 
    For the current VM setup, the recommended endpoint is:
 
    ```bash
-   MAIL_SENTRY_MCP_URL=http://127.0.0.1:8025/mcp
+   AGENT_ARBITER_MCP_URL=http://127.0.0.1:8025/mcp
    ```
 
    That works for the current deployment because the `openclaw` container is using host networking.
@@ -65,7 +65,7 @@ Recommended split:
    ~/.openclaw/skills/send-email-predefined/templates.json
    ```
 
-   Each template in that file is fixed to a specific Mail Sentry account through its `account` field.
+   Each template in that file is fixed to a specific Agent Arbiter account through its `account` field.
 
    The sample file includes:
 
@@ -77,19 +77,19 @@ Recommended split:
 4. Run the installer script from GitHub:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/omry/mail-sentry/main/openclaw_skills/install-openclaw-skills.sh" | bash -s -- install --source github
+curl -fsSL "https://raw.githubusercontent.com/omry/agent-arbiter/main/openclaw_skills/install-openclaw-skills.sh" | bash -s -- install --source github
 ```
 
 5. Smoke-test the interactive skill:
 
 ```bash
-printf 'Hello Omry\n\nThis is a Mail Sentry stdin test.\n\nBest,\nAtlas\n' | docker exec -i \
-  -e MAIL_SENTRY_MCP_URL=http://127.0.0.1:8025/mcp \
+printf 'Hello Omry\n\nThis is an Agent Arbiter stdin test.\n\nBest,\nAtlas\n' | docker exec -i \
+  -e AGENT_ARBITER_MCP_URL=http://127.0.0.1:8025/mcp \
   openclaw \
   python3 /home/node/.openclaw/skills/send-email-interactive/scripts/send_email_interactive.py \
   --account primary \
   --to you@example.com \
-  --subject "Mail Sentry skill test" \
+  --subject "Agent Arbiter skill test" \
   --text-stdin
 ```
 
@@ -110,9 +110,9 @@ Update flow:
 nano ~/.openclaw/.env
 ```
 
-2. recreate the `openclaw` container so it picks up updated environment values, such as `MAIL_SENTRY_MCP_URL` from `~/.openclaw/.env`
+2. recreate the `openclaw` container so it picks up updated environment values, such as `AGENT_ARBITER_MCP_URL` from `~/.openclaw/.env`
 
-3. rerun the Mail Sentry installer
+3. rerun the Agent Arbiter installer
 
 The installed skill files stay on the mounted host path, but Python dependencies like `httpx` and `mcp` are installed into the container filesystem and do not survive container recreation.
 
@@ -131,7 +131,7 @@ What the installer does:
 4. installs the required Python dependencies in the container:
    - `httpx`
    - `mcp`
-5. downloads the Mail Sentry skill files from GitHub at the requested ref
+5. downloads the Agent Arbiter skill files from GitHub at the requested ref
 6. installs `_shared`, `send-email-interactive`, and `send-email-predefined` into `/home/node/.openclaw/skills`
 
 The installer is idempotent. Re-running it updates the skill files in place.
@@ -153,23 +153,23 @@ For pre-push testing from a local checkout, use `--source local`.
 ### Automatic uninstall
 
 ```bash
-REF=<git-ref>; curl -fsSL "https://raw.githubusercontent.com/omry/mail-sentry/${REF}/openclaw_skills/install-openclaw-skills.sh" | bash -s -- uninstall
+REF=<git-ref>; curl -fsSL "https://raw.githubusercontent.com/omry/agent-arbiter/${REF}/openclaw_skills/install-openclaw-skills.sh" | bash -s -- uninstall
 ```
 
-This removes only the Mail Sentry skill files from `/home/node/.openclaw/skills`. It does not remove `python3-pip`, `httpx`, or `mcp`.
+This removes only the Agent Arbiter skill files from `/home/node/.openclaw/skills`. It does not remove `python3-pip`, `httpx`, or `mcp`.
 
 ### Automatic install overrides
 
 Use a different container:
 
 ```bash
-REF=<git-ref>; curl -fsSL "https://raw.githubusercontent.com/omry/mail-sentry/${REF}/openclaw_skills/install-openclaw-skills.sh" | bash -s -- install --ref "${REF}" --source github --container my-openclaw
+REF=<git-ref>; curl -fsSL "https://raw.githubusercontent.com/omry/agent-arbiter/${REF}/openclaw_skills/install-openclaw-skills.sh" | bash -s -- install --ref "${REF}" --source github --container my-openclaw
 ```
 
 Use a different skill directory inside the container:
 
 ```bash
-REF=<git-ref>; curl -fsSL "https://raw.githubusercontent.com/omry/mail-sentry/${REF}/openclaw_skills/install-openclaw-skills.sh" | bash -s -- install --ref "${REF}" --source github --skill-dir /home/node/.openclaw/skills
+REF=<git-ref>; curl -fsSL "https://raw.githubusercontent.com/omry/agent-arbiter/${REF}/openclaw_skills/install-openclaw-skills.sh" | bash -s -- install --ref "${REF}" --source github --skill-dir /home/node/.openclaw/skills
 ```
 
 ### Local checkout install
@@ -177,7 +177,7 @@ REF=<git-ref>; curl -fsSL "https://raw.githubusercontent.com/omry/mail-sentry/${
 When testing from a local checkout before pushing to GitHub, run the installer script directly and force local source mode:
 
 ```bash
-bash /path/to/mail-sentry/openclaw_skills/install-openclaw-skills.sh install --source local
+bash /path/to/agent-arbiter/openclaw_skills/install-openclaw-skills.sh install --source local
 ```
 
 ## Manual install
@@ -189,7 +189,7 @@ Use manual install if you do not want to pipe a remote script into `bash`.
 From a checkout of this repo:
 
 ```bash
-scp -r /path/to/mail-sentry/openclaw_skills openclaw:~/openclaw-skill-staging/
+scp -r /path/to/agent-arbiter/openclaw_skills openclaw:~/openclaw-skill-staging/
 ```
 
 ### 2. Bootstrap `pip` inside the container if needed
@@ -217,19 +217,19 @@ tar -C ~/openclaw-skill-staging/openclaw_skills -cf - _shared send-email-interac
 ### 5. Verify the installed files
 
 ```bash
-docker exec openclaw sh -lc 'find /home/node/.openclaw/skills -maxdepth 3 -name SKILL.md -o -name mail_sentry_client.py'
+docker exec openclaw sh -lc 'find /home/node/.openclaw/skills -maxdepth 3 -name SKILL.md -o -name agent_arbiter_client.py'
 ```
 
 ### 6. Smoke-test the interactive skill
 
 ```bash
-printf 'Hello Omry\n\nThis is a Mail Sentry stdin test.\n\nBest,\nAtlas\n' | docker exec -i \
-  -e MAIL_SENTRY_MCP_URL=http://127.0.0.1:8025/mcp \
+printf 'Hello Omry\n\nThis is an Agent Arbiter stdin test.\n\nBest,\nAtlas\n' | docker exec -i \
+  -e AGENT_ARBITER_MCP_URL=http://127.0.0.1:8025/mcp \
   openclaw \
   python3 /home/node/.openclaw/skills/send-email-interactive/scripts/send_email_interactive.py \
   --account primary \
   --to you@example.com \
-  --subject "Mail Sentry skill test" \
+  --subject "Agent Arbiter skill test" \
   --text-stdin
 ```
 
@@ -258,12 +258,12 @@ HTML body via stdin:
 
 ```bash
 printf '<p>Hello Omry</p><p>This is an HTML stdin test.</p><p>Best,<br>Atlas</p>\n' | docker exec -i \
-  -e MAIL_SENTRY_MCP_URL=http://127.0.0.1:8025/mcp \
+  -e AGENT_ARBITER_MCP_URL=http://127.0.0.1:8025/mcp \
   openclaw \
   python3 /home/node/.openclaw/skills/send-email-interactive/scripts/send_email_interactive.py \
   --account primary \
   --to you@example.com \
-  --subject "Mail Sentry HTML stdin test" \
+  --subject "Agent Arbiter HTML stdin test" \
   --html-stdin
 ```
 
@@ -271,7 +271,7 @@ Regression example showing why arg-passed multiline content is bad:
 
 ```bash
 docker exec \
-  -e MAIL_SENTRY_MCP_URL=http://127.0.0.1:8025/mcp \
+  -e AGENT_ARBITER_MCP_URL=http://127.0.0.1:8025/mcp \
   openclaw \
   python3 /home/node/.openclaw/skills/send-email-interactive/scripts/send_email_interactive.py \
   --account primary \

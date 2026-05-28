@@ -1,12 +1,12 @@
 ---
 name: send-email-predefined
-description: Use for unattended or preapproved Mail Sentry sends driven by deployment-owned templates or profiles. Resolve a configured template, validate allowed parameters, and submit without a final confirmation step.
+description: Use for unattended or preapproved Agent Arbiter sends driven by deployment-owned templates or profiles. Resolve a configured template, validate allowed parameters, and submit without a final confirmation step.
 metadata:
   openclaw:
     requires:
       env:
-        - MAIL_SENTRY_MCP_URL
-    homepage: https://github.com/omry/mail-sentry/tree/main/openclaw_skills
+        - AGENT_ARBITER_MCP_URL
+    homepage: https://github.com/omry/agent-arbiter/tree/main/openclaw_skills
 ---
 
 # Send Email Predefined
@@ -15,9 +15,9 @@ Use this skill for unattended or preapproved email sends.
 
 Required environment:
 
-- `MAIL_SENTRY_MCP_URL`
-- optional `MAIL_SENTRY_MCP_BEARER_TOKEN`
-- optional `MAIL_SENTRY_TIMEOUT_SECONDS`
+- `AGENT_ARBITER_MCP_URL`
+- optional `AGENT_ARBITER_MCP_BEARER_TOKEN`
+- optional `AGENT_ARBITER_TIMEOUT_SECONDS`
 
 Use the helper script at `scripts/send_email_predefined.py`.
 

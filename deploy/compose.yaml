@@ -1,43 +1,43 @@
 services:
-  mail-sentry:
+  agent-arbiter:
     image: python:3.11-slim
-    container_name: mail-sentry
+    container_name: agent-arbiter
     restart: unless-stopped
     env_file:
-      - ./mail-sentry.env
+      - ./agent-arbiter.env
     environment:
       # Bind to all container interfaces so Docker's host-loopback port publish can
       # reach the service. The service stays host-local because ports publish
       # only on 127.0.0.1.
-      MAIL_SENTRY_SERVER_HOST: 0.0.0.0
-      MAIL_SENTRY_INSTALL_TARGET: ${MAIL_SENTRY_CONTAINER_INSTALL_TARGET:?set MAIL_SENTRY_CONTAINER_INSTALL_TARGET}
+      AGENT_ARBITER_SERVER_HOST: 0.0.0.0
+      AGENT_ARBITER_INSTALL_TARGET: ${AGENT_ARBITER_CONTAINER_INSTALL_TARGET:?set AGENT_ARBITER_CONTAINER_INSTALL_TARGET}
     volumes:
       - ./config.yaml:/config/config.yaml:ro
-      - ${MAIL_SENTRY_LOCAL_SOURCE_DIR:-./empty-source}:/source/mail-sentry:ro
+      - ${AGENT_ARBITER_LOCAL_SOURCE_DIR:-./empty-source}:/source/agent-arbiter:ro
     ports:
       - "127.0.0.1:8025:8025"
     networks:
-      - mail-sentry
+      - agent-arbiter
     command: >
       sh -lc
-      'install_target="$${MAIL_SENTRY_INSTALL_TARGET}" &&
-      if [ "$$install_target" = /source/mail-sentry ]; then
-        rm -rf /tmp/mail-sentry-source &&
-        mkdir -p /tmp/mail-sentry-source &&
-        cp -a /source/mail-sentry/pyproject.toml /source/mail-sentry/README.md /source/mail-sentry/src /tmp/mail-sentry-source/ &&
-        find /tmp/mail-sentry-source -type d \( -name "*.egg-info" -o -name "__pycache__" \) -prune -exec rm -rf {} + &&
-        install_target=/tmp/mail-sentry-source;
+      'install_target="$${AGENT_ARBITER_INSTALL_TARGET}" &&
+      if [ "$$install_target" = /source/agent-arbiter ]; then
+        rm -rf /tmp/agent-arbiter-source &&
+        mkdir -p /tmp/agent-arbiter-source &&
+        cp -a /source/agent-arbiter/pyproject.toml /source/agent-arbiter/README.md /source/agent-arbiter/src /tmp/agent-arbiter-source/ &&
+        find /tmp/agent-arbiter-source -type d \( -name "*.egg-info" -o -name "__pycache__" \) -prune -exec rm -rf {} + &&
+        install_target=/tmp/agent-arbiter-source;
       fi &&
       python -m pip install --no-cache-dir "$$install_target" &&
-      exec mail-sentry --config-path /config --config-name config'
+      exec agent-arbiter --config-path /config --config-name config'
 
 networks:
-  mail-sentry:
-    name: mail-sentry
+  agent-arbiter:
+    name: agent-arbiter
     driver: bridge
     driver_opts:
-      com.docker.network.bridge.name: "${MAIL_SENTRY_DOCKER_BRIDGE_NAME:-mail-sentry0}"
+      com.docker.network.bridge.name: "${AGENT_ARBITER_DOCKER_BRIDGE_NAME:-agent-arbiter0}"
     ipam:
       config:
         # Override only if the default subnet conflicts with another host network.
-        - subnet: "${MAIL_SENTRY_DOCKER_SUBNET:-172.31.250.0/24}"
+        - subnet: "${AGENT_ARBITER_DOCKER_SUBNET:-172.31.250.0/24}"

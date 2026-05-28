@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mail-sentry"
+name = "agent-arbiter"
 version = "0.1.1.dev1"
-description = "Policy-controlled MCP mail gateway"
+description = "Policy-controlled MCP gateway for agent-accessible services"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [
@@ -14,7 +14,7 @@ authors = [
 maintainers = [
   { name = "Omry Yadan", email = "omry@yadan.net" },
 ]
-keywords = ["email", "mcp", "mail", "smtp", "imap", "openclaw", "security"]
+keywords = ["agent", "policy", "mcp", "access-control", "smtp", "imap", "security"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
@@ -30,8 +30,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/omry/mail-sentry"
-Repository = "https://github.com/omry/mail-sentry"
+Homepage = "https://github.com/omry/agent-arbiter"
+Repository = "https://github.com/omry/agent-arbiter"
 
 [project.optional-dependencies]
 dev = [
@@ -44,11 +44,11 @@ dev = [
 ]
 
 [project.scripts]
-mail-sentry = "mail_sentry.main:main"
+agent-arbiter = "agent_arbiter.main:main"
 
-[project.entry-points."mail_sentry.services"]
-imap = "mail_sentry.plugins.imap:plugin"
-smtp = "mail_sentry.plugins.smtp:plugin"
+[project.entry-points."agent_arbiter.services"]
+imap = "agent_arbiter.plugins.imap:plugin"
+smtp = "agent_arbiter.plugins.smtp:plugin"
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"
@@ -70,5 +70,5 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-"mail_sentry" = ["py.typed"]
-"mail_sentry.conf" = ["*.yaml"]
+"agent_arbiter" = ["py.typed"]
+"agent_arbiter.conf" = ["*.yaml"]

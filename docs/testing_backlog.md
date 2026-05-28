@@ -6,7 +6,7 @@ Keep the remaining test work small, explicit, and prioritized.
 
 This file tracks the highest-value gaps between:
 
-- the current Mail Sentry implementation
+- the current Agent Arbiter implementation
 - the documented SMTP and IMAP contracts
 - the tests already in place
 

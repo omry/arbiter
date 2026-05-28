@@ -8,18 +8,18 @@ from typing import Any, cast
 import pytest
 from omegaconf import OmegaConf
 
-from mail_sentry.config import (
+from agent_arbiter.config import (
     AppConfig,
     IMAPConfig,
     IMAPFolderConfig,
     IMAPServiceConfig,
     ServicesConfig,
 )
-from mail_sentry.main import build_app, build_server, log_startup_summary
-from mail_sentry.plugins import discover_service_plugins
-from mail_sentry.plugins.imap import IMAPRuntime, IMAPServicePlugin
-from mail_sentry.plugins.smtp import SendEmailResult, SMTPRuntime, SMTPServicePlugin
-from mail_sentry.services import (
+from agent_arbiter.main import build_app, build_server, log_startup_summary
+from agent_arbiter.plugins import discover_service_plugins
+from agent_arbiter.plugins.imap import IMAPRuntime, IMAPServicePlugin
+from agent_arbiter.plugins.smtp import SendEmailResult, SMTPRuntime, SMTPServicePlugin
+from agent_arbiter.services import (
     SERVICE_PLUGIN_ENTRY_POINT_GROUP,
     RuntimeRegistry,
     ServicePlugin,
@@ -93,7 +93,7 @@ def test_discover_service_plugins_loads_entry_point_factories(
             return self
 
     monkeypatch.setattr(
-        "mail_sentry.plugins.entry_points",
+        "agent_arbiter.plugins.entry_points",
         lambda: FakeEntryPoints(
             [
                 FakeEntryPoint(smtp_plugin),
@@ -135,13 +135,13 @@ def test_log_startup_summary_includes_safe_runtime_context(
     assert cfg.services.smtp is not None
     cfg.services.smtp.accounts["primary"].password = "super-secret"
 
-    monkeypatch.setattr("mail_sentry.main.package_version", lambda: "1.2.3")
-    caplog.set_level(logging.INFO, logger="mail_sentry.main")
+    monkeypatch.setattr("agent_arbiter.main.package_version", lambda: "1.2.3")
+    caplog.set_level(logging.INFO, logger="agent_arbiter.main")
 
     log_startup_summary(cfg)
 
     message = caplog.messages[0]
-    assert "Mail Sentry starting version=1.2.3" in message
+    assert "Agent Arbiter starting version=1.2.3" in message
     assert "transport=streamable-http" in message
     assert "bind=127.0.0.1:8000/mcp" in message
     assert "accounts=primary" in message
@@ -480,7 +480,7 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "mcp.server", server_module)
     monkeypatch.setitem(sys.modules, "mcp.server.fastmcp", fastmcp_module)
     monkeypatch.setattr(
-        "mail_sentry.main.build_app",
+        "agent_arbiter.main.build_app",
         lambda cfg, service_plugins=None, runtime_dependencies=None: FakeApp(),
     )
 
@@ -488,7 +488,7 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
 
     server = cast(Any, build_server(cfg, service_plugins=_test_service_plugins()))
 
-    assert server.name == "mail-sentry"
+    assert server.name == "agent-arbiter"
     assert server.stateless_http is True
     assert server.json_response is True
     assert server.settings.host == "127.0.0.1"

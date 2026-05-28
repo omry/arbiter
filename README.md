@@ -1,6 +1,6 @@
-# Mail Sentry
+# Agent Arbiter
 
-Mail Sentry is a policy-controlled MCP mail gateway for sending mail and reading IMAP folders through explicit account policies.
+Agent Arbiter is a policy-controlled MCP gateway for exposing configured services to agents. The current service surface covers sending mail over SMTP and reading IMAP folders through explicit account policies.
 
 ## Project Status
 
@@ -37,7 +37,7 @@ Run the test suite from the repo root with:
 - `.venv/bin/python -m nox -s tests`
 - `.venv/bin/python -m nox -s lint`
 
-The `lint` session runs both `black --check` and the Mail Sentry `mypy` passes.
+The `lint` session runs both `black --check` and the Agent Arbiter `mypy` passes.
 
 For focused local runs without `nox`, use the same environment directly, for example:
 
@@ -64,7 +64,7 @@ The design is documented in the `docs/` structure used by the MCP server templat
 
 ## Local Streamable HTTP Run
 
-For local Codex or VS Code integration, run Mail Sentry as a streamable HTTP MCP
+For local Codex or VS Code integration, run Agent Arbiter as a streamable HTTP MCP
 server and point the client at:
 
 ```text
@@ -75,9 +75,9 @@ One convenient local setup is to keep secrets in environment variables and run
 with a throwaway Hydra config outside the repository:
 
 ```yaml
-# /tmp/mail-sentry-local.yaml
+# /tmp/agent-arbiter-local.yaml
 defaults:
-  - mail_sentry_app_config_schema
+  - agent_arbiter_app_config_schema
   - _self_
 
 server:
@@ -115,10 +115,10 @@ mail:
 
 etc:
   mailserver:
-    smtp_host: ${oc.env:MAIL_SENTRY_SMTP_HOST}
-    smtp_port: ${oc.env:MAIL_SENTRY_SMTP_PORT,587}
-    imap_host: ${oc.env:MAIL_SENTRY_IMAP_HOST}
-    imap_port: ${oc.env:MAIL_SENTRY_IMAP_PORT,993}
+    smtp_host: ${oc.env:AGENT_ARBITER_SMTP_HOST}
+    smtp_port: ${oc.env:AGENT_ARBITER_SMTP_PORT,587}
+    imap_host: ${oc.env:AGENT_ARBITER_IMAP_HOST}
+    imap_port: ${oc.env:AGENT_ARBITER_IMAP_PORT,993}
 
 services:
   smtp:
@@ -127,21 +127,21 @@ services:
         host: ${etc.mailserver.smtp_host}
         port: ${etc.mailserver.smtp_port}
         authenticate: true
-        username: ${oc.env:MAIL_SENTRY_SMTP_USERNAME}
-        password: ${oc.env:MAIL_SENTRY_SMTP_PASSWORD}
-        from_email: ${oc.env:MAIL_SENTRY_SMTP_FROM_EMAIL}
-        from_name: ${oc.env:MAIL_SENTRY_SMTP_FROM_NAME,Mail Sentry}
-        tls: ${oc.env:MAIL_SENTRY_SMTP_TLS,starttls}
-        verify_peer: ${oc.env:MAIL_SENTRY_SMTP_VERIFY_PEER,true}
+        username: ${oc.env:AGENT_ARBITER_SMTP_USERNAME}
+        password: ${oc.env:AGENT_ARBITER_SMTP_PASSWORD}
+        from_email: ${oc.env:AGENT_ARBITER_SMTP_FROM_EMAIL}
+        from_name: ${oc.env:AGENT_ARBITER_SMTP_FROM_NAME,Agent Arbiter}
+        tls: ${oc.env:AGENT_ARBITER_SMTP_TLS,starttls}
+        verify_peer: ${oc.env:AGENT_ARBITER_SMTP_VERIFY_PEER,true}
   imap:
     accounts:
       primary:
         host: ${etc.mailserver.imap_host}
         port: ${etc.mailserver.imap_port}
-        username: ${oc.env:MAIL_SENTRY_IMAP_USERNAME}
-        password: ${oc.env:MAIL_SENTRY_IMAP_PASSWORD}
-        tls: ${oc.env:MAIL_SENTRY_IMAP_TLS,implicit}
-        verify_peer: ${oc.env:MAIL_SENTRY_IMAP_VERIFY_PEER,true}
+        username: ${oc.env:AGENT_ARBITER_IMAP_USERNAME}
+        password: ${oc.env:AGENT_ARBITER_IMAP_PASSWORD}
+        tls: ${oc.env:AGENT_ARBITER_IMAP_TLS,implicit}
+        verify_peer: ${oc.env:AGENT_ARBITER_IMAP_VERIFY_PEER,true}
         default_folder: INBOX
         folders:
           INBOX:
@@ -153,7 +153,7 @@ services:
 Then run from this directory:
 
 ```bash
-python -m mail_sentry --config-path /tmp --config-name mail-sentry-local
+python -m agent_arbiter --config-path /tmp --config-name agent-arbiter-local
 ```
 
 The IMAP tools use folder-scoped UIDs returned by `list_messages` and

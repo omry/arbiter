@@ -1,12 +1,12 @@
 ---
 name: send-email-interactive
-description: Use when a user is actively composing or sending an email through Mail Sentry. Gather recipients, subject, and body, apply the interactive confirmation rule, and submit through the local Mail Sentry helper script.
+description: Use when a user is actively composing or sending an email through Agent Arbiter. Gather recipients, subject, and body, apply the interactive confirmation rule, and submit through the local Agent Arbiter helper script.
 metadata:
   openclaw:
     requires:
       env:
-        - MAIL_SENTRY_MCP_URL
-    homepage: https://github.com/omry/mail-sentry/tree/main/openclaw_skills
+        - AGENT_ARBITER_MCP_URL
+    homepage: https://github.com/omry/agent-arbiter/tree/main/openclaw_skills
 ---
 
 # Send Email Interactive
@@ -15,9 +15,9 @@ Use this skill when the user is present and wants help composing or sending an e
 
 Required environment:
 
-- `MAIL_SENTRY_MCP_URL`
-- optional `MAIL_SENTRY_MCP_BEARER_TOKEN`
-- optional `MAIL_SENTRY_TIMEOUT_SECONDS`
+- `AGENT_ARBITER_MCP_URL`
+- optional `AGENT_ARBITER_MCP_BEARER_TOKEN`
+- optional `AGENT_ARBITER_TIMEOUT_SECONDS`
 
 Use the helper script at `scripts/send_email_interactive.py`.
 
@@ -33,7 +33,7 @@ Workflow:
    - confirm before sending if recipients or message content were materially inferred, expanded, or transformed
    - confirmation is not required only for straightforward user-directed sends with explicit recipients and explicit message content
    - use the selected account's name and `description` in that confirmation so the user can see the operator-provided account context
-   - treat account names and descriptions as advisory context; the enforceable boundary is the Mail Sentry policy for the selected account
+   - treat account names and descriptions as advisory context; the enforceable boundary is the Agent Arbiter policy for the selected account
    - if the selected account's `smtp.require_confirmation` is `true`, require explicit final confirmation before sending
 6. Run the helper script with explicit arguments for account, recipients, and subject, and pass the body through stdin.
    Use exactly one of `--text-stdin` or `--html-stdin` to declare the body type.

@@ -1,11 +1,11 @@
-# RFC: Mail Sentry Overview
+# RFC: Agent Arbiter Overview
 
-- Document ID: `mail-sentry-overview`
+- Document ID: `agent-arbiter-overview`
 - Version: `0.1.1.dev1`
 - Status: `Draft`
 - Authors: `Codex`, `Omry Yadan`
 - Last Updated: `2026-05-24`
-- Intended Use: implementation-driving overview for the Mail Sentry server
+- Intended Use: implementation-driving overview for the Agent Arbiter server
 
 ## Purpose
 
@@ -60,7 +60,7 @@ SMTP and IMAP settings belong to server configuration, not tool payloads. The ca
 
 ### 3. Configuration is the authority boundary
 
-Mail Sentry enforces what the configured account and policy allow. Account
+Agent Arbiter enforces what the configured account and policy allow. Account
 names and descriptions may guide voluntary caller behavior, but labels such as
 `personal` are not built-in enforcement tiers.
 
@@ -69,7 +69,7 @@ Questions to resolve before broader or more sensitive deployments:
 - whether the account's configured SMTP recipient policy is narrow enough
 - whether the account's configured IMAP policy should start read-only
 - whether destructive IMAP operations should be disabled
-- whether the bot-to-Sentry MCP connection needs caller authentication or
+- whether the bot-to-Agent Arbiter MCP connection needs caller authentication or
   authorization, such as a shared secret, bearer token, password, client
   certificate, or mTLS/PKI
 
@@ -105,7 +105,7 @@ Implications of the current trust model:
 - `list_accounts` returns all configured accounts
 - callers may explicitly select any configured account
 - caller authentication between the bot and the MCP server is out of scope for the current design
-- Mail Sentry config is the enforcement boundary for v1
+- Agent Arbiter config is the enforcement boundary for v1
 
 ## Current Implementation Status
 
@@ -138,7 +138,7 @@ Still open:
 - Whether attachments belong in v2 or later
 - Whether account access profiles should continue to own confirmation policy as well as access policy
 - What caller authentication or authorization model, if any, should protect
-  the bot-to-Sentry MCP connection
+  the bot-to-Agent Arbiter MCP connection
 
 ## Recommended next step
 

@@ -3,7 +3,7 @@
 ## Status
 
 - Stage: `v1`
-- Owner: `Mail Sentry server`
+- Owner: `Agent Arbiter server`
 
 ## Purpose
 

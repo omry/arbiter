@@ -15,7 +15,7 @@ _SKILL_ROOT = Path(__file__).resolve().parents[1]
 _DEFAULT_TEMPLATE_REGISTRY = _SKILL_ROOT / "templates.json"
 sys.path.insert(0, str(_SHARED_SCRIPTS))
 
-from mail_sentry_client import (
+from agent_arbiter_client import (
     call_tool_sync,
     config_from_env,
     parse_json_argument,
@@ -135,7 +135,7 @@ def build_payload(
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Submit a predefined Mail Sentry send_email request."
+        description="Submit a predefined Agent Arbiter send_email request."
     )
     parser.add_argument(
         "--template", required=True, help="Template name from the registry."

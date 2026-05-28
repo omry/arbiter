@@ -4,7 +4,7 @@ from omegaconf import DictConfig, OmegaConf
 from pathlib import Path
 from typing import Any, cast
 
-from mail_sentry.config import (
+from agent_arbiter.config import (
     AccountConfig,
     AccountAccessProfileConfig,
     AccountServicesConfig,
@@ -33,7 +33,9 @@ from mail_sentry.config import (
 
 def _compose_config(overrides: list[str] | None = None) -> DictConfig:
     register_configs()
-    with initialize_config_module(version_base=None, config_module="mail_sentry.conf"):
+    with initialize_config_module(
+        version_base=None, config_module="agent_arbiter.conf"
+    ):
         return compose(config_name="config", overrides=overrides or [])
 
 
@@ -41,7 +43,7 @@ def test_compose_config_returns_hydra_config() -> None:
     cfg = _compose_config()
 
     assert isinstance(cfg, DictConfig)
-    assert cfg.server.name == "mail-sentry"
+    assert cfg.server.name == "agent-arbiter"
     assert cfg.server.transport == "streamable-http"
     assert cfg.server.host == "127.0.0.1"
     assert cfg.server.port == 8000
@@ -105,8 +107,8 @@ def test_hydra_config_preserves_lazy_interpolations() -> None:
         ["services.smtp.accounts.primary.from_name=${server.name}"]
     )
 
-    assert app_config.server.name == "mail-sentry"
-    assert app_config.services.smtp.accounts.primary.from_name == "mail-sentry"
+    assert app_config.server.name == "agent-arbiter"
+    assert app_config.services.smtp.accounts.primary.from_name == "agent-arbiter"
 
 
 def test_mailgateway_schema_alias_composes(tmp_path: Path) -> None:
@@ -118,7 +120,7 @@ defaults:
   - _self_
 
 server:
-  name: mail-sentry-mcp
+  name: agent-arbiter-mcp
 mail:
   account_access_profiles:
     bot:
@@ -152,7 +154,7 @@ services:
     with initialize_config_dir(version_base=None, config_dir=str(tmp_path)):
         cfg = compose(config_name="config")
 
-    assert cfg.server.name == "mail-sentry-mcp"
+    assert cfg.server.name == "agent-arbiter-mcp"
     assert (
         cfg.mail.account_access_profiles.bot.services.smtp.require_confirmation is False
     )
@@ -162,17 +164,17 @@ services:
 def test_standard_deployment_config_composes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("MAIL_SENTRY_BOT_SMTP_HOST", "smtp.example.com")
-    monkeypatch.setenv("MAIL_SENTRY_BOT_SMTP_USERNAME", "bot@example.com")
-    monkeypatch.setenv("MAIL_SENTRY_BOT_SMTP_PASSWORD", "secret")
-    monkeypatch.setenv("MAIL_SENTRY_BOT_SMTP_FROM_EMAIL", "bot@example.com")
-    monkeypatch.setenv("MAIL_SENTRY_BOT_IMAP_HOST", "imap.example.com")
-    monkeypatch.setenv("MAIL_SENTRY_BOT_IMAP_USERNAME", "bot@example.com")
-    monkeypatch.setenv("MAIL_SENTRY_BOT_IMAP_PASSWORD", "secret")
-    monkeypatch.setenv("MAIL_SENTRY_PERSONAL_SMTP_HOST", "smtp.example.com")
-    monkeypatch.setenv("MAIL_SENTRY_PERSONAL_SMTP_USERNAME", "omry@example.com")
-    monkeypatch.setenv("MAIL_SENTRY_PERSONAL_SMTP_PASSWORD", "secret")
-    monkeypatch.setenv("MAIL_SENTRY_PERSONAL_SMTP_FROM_EMAIL", "omry@example.com")
+    monkeypatch.setenv("AGENT_ARBITER_BOT_SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("AGENT_ARBITER_BOT_SMTP_USERNAME", "bot@example.com")
+    monkeypatch.setenv("AGENT_ARBITER_BOT_SMTP_PASSWORD", "secret")
+    monkeypatch.setenv("AGENT_ARBITER_BOT_SMTP_FROM_EMAIL", "bot@example.com")
+    monkeypatch.setenv("AGENT_ARBITER_BOT_IMAP_HOST", "imap.example.com")
+    monkeypatch.setenv("AGENT_ARBITER_BOT_IMAP_USERNAME", "bot@example.com")
+    monkeypatch.setenv("AGENT_ARBITER_BOT_IMAP_PASSWORD", "secret")
+    monkeypatch.setenv("AGENT_ARBITER_PERSONAL_SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("AGENT_ARBITER_PERSONAL_SMTP_USERNAME", "omry@example.com")
+    monkeypatch.setenv("AGENT_ARBITER_PERSONAL_SMTP_PASSWORD", "secret")
+    monkeypatch.setenv("AGENT_ARBITER_PERSONAL_SMTP_FROM_EMAIL", "omry@example.com")
 
     deploy_config_dir = Path(__file__).parents[2] / "deploy"
     register_configs()
@@ -182,7 +184,7 @@ def test_standard_deployment_config_composes(
     ):
         cfg = compose(config_name="config")
 
-    assert cfg.server.name == "mail-sentry-mcp"
+    assert cfg.server.name == "agent-arbiter-mcp"
     assert (
         cfg.mail.account_access_profiles.bot.services.smtp.require_confirmation is False
     )
@@ -275,9 +277,9 @@ def test_readonly_imap_deployment_config_composes(
     username_file.write_text("user@example.com\n", encoding="utf-8")
     password_file.write_text("secret\n", encoding="utf-8")
 
-    monkeypatch.setenv("MAIL_SENTRY_IMAP_HOST", "imap.example.com")
-    monkeypatch.setenv("MAIL_SENTRY_IMAP_USERNAME_FILE", str(username_file))
-    monkeypatch.setenv("MAIL_SENTRY_IMAP_PASSWORD_FILE", str(password_file))
+    monkeypatch.setenv("AGENT_ARBITER_IMAP_HOST", "imap.example.com")
+    monkeypatch.setenv("AGENT_ARBITER_IMAP_USERNAME_FILE", str(username_file))
+    monkeypatch.setenv("AGENT_ARBITER_IMAP_PASSWORD_FILE", str(password_file))
 
     deploy_config_dir = Path(__file__).parents[2] / "deploy" / "readonly-imap"
     register_configs()

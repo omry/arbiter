@@ -6,8 +6,8 @@ from typing import Any
 
 import pytest
 
-from mail_sentry.config import IMAPConfig, MailTlsMode
-from mail_sentry.imap import IMAPClient, IMAPOperationError
+from agent_arbiter.config import IMAPConfig, MailTlsMode
+from agent_arbiter.imap import IMAPClient, IMAPOperationError
 
 
 MESSAGE_BYTES = (
@@ -82,7 +82,7 @@ def test_list_messages_uses_ssl_login_and_parses_recent_messages(
         assert ssl_context.check_hostname is False
         return fake_server
 
-    monkeypatch.setattr("mail_sentry.imap.imaplib.IMAP4_SSL", fake_imap4_ssl)
+    monkeypatch.setattr("agent_arbiter.imap.imaplib.IMAP4_SSL", fake_imap4_ssl)
 
     client = IMAPClient(
         IMAPConfig(
@@ -119,7 +119,7 @@ def test_starttls_uses_configured_context(monkeypatch: pytest.MonkeyPatch) -> No
         assert timeout == 30.0
         return fake_server
 
-    monkeypatch.setattr("mail_sentry.imap.imaplib.IMAP4", fake_imap4)
+    monkeypatch.setattr("agent_arbiter.imap.imaplib.IMAP4", fake_imap4)
 
     client = IMAPClient(
         IMAPConfig(
@@ -152,7 +152,7 @@ def test_move_falls_back_to_copy_delete_and_expunge(
     ) -> FakeIMAPServer:
         return fake_server
 
-    monkeypatch.setattr("mail_sentry.imap.imaplib.IMAP4_SSL", fake_imap4_ssl)
+    monkeypatch.setattr("agent_arbiter.imap.imaplib.IMAP4_SSL", fake_imap4_ssl)
 
     client = IMAPClient(IMAPConfig())
 
@@ -189,7 +189,7 @@ def test_fetch_without_rfc822_data_raises(monkeypatch: pytest.MonkeyPatch) -> No
     ) -> FakeIMAPServer:
         return fake_server
 
-    monkeypatch.setattr("mail_sentry.imap.imaplib.IMAP4_SSL", fake_imap4_ssl)
+    monkeypatch.setattr("agent_arbiter.imap.imaplib.IMAP4_SSL", fake_imap4_ssl)
 
     client = IMAPClient(IMAPConfig())
 
