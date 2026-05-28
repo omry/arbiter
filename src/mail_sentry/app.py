@@ -3,8 +3,8 @@ from __future__ import annotations
 from time import monotonic
 
 from .config import MailConfig
-from .plugins.imap import ImapClientFactory, ImapRuntime
-from .plugins.smtp import SendEmailResult, SmtpClientFactory, SmtpRuntime, TimeProvider
+from .plugins.imap import IMAPClientFactory, IMAPRuntime
+from .plugins.smtp import SendEmailResult, SMTPClientFactory, SMTPRuntime, TimeProvider
 from .services import RuntimeRegistry
 
 
@@ -14,17 +14,17 @@ class MailSentryApp:
     def __init__(
         self,
         mail_config: MailConfig,
-        smtp_client_factory: SmtpClientFactory,
-        imap_client_factory: ImapClientFactory | None = None,
+        smtp_client_factory: SMTPClientFactory,
+        imap_client_factory: IMAPClientFactory | None = None,
         time_provider: TimeProvider = monotonic,
     ) -> None:
         self._mail_config = mail_config
-        self.smtp = SmtpRuntime(
+        self.smtp = SMTPRuntime(
             mail_config,
             smtp_client_factory=smtp_client_factory,
             time_provider=time_provider,
         )
-        self.imap = ImapRuntime(
+        self.imap = IMAPRuntime(
             mail_config,
             imap_client_factory=imap_client_factory,
         )

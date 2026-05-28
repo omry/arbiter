@@ -7,8 +7,8 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from mail_sentry.config import MailTlsMode, SmtpConfig
-from mail_sentry.smtp import SmtpSubmissionClient
+from mail_sentry.config import MailTlsMode, SMTPConfig
+from mail_sentry.smtp import SMTPSubmissionClient
 
 
 class FakeServer:
@@ -54,7 +54,7 @@ def _smtp_config(
     use_ssl: bool | None = None,
     authenticate: bool | None = None,
     **overrides: Any,
-) -> SmtpConfig:
+) -> SMTPConfig:
     if use_ssl:
         tls = MailTlsMode.implicit
     elif starttls is False:
@@ -65,11 +65,11 @@ def _smtp_config(
     if authenticate is None:
         authenticate = bool(overrides.get("username"))
 
-    return SmtpConfig(tls=tls, authenticate=authenticate, **overrides)
+    return SMTPConfig(tls=tls, authenticate=authenticate, **overrides)
 
 
 def test_build_ssl_context_disables_verification_when_verify_peer_is_false() -> None:
-    client = SmtpSubmissionClient(_smtp_config(verify_peer=False))
+    client = SMTPSubmissionClient(_smtp_config(verify_peer=False))
 
     context = client._build_ssl_context()
 
@@ -78,7 +78,7 @@ def test_build_ssl_context_disables_verification_when_verify_peer_is_false() -> 
 
 
 def test_build_ssl_context_verifies_peer_by_default() -> None:
-    client = SmtpSubmissionClient(_smtp_config())
+    client = SMTPSubmissionClient(_smtp_config())
 
     context = client._build_ssl_context()
 
@@ -97,7 +97,7 @@ def test_send_uses_unverified_context_for_starttls(monkeypatch) -> None:
 
     monkeypatch.setattr("mail_sentry.smtp.smtplib.SMTP", fake_smtp)
 
-    client = SmtpSubmissionClient(
+    client = SMTPSubmissionClient(
         _smtp_config(
             host="smtp.example.com",
             verify_peer=False,
@@ -142,7 +142,7 @@ def test_send_uses_smtp_ssl_when_use_ssl_is_enabled(monkeypatch) -> None:
     monkeypatch.setattr("mail_sentry.smtp.smtplib.SMTP", fail_plain_smtp)
     monkeypatch.setattr("mail_sentry.smtp.smtplib.SMTP_SSL", fake_smtp_ssl)
 
-    client = SmtpSubmissionClient(
+    client = SMTPSubmissionClient(
         _smtp_config(
             host="smtp.example.com",
             port=465,
@@ -172,7 +172,7 @@ def test_send_skips_login_when_username_is_not_configured(monkeypatch) -> None:
 
     monkeypatch.setattr("mail_sentry.smtp.smtplib.SMTP", fake_smtp)
 
-    client = SmtpSubmissionClient(_smtp_config())
+    client = SMTPSubmissionClient(_smtp_config())
     message = EmailMessage()
     message["Subject"] = "Hello"
 
@@ -187,7 +187,7 @@ def test_send_propagates_connection_errors(monkeypatch) -> None:
 
     monkeypatch.setattr("mail_sentry.smtp.smtplib.SMTP", fake_smtp)
 
-    client = SmtpSubmissionClient(_smtp_config())
+    client = SMTPSubmissionClient(_smtp_config())
     message = EmailMessage()
     message["Subject"] = "Hello"
 
@@ -212,7 +212,7 @@ def test_send_propagates_authentication_errors(monkeypatch) -> None:
 
     monkeypatch.setattr("mail_sentry.smtp.smtplib.SMTP", fake_smtp)
 
-    client = SmtpSubmissionClient(
+    client = SMTPSubmissionClient(
         _smtp_config(authenticate=True, username="user", password="secret")
     )
     message = EmailMessage()
@@ -233,7 +233,7 @@ def test_send_raises_when_some_recipients_are_refused(monkeypatch) -> None:
 
     monkeypatch.setattr("mail_sentry.smtp.smtplib.SMTP", fake_smtp)
 
-    client = SmtpSubmissionClient(_smtp_config())
+    client = SMTPSubmissionClient(_smtp_config())
     message = EmailMessage()
     message["Subject"] = "Hello"
 
@@ -251,7 +251,7 @@ def test_send_raises_when_some_recipients_are_refused(monkeypatch) -> None:
 
 def test_client_rejects_invalid_duck_typed_config() -> None:
     with pytest.raises(ValueError, match="smtp config tls"):
-        SmtpSubmissionClient(
+        SMTPSubmissionClient(
             SimpleNamespace(
                 host="smtp.example.com",
                 port=587,

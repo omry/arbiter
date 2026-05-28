@@ -11,8 +11,8 @@ from omegaconf import OmegaConf
 from mail_sentry.config import AppConfig
 from mail_sentry.main import build_app, build_server, log_startup_summary
 from mail_sentry.plugins import discover_service_plugins
-from mail_sentry.plugins.imap import ImapRuntime, ImapServicePlugin
-from mail_sentry.plugins.smtp import SendEmailResult, SmtpRuntime, SmtpServicePlugin
+from mail_sentry.plugins.imap import IMAPRuntime, IMAPServicePlugin
+from mail_sentry.plugins.smtp import SendEmailResult, SMTPRuntime, SMTPServicePlugin
 from mail_sentry.services import (
     SERVICE_PLUGIN_ENTRY_POINT_GROUP,
     RuntimeRegistry,
@@ -95,8 +95,8 @@ def test_discover_service_plugins_loads_entry_point_factories(
 
 def _test_service_plugins() -> list[ServicePlugin]:
     return [
-        SmtpServicePlugin(),
-        ImapServicePlugin(),
+        SMTPServicePlugin(),
+        IMAPServicePlugin(),
     ]
 
 
@@ -135,7 +135,7 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     mark_message_read_calls: list[dict[str, object]] = []
     delete_message_calls: list[dict[str, object]] = []
 
-    class FakeSmtpRuntime(SmtpRuntime):
+    class FakeSMTPRuntime(SMTPRuntime):
         def send_email(
             self,
             account: str,
@@ -163,7 +163,7 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
                 recipient_count=len(to) + len(cc or []) + len(bcc or []),
             )
 
-    class FakeImapRuntime(ImapRuntime):
+    class FakeIMAPRuntime(IMAPRuntime):
         def list_messages(
             self,
             account: str,
@@ -256,11 +256,11 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     class FakeApp:
         runtime_registry = RuntimeRegistry(
             {
-                "smtp": FakeSmtpRuntime(
+                "smtp": FakeSMTPRuntime(
                     AppConfig().mail,
                     smtp_client_factory=lambda config: cast(Any, object()),
                 ),
-                "imap": FakeImapRuntime(AppConfig().mail),
+                "imap": FakeIMAPRuntime(AppConfig().mail),
             }
         )
 

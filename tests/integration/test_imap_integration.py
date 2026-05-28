@@ -9,8 +9,8 @@ import threading
 
 import pytest
 
-from mail_sentry.config import ImapConfig, MailTlsMode
-from mail_sentry.imap import ImapClient, ImapOperationError
+from mail_sentry.config import IMAPConfig, MailTlsMode
+from mail_sentry.imap import IMAPClient, IMAPOperationError
 
 
 def _message_bytes(uid: str) -> bytes:
@@ -44,14 +44,14 @@ def _multipart_message_bytes(uid: str) -> bytes:
 
 
 @dataclass(frozen=True)
-class LocalImapServer:
+class LocalIMAPServer:
     host: str
     port: int
     commands: list[str]
     stop: object
 
 
-class _LocalImapServerRunner:
+class _LocalIMAPServerRunner:
     def __init__(
         self,
         port: int,
@@ -77,10 +77,10 @@ class _LocalImapServerRunner:
         self._thread = threading.Thread(target=self._serve, daemon=True)
         self._socket: socket.socket | None = None
 
-    def start(self) -> LocalImapServer:
+    def start(self) -> LocalIMAPServer:
         self._thread.start()
         assert self._ready.wait(timeout=5)
-        return LocalImapServer(
+        return LocalIMAPServer(
             host=self.host,
             port=self.port,
             commands=self.commands,
@@ -211,8 +211,8 @@ class _LocalImapServerRunner:
 @pytest.fixture
 def imap_server_factory(
     free_tcp_port_factory: Callable[[], int],
-) -> Iterator[Callable[..., LocalImapServer]]:
-    runners: list[_LocalImapServerRunner] = []
+) -> Iterator[Callable[..., LocalIMAPServer]]:
+    runners: list[_LocalIMAPServerRunner] = []
 
     def start_server(
         *,
@@ -222,8 +222,8 @@ def imap_server_factory(
         selectable_mailboxes: set[str] | None = None,
         search_uids: tuple[str, ...] = ("40", "41", "42"),
         messages: dict[str, bytes] | None = None,
-    ) -> LocalImapServer:
-        runner = _LocalImapServerRunner(
+    ) -> LocalIMAPServer:
+        runner = _LocalIMAPServerRunner(
             free_tcp_port_factory(),
             login_ok=login_ok,
             search_ok=search_ok,
@@ -244,14 +244,14 @@ def imap_server_factory(
 
 @pytest.fixture
 def imap_server(
-    imap_server_factory: Callable[..., LocalImapServer],
-) -> LocalImapServer:
+    imap_server_factory: Callable[..., LocalIMAPServer],
+) -> LocalIMAPServer:
     return imap_server_factory()
 
 
-def _client(server: LocalImapServer) -> ImapClient:
-    return ImapClient(
-        ImapConfig(
+def _client(server: LocalIMAPServer) -> IMAPClient:
+    return IMAPClient(
+        IMAPConfig(
             host=server.host,
             port=server.port,
             username="user@example.com",
@@ -262,7 +262,7 @@ def _client(server: LocalImapServer) -> ImapClient:
 
 
 def test_imap_client_reads_and_searches_against_local_server(
-    imap_server: LocalImapServer,
+    imap_server: LocalIMAPServer,
 ) -> None:
     client = _client(imap_server)
 
@@ -294,7 +294,7 @@ def test_imap_client_reads_and_searches_against_local_server(
 
 
 def test_imap_client_mutations_against_local_server(
-    imap_server: LocalImapServer,
+    imap_server: LocalIMAPServer,
 ) -> None:
     client = _client(imap_server)
 
@@ -323,7 +323,7 @@ def test_imap_client_mutations_against_local_server(
 
 
 def test_imap_client_falls_back_when_move_is_unsupported(
-    imap_server_factory: Callable[..., LocalImapServer],
+    imap_server_factory: Callable[..., LocalIMAPServer],
 ) -> None:
     imap_server = imap_server_factory(support_move=False)
     client = _client(imap_server)
@@ -344,7 +344,7 @@ def test_imap_client_falls_back_when_move_is_unsupported(
 
 
 def test_imap_client_quotes_text_search_query(
-    imap_server: LocalImapServer,
+    imap_server: LocalIMAPServer,
 ) -> None:
     client = _client(imap_server)
 
@@ -357,7 +357,7 @@ def test_imap_client_quotes_text_search_query(
 
 
 def test_imap_client_parses_multipart_messages(
-    imap_server_factory: Callable[..., LocalImapServer],
+    imap_server_factory: Callable[..., LocalIMAPServer],
 ) -> None:
     imap_server = imap_server_factory(
         search_uids=("43",),
@@ -374,7 +374,7 @@ def test_imap_client_parses_multipart_messages(
 
 
 def test_imap_client_surfaces_login_failure(
-    imap_server_factory: Callable[..., LocalImapServer],
+    imap_server_factory: Callable[..., LocalIMAPServer],
 ) -> None:
     imap_server = imap_server_factory(login_ok=False)
 
@@ -383,18 +383,18 @@ def test_imap_client_surfaces_login_failure(
 
 
 def test_imap_client_surfaces_folder_selection_failure(
-    imap_server_factory: Callable[..., LocalImapServer],
+    imap_server_factory: Callable[..., LocalIMAPServer],
 ) -> None:
     imap_server = imap_server_factory(selectable_mailboxes={"INBOX"})
 
-    with pytest.raises(ImapOperationError, match="select folder Missing"):
+    with pytest.raises(IMAPOperationError, match="select folder Missing"):
         _client(imap_server).get_message(folder="Missing", uid="42")
 
 
 def test_imap_client_surfaces_search_failure(
-    imap_server_factory: Callable[..., LocalImapServer],
+    imap_server_factory: Callable[..., LocalIMAPServer],
 ) -> None:
     imap_server = imap_server_factory(search_ok=False)
 
-    with pytest.raises(ImapOperationError, match="search messages"):
+    with pytest.raises(IMAPOperationError, match="search messages"):
         _client(imap_server).search_messages(folder="INBOX", query="invoice", limit=1)

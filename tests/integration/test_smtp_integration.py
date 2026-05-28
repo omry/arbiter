@@ -13,8 +13,8 @@ import pytest
 import trustme
 
 from mail_sentry.app import MailSentryApp
-from mail_sentry.config import AccountConfig, MailConfig, MailTlsMode, SmtpConfig
-from mail_sentry.smtp import SmtpSubmissionClient
+from mail_sentry.config import AccountConfig, MailConfig, MailTlsMode, SMTPConfig
+from mail_sentry.smtp import SMTPSubmissionClient
 
 
 class CapturingHandler:
@@ -81,7 +81,7 @@ def _smtp_config(
     use_ssl: bool | None = None,
     authenticate: bool | None = None,
     **overrides: Any,
-) -> SmtpConfig:
+) -> SMTPConfig:
     if use_ssl:
         tls = MailTlsMode.implicit
     elif starttls is False:
@@ -92,10 +92,10 @@ def _smtp_config(
     if authenticate is None:
         authenticate = bool(overrides.get("username"))
 
-    return SmtpConfig(tls=tls, authenticate=authenticate, **overrides)
+    return SMTPConfig(tls=tls, authenticate=authenticate, **overrides)
 
 
-def _build_app(smtp_config: SmtpConfig) -> MailSentryApp:
+def _build_app(smtp_config: SMTPConfig) -> MailSentryApp:
     return MailSentryApp(
         MailConfig(
             accounts={
@@ -106,7 +106,7 @@ def _build_app(smtp_config: SmtpConfig) -> MailSentryApp:
                 )
             }
         ),
-        smtp_client_factory=SmtpSubmissionClient,
+        smtp_client_factory=SMTPSubmissionClient,
     )
 
 

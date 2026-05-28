@@ -6,21 +6,21 @@ from pydantic import Field
 
 from ..config import (
     AccountConfig,
-    ImapAccessPolicyConfig,
-    ImapConfigLike,
-    ImapFlagMode,
+    IMAPAccessPolicyConfig,
+    IMAPConfigLike,
+    IMAPFlagMode,
     MailConfig,
     resolve_imap_flag_mode,
     resolve_system_flag_key,
 )
-from ..imap import FetchedImapMessage
+from ..imap import FetchedIMAPMessage
 from ..services import ServicePluginContext, ToolServer
 
 
-class ImapClientLike(Protocol):
-    def list_messages(self, *, folder: str, limit: int) -> list[FetchedImapMessage]: ...
+class IMAPClientLike(Protocol):
+    def list_messages(self, *, folder: str, limit: int) -> list[FetchedIMAPMessage]: ...
 
-    def get_message(self, *, folder: str, uid: str) -> FetchedImapMessage: ...
+    def get_message(self, *, folder: str, uid: str) -> FetchedIMAPMessage: ...
 
     def search_messages(
         self,
@@ -28,7 +28,7 @@ class ImapClientLike(Protocol):
         folder: str,
         query: str,
         limit: int,
-    ) -> list[FetchedImapMessage]: ...
+    ) -> list[FetchedIMAPMessage]: ...
 
     def move_message(
         self,
@@ -43,16 +43,16 @@ class ImapClientLike(Protocol):
     def delete_message(self, *, folder: str, uid: str) -> None: ...
 
 
-ImapClientFactory = Callable[[ImapConfigLike], ImapClientLike]
+IMAPClientFactory = Callable[[IMAPConfigLike], IMAPClientLike]
 
 
-class ImapRuntime:
+class IMAPRuntime:
     service_name = "imap"
 
     def __init__(
         self,
         mail_config: MailConfig,
-        imap_client_factory: ImapClientFactory | None = None,
+        imap_client_factory: IMAPClientFactory | None = None,
     ) -> None:
         self._mail_config = mail_config
         self._imap_client_factory = imap_client_factory
@@ -60,7 +60,7 @@ class ImapRuntime:
     def account_summary(
         self,
         account: AccountConfig,
-        imap_policy: ImapAccessPolicyConfig | None,
+        imap_policy: IMAPAccessPolicyConfig | None,
     ) -> dict[str, object]:
         imap_enabled = account.imap is not None
         summary: dict[str, object] = {
@@ -199,7 +199,7 @@ class ImapRuntime:
         imap_config, imap_policy, folder_name = self._resolve_context(
             "mark_message_read", account, folder
         )
-        if resolve_imap_flag_mode(imap_policy, "\\Seen") is not ImapFlagMode.read_write:
+        if resolve_imap_flag_mode(imap_policy, "\\Seen") is not IMAPFlagMode.read_write:
             raise ValueError(
                 f"mark_message_read requires read_write access to the seen flag for account: {account}"
             )
@@ -247,7 +247,7 @@ class ImapRuntime:
         tool_name: str,
         account_name: str,
         folder: str | None,
-    ) -> tuple[ImapConfigLike, ImapAccessPolicyConfig, str]:
+    ) -> tuple[IMAPConfigLike, IMAPAccessPolicyConfig, str]:
         account = self._mail_config.accounts.get(account_name)
         if account is None:
             raise ValueError(f"{tool_name} received an unknown account: {account_name}")
@@ -270,7 +270,7 @@ class ImapRuntime:
     def _resolve_optional_folder(
         self,
         tool_name: str,
-        imap_config: ImapConfigLike,
+        imap_config: IMAPConfigLike,
         folder: str | None,
     ) -> str:
         folder_name = folder.strip() if folder else imap_config.default_folder
@@ -283,7 +283,7 @@ class ImapRuntime:
     def _resolve_folder(
         self,
         tool_name: str,
-        imap_config: ImapConfigLike,
+        imap_config: IMAPConfigLike,
         folder: str,
     ) -> str:
         folder_name = folder.strip()
@@ -293,14 +293,14 @@ class ImapRuntime:
             raise ValueError(f"{tool_name} received an unconfigured folder: {folder}")
         return folder_name
 
-    def _make_client(self, imap_config: ImapConfigLike) -> ImapClientLike:
+    def _make_client(self, imap_config: IMAPConfigLike) -> IMAPClientLike:
         if self._imap_client_factory is None:
             raise RuntimeError("IMAP client factory is not configured")
         return self._imap_client_factory(imap_config)
 
     def _message_summary(
         self,
-        imap_policy: ImapAccessPolicyConfig,
+        imap_policy: IMAPAccessPolicyConfig,
     ) -> dict[str, object]:
         flags = self._flag_summary(imap_policy)
         return {
@@ -312,7 +312,7 @@ class ImapRuntime:
 
     def _flag_summary(
         self,
-        imap_policy: ImapAccessPolicyConfig,
+        imap_policy: IMAPAccessPolicyConfig,
     ) -> dict[str, object]:
         system_flags = {
             "seen": imap_policy.system_flags.seen,
@@ -328,7 +328,7 @@ class ImapRuntime:
         user_flags = {
             flag_name: mode.value
             for flag_name, mode in sorted(imap_policy.user_flags.items())
-            if mode is not ImapFlagMode.hidden
+            if mode is not IMAPFlagMode.hidden
         }
         if user_flags:
             flags["user"] = user_flags
@@ -352,8 +352,8 @@ class ImapRuntime:
 
     def _message_to_dict(
         self,
-        message: FetchedImapMessage,
-        imap_policy: ImapAccessPolicyConfig,
+        message: FetchedIMAPMessage,
+        imap_policy: IMAPAccessPolicyConfig,
         *,
         include_body: bool,
     ) -> dict[str, object]:
@@ -378,19 +378,19 @@ class ImapRuntime:
 
     def _visible_flags(
         self,
-        imap_policy: ImapAccessPolicyConfig,
+        imap_policy: IMAPAccessPolicyConfig,
         flags: list[str],
     ) -> list[str]:
         visible_flags: list[str] = []
         for flag in flags:
             mode = resolve_imap_flag_mode(imap_policy, flag)
-            if mode is ImapFlagMode.hidden:
+            if mode is IMAPFlagMode.hidden:
                 continue
             visible_flags.append(resolve_system_flag_key(flag) or flag)
         return visible_flags
 
 
-ImapAccountName = Annotated[
+IMAPAccountName = Annotated[
     str,
     Field(
         description=(
@@ -422,7 +422,7 @@ FolderName = Annotated[
     ),
 ]
 
-ImapMessageId = Annotated[
+IMAPMessageId = Annotated[
     str,
     Field(
         description=(
@@ -434,7 +434,7 @@ ImapMessageId = Annotated[
     ),
 ]
 
-ImapSearchQuery = Annotated[
+IMAPSearchQuery = Annotated[
     str,
     Field(
         description="Text query used with IMAP TEXT search in the selected folder.",
@@ -443,7 +443,7 @@ ImapSearchQuery = Annotated[
     ),
 ]
 
-ImapMessageLimit = Annotated[
+IMAPMessageLimit = Annotated[
     int,
     Field(
         description="Maximum number of messages to return.",
@@ -454,7 +454,7 @@ ImapMessageLimit = Annotated[
 ]
 
 
-class ImapServicePlugin:
+class IMAPServicePlugin:
     name = "imap"
 
     def register_tools(
@@ -462,7 +462,7 @@ class ImapServicePlugin:
         server: ToolServer,
         context: ServicePluginContext,
     ) -> None:
-        runtime = context.runtimes.require(self.name, ImapRuntime)
+        runtime = context.runtimes.require(self.name, IMAPRuntime)
 
         @server.tool(
             description=(
@@ -471,9 +471,9 @@ class ImapServicePlugin:
             )
         )
         def list_messages(
-            account: ImapAccountName,
+            account: IMAPAccountName,
             folder: OptionalFolderName = None,
-            limit: ImapMessageLimit = 20,
+            limit: IMAPMessageLimit = 20,
         ) -> dict[str, object]:
             return runtime.list_messages(account=account, folder=folder, limit=limit)
 
@@ -484,8 +484,8 @@ class ImapServicePlugin:
             )
         )
         def get_message(
-            account: ImapAccountName,
-            message_id: ImapMessageId,
+            account: IMAPAccountName,
+            message_id: IMAPMessageId,
             folder: OptionalFolderName = None,
         ) -> dict[str, object]:
             return runtime.get_message(
@@ -501,10 +501,10 @@ class ImapServicePlugin:
             )
         )
         def search_messages(
-            account: ImapAccountName,
-            query: ImapSearchQuery,
+            account: IMAPAccountName,
+            query: IMAPSearchQuery,
             folder: OptionalFolderName = None,
-            limit: ImapMessageLimit = 20,
+            limit: IMAPMessageLimit = 20,
         ) -> dict[str, object]:
             return runtime.search_messages(
                 account=account,
@@ -520,8 +520,8 @@ class ImapServicePlugin:
             )
         )
         def move_message(
-            account: ImapAccountName,
-            message_id: ImapMessageId,
+            account: IMAPAccountName,
+            message_id: IMAPMessageId,
             destination_folder: FolderName,
             folder: OptionalFolderName = None,
         ) -> dict[str, object]:
@@ -539,8 +539,8 @@ class ImapServicePlugin:
             )
         )
         def mark_message_read(
-            account: ImapAccountName,
-            message_id: ImapMessageId,
+            account: IMAPAccountName,
+            message_id: IMAPMessageId,
             folder: OptionalFolderName = None,
             read: bool = True,
         ) -> dict[str, object]:
@@ -558,8 +558,8 @@ class ImapServicePlugin:
             )
         )
         def delete_message(
-            account: ImapAccountName,
-            message_id: ImapMessageId,
+            account: IMAPAccountName,
+            message_id: IMAPMessageId,
             folder: OptionalFolderName = None,
         ) -> dict[str, object]:
             return runtime.delete_message(
@@ -569,5 +569,5 @@ class ImapServicePlugin:
             )
 
 
-def plugin() -> ImapServicePlugin:
-    return ImapServicePlugin()
+def plugin() -> IMAPServicePlugin:
+    return IMAPServicePlugin()

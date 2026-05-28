@@ -16,13 +16,13 @@ class MailTlsMode(str, Enum):
     implicit = "implicit"
 
 
-class ImapFlagMode(str, Enum):
+class IMAPFlagMode(str, Enum):
     hidden = "hidden"
     read_only = "read_only"
     read_write = "read_write"
 
 
-class ImapConfirmationAction(str, Enum):
+class IMAPConfirmationAction(str, Enum):
     read = "read"
     search = "search"
     move = "move"
@@ -42,18 +42,18 @@ class ServerConfig:
 
 
 @dataclass
-class SmtpLimitsConfig:
+class SMTPLimitsConfig:
     max_messages_per_minute: int | None = None
     max_recipients_per_message: int | None = None
 
 
 @dataclass
-class SmtpIdempotencyConfig:
+class SMTPIdempotencyConfig:
     expiration_days: int = 7
 
 
 @dataclass
-class SmtpRecipientPolicyConfig:
+class SMTPRecipientPolicyConfig:
     allowed_recipients: list[str] = field(default_factory=list)
     blocked_recipients: list[str] = field(default_factory=list)
     allowed_domain_patterns: list[str] = field(default_factory=list)
@@ -64,7 +64,7 @@ class SmtpRecipientPolicyConfig:
 
 
 @dataclass
-class SmtpConfig:
+class SMTPConfig:
     host: str = "localhost"
     port: int = 587
     authenticate: bool = False
@@ -82,12 +82,12 @@ class SmtpConfig:
 
 
 @dataclass
-class ImapFolderConfig:
+class IMAPFolderConfig:
     description: str = ""
 
 
 @dataclass
-class ImapConfig:
+class IMAPConfig:
     host: str = "localhost"
     port: int = 993
     username: str = ""
@@ -96,7 +96,7 @@ class ImapConfig:
     verify_peer: bool = True
     timeout_seconds: float = 30.0
     default_folder: str | None = None
-    folders: dict[str, ImapFolderConfig] = field(default_factory=dict)
+    folders: dict[str, IMAPFolderConfig] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.tls = _coerce_tls_mode(self.tls, "imap config tls")
@@ -104,12 +104,12 @@ class ImapConfig:
 
 
 @dataclass
-class ImapSystemFlagsPolicyConfig:
-    seen: ImapFlagMode = ImapFlagMode.read_only
-    flagged: ImapFlagMode = ImapFlagMode.read_only
-    answered: ImapFlagMode = ImapFlagMode.read_only
-    deleted: ImapFlagMode = ImapFlagMode.read_only
-    draft: ImapFlagMode = ImapFlagMode.read_only
+class IMAPSystemFlagsPolicyConfig:
+    seen: IMAPFlagMode = IMAPFlagMode.read_only
+    flagged: IMAPFlagMode = IMAPFlagMode.read_only
+    answered: IMAPFlagMode = IMAPFlagMode.read_only
+    deleted: IMAPFlagMode = IMAPFlagMode.read_only
+    draft: IMAPFlagMode = IMAPFlagMode.read_only
 
     def __post_init__(self) -> None:
         self.seen = _coerce_imap_flag_mode(self.seen, "imap system_flags.seen")
@@ -122,16 +122,16 @@ class ImapSystemFlagsPolicyConfig:
 
 
 @dataclass
-class ImapAccessPolicyConfig:
+class IMAPAccessPolicyConfig:
     allow_read: bool = True
     allow_search: bool = True
     allow_move: bool = True
     allow_delete: bool = True
-    confirmation_required: list[ImapConfirmationAction] = field(default_factory=list)
-    system_flags: ImapSystemFlagsPolicyConfig = field(
-        default_factory=ImapSystemFlagsPolicyConfig
+    confirmation_required: list[IMAPConfirmationAction] = field(default_factory=list)
+    system_flags: IMAPSystemFlagsPolicyConfig = field(
+        default_factory=IMAPSystemFlagsPolicyConfig
     )
-    user_flags: dict[str, ImapFlagMode] = field(default_factory=dict)
+    user_flags: dict[str, IMAPFlagMode] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.user_flags = {
@@ -148,12 +148,12 @@ class ImapAccessPolicyConfig:
 
 
 @dataclass
-class SmtpServicePolicyConfig:
+class SMTPServicePolicyConfig:
     require_confirmation: bool = False
-    limits: SmtpLimitsConfig = field(default_factory=SmtpLimitsConfig)
-    idempotency: SmtpIdempotencyConfig = field(default_factory=SmtpIdempotencyConfig)
-    recipient_policy: SmtpRecipientPolicyConfig = field(
-        default_factory=SmtpRecipientPolicyConfig
+    limits: SMTPLimitsConfig = field(default_factory=SMTPLimitsConfig)
+    idempotency: SMTPIdempotencyConfig = field(default_factory=SMTPIdempotencyConfig)
+    recipient_policy: SMTPRecipientPolicyConfig = field(
+        default_factory=SMTPRecipientPolicyConfig
     )
 
     def __post_init__(self) -> None:
@@ -162,14 +162,14 @@ class SmtpServicePolicyConfig:
 
 @dataclass
 class AccountServicesConfig:
-    smtp: SmtpServicePolicyConfig | None = None
-    imap: ImapAccessPolicyConfig | None = None
+    smtp: SMTPServicePolicyConfig | None = None
+    imap: IMAPAccessPolicyConfig | None = None
 
 
 def _default_profile_services() -> AccountServicesConfig:
     return AccountServicesConfig(
-        smtp=SmtpServicePolicyConfig(),
-        imap=ImapAccessPolicyConfig(),
+        smtp=SMTPServicePolicyConfig(),
+        imap=IMAPAccessPolicyConfig(),
     )
 
 
@@ -185,8 +185,8 @@ class AccountAccessProfileConfig:
 class AccountConfig:
     description: str = ""
     account_access_profile: str = "bot"
-    smtp: SmtpConfig | None = None
-    imap: ImapConfig | None = None
+    smtp: SMTPConfig | None = None
+    imap: IMAPConfig | None = None
 
 
 def _default_accounts() -> dict[str, AccountConfig]:
@@ -194,7 +194,7 @@ def _default_accounts() -> dict[str, AccountConfig]:
         "primary": AccountConfig(
             description="Bot-owned account for automated email tasks.",
             account_access_profile="bot",
-            smtp=SmtpConfig(),
+            smtp=SMTPConfig(),
         )
     }
 
@@ -230,7 +230,7 @@ class ServerConfigLike(Protocol):
     json_response: bool
 
 
-class SmtpConfigLike(Protocol):
+class SMTPConfigLike(Protocol):
     host: str
     port: int
     authenticate: bool
@@ -243,7 +243,7 @@ class SmtpConfigLike(Protocol):
     timeout_seconds: float
 
 
-class ImapConfigLike(Protocol):
+class IMAPConfigLike(Protocol):
     host: str
     port: int
     username: str
@@ -252,55 +252,55 @@ class ImapConfigLike(Protocol):
     verify_peer: bool
     timeout_seconds: float
     default_folder: str | None
-    folders: dict[str, ImapFolderConfig]
+    folders: dict[str, IMAPFolderConfig]
 
 
 class AccountConfigLike(Protocol):
     description: str
     account_access_profile: str
-    smtp: SmtpConfigLike | None
-    imap: ImapConfigLike | None
+    smtp: SMTPConfigLike | None
+    imap: IMAPConfigLike | None
 
 
 class AccountAccessProfileConfigLike(Protocol):
     services: "AccountServicesConfigLike"
 
 
-class SmtpRecipientPolicyConfigLike(Protocol):
+class SMTPRecipientPolicyConfigLike(Protocol):
     allowed_recipients: list[str]
     blocked_recipients: list[str]
     allowed_domain_patterns: list[str]
     blocked_domain_patterns: list[str]
 
 
-class SmtpServicePolicyConfigLike(Protocol):
+class SMTPServicePolicyConfigLike(Protocol):
     require_confirmation: bool
-    limits: SmtpLimitsConfig
-    idempotency: SmtpIdempotencyConfig
-    recipient_policy: SmtpRecipientPolicyConfigLike
+    limits: SMTPLimitsConfig
+    idempotency: SMTPIdempotencyConfig
+    recipient_policy: SMTPRecipientPolicyConfigLike
 
 
 class AccountServicesConfigLike(Protocol):
-    smtp: SmtpServicePolicyConfigLike | None
-    imap: "ImapAccessPolicyConfigLike" | None
+    smtp: SMTPServicePolicyConfigLike | None
+    imap: "IMAPAccessPolicyConfigLike" | None
 
 
-class ImapSystemFlagsPolicyConfigLike(Protocol):
-    seen: ImapFlagMode
-    flagged: ImapFlagMode
-    answered: ImapFlagMode
-    deleted: ImapFlagMode
-    draft: ImapFlagMode
+class IMAPSystemFlagsPolicyConfigLike(Protocol):
+    seen: IMAPFlagMode
+    flagged: IMAPFlagMode
+    answered: IMAPFlagMode
+    deleted: IMAPFlagMode
+    draft: IMAPFlagMode
 
 
-class ImapAccessPolicyConfigLike(Protocol):
+class IMAPAccessPolicyConfigLike(Protocol):
     allow_read: bool
     allow_search: bool
     allow_move: bool
     allow_delete: bool
-    confirmation_required: list[ImapConfirmationAction]
-    system_flags: ImapSystemFlagsPolicyConfigLike
-    user_flags: Mapping[str, ImapFlagMode]
+    confirmation_required: list[IMAPConfirmationAction]
+    system_flags: IMAPSystemFlagsPolicyConfigLike
+    user_flags: Mapping[str, IMAPFlagMode]
 
 
 class MailConfigLike(Protocol):
@@ -337,13 +337,13 @@ def _coerce_tls_mode(value: MailTlsMode | str, context: str) -> MailTlsMode:
     raise ValueError(f"{context} must be one of: none, starttls, implicit")
 
 
-def _coerce_imap_flag_mode(value: ImapFlagMode | str, context: str) -> ImapFlagMode:
-    if isinstance(value, ImapFlagMode):
+def _coerce_imap_flag_mode(value: IMAPFlagMode | str, context: str) -> IMAPFlagMode:
+    if isinstance(value, IMAPFlagMode):
         return value
 
     if isinstance(value, str):
         try:
-            return ImapFlagMode(value)
+            return IMAPFlagMode(value)
         except ValueError as exc:
             raise ValueError(
                 f"{context} must be one of: hidden, read_only, read_write"
@@ -353,14 +353,14 @@ def _coerce_imap_flag_mode(value: ImapFlagMode | str, context: str) -> ImapFlagM
 
 
 def _coerce_imap_confirmation_action(
-    value: ImapConfirmationAction | str, context: str
-) -> ImapConfirmationAction:
-    if isinstance(value, ImapConfirmationAction):
+    value: IMAPConfirmationAction | str, context: str
+) -> IMAPConfirmationAction:
+    if isinstance(value, IMAPConfirmationAction):
         return value
 
     if isinstance(value, str):
         try:
-            return ImapConfirmationAction(value)
+            return IMAPConfirmationAction(value)
         except ValueError as exc:
             raise ValueError(
                 f"{context} must be one of: read, search, move, mark_read, delete"
@@ -369,7 +369,7 @@ def _coerce_imap_confirmation_action(
     raise ValueError(f"{context} must be one of: read, search, move, mark_read, delete")
 
 
-def validate_smtp_config(config: SmtpConfigLike) -> None:
+def validate_smtp_config(config: SMTPConfigLike) -> None:
     _coerce_tls_mode(config.tls, "smtp config tls")
 
     has_username = bool(config.username)
@@ -400,7 +400,7 @@ def _is_valid_domain_pattern(value: str) -> bool:
     return "*" not in value
 
 
-def validate_smtp_recipient_policy(config: SmtpRecipientPolicyConfigLike) -> None:
+def validate_smtp_recipient_policy(config: SMTPRecipientPolicyConfigLike) -> None:
     for field_name in ("allowed_recipients", "blocked_recipients"):
         recipients = getattr(config, field_name)
         for recipient in recipients:
@@ -419,7 +419,7 @@ def validate_smtp_recipient_policy(config: SmtpRecipientPolicyConfigLike) -> Non
                 )
 
 
-def validate_smtp_service_policy(config: SmtpServicePolicyConfig) -> None:
+def validate_smtp_service_policy(config: SMTPServicePolicyConfig) -> None:
     validate_smtp_recipient_policy(config.recipient_policy)
 
     unsupported_fields: list[str] = []
@@ -432,7 +432,7 @@ def validate_smtp_service_policy(config: SmtpServicePolicyConfig) -> None:
             "smtp service policy limits.max_messages_per_minute must be at least 1"
         )
 
-    if config.idempotency != SmtpIdempotencyConfig():
+    if config.idempotency != SMTPIdempotencyConfig():
         unsupported_fields.append(
             "mail.account_access_profiles.<profile>.services.smtp.idempotency.expiration_days"
         )
@@ -445,7 +445,7 @@ def validate_smtp_service_policy(config: SmtpServicePolicyConfig) -> None:
         )
 
 
-def validate_imap_config(config: ImapConfigLike) -> None:
+def validate_imap_config(config: IMAPConfigLike) -> None:
     _coerce_tls_mode(config.tls, "imap config tls")
 
     has_username = bool(config.username)
@@ -458,7 +458,7 @@ def validate_imap_config(config: ImapConfigLike) -> None:
         raise ValueError("imap config default_folder must match a configured folder")
 
 
-def validate_imap_access_policy(config: ImapAccessPolicyConfig) -> None:
+def validate_imap_access_policy(config: IMAPAccessPolicyConfig) -> None:
     if config.allow_search and not config.allow_read:
         raise ValueError("imap access policy allow_search requires allow_read")
 
@@ -477,18 +477,18 @@ def validate_imap_access_policy(config: ImapAccessPolicyConfig) -> None:
 
 
 def _imap_policy_allows_confirmation_action(
-    policy: ImapAccessPolicyConfig,
-    action: ImapConfirmationAction,
+    policy: IMAPAccessPolicyConfig,
+    action: IMAPConfirmationAction,
 ) -> bool:
-    if action is ImapConfirmationAction.read:
+    if action is IMAPConfirmationAction.read:
         return policy.allow_read
-    if action is ImapConfirmationAction.search:
+    if action is IMAPConfirmationAction.search:
         return policy.allow_search
-    if action is ImapConfirmationAction.move:
+    if action is IMAPConfirmationAction.move:
         return policy.allow_move
-    if action is ImapConfirmationAction.mark_read:
-        return policy.allow_read and policy.system_flags.seen is ImapFlagMode.read_write
-    if action is ImapConfirmationAction.delete:
+    if action is IMAPConfirmationAction.mark_read:
+        return policy.allow_read and policy.system_flags.seen is IMAPFlagMode.read_write
+    if action is IMAPConfirmationAction.delete:
         return policy.allow_delete
 
 
@@ -510,9 +510,9 @@ def resolve_system_flag_key(flag_name: str) -> str | None:
 
 
 def resolve_imap_flag_mode(
-    policy: ImapAccessPolicyConfig,
+    policy: IMAPAccessPolicyConfig,
     flag_name: str,
-) -> ImapFlagMode:
+) -> IMAPFlagMode:
     system_flag_key = resolve_system_flag_key(flag_name)
     if system_flag_key == "seen":
         return policy.system_flags.seen
@@ -525,8 +525,8 @@ def resolve_imap_flag_mode(
     if system_flag_key == "draft":
         return policy.system_flags.draft
     if flag_name.startswith("\\"):
-        return ImapFlagMode.read_only
-    return policy.user_flags.get(flag_name, ImapFlagMode.hidden)
+        return IMAPFlagMode.read_only
+    return policy.user_flags.get(flag_name, IMAPFlagMode.hidden)
 
 
 def validate_app_config(config: AppConfig) -> None:

@@ -6,8 +6,8 @@ from typing import Any
 
 import pytest
 
-from mail_sentry.config import ImapConfig, MailTlsMode
-from mail_sentry.imap import ImapClient, ImapOperationError
+from mail_sentry.config import IMAPConfig, MailTlsMode
+from mail_sentry.imap import IMAPClient, IMAPOperationError
 
 
 MESSAGE_BYTES = (
@@ -23,7 +23,7 @@ MESSAGE_BYTES = (
 )
 
 
-class FakeImapServer:
+class FakeIMAPServer:
     def __init__(self) -> None:
         self.selected: list[dict[str, object]] = []
         self.uid_calls: list[tuple[str, tuple[object, ...]]] = []
@@ -67,7 +67,7 @@ class FakeImapServer:
 def test_list_messages_uses_ssl_login_and_parses_recent_messages(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fake_server = FakeImapServer()
+    fake_server = FakeIMAPServer()
 
     def fake_imap4_ssl(
         host: str,
@@ -75,7 +75,7 @@ def test_list_messages_uses_ssl_login_and_parses_recent_messages(
         *,
         ssl_context: ssl.SSLContext,
         timeout: float,
-    ) -> FakeImapServer:
+    ) -> FakeIMAPServer:
         assert host == "imap.example.com"
         assert port == 993
         assert timeout == 10.0
@@ -84,8 +84,8 @@ def test_list_messages_uses_ssl_login_and_parses_recent_messages(
 
     monkeypatch.setattr("mail_sentry.imap.imaplib.IMAP4_SSL", fake_imap4_ssl)
 
-    client = ImapClient(
-        ImapConfig(
+    client = IMAPClient(
+        IMAPConfig(
             host="imap.example.com",
             username="user",
             password="secret",
@@ -111,9 +111,9 @@ def test_list_messages_uses_ssl_login_and_parses_recent_messages(
 
 
 def test_starttls_uses_configured_context(monkeypatch: pytest.MonkeyPatch) -> None:
-    fake_server = FakeImapServer()
+    fake_server = FakeIMAPServer()
 
-    def fake_imap4(host: str, port: int, *, timeout: float) -> FakeImapServer:
+    def fake_imap4(host: str, port: int, *, timeout: float) -> FakeIMAPServer:
         assert host == "imap.example.com"
         assert port == 143
         assert timeout == 30.0
@@ -121,8 +121,8 @@ def test_starttls_uses_configured_context(monkeypatch: pytest.MonkeyPatch) -> No
 
     monkeypatch.setattr("mail_sentry.imap.imaplib.IMAP4", fake_imap4)
 
-    client = ImapClient(
-        ImapConfig(
+    client = IMAPClient(
+        IMAPConfig(
             host="imap.example.com",
             port=143,
             tls=MailTlsMode.starttls,
@@ -140,7 +140,7 @@ def test_starttls_uses_configured_context(monkeypatch: pytest.MonkeyPatch) -> No
 def test_move_falls_back_to_copy_delete_and_expunge(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fake_server = FakeImapServer()
+    fake_server = FakeIMAPServer()
     fake_server.raise_on_move = True
 
     def fake_imap4_ssl(
@@ -149,12 +149,12 @@ def test_move_falls_back_to_copy_delete_and_expunge(
         *,
         ssl_context: ssl.SSLContext,
         timeout: float,
-    ) -> FakeImapServer:
+    ) -> FakeIMAPServer:
         return fake_server
 
     monkeypatch.setattr("mail_sentry.imap.imaplib.IMAP4_SSL", fake_imap4_ssl)
 
-    client = ImapClient(ImapConfig())
+    client = IMAPClient(IMAPConfig())
 
     client.move_message(
         source_folder="INBOX",
@@ -169,7 +169,7 @@ def test_move_falls_back_to_copy_delete_and_expunge(
 
 
 def test_fetch_without_rfc822_data_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    fake_server = FakeImapServer()
+    fake_server = FakeIMAPServer()
 
     def fake_uid(command: str, *args: object) -> tuple[str, list[Any]]:
         if command == "SEARCH":
@@ -186,12 +186,12 @@ def test_fetch_without_rfc822_data_raises(monkeypatch: pytest.MonkeyPatch) -> No
         *,
         ssl_context: ssl.SSLContext,
         timeout: float,
-    ) -> FakeImapServer:
+    ) -> FakeIMAPServer:
         return fake_server
 
     monkeypatch.setattr("mail_sentry.imap.imaplib.IMAP4_SSL", fake_imap4_ssl)
 
-    client = ImapClient(ImapConfig())
+    client = IMAPClient(IMAPConfig())
 
-    with pytest.raises(ImapOperationError, match="did not return RFC822"):
+    with pytest.raises(IMAPOperationError, match="did not return RFC822"):
         client.list_messages(folder="INBOX", limit=1)

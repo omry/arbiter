@@ -9,10 +9,10 @@ import hydra
 
 from .app import MailSentryApp
 from .config import AppConfig, register_configs
-from .imap import ImapClient
+from .imap import IMAPClient
 from .plugins import discover_service_plugins
 from .services import ServicePlugin, ServicePluginContext
-from .smtp import SmtpSubmissionClient
+from .smtp import SMTPSubmissionClient
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -25,8 +25,8 @@ TransportMode = Literal["stdio", "sse", "streamable-http"]
 def build_app(cfg: AppConfig) -> MailSentryApp:
     return MailSentryApp(
         cfg.mail,
-        smtp_client_factory=SmtpSubmissionClient,
-        imap_client_factory=ImapClient,
+        smtp_client_factory=SMTPSubmissionClient,
+        imap_client_factory=IMAPClient,
     )
 
 

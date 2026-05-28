@@ -11,8 +11,8 @@ from pydantic import Field
 from ..config import (
     AccountConfig,
     MailConfig,
-    SmtpConfigLike,
-    SmtpServicePolicyConfig,
+    SMTPConfigLike,
+    SMTPServicePolicyConfig,
 )
 from ..services import ServicePluginContext, ToolServer
 
@@ -24,7 +24,7 @@ class SendEmailResult:
     recipient_count: int
 
 
-class SmtpClientLike(Protocol):
+class SMTPClientLike(Protocol):
     def send(
         self,
         message: EmailMessage,
@@ -33,17 +33,17 @@ class SmtpClientLike(Protocol):
     ) -> None: ...
 
 
-SmtpClientFactory = Callable[[SmtpConfigLike], SmtpClientLike]
+SMTPClientFactory = Callable[[SMTPConfigLike], SMTPClientLike]
 TimeProvider = Callable[[], float]
 
 
-class SmtpRuntime:
+class SMTPRuntime:
     service_name = "smtp"
 
     def __init__(
         self,
         mail_config: MailConfig,
-        smtp_client_factory: SmtpClientFactory,
+        smtp_client_factory: SMTPClientFactory,
         time_provider: TimeProvider = monotonic,
     ) -> None:
         self._mail_config = mail_config
@@ -54,7 +54,7 @@ class SmtpRuntime:
     def account_summary(
         self,
         account: AccountConfig,
-        smtp_policy: SmtpServicePolicyConfig | None,
+        smtp_policy: SMTPServicePolicyConfig | None,
     ) -> dict[str, object]:
         return {
             "send": self._send_state(account),
@@ -122,7 +122,7 @@ class SmtpRuntime:
     def _resolve_context(
         self,
         account_name: str,
-    ) -> tuple[SmtpConfigLike, SmtpServicePolicyConfig]:
+    ) -> tuple[SMTPConfigLike, SMTPServicePolicyConfig]:
         account = self._mail_config.accounts.get(account_name)
         if account is None:
             raise ValueError(f"send_email received an unknown account: {account_name}")
@@ -160,7 +160,7 @@ class SmtpRuntime:
 
         return normalized
 
-    def _sender_domain(self, smtp_config: SmtpConfigLike) -> str:
+    def _sender_domain(self, smtp_config: SMTPConfigLike) -> str:
         _, _, domain = smtp_config.from_email.partition("@")
         return domain or "localhost"
 
@@ -172,7 +172,7 @@ class SmtpRuntime:
     def _enforce_policy(
         self,
         account_name: str,
-        smtp_policy: SmtpServicePolicyConfig,
+        smtp_policy: SMTPServicePolicyConfig,
         recipients: list[str],
     ) -> None:
         max_recipients = smtp_policy.limits.max_recipients_per_message
@@ -217,7 +217,7 @@ class SmtpRuntime:
     def _consume_rate_limit(
         self,
         account_name: str,
-        smtp_policy: SmtpServicePolicyConfig,
+        smtp_policy: SMTPServicePolicyConfig,
     ) -> None:
         max_messages = smtp_policy.limits.max_messages_per_minute
         if max_messages is None:
@@ -316,7 +316,7 @@ HtmlBody = Annotated[
 ]
 
 
-class SmtpServicePlugin:
+class SMTPServicePlugin:
     name = "smtp"
 
     def register_tools(
@@ -324,7 +324,7 @@ class SmtpServicePlugin:
         server: ToolServer,
         context: ServicePluginContext,
     ) -> None:
-        runtime = context.runtimes.require(self.name, SmtpRuntime)
+        runtime = context.runtimes.require(self.name, SMTPRuntime)
 
         @server.tool(
             description=(
@@ -359,5 +359,5 @@ class SmtpServicePlugin:
             }
 
 
-def plugin() -> SmtpServicePlugin:
-    return SmtpServicePlugin()
+def plugin() -> SMTPServicePlugin:
+    return SMTPServicePlugin()

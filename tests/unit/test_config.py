@@ -9,20 +9,20 @@ from mail_sentry.config import (
     AccountAccessProfileConfig,
     AccountServicesConfig,
     AppConfig,
-    ImapAccessPolicyConfig,
-    ImapConfirmationAction,
-    ImapConfig,
-    ImapFlagMode,
-    ImapFolderConfig,
-    ImapSystemFlagsPolicyConfig,
+    IMAPAccessPolicyConfig,
+    IMAPConfirmationAction,
+    IMAPConfig,
+    IMAPFlagMode,
+    IMAPFolderConfig,
+    IMAPSystemFlagsPolicyConfig,
     MailTlsMode,
     MailConfig,
     resolve_imap_flag_mode,
-    SmtpConfig,
-    SmtpIdempotencyConfig,
-    SmtpLimitsConfig,
-    SmtpRecipientPolicyConfig,
-    SmtpServicePolicyConfig,
+    SMTPConfig,
+    SMTPIdempotencyConfig,
+    SMTPLimitsConfig,
+    SMTPRecipientPolicyConfig,
+    SMTPServicePolicyConfig,
     validate_app_config,
     register_configs,
 )
@@ -60,7 +60,7 @@ def test_compose_config_returns_hydra_config() -> None:
     assert cfg.mail.account_access_profiles.bot.services.imap.allow_delete is True
     assert (
         cfg.mail.account_access_profiles.bot.services.imap.system_flags.seen
-        == ImapFlagMode.read_write
+        == IMAPFlagMode.read_write
     )
 
 
@@ -91,7 +91,7 @@ def test_compose_config_applies_overrides() -> None:
     )
     assert (
         cfg.mail.account_access_profiles.bot.services.imap.system_flags.seen
-        == ImapFlagMode.read_write
+        == IMAPFlagMode.read_write
     )
 
 
@@ -206,7 +206,7 @@ def test_readonly_imap_account_policy_limits_mutation_and_folder() -> None:
             account_access_profiles={
                 "alerts_readonly": AccountAccessProfileConfig(
                     services=AccountServicesConfig(
-                        imap=ImapAccessPolicyConfig(
+                        imap=IMAPAccessPolicyConfig(
                             allow_read=True,
                             allow_search=True,
                             allow_move=False,
@@ -219,12 +219,12 @@ def test_readonly_imap_account_policy_limits_mutation_and_folder() -> None:
                 "primary": AccountConfig(
                     description="Read-only alerts",
                     account_access_profile="alerts_readonly",
-                    imap=ImapConfig(
+                    imap=IMAPConfig(
                         host="imap.example.com",
                         username="user@example.com",
                         password="secret",
                         default_folder=folder,
-                        folders={folder: ImapFolderConfig(description="Alerts")},
+                        folders={folder: IMAPFolderConfig(description="Alerts")},
                     ),
                 )
             },
@@ -243,7 +243,7 @@ def test_readonly_imap_account_policy_limits_mutation_and_folder() -> None:
     assert policy.allow_search is True
     assert policy.allow_move is False
     assert policy.allow_delete is False
-    assert policy.system_flags.seen is ImapFlagMode.read_only
+    assert policy.system_flags.seen is IMAPFlagMode.read_only
 
 
 def test_readonly_imap_deployment_config_composes(
@@ -293,7 +293,7 @@ def test_app_config_rejects_unknown_account_access_profile() -> None:
                     "primary": AccountConfig(
                         description="Primary account",
                         account_access_profile="missing",
-                        smtp=SmtpConfig(),
+                        smtp=SMTPConfig(),
                     )
                 },
                 account_access_profiles={"bot": AccountAccessProfileConfig()},
@@ -313,7 +313,7 @@ def test_smtp_config_requires_username_and_password_together_when_auth_enabled(
     password: str,
 ) -> None:
     with pytest.raises(ValueError, match="username and password together"):
-        SmtpConfig(authenticate=True, username=username, password=password)
+        SMTPConfig(authenticate=True, username=username, password=password)
 
 
 @pytest.mark.parametrize(
@@ -328,19 +328,19 @@ def test_smtp_config_rejects_credentials_when_auth_is_disabled(
     password: str,
 ) -> None:
     with pytest.raises(ValueError, match="authenticate is false"):
-        SmtpConfig(authenticate=False, username=username, password=password)
+        SMTPConfig(authenticate=False, username=username, password=password)
 
 
 def test_smtp_config_rejects_unknown_tls_mode() -> None:
     with pytest.raises(ValueError, match="smtp config tls"):
-        SmtpConfig(tls=cast(Any, "bogus"))
+        SMTPConfig(tls=cast(Any, "bogus"))
 
 
 def test_imap_config_requires_default_folder_to_exist() -> None:
     with pytest.raises(ValueError, match="default_folder"):
-        ImapConfig(
+        IMAPConfig(
             default_folder="INBOX",
-            folders={"Archive": ImapFolderConfig(description="Archive")},
+            folders={"Archive": IMAPFolderConfig(description="Archive")},
         )
 
 
@@ -356,12 +356,12 @@ def test_imap_config_requires_username_and_password_together(
     password: str,
 ) -> None:
     with pytest.raises(ValueError, match="username and password together"):
-        ImapConfig(username=username, password=password)
+        IMAPConfig(username=username, password=password)
 
 
 def test_imap_access_policy_requires_read_for_search() -> None:
     with pytest.raises(ValueError, match="allow_search requires allow_read"):
-        ImapAccessPolicyConfig(
+        IMAPAccessPolicyConfig(
             allow_read=False,
             allow_search=True,
             allow_move=False,
@@ -371,7 +371,7 @@ def test_imap_access_policy_requires_read_for_search() -> None:
 
 def test_imap_access_policy_requires_read_for_move() -> None:
     with pytest.raises(ValueError, match="allow_move requires allow_read"):
-        ImapAccessPolicyConfig(
+        IMAPAccessPolicyConfig(
             allow_read=False,
             allow_search=False,
             allow_move=True,
@@ -381,7 +381,7 @@ def test_imap_access_policy_requires_read_for_move() -> None:
 
 def test_imap_access_policy_requires_read_for_delete() -> None:
     with pytest.raises(ValueError, match="allow_delete requires allow_read"):
-        ImapAccessPolicyConfig(
+        IMAPAccessPolicyConfig(
             allow_read=False,
             allow_search=False,
             allow_move=False,
@@ -393,12 +393,12 @@ def test_account_access_profile_rejects_confirmation_for_disallowed_action() -> 
     with pytest.raises(
         ValueError, match="confirmation_required contains an action that is not allowed"
     ):
-        ImapAccessPolicyConfig(
+        IMAPAccessPolicyConfig(
             allow_read=False,
             allow_search=False,
             allow_move=False,
             allow_delete=False,
-            confirmation_required=[ImapConfirmationAction.read],
+            confirmation_required=[IMAPConfirmationAction.read],
         )
 
 
@@ -408,61 +408,61 @@ def test_account_access_profile_rejects_mark_read_confirmation_without_seen_writ
     with pytest.raises(
         ValueError, match="confirmation_required contains an action that is not allowed"
     ):
-        ImapAccessPolicyConfig(
-            confirmation_required=[ImapConfirmationAction.mark_read],
+        IMAPAccessPolicyConfig(
+            confirmation_required=[IMAPConfirmationAction.mark_read],
         )
 
 
 def test_imap_access_policy_accepts_mark_read_confirmation_with_seen_write() -> None:
-    policy = ImapAccessPolicyConfig(
-        confirmation_required=[ImapConfirmationAction.mark_read],
-        system_flags=ImapSystemFlagsPolicyConfig(seen=ImapFlagMode.read_write),
+    policy = IMAPAccessPolicyConfig(
+        confirmation_required=[IMAPConfirmationAction.mark_read],
+        system_flags=IMAPSystemFlagsPolicyConfig(seen=IMAPFlagMode.read_write),
     )
 
-    assert policy.confirmation_required == [ImapConfirmationAction.mark_read]
+    assert policy.confirmation_required == [IMAPConfirmationAction.mark_read]
 
 
 def test_imap_access_policy_rejects_unknown_user_flag_mode() -> None:
     with pytest.raises(ValueError, match="imap user_flags.bot.followed_up"):
-        ImapAccessPolicyConfig(user_flags={"bot.followed_up": cast(Any, "bogus")})
+        IMAPAccessPolicyConfig(user_flags={"bot.followed_up": cast(Any, "bogus")})
 
 
 def test_imap_access_policy_accepts_hidden_user_flag_mode_as_noop() -> None:
-    policy = ImapAccessPolicyConfig(user_flags={"bot.followed_up": ImapFlagMode.hidden})
+    policy = IMAPAccessPolicyConfig(user_flags={"bot.followed_up": IMAPFlagMode.hidden})
 
-    assert policy.user_flags["bot.followed_up"] is ImapFlagMode.hidden
+    assert policy.user_flags["bot.followed_up"] is IMAPFlagMode.hidden
 
 
 def test_imap_access_policy_rejects_legacy_mutate_alias() -> None:
     with pytest.raises(ValueError, match="imap user_flags.bot.followed_up"):
-        ImapAccessPolicyConfig(user_flags={"bot.followed_up": cast(Any, "mutate")})
+        IMAPAccessPolicyConfig(user_flags={"bot.followed_up": cast(Any, "mutate")})
 
 
 def test_resolve_imap_flag_mode_defaults_system_flags_to_read_only() -> None:
-    policy = ImapAccessPolicyConfig()
+    policy = IMAPAccessPolicyConfig()
 
-    assert resolve_imap_flag_mode(policy, "\\Seen") is ImapFlagMode.read_only
-    assert resolve_imap_flag_mode(policy, "\\Recent") is ImapFlagMode.read_only
+    assert resolve_imap_flag_mode(policy, "\\Seen") is IMAPFlagMode.read_only
+    assert resolve_imap_flag_mode(policy, "\\Recent") is IMAPFlagMode.read_only
 
 
 def test_resolve_imap_flag_mode_defaults_user_flags_to_hidden() -> None:
-    policy = ImapAccessPolicyConfig()
+    policy = IMAPAccessPolicyConfig()
 
-    assert resolve_imap_flag_mode(policy, "bot.followed_up") is ImapFlagMode.hidden
+    assert resolve_imap_flag_mode(policy, "bot.followed_up") is IMAPFlagMode.hidden
 
 
 def test_resolve_imap_flag_mode_returns_configured_user_flag_mode() -> None:
-    policy = ImapAccessPolicyConfig(
-        user_flags={"bot.followed_up": ImapFlagMode.read_write}
+    policy = IMAPAccessPolicyConfig(
+        user_flags={"bot.followed_up": IMAPFlagMode.read_write}
     )
 
-    assert resolve_imap_flag_mode(policy, "bot.followed_up") is ImapFlagMode.read_write
+    assert resolve_imap_flag_mode(policy, "bot.followed_up") is IMAPFlagMode.read_write
 
 
 def test_resolve_imap_flag_mode_returns_explicit_hidden_user_flag_mode() -> None:
-    policy = ImapAccessPolicyConfig(user_flags={"bot.followed_up": ImapFlagMode.hidden})
+    policy = IMAPAccessPolicyConfig(user_flags={"bot.followed_up": IMAPFlagMode.hidden})
 
-    assert resolve_imap_flag_mode(policy, "bot.followed_up") is ImapFlagMode.hidden
+    assert resolve_imap_flag_mode(policy, "bot.followed_up") is IMAPFlagMode.hidden
 
 
 def test_app_config_rejects_account_without_any_protocols() -> None:
@@ -488,7 +488,7 @@ def test_app_config_accepts_smtp_only_account() -> None:
                     "primary": AccountConfig(
                         description="SMTP account",
                         account_access_profile="bot",
-                        smtp=SmtpConfig(),
+                        smtp=SMTPConfig(),
                     )
                 },
                 account_access_profiles={"bot": AccountAccessProfileConfig()},
@@ -505,16 +505,16 @@ def test_app_config_accepts_imap_only_account() -> None:
                     "primary": AccountConfig(
                         description="IMAP account",
                         account_access_profile="bot",
-                        imap=ImapConfig(
+                        imap=IMAPConfig(
                             default_folder="INBOX",
-                            folders={"INBOX": ImapFolderConfig(description="Inbox")},
+                            folders={"INBOX": IMAPFolderConfig(description="Inbox")},
                         ),
                     )
                 },
                 account_access_profiles={
                     "bot": AccountAccessProfileConfig(
                         services=AccountServicesConfig(
-                            smtp=None, imap=ImapAccessPolicyConfig()
+                            smtp=None, imap=IMAPAccessPolicyConfig()
                         )
                     )
                 },
@@ -531,10 +531,10 @@ def test_app_config_accepts_account_with_both_protocols() -> None:
                     "primary": AccountConfig(
                         description="Full account",
                         account_access_profile="bot",
-                        smtp=SmtpConfig(),
-                        imap=ImapConfig(
+                        smtp=SMTPConfig(),
+                        imap=IMAPConfig(
                             default_folder="INBOX",
-                            folders={"INBOX": ImapFolderConfig(description="Inbox")},
+                            folders={"INBOX": IMAPFolderConfig(description="Inbox")},
                         ),
                     )
                 },
@@ -553,13 +553,13 @@ def test_app_config_rejects_smtp_account_without_smtp_service_policy() -> None:
                         "primary": AccountConfig(
                             description="SMTP account",
                             account_access_profile="bot",
-                            smtp=SmtpConfig(),
+                            smtp=SMTPConfig(),
                         )
                     },
                     account_access_profiles={
                         "bot": AccountAccessProfileConfig(
                             services=AccountServicesConfig(
-                                smtp=None, imap=ImapAccessPolicyConfig()
+                                smtp=None, imap=IMAPAccessPolicyConfig()
                             )
                         )
                     },
@@ -576,14 +576,14 @@ def test_app_config_accepts_smtp_account_with_recipient_policy() -> None:
                     "primary": AccountConfig(
                         description="SMTP account",
                         account_access_profile="bot",
-                        smtp=SmtpConfig(),
+                        smtp=SMTPConfig(),
                     )
                 },
                 account_access_profiles={
                     "bot": AccountAccessProfileConfig(
                         services=AccountServicesConfig(
-                            smtp=SmtpServicePolicyConfig(
-                                recipient_policy=SmtpRecipientPolicyConfig(
+                            smtp=SMTPServicePolicyConfig(
+                                recipient_policy=SMTPRecipientPolicyConfig(
                                     allowed_recipients=["ops@example.com"],
                                     allowed_domain_patterns=[
                                         "example.com",
@@ -593,7 +593,7 @@ def test_app_config_accepts_smtp_account_with_recipient_policy() -> None:
                                     blocked_domain_patterns=["*.blocked.example"],
                                 )
                             ),
-                            imap=ImapAccessPolicyConfig(),
+                            imap=IMAPAccessPolicyConfig(),
                         )
                     )
                 },
@@ -610,16 +610,16 @@ def test_app_config_accepts_implemented_smtp_rate_limit() -> None:
                     "primary": AccountConfig(
                         description="SMTP account",
                         account_access_profile="bot",
-                        smtp=SmtpConfig(),
+                        smtp=SMTPConfig(),
                     )
                 },
                 account_access_profiles={
                     "bot": AccountAccessProfileConfig(
                         services=AccountServicesConfig(
-                            smtp=SmtpServicePolicyConfig(
-                                limits=SmtpLimitsConfig(max_messages_per_minute=5)
+                            smtp=SMTPServicePolicyConfig(
+                                limits=SMTPLimitsConfig(max_messages_per_minute=5)
                             ),
-                            imap=ImapAccessPolicyConfig(),
+                            imap=IMAPAccessPolicyConfig(),
                         )
                     )
                 },
@@ -640,16 +640,16 @@ def test_app_config_rejects_non_positive_smtp_rate_limit() -> None:
                         "primary": AccountConfig(
                             description="SMTP account",
                             account_access_profile="bot",
-                            smtp=SmtpConfig(),
+                            smtp=SMTPConfig(),
                         )
                     },
                     account_access_profiles={
                         "bot": AccountAccessProfileConfig(
                             services=AccountServicesConfig(
-                                smtp=SmtpServicePolicyConfig(
-                                    limits=SmtpLimitsConfig(max_messages_per_minute=0)
+                                smtp=SMTPServicePolicyConfig(
+                                    limits=SMTPLimitsConfig(max_messages_per_minute=0)
                                 ),
-                                imap=ImapAccessPolicyConfig(),
+                                imap=IMAPAccessPolicyConfig(),
                             )
                         )
                     },
@@ -670,16 +670,16 @@ def test_app_config_rejects_unimplemented_smtp_idempotency_config() -> None:
                         "primary": AccountConfig(
                             description="SMTP account",
                             account_access_profile="bot",
-                            smtp=SmtpConfig(),
+                            smtp=SMTPConfig(),
                         )
                     },
                     account_access_profiles={
                         "bot": AccountAccessProfileConfig(
                             services=AccountServicesConfig(
-                                smtp=SmtpServicePolicyConfig(
-                                    idempotency=SmtpIdempotencyConfig(expiration_days=3)
+                                smtp=SMTPServicePolicyConfig(
+                                    idempotency=SMTPIdempotencyConfig(expiration_days=3)
                                 ),
-                                imap=ImapAccessPolicyConfig(),
+                                imap=IMAPAccessPolicyConfig(),
                             )
                         )
                     },

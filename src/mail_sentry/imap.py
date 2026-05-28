@@ -10,11 +10,11 @@ import re
 import ssl
 from typing import Any
 
-from .config import ImapConfigLike, MailTlsMode, validate_imap_config
+from .config import IMAPConfigLike, MailTlsMode, validate_imap_config
 
 
 @dataclass(frozen=True)
-class FetchedImapMessage:
+class FetchedIMAPMessage:
     uid: str
     subject: str
     from_addr: str
@@ -28,30 +28,30 @@ class FetchedImapMessage:
     snippet: str
 
 
-class ImapOperationError(RuntimeError):
+class IMAPOperationError(RuntimeError):
     pass
 
 
-class ImapClient:
-    def __init__(self, config: ImapConfigLike) -> None:
+class IMAPClient:
+    def __init__(self, config: IMAPConfigLike) -> None:
         validate_imap_config(config)
         self._config = config
 
-    def list_messages(self, *, folder: str, limit: int) -> list[FetchedImapMessage]:
+    def list_messages(self, *, folder: str, limit: int) -> list[FetchedIMAPMessage]:
         with self._session() as server:
             self._select_folder(server, folder, readonly=True)
             uids = self._search_uids(server, "ALL")
             selected_uids = list(reversed(uids))[:limit]
             return [self._fetch_message(server, uid) for uid in selected_uids]
 
-    def get_message(self, *, folder: str, uid: str) -> FetchedImapMessage:
+    def get_message(self, *, folder: str, uid: str) -> FetchedIMAPMessage:
         with self._session() as server:
             self._select_folder(server, folder, readonly=True)
             return self._fetch_message(server, uid)
 
     def search_messages(
         self, *, folder: str, query: str, limit: int
-    ) -> list[FetchedImapMessage]:
+    ) -> list[FetchedIMAPMessage]:
         with self._session() as server:
             self._select_folder(server, folder, readonly=True)
             uids = self._search_uids(server, "TEXT", self._quote_search_text(query))
@@ -83,8 +83,8 @@ class ImapClient:
             status, data = server.expunge()
             self._expect_ok(status, data, "expunge deleted message")
 
-    def _session(self) -> ImapSession:
-        return ImapSession(self._connect())
+    def _session(self) -> IMAPSession:
+        return IMAPSession(self._connect())
 
     def _connect(self) -> imaplib.IMAP4 | imaplib.IMAP4_SSL:
         ssl_context = self._build_ssl_context()
@@ -149,13 +149,13 @@ class ImapClient:
         self,
         server: imaplib.IMAP4 | imaplib.IMAP4_SSL,
         uid: str,
-    ) -> FetchedImapMessage:
+    ) -> FetchedIMAPMessage:
         flags = self._fetch_flags(server, uid)
         message_bytes = self._fetch_message_bytes(server, uid)
         email_message = BytesParser(policy=policy.default).parsebytes(message_bytes)
         text_body, html_body = self._extract_bodies(email_message)
         snippet = self._snippet_from_body(text_body or html_body or "")
-        return FetchedImapMessage(
+        return FetchedIMAPMessage(
             uid=uid,
             subject=email_message.get("Subject", ""),
             from_addr=self._first_address(email_message, "From"),
@@ -204,7 +204,7 @@ class ImapClient:
                 and isinstance(item[1], bytes)
             ):
                 return item[1]
-        raise ImapOperationError(f"IMAP fetch for UID {uid} did not return RFC822 data")
+        raise IMAPOperationError(f"IMAP fetch for UID {uid} did not return RFC822 data")
 
     def _copy_then_delete(
         self,
@@ -228,7 +228,7 @@ class ImapClient:
 
     def _expect_ok(self, status: str, data: list[Any], action: str) -> None:
         if status.upper() != "OK":
-            raise ImapOperationError(f"IMAP {action} failed: {status} {data!r}")
+            raise IMAPOperationError(f"IMAP {action} failed: {status} {data!r}")
 
     def _raw_fetch_item(self, item: object) -> bytes | None:
         if isinstance(item, bytes):
@@ -292,7 +292,7 @@ class ImapClient:
         return compact[:240]
 
 
-class ImapSession:
+class IMAPSession:
     def __init__(self, server: imaplib.IMAP4 | imaplib.IMAP4_SSL) -> None:
         self._server = server
 
