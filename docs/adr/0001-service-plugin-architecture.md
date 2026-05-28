@@ -142,9 +142,12 @@ The first extraction stage introduced a plugin registration boundary:
 - SMTP MCP registration lives in a first-party SMTP plugin module
 - IMAP MCP registration lives in a first-party IMAP plugin module
 
-Later stages should move runtime behavior out of `MailSentryApp`, introduce the
-`services.*` config shape, add config-driven activation, and perform any chosen
-rename before release.
+The second extraction stage moved SMTP and IMAP operation behavior into
+service-specific runtime objects. `MailSentryApp` remains only as a transitional
+facade for account discovery and existing test helpers.
+
+Later stages should introduce the `services.*` config shape, add config-driven
+activation, and perform any chosen rename before release.
 
 ## Consequences
 

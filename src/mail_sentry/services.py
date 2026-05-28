@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeVar
 
-from .app import MailSentryApp
+
+RuntimeT = TypeVar("RuntimeT")
 
 
 class ToolServer(Protocol):
@@ -21,8 +22,19 @@ class ToolServer(Protocol):
 
 
 @dataclass(frozen=True)
+class RuntimeRegistry:
+    runtimes: Mapping[str, object]
+
+    def require(self, service_name: str, runtime_type: type[RuntimeT]) -> RuntimeT:
+        runtime = self.runtimes.get(service_name)
+        if not isinstance(runtime, runtime_type):
+            raise RuntimeError(f"service runtime is not configured: {service_name}")
+        return runtime
+
+
+@dataclass(frozen=True)
 class ServicePluginContext:
-    app: MailSentryApp
+    runtimes: RuntimeRegistry
 
 
 class ServicePlugin(Protocol):

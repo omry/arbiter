@@ -87,7 +87,7 @@ def _register_service_plugins(
     app: MailSentryApp,
     service_plugins: Sequence[ServicePlugin],
 ) -> None:
-    context = ServicePluginContext(app=app)
+    context = ServicePluginContext(runtimes=app.runtime_registry)
     for service_plugin in service_plugins:
         service_plugin.register_tools(server, context)
 

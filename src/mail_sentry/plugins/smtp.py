@@ -1,10 +1,265 @@
 from __future__ import annotations
 
-from typing import Annotated
+from dataclasses import dataclass
+from email.message import EmailMessage
+from email.utils import formataddr, make_msgid
+from time import monotonic
+from typing import Annotated, Callable, Protocol
 
 from pydantic import Field
 
+from ..config import (
+    AccountConfig,
+    MailConfig,
+    SmtpConfigLike,
+    SmtpServicePolicyConfig,
+)
 from ..services import ServicePluginContext, ToolServer
+
+
+@dataclass(frozen=True)
+class SendEmailResult:
+    tool: str
+    message_id: str
+    recipient_count: int
+
+
+class SmtpClientLike(Protocol):
+    def send(
+        self,
+        message: EmailMessage,
+        sender: str,
+        recipients: list[str],
+    ) -> None: ...
+
+
+SmtpClientFactory = Callable[[SmtpConfigLike], SmtpClientLike]
+TimeProvider = Callable[[], float]
+
+
+class SmtpRuntime:
+    service_name = "smtp"
+
+    def __init__(
+        self,
+        mail_config: MailConfig,
+        smtp_client_factory: SmtpClientFactory,
+        time_provider: TimeProvider = monotonic,
+    ) -> None:
+        self._mail_config = mail_config
+        self._smtp_client_factory = smtp_client_factory
+        self._time_provider = time_provider
+        self._attempt_timestamps: dict[str, list[float]] = {}
+
+    def account_summary(
+        self,
+        account: AccountConfig,
+        smtp_policy: SmtpServicePolicyConfig | None,
+    ) -> dict[str, object]:
+        return {
+            "send": self._send_state(account),
+            "require_confirmation": bool(
+                account.smtp is not None
+                and smtp_policy is not None
+                and smtp_policy.require_confirmation
+            ),
+        }
+
+    def send_email(
+        self,
+        account: str,
+        to: list[str],
+        subject: str,
+        text_body: str | None = None,
+        html_body: str | None = None,
+        cc: list[str] | None = None,
+        bcc: list[str] | None = None,
+    ) -> SendEmailResult:
+        smtp_config, smtp_policy = self._resolve_context(account)
+        recipients_to = self._normalize_recipients("to", to)
+        recipients_cc = self._normalize_recipients("cc", cc or [])
+        recipients_bcc = self._normalize_recipients("bcc", bcc or [])
+
+        if not text_body and not html_body:
+            raise ValueError("send_email requires text_body or html_body")
+
+        normalized_subject = subject.strip()
+        if not normalized_subject:
+            raise ValueError("send_email requires a non-empty subject")
+
+        sender = formataddr((smtp_config.from_name, smtp_config.from_email))
+        message = EmailMessage()
+        message["From"] = sender
+        message["To"] = ", ".join(recipients_to)
+        if recipients_cc:
+            message["Cc"] = ", ".join(recipients_cc)
+        message["Subject"] = normalized_subject
+        message["Message-ID"] = make_msgid(domain=self._sender_domain(smtp_config))
+
+        if text_body:
+            message.set_content(text_body)
+            if html_body:
+                message.add_alternative(html_body, subtype="html")
+        else:
+            message.set_content(html_body or "", subtype="html")
+
+        envelope_recipients = recipients_to + recipients_cc + recipients_bcc
+        self._enforce_policy(account, smtp_policy, envelope_recipients)
+        self._consume_rate_limit(account, smtp_policy)
+        smtp_client = self._smtp_client_factory(smtp_config)
+        smtp_client.send(
+            message,
+            sender=smtp_config.from_email,
+            recipients=envelope_recipients,
+        )
+
+        return SendEmailResult(
+            tool="send_email",
+            message_id=str(message["Message-ID"]),
+            recipient_count=len(envelope_recipients),
+        )
+
+    def _resolve_context(
+        self,
+        account_name: str,
+    ) -> tuple[SmtpConfigLike, SmtpServicePolicyConfig]:
+        account = self._mail_config.accounts.get(account_name)
+        if account is None:
+            raise ValueError(f"send_email received an unknown account: {account_name}")
+
+        if account.smtp is None:
+            raise ValueError(
+                f"send_email requires an SMTP-enabled account: {account_name}"
+            )
+
+        profile = self._mail_config.account_access_profiles[
+            account.account_access_profile
+        ]
+        smtp_policy = profile.services.smtp
+        if smtp_policy is None:
+            raise ValueError(
+                f"send_email requires an SMTP service policy for account: {account_name}"
+            )
+
+        return account.smtp, smtp_policy
+
+    def _normalize_recipients(
+        self,
+        field_name: str,
+        recipients: list[str],
+    ) -> list[str]:
+        normalized = [
+            recipient.strip() for recipient in recipients if recipient.strip()
+        ]
+        if field_name == "to" and not normalized:
+            raise ValueError("send_email requires at least one recipient in to")
+
+        for recipient in normalized:
+            if "@" not in recipient:
+                raise ValueError(f"send_email received an invalid {field_name} address")
+
+        return normalized
+
+    def _sender_domain(self, smtp_config: SmtpConfigLike) -> str:
+        _, _, domain = smtp_config.from_email.partition("@")
+        return domain or "localhost"
+
+    def _send_state(self, account: AccountConfig) -> str:
+        if account.smtp is None:
+            return "unavailable"
+        return "allowed"
+
+    def _enforce_policy(
+        self,
+        account_name: str,
+        smtp_policy: SmtpServicePolicyConfig,
+        recipients: list[str],
+    ) -> None:
+        max_recipients = smtp_policy.limits.max_recipients_per_message
+        if max_recipients is not None and len(recipients) > max_recipients:
+            raise ValueError(
+                f"send_email exceeds max_recipients_per_message for account: {account_name}"
+            )
+
+        recipient_policy = smtp_policy.recipient_policy
+        for recipient in recipients:
+            normalized_recipient = recipient.strip().lower()
+            _, _, domain = normalized_recipient.partition("@")
+            if self._recipient_matches_list(
+                normalized_recipient, recipient_policy.blocked_recipients
+            ):
+                raise ValueError(
+                    f"send_email recipient is blocked by exact address policy: {recipient}"
+                )
+            if self._domain_matches_any_pattern(
+                domain, recipient_policy.blocked_domain_patterns
+            ):
+                raise ValueError(
+                    f"send_email recipient is blocked by domain policy: {recipient}"
+                )
+
+            has_allowlist = bool(
+                recipient_policy.allowed_recipients
+                or recipient_policy.allowed_domain_patterns
+            )
+            if has_allowlist and not (
+                self._recipient_matches_list(
+                    normalized_recipient, recipient_policy.allowed_recipients
+                )
+                or self._domain_matches_any_pattern(
+                    domain, recipient_policy.allowed_domain_patterns
+                )
+            ):
+                raise ValueError(
+                    f"send_email recipient is not allowed by policy: {recipient}"
+                )
+
+    def _consume_rate_limit(
+        self,
+        account_name: str,
+        smtp_policy: SmtpServicePolicyConfig,
+    ) -> None:
+        max_messages = smtp_policy.limits.max_messages_per_minute
+        if max_messages is None:
+            return
+
+        now = self._time_provider()
+        window_start = now - 60.0
+        active_attempts = [
+            timestamp
+            for timestamp in self._attempt_timestamps.get(account_name, [])
+            if timestamp > window_start
+        ]
+        if len(active_attempts) >= max_messages:
+            raise ValueError(
+                f"send_email exceeds max_messages_per_minute for account: {account_name}"
+            )
+
+        active_attempts.append(now)
+        self._attempt_timestamps[account_name] = active_attempts
+
+    def _recipient_matches_list(
+        self,
+        recipient: str,
+        configured_recipients: list[str],
+    ) -> bool:
+        normalized = recipient.lower()
+        return any(
+            normalized == value.strip().lower() for value in configured_recipients
+        )
+
+    def _domain_matches_any_pattern(self, domain: str, patterns: list[str]) -> bool:
+        normalized_domain = domain.lower()
+        for pattern in patterns:
+            normalized_pattern = pattern.strip().lower()
+            if normalized_pattern.startswith("*."):
+                suffix = normalized_pattern[2:]
+                if normalized_domain.endswith(f".{suffix}"):
+                    return True
+                continue
+            if normalized_domain == normalized_pattern:
+                return True
+        return False
 
 
 RecipientList = Annotated[
@@ -69,7 +324,7 @@ class SmtpServicePlugin:
         server: ToolServer,
         context: ServicePluginContext,
     ) -> None:
-        app = context.app
+        runtime = context.runtimes.require(self.name, SmtpRuntime)
 
         @server.tool(
             description=(
@@ -88,7 +343,7 @@ class SmtpServicePlugin:
             cc: OptionalRecipientList = None,
             bcc: OptionalRecipientList = None,
         ) -> dict[str, object]:
-            result = app.send_email(
+            result = runtime.send_email(
                 account=account,
                 to=to,
                 subject=subject,

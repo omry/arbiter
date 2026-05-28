@@ -36,18 +36,16 @@ This file is the day-to-day queue for design and implementation gaps.
 
 ## Now
 
-- [ ] `P1` Split SMTP and IMAP runtime ownership out of the monolithic app.
-      The first plugin extraction moved MCP registration into separate
-      first-party SMTP and IMAP plugin modules and replaced the central plugin
-      list with entry-point discovery. The next step is to move the service
-      runtime/application behavior behind those plugin boundaries while keeping
-      the change reviewable. There is no released compatibility contract yet,
-      so package names, config keys, and MCP tool names may change before v1.
-      Acceptance checks: SMTP and IMAP plugins own their service operation
-      implementations or delegate through service-specific runtime objects; the
-      core app/server no longer exposes one monolithic SMTP+IMAP method surface
-      as the plugin context; any public-shape changes are reflected in docs and
-      tests; and tests plus lint pass.
+- [ ] `P1` Introduce the `services.*` config shape and config-driven activation.
+      SMTP and IMAP now register through entry points and own service-specific
+      runtime objects. The next step is to move from the current mail-shaped
+      config root toward plugin-owned service config nodes, with config
+      presence activating each service.
+      Acceptance checks: the config schema has a first pass at `services.smtp`
+      and `services.imap`; plugin activation is derived from configured service
+      nodes instead of loading every installed service; shared operator-owned
+      interpolation space is represented as `etc`; docs and tests reflect the
+      new shape; and tests plus lint pass.
 
 ## Post-v1
 

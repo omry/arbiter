@@ -24,8 +24,9 @@ The point of the implementation is not to build a generic mail framework. It is 
 
 The planned platform direction is captured in
 [ADR 0001: Service Plugin Architecture](adr/0001-service-plugin-architecture.md).
-That direction moves SMTP and IMAP toward separate first-party service plugins
-while the unreleased package, config, and MCP surface are still free to evolve.
+SMTP and IMAP now register as separate first-party service plugins and own
+service-specific runtime objects. The unreleased package, config, and MCP
+surface are still free to evolve before v1.
 
 ## Main responsibilities
 
@@ -34,9 +35,9 @@ while the unreleased package, config, and MCP surface are still free to evolve.
 - Config loading:
   load configured accounts, sender identities, limits, and recipient policy
 - Send-email flow:
-  resolve the selected account, apply policy checks, build the RFC 5322/MIME message, and submit it over SMTP
+  resolve the selected account, apply policy checks, build the RFC 5322/MIME message, and submit it through the SMTP runtime
 - IMAP flow:
-  resolve the selected account and configured folder, apply read/search/move/delete/flag policy, and execute the operation over IMAP
+  resolve the selected account and configured folder, apply read/search/move/delete/flag policy, and execute the operation through the IMAP runtime
 - Shared result handling:
   normalize failures into stable error codes and emit operational logs once those hardening pieces are implemented
 
@@ -68,9 +69,13 @@ mail-sentry/
       imap_extension.md
   src/
     mail_sentry/
-      app.py       # application/service layer and policy checks
+      app.py       # transitional facade and account discovery
       config.py    # dataclass config schema and validation
-      main.py      # FastMCP server and tool registration
+      main.py      # FastMCP server bootstrap and core tool registration
+      services.py  # service plugin contract and runtime registry
+      plugins/
+        smtp.py    # SMTP service plugin and runtime
+        imap.py    # IMAP service plugin and runtime
       smtp.py      # SMTP transport adapter
       imap.py      # IMAP transport adapter
   tests/
@@ -80,7 +85,7 @@ mail-sentry/
 
 - Keep MCP tool handlers thin.
 - Keep SMTP and IMAP session handling out of tool handlers.
-- Keep account/folder access policy in the application layer rather than transport adapters.
+- Keep account/folder access policy in service runtimes rather than transport adapters.
 - Centralize logging and error normalization when those hardening pieces are implemented.
 - Keep durable audit storage and audit policy configuration as post-v1 work.
-- Implement one shared server that exposes multiple tools over the same config.
+- Keep `MailSentryApp` temporary; it should shrink as `services.*` config and service discovery mature.

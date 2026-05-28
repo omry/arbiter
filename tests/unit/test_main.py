@@ -11,9 +11,13 @@ from omegaconf import OmegaConf
 from mail_sentry.config import AppConfig
 from mail_sentry.main import build_app, build_server, log_startup_summary
 from mail_sentry.plugins import discover_service_plugins
-from mail_sentry.plugins.imap import ImapServicePlugin
-from mail_sentry.plugins.smtp import SmtpServicePlugin
-from mail_sentry.services import SERVICE_PLUGIN_ENTRY_POINT_GROUP, ServicePlugin
+from mail_sentry.plugins.imap import ImapRuntime, ImapServicePlugin
+from mail_sentry.plugins.smtp import SendEmailResult, SmtpRuntime, SmtpServicePlugin
+from mail_sentry.services import (
+    SERVICE_PLUGIN_ENTRY_POINT_GROUP,
+    RuntimeRegistry,
+    ServicePlugin,
+)
 
 
 def test_build_app_accepts_hydra_config() -> None:
@@ -131,7 +135,135 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     mark_message_read_calls: list[dict[str, object]] = []
     delete_message_calls: list[dict[str, object]] = []
 
+    class FakeSmtpRuntime(SmtpRuntime):
+        def send_email(
+            self,
+            account: str,
+            to: list[str],
+            subject: str,
+            text_body: str | None = None,
+            html_body: str | None = None,
+            cc: list[str] | None = None,
+            bcc: list[str] | None = None,
+        ) -> SendEmailResult:
+            send_email_calls.append(
+                {
+                    "account": account,
+                    "to": to,
+                    "subject": subject,
+                    "text_body": text_body,
+                    "html_body": html_body,
+                    "cc": cc,
+                    "bcc": bcc,
+                }
+            )
+            return SendEmailResult(
+                tool="send_email",
+                message_id="<message-id@example.com>",
+                recipient_count=len(to) + len(cc or []) + len(bcc or []),
+            )
+
+    class FakeImapRuntime(ImapRuntime):
+        def list_messages(
+            self,
+            account: str,
+            folder: str | None = None,
+            limit: int = 20,
+        ) -> dict[str, object]:
+            list_messages_calls.append(
+                {"account": account, "folder": folder, "limit": limit}
+            )
+            return {"account": account, "folder": folder or "INBOX", "messages": []}
+
+        def get_message(
+            self,
+            account: str,
+            message_id: str,
+            folder: str | None = None,
+        ) -> dict[str, object]:
+            get_message_calls.append(
+                {"account": account, "message_id": message_id, "folder": folder}
+            )
+            return {"account": account, "folder": folder or "INBOX", "message": {}}
+
+        def search_messages(
+            self,
+            account: str,
+            query: str,
+            folder: str | None = None,
+            limit: int = 20,
+        ) -> dict[str, object]:
+            search_messages_calls.append(
+                {
+                    "account": account,
+                    "query": query,
+                    "folder": folder,
+                    "limit": limit,
+                }
+            )
+            return {
+                "account": account,
+                "folder": folder or "INBOX",
+                "query": query,
+                "messages": [],
+            }
+
+        def move_message(
+            self,
+            account: str,
+            message_id: str,
+            destination_folder: str,
+            folder: str | None = None,
+        ) -> dict[str, object]:
+            move_message_calls.append(
+                {
+                    "account": account,
+                    "message_id": message_id,
+                    "destination_folder": destination_folder,
+                    "folder": folder,
+                }
+            )
+            return {"ok": True}
+
+        def mark_message_read(
+            self,
+            account: str,
+            message_id: str,
+            folder: str | None = None,
+            read: bool = True,
+        ) -> dict[str, object]:
+            mark_message_read_calls.append(
+                {
+                    "account": account,
+                    "message_id": message_id,
+                    "folder": folder,
+                    "read": read,
+                }
+            )
+            return {"ok": True}
+
+        def delete_message(
+            self,
+            account: str,
+            message_id: str,
+            folder: str | None = None,
+        ) -> dict[str, object]:
+            delete_message_calls.append(
+                {"account": account, "message_id": message_id, "folder": folder}
+            )
+            return {"ok": True}
+
     class FakeApp:
+        runtime_registry = RuntimeRegistry(
+            {
+                "smtp": FakeSmtpRuntime(
+                    AppConfig().mail,
+                    smtp_client_factory=lambda config: cast(Any, object()),
+                ),
+                "imap": FakeImapRuntime(AppConfig().mail),
+            }
+        )
+
         def list_accounts(self) -> list[dict[str, object]]:
             nonlocal list_accounts_calls
             list_accounts_calls += 1
