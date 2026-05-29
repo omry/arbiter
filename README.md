@@ -60,24 +60,6 @@ The design is documented in the `docs/` structure used by the MCP server templat
 - [docs/tools/send_email.md](docs/tools/send_email.md)
 - [docs/tools/imap_extension.md](docs/tools/imap_extension.md)
 
-## Playground
-
-For a safe in-repo server playground with no configured mail accounts, use
-[playground](playground). Activate the repository virtualenv before running
-these commands:
-
-```bash
-arbiter-server config check --config-path "$PWD/playground" --config-name config
-arbiter-server serve --config-path "$PWD/playground" --config-name config
-```
-
-Then point the client at the playground server from another terminal:
-
-```bash
-arbiter --url http://127.0.0.1:8025/mcp tools list
-arbiter --url http://127.0.0.1:8025/mcp accounts list
-```
-
 ## Local Streamable HTTP Run
 
 For local Codex or VS Code integration, run Agent Arbiter as a streamable HTTP MCP

@@ -58,6 +58,35 @@ class SMTPServicePolicyConfig(Policy):
     )
 
 
+SMTP_ACCOUNT_EXAMPLE = SMTPConfig(
+    policy="bot",
+    description="SMTP account used by Agent Arbiter to send mail.",
+    host="${oc.env:AGENT_ARBITER_SMTP_HOST,smtp.example.com}",
+    port="${oc.env:AGENT_ARBITER_SMTP_PORT,587}",  # type: ignore[arg-type]
+    authenticate=True,
+    username="${oc.env:AGENT_ARBITER_SMTP_USERNAME,agent@example.com}",
+    password="${oc.env:AGENT_ARBITER_SMTP_PASSWORD,change-me}",
+    from_email="${oc.env:AGENT_ARBITER_SMTP_FROM_EMAIL,agent@example.com}",
+    from_name="${oc.env:AGENT_ARBITER_SMTP_FROM_NAME,Agent Arbiter}",
+    tls="${oc.env:AGENT_ARBITER_SMTP_TLS,starttls}",  # type: ignore[arg-type]
+    verify_peer="${oc.env:AGENT_ARBITER_SMTP_VERIFY_PEER,true}",  # type: ignore[arg-type]
+    timeout_seconds="${oc.env:AGENT_ARBITER_SMTP_TIMEOUT_SECONDS,30}",  # type: ignore[arg-type]
+)
+
+SMTP_POLICY_EXAMPLE = SMTPServicePolicyConfig(
+    require_confirmation=True,
+    limits=SMTPLimitsConfig(
+        max_messages_per_minute=30,
+        max_recipients_per_message=10,
+    ),
+    recipient_policy=SMTPRecipientPolicyConfig(
+        allowed_domain_patterns=[
+            "${oc.env:AGENT_ARBITER_SMTP_ALLOWED_DOMAIN,example.com}"
+        ],
+    ),
+)
+
+
 def register_configs(config_store: ConfigStore) -> None:
     config_store.store(
         group="arbiter/account/smtp",
@@ -66,8 +95,20 @@ def register_configs(config_store: ConfigStore) -> None:
         provider="agent-arbiter-smtp",
     )
     config_store.store(
+        group="arbiter/account/smtp",
+        name="example",
+        node=SMTP_ACCOUNT_EXAMPLE,
+        provider="agent-arbiter-smtp",
+    )
+    config_store.store(
         group="arbiter/policy/smtp",
         name="schema",
         node=SMTPServicePolicyConfig,
+        provider="agent-arbiter-smtp",
+    )
+    config_store.store(
+        group="arbiter/policy/smtp",
+        name="example",
+        node=SMTP_POLICY_EXAMPLE,
         provider="agent-arbiter-smtp",
     )

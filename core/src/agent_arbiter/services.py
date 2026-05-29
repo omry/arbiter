@@ -57,6 +57,8 @@ class ServicePluginContext:
 class ServicePlugin(Protocol):
     name: str
 
+    # Called before Hydra composes application config. Plugins register all
+    # service-owned schema and example options in their ConfigStore groups here.
     def register_configs(self, config_store: Any) -> None: ...
 
     def build_runtime(

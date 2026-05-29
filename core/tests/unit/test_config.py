@@ -176,20 +176,6 @@ def test_standard_deployment_config_composes(
     assert cfg.accounts.smtp.personal.from_name == "Omry"
 
 
-def test_playground_config_composes() -> None:
-    config_dir = Path(__file__).parents[3] / "playground"
-    _register_all_configs()
-    with initialize_config_dir(version_base=None, config_dir=str(config_dir)):
-        cfg = compose(config_name="config")
-
-    assert cfg.server.name == "agent-arbiter-playground"
-    assert cfg.server.transport == "streamable-http"
-    assert cfg.server.port == 8025
-    assert cfg.server.path == "/mcp"
-    assert cfg.accounts == {}
-    assert cfg.policies == {}
-
-
 def test_secret_file_resolver_reads_secret_file(tmp_path: Path) -> None:
     secret = tmp_path / "imap_password"
     secret.write_text("super-secret\n", encoding="utf-8")
@@ -355,3 +341,42 @@ def test_hydra_coerces_plugin_enum_values() -> None:
     assert cfg.policies.imap.bot.system_flags.seen == IMAPFlagMode.read_write
     assert cfg.policies.imap.bot.user_flags.bot_followed_up == IMAPFlagMode.read_only
     assert cfg.policies.imap.bot.confirmation_required == [IMAPConfirmationAction.read]
+
+
+def test_smtp_configstore_example_composes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for env_name in (
+        "AGENT_ARBITER_SMTP_HOST",
+        "AGENT_ARBITER_SMTP_PORT",
+        "AGENT_ARBITER_SMTP_USERNAME",
+        "AGENT_ARBITER_SMTP_PASSWORD",
+        "AGENT_ARBITER_SMTP_FROM_EMAIL",
+        "AGENT_ARBITER_SMTP_FROM_NAME",
+        "AGENT_ARBITER_SMTP_TLS",
+        "AGENT_ARBITER_SMTP_VERIFY_PEER",
+        "AGENT_ARBITER_SMTP_TIMEOUT_SECONDS",
+        "AGENT_ARBITER_SMTP_ALLOWED_DOMAIN",
+    ):
+        monkeypatch.delenv(env_name, raising=False)
+
+    cfg = _compose_config(
+        [
+            "+arbiter/account/smtp@accounts.smtp.primary=example",
+            "+arbiter/policy/smtp@policies.smtp.bot=example",
+        ]
+    )
+
+    assert cfg.accounts.smtp.primary.description == (
+        "SMTP account used by Agent Arbiter to send mail."
+    )
+    assert cfg.accounts.smtp.primary.host == "smtp.example.com"
+    assert cfg.accounts.smtp.primary.port == 587
+    assert cfg.accounts.smtp.primary.authenticate is True
+    assert cfg.accounts.smtp.primary.tls == SMTPMailTlsMode.starttls
+    assert cfg.policies.smtp.bot.require_confirmation is True
+    assert cfg.policies.smtp.bot.limits.max_messages_per_minute == 30
+    assert cfg.policies.smtp.bot.limits.max_recipients_per_message == 10
+    assert cfg.policies.smtp.bot.recipient_policy.allowed_domain_patterns == [
+        "example.com"
+    ]

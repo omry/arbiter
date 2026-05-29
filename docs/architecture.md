@@ -41,7 +41,12 @@ across installed services rather than belonging to `core/`, `smtp/`, or `imap/`.
   accept tool calls, validate input, and return the documented response shapes
 - Config loading:
   load service-owned account config from `accounts.*`, reusable policy config
-  from `policies.*`, and operator interpolation values from `etc`
+  from `policies.*`, and operator interpolation values from `etc`; before Hydra
+  composes config, core initializes all installed service plugins through their
+  `register_configs` hook
+- Config examples:
+  let service plugins register canonical account and policy examples in their
+  own Hydra ConfigStore groups beside `schema`
 - Send-email flow:
   resolve the selected account, apply policy checks, build the RFC 5322/MIME message, and submit it through the SMTP runtime
 - IMAP flow:

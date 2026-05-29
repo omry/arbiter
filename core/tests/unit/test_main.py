@@ -243,6 +243,24 @@ def test_server_cli_reports_clean_keyboard_interrupt(
     assert capsys.readouterr().err == "Agent Arbiter server stopped.\n"
 
 
+def test_hydra_entrypoint_registers_plugin_configs_before_composing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    def fake_register_configs() -> None:
+        calls.append("register_configs")
+
+    def fake_hydra_entrypoint() -> None:
+        calls.append("hydra_entrypoint")
+
+    monkeypatch.setattr("agent_arbiter.main.register_configs", fake_register_configs)
+
+    assert _run_hydra_entrypoint(fake_hydra_entrypoint, []) == 0
+
+    assert calls == ["register_configs", "hydra_entrypoint"]
+
+
 def test_cli_lists_plugins_as_json(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,

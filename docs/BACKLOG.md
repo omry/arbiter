@@ -46,6 +46,15 @@ This file is the day-to-day queue for design and implementation gaps.
 
 ## Post-v1
 
+- [ ] `P2` Build a proper documentation site, likely with Docusaurus.
+      The README and markdown docs are enough for early development, but the
+      operator and plugin-author surfaces need a real documentation home.
+      Acceptance checks: choose the docs framework; create navigation for
+      operators, plugin authors, config, CLI, deployment, and safety policy;
+      migrate or link the existing markdown docs without duplicating stale
+      examples; and document how generated config tooling fits into the docs
+      workflow.
+
 - [ ] `P2` Design live config reload for service runtimes. A future reload path
       should apply validated configuration changes without interrupting
       in-flight tool calls. Acceptance checks: define whether reload happens by
