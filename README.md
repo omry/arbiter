@@ -12,6 +12,7 @@ Current implementation status:
 - IMAP list/get/search/move/mark-read/delete tools scoped to configured accounts and folders
 - top-level `accounts.<service>` and reusable `policies.<service>` objects for
   per-service account policy
+- `arbiter` client CLI and `arbiter-server` server/operator CLI
 - Docker deployment files for a standard SMTP gateway and a hardened read-only IMAP variant
 
 Known open gaps:
@@ -58,6 +59,24 @@ The design is documented in the `docs/` structure used by the MCP server templat
 - [docs/tools/list_accounts.md](docs/tools/list_accounts.md)
 - [docs/tools/send_email.md](docs/tools/send_email.md)
 - [docs/tools/imap_extension.md](docs/tools/imap_extension.md)
+
+## Playground
+
+For a safe in-repo server playground with no configured mail accounts, use
+[playground](playground). Activate the repository virtualenv before running
+these commands:
+
+```bash
+arbiter-server config check --config-path "$PWD/playground" --config-name config
+arbiter-server serve --config-path "$PWD/playground" --config-name config
+```
+
+Then point the client at the playground server from another terminal:
+
+```bash
+arbiter --url http://127.0.0.1:8025/mcp tools list
+arbiter --url http://127.0.0.1:8025/mcp accounts list
+```
 
 ## Local Streamable HTTP Run
 
@@ -148,7 +167,17 @@ etc:
 Then run from this directory:
 
 ```bash
-python -m agent_arbiter --config-path /tmp --config-name agent-arbiter-local
+arbiter-server config check --config-path /tmp --config-name agent-arbiter-local
+arbiter-server serve --config-path /tmp --config-name agent-arbiter-local
+```
+
+Use `arbiter-server plugins list` to inspect installed service plugins before
+validating a config. Once the server is running, use the client CLI against the
+MCP endpoint:
+
+```bash
+arbiter --url http://127.0.0.1:8025/mcp tools list
+arbiter --url http://127.0.0.1:8025/mcp accounts list
 ```
 
 The IMAP tools use folder-scoped UIDs returned by `list_messages` and

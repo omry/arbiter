@@ -176,6 +176,20 @@ def test_standard_deployment_config_composes(
     assert cfg.accounts.smtp.personal.from_name == "Omry"
 
 
+def test_playground_config_composes() -> None:
+    config_dir = Path(__file__).parents[3] / "playground"
+    _register_all_configs()
+    with initialize_config_dir(version_base=None, config_dir=str(config_dir)):
+        cfg = compose(config_name="config")
+
+    assert cfg.server.name == "agent-arbiter-playground"
+    assert cfg.server.transport == "streamable-http"
+    assert cfg.server.port == 8025
+    assert cfg.server.path == "/mcp"
+    assert cfg.accounts == {}
+    assert cfg.policies == {}
+
+
 def test_secret_file_resolver_reads_secret_file(tmp_path: Path) -> None:
     secret = tmp_path / "imap_password"
     secret.write_text("super-secret\n", encoding="utf-8")

@@ -1,6 +1,6 @@
 import logging
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from types import ModuleType
 from types import SimpleNamespace
 from typing import Any, cast
@@ -9,7 +9,16 @@ import pytest
 from omegaconf import OmegaConf
 
 from agent_arbiter.config import AppConfig
-from agent_arbiter.main import build_app, build_server, log_startup_summary
+from agent_arbiter.main import (
+    _run_hydra_entrypoint,
+    _run_server,
+    build_app,
+    build_server,
+    config_check_summary,
+    log_startup_summary,
+    main,
+    service_plugin_names,
+)
 from agent_arbiter.plugins import discover_service_plugins
 from agent_arbiter_imap import IMAPRuntime, IMAPServicePlugin
 from agent_arbiter_imap.config import (
@@ -182,6 +191,124 @@ def test_discover_service_plugins_loads_entry_point_factories(
     )
 
     assert [plugin.name for plugin in discover_service_plugins()] == ["imap", "smtp"]
+
+
+def test_config_check_summary_validates_runtime_construction() -> None:
+    assert (
+        config_check_summary(
+            _app_config_with_smtp_imap(),
+            service_plugins=_test_service_plugins(),
+        )
+        == "config ok: services=smtp,imap service_accounts=smtp:primary;imap:primary"
+    )
+
+
+def test_service_plugin_names_are_sorted() -> None:
+    assert service_plugin_names(service_plugins=_test_service_plugins()) == [
+        "imap",
+        "smtp",
+    ]
+
+
+def test_cli_lists_plugins(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "agent_arbiter.main.discover_service_plugins",
+        lambda: _test_service_plugins(),
+    )
+
+    assert main(["plugins", "list"]) == 0
+
+    assert capsys.readouterr().out == "imap\nsmtp\n"
+
+
+def test_server_cli_help_uses_arbiter_server_program_name(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["--help"]) == 0
+
+    assert capsys.readouterr().out.startswith("usage: arbiter-server ")
+
+
+def test_server_cli_reports_clean_keyboard_interrupt(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def raise_keyboard_interrupt() -> None:
+        raise KeyboardInterrupt
+
+    assert _run_hydra_entrypoint(raise_keyboard_interrupt, []) == 130
+
+    assert capsys.readouterr().err == "Agent Arbiter server stopped.\n"
+
+
+def test_cli_lists_plugins_as_json(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "agent_arbiter.main.discover_service_plugins",
+        lambda: _test_service_plugins(),
+    )
+
+    assert main(["plugins", "list", "--json"]) == 0
+
+    assert capsys.readouterr().out == (
+        '{"plugins": [{"name": "imap"}, {"name": "smtp"}]}\n'
+    )
+
+
+def test_cli_routes_legacy_hydra_args_to_serve(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    serve_calls: list[list[str]] = []
+
+    def fake_serve(args: Sequence[str]) -> int:
+        serve_calls.append(list(args))
+        return 0
+
+    monkeypatch.setattr("agent_arbiter.main._run_serve", fake_serve)
+
+    assert main(["--config-path", "/tmp", "--config-name", "agent-arbiter-local"]) == 0
+    assert main(["server.port=8025"]) == 0
+
+    assert serve_calls == [
+        ["--config-path", "/tmp", "--config-name", "agent-arbiter-local"],
+        ["server.port=8025"],
+    ]
+
+
+def test_cli_serve_subcommand_passes_hydra_args(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    serve_calls: list[list[str]] = []
+
+    def fake_serve(args: Sequence[str]) -> int:
+        serve_calls.append(list(args))
+        return 0
+
+    monkeypatch.setattr("agent_arbiter.main._run_serve", fake_serve)
+
+    assert main(["serve", "--config-path", "/tmp"]) == 0
+
+    assert serve_calls == [["--config-path", "/tmp"]]
+
+
+def test_cli_config_check_subcommand_passes_hydra_args(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    check_calls: list[list[str]] = []
+
+    def fake_check(args: Sequence[str]) -> int:
+        check_calls.append(list(args))
+        return 0
+
+    monkeypatch.setattr("agent_arbiter.main._run_config_check", fake_check)
+
+    assert main(["config", "check", "--config-path", "/tmp"]) == 0
+
+    assert check_calls == [["--config-path", "/tmp"]]
 
 
 def _test_service_plugins() -> list[ServicePlugin]:
@@ -727,6 +854,79 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     assert delete_message_calls == [
         {"account": "primary", "message_id": "42", "folder": "INBOX"}
     ]
+
+
+@pytest.mark.parametrize(
+    ("transport", "expected_app"),
+    [
+        ("streamable-http", "streamable-http-app"),
+        ("sse", "sse-app"),
+    ],
+)
+def test_run_server_preserves_hydra_logging_for_uvicorn_transports(
+    monkeypatch: pytest.MonkeyPatch,
+    transport: str,
+    expected_app: str,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeUvicornConfig:
+        def __init__(self, app: object, **kwargs: object) -> None:
+            captured["app"] = app
+            captured["config_kwargs"] = kwargs
+
+    class FakeUvicornServer:
+        def __init__(self, config: FakeUvicornConfig) -> None:
+            captured["config"] = config
+
+        async def serve(self) -> None:
+            captured["served"] = True
+
+    fake_uvicorn = ModuleType("uvicorn")
+    setattr(fake_uvicorn, "Config", FakeUvicornConfig)
+    setattr(fake_uvicorn, "Server", FakeUvicornServer)
+    monkeypatch.setitem(sys.modules, "uvicorn", fake_uvicorn)
+
+    def streamable_http_app() -> str:
+        return "streamable-http-app"
+
+    def sse_app(mount_path: str | None) -> str:
+        captured["sse_mount_path"] = mount_path
+        return "sse-app"
+
+    fake_server = SimpleNamespace(
+        settings=SimpleNamespace(host="127.0.0.1", port=8025, log_level="INFO"),
+        streamable_http_app=streamable_http_app,
+        sse_app=sse_app,
+    )
+
+    _run_server(cast(Any, fake_server), cast(Any, transport))
+
+    assert captured["app"] == expected_app
+    assert captured["served"] is True
+    assert captured["config_kwargs"] == {
+        "host": "127.0.0.1",
+        "port": 8025,
+        "log_level": "info",
+        "log_config": None,
+    }
+    if transport == "sse":
+        assert captured["sse_mount_path"] is None
+
+
+def test_run_server_keeps_stdio_on_fastmcp_runner() -> None:
+    class FakeServer:
+        def __init__(self) -> None:
+            self.transport = ""
+
+        def run(self, *, transport: str) -> None:
+            self.transport = transport
+
+    fake_server = FakeServer()
+
+    _run_server(cast(Any, fake_server), "stdio")
+
+    assert fake_server.transport == "stdio"
 
 
 def test_build_server_describes_send_email_tool_schema() -> None:

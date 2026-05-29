@@ -33,7 +33,8 @@ Homepage = "https://github.com/omry/agent-arbiter"
 Repository = "https://github.com/omry/agent-arbiter"
 
 [project.scripts]
-agent-arbiter = "agent_arbiter.main:main"
+arbiter = "agent_arbiter.client:main"
+arbiter-server = "agent_arbiter.main:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

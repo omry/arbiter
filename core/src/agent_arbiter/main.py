@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import argparse
+import json
 import logging
-from collections.abc import Mapping, Sequence
+import sys
+from collections.abc import Callable, Mapping, Sequence
 from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -32,6 +35,7 @@ if TYPE_CHECKING:
 LOGGER = logging.getLogger(__name__)
 TransportMode = Literal["stdio", "sse", "streamable-http"]
 HydraConfig = AppConfig | DictConfig
+CLI_COMMANDS = {"serve", "config", "plugins"}
 
 
 def _to_object(value: Any) -> Any:
@@ -150,6 +154,26 @@ def log_startup_summary(cfg: AppConfig) -> None:
     )
 
 
+def config_check_summary(
+    cfg: HydraConfig,
+    service_plugins: Sequence[ServicePlugin] | None = None,
+) -> str:
+    app_config = _instantiate_app_config(cfg)
+    build_app(app_config, service_plugins=service_plugins)
+    return (
+        "config ok: "
+        f"services={_csv_or_none(configured_service_names(app_config.accounts))} "
+        f"service_accounts={_service_accounts_summary(app_config)}"
+    )
+
+
+def service_plugin_names(
+    service_plugins: Sequence[ServicePlugin] | None = None,
+) -> list[str]:
+    plugins = discover_service_plugins() if service_plugins is None else service_plugins
+    return sorted(service_plugin.name for service_plugin in plugins)
+
+
 def _register_core_tools(server: "FastMCP", app: AgentArbiterApp) -> None:
     @server.tool(
         description=(
@@ -203,16 +227,152 @@ def build_server(
     return server
 
 
-register_configs()
+async def _serve_uvicorn_app(server: "FastMCP", starlette_app: object) -> None:
+    import uvicorn
+
+    config = uvicorn.Config(
+        cast(Any, starlette_app),
+        host=server.settings.host,
+        port=server.settings.port,
+        log_level=server.settings.log_level.lower(),
+        log_config=None,
+    )
+    uvicorn_server = uvicorn.Server(config)
+    await uvicorn_server.serve()
+
+
+def _run_server(server: "FastMCP", transport: TransportMode) -> None:
+    if transport == "stdio":
+        server.run(transport=transport)
+        return
+
+    import anyio
+
+    if transport == "streamable-http":
+        anyio.run(_serve_uvicorn_app, server, server.streamable_http_app())
+        return
+
+    anyio.run(_serve_uvicorn_app, server, server.sse_app(None))
 
 
 @hydra.main(version_base=None, config_path="conf", config_name="config")
-def _main(cfg: DictConfig) -> None:
+def _serve_main(cfg: DictConfig) -> None:
     app_config = _instantiate_app_config(cfg)
     log_startup_summary(app_config)
     server = build_server(app_config)
-    server.run(transport=cast(TransportMode, app_config.server.transport))
+    _run_server(server, cast(TransportMode, app_config.server.transport))
 
 
-def main() -> None:
-    _main()
+@hydra.main(version_base=None, config_path="conf", config_name="config")
+def _config_check_main(cfg: DictConfig) -> None:
+    print(config_check_summary(cfg))
+
+
+def _strip_arg_separator(args: Sequence[str]) -> list[str]:
+    if args and args[0] == "--":
+        return list(args[1:])
+    return list(args)
+
+
+def _run_hydra_entrypoint(
+    entrypoint: Callable[[], None],
+    hydra_args: Sequence[str],
+) -> int:
+    original_argv = sys.argv
+    sys.argv = [original_argv[0], *_strip_arg_separator(hydra_args)]
+    try:
+        register_configs()
+        entrypoint()
+    except KeyboardInterrupt:
+        print("Agent Arbiter server stopped.", file=sys.stderr)
+        return 130
+    finally:
+        sys.argv = original_argv
+    return 0
+
+
+def _run_serve(hydra_args: Sequence[str]) -> int:
+    return _run_hydra_entrypoint(_serve_main, hydra_args)
+
+
+def _run_config_check(hydra_args: Sequence[str]) -> int:
+    return _run_hydra_entrypoint(_config_check_main, hydra_args)
+
+
+def _looks_like_hydra_arg(value: str) -> bool:
+    return (
+        value.startswith("-")
+        or value.startswith("+")
+        or value.startswith("~")
+        or "=" in value
+    )
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="arbiter-server",
+        description="Policy-controlled MCP gateway for agent-accessible services.",
+    )
+    subcommands = parser.add_subparsers(dest="command")
+
+    serve = subcommands.add_parser("serve", help="run the Agent Arbiter MCP server")
+    serve.add_argument(
+        "hydra_args",
+        nargs=argparse.REMAINDER,
+        help="Hydra config arguments passed to the server",
+    )
+
+    config = subcommands.add_parser("config", help="inspect and validate config")
+    config_subcommands = config.add_subparsers(dest="config_command", required=True)
+    check = config_subcommands.add_parser(
+        "check",
+        help="validate config and service runtime construction without serving",
+    )
+    check.add_argument(
+        "hydra_args",
+        nargs=argparse.REMAINDER,
+        help="Hydra config arguments passed to config validation",
+    )
+
+    plugins = subcommands.add_parser("plugins", help="inspect service plugins")
+    plugin_subcommands = plugins.add_subparsers(dest="plugins_command", required=True)
+    plugins_list = plugin_subcommands.add_parser(
+        "list",
+        help="list installed service plugins",
+    )
+    plugins_list.add_argument(
+        "--json",
+        action="store_true",
+        help="print plugin names as JSON",
+    )
+
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    parser = _build_parser()
+
+    if args == ["-h"] or args == ["--help"]:
+        parser.print_help()
+        return 0
+
+    if not args or (args[0] not in CLI_COMMANDS and _looks_like_hydra_arg(args[0])):
+        return _run_serve(args)
+
+    if args[0] == "serve":
+        return _run_serve(args[1:])
+    if len(args) >= 2 and args[0] == "config" and args[1] == "check":
+        return _run_config_check(args[2:])
+
+    namespace = parser.parse_args(args)
+    if namespace.command == "plugins" and namespace.plugins_command == "list":
+        names = service_plugin_names()
+        if namespace.json:
+            print(json.dumps({"plugins": [{"name": name} for name in names]}))
+        else:
+            for name in names:
+                print(name)
+        return 0
+
+    parser.error("unknown command")
