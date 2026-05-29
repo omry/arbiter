@@ -33,11 +33,16 @@ class Policy:
 
 
 @dataclass
-class AppConfig:
+class ArbiterConfig:
     server: FastMCPConfig = field(default_factory=FastMCPConfig)
-    accounts: dict[str, Any] = field(default_factory=dict)
-    policies: dict[str, Any] = field(default_factory=dict)
+    account: dict[str, Any] = field(default_factory=dict)
+    policy: dict[str, Any] = field(default_factory=dict)
     etc: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class AppConfig:
+    arbiter: ArbiterConfig = field(default_factory=ArbiterConfig)
 
 
 def _config_mapping_items(config: Any) -> list[tuple[str, object]]:
@@ -76,7 +81,7 @@ def service_accounts_for(
     config: AppConfig,
     service_name: str,
 ) -> Mapping[str, object] | None:
-    accounts = _service_config_mapping(config.accounts, service_name)
+    accounts = _service_config_mapping(config.arbiter.account, service_name)
     if not accounts:
         return None
     return accounts
@@ -86,7 +91,7 @@ def service_policies_for(
     config: AppConfig,
     service_name: str,
 ) -> Mapping[str, object]:
-    return _service_config_mapping(config.policies, service_name)
+    return _service_config_mapping(config.arbiter.policy, service_name)
 
 
 _CONFIG_SCHEMA_NAMES = (
@@ -126,28 +131,28 @@ def _register_core_configs(config_store: ConfigStore) -> None:
         group="arbiter/server",
         name="schema",
         node=FastMCPConfig,
-        package="server",
+        package="arbiter.server",
         provider="agent-arbiter-core",
     )
     config_store.store(
         group="arbiter/server",
         name="streamable-http",
         node=FastMCPConfig(),
-        package="server",
+        package="arbiter.server",
         provider="agent-arbiter-core",
     )
     config_store.store(
         group="arbiter/server",
         name="stdio",
         node=FastMCPConfig(transport="stdio"),
-        package="server",
+        package="arbiter.server",
         provider="agent-arbiter-core",
     )
     config_store.store(
         group="arbiter/server",
         name="sse",
         node=FastMCPConfig(transport="sse"),
-        package="server",
+        package="arbiter.server",
         provider="agent-arbiter-core",
     )
 

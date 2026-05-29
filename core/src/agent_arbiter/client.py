@@ -168,7 +168,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if _contains_exception(exc, httpx.ConnectError):
             print(
                 f"Could not connect to Agent Arbiter at {namespace.url}. "
-                "Is arbiter-server running?",
+                "Is agent-arbiter serve running?",
                 file=sys.stderr,
             )
             return 1

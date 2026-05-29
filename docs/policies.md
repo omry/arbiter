@@ -21,12 +21,12 @@ Current implications:
 - account names and descriptions, including labels such as `personal`, are
   advisory context for caller behavior, not built-in enforcement tiers
 
-The current implementation uses top-level service-scoped policies:
+The current implementation uses service-scoped policies under `arbiter`:
 
-- SMTP accounts reference `policies.smtp.<policy>` through
-  `accounts.smtp.<account>.policy`
-- IMAP accounts reference `policies.imap.<policy>` through
-  `accounts.imap.<account>.policy`
+- SMTP accounts reference `arbiter.policy.smtp.<policy>` through
+  `arbiter.account.smtp.<account>.policy`
+- IMAP accounts reference `arbiter.policy.imap.<policy>` through
+  `arbiter.account.imap.<account>.policy`
 
 ## Current Runtime Policies
 
@@ -86,7 +86,7 @@ The durable audit log should:
 
 Future protocol-specific audit policy:
 
-- decide whether audit belongs under `policies.<service>.<policy>` or a
+- decide whether audit belongs under `arbiter.policy.<service>.<policy>` or a
   separate policy block
 - define the final SMTP audit settings shape
 - define the final IMAP audit settings shape
@@ -124,13 +124,13 @@ The durable audit log should be treated as a distinct storage and retention conc
 
 The config schema includes these SMTP safety controls:
 
-- `policies.smtp.<policy>.limits.max_messages_per_minute`
-- `policies.smtp.<policy>.limits.max_recipients_per_message`
-- `policies.smtp.<policy>.recipient_policy.allowed_recipients`
-- `policies.smtp.<policy>.recipient_policy.blocked_recipients`
-- `policies.smtp.<policy>.recipient_policy.allowed_domain_patterns`
-- `policies.smtp.<policy>.recipient_policy.blocked_domain_patterns`
-- `policies.smtp.<policy>.idempotency.expiration_days`
+- `arbiter.policy.smtp.<policy>.limits.max_messages_per_minute`
+- `arbiter.policy.smtp.<policy>.limits.max_recipients_per_message`
+- `arbiter.policy.smtp.<policy>.recipient_policy.allowed_recipients`
+- `arbiter.policy.smtp.<policy>.recipient_policy.blocked_recipients`
+- `arbiter.policy.smtp.<policy>.recipient_policy.allowed_domain_patterns`
+- `arbiter.policy.smtp.<policy>.recipient_policy.blocked_domain_patterns`
+- `arbiter.policy.smtp.<policy>.idempotency.expiration_days`
 
 Current runtime status:
 
@@ -143,8 +143,8 @@ Current runtime status:
 
 Caller confirmation policy is configured through:
 
-- `policies.smtp.<policy>.require_confirmation`
-- `policies.imap.<policy>.confirmation_required`
+- `arbiter.policy.smtp.<policy>.require_confirmation`
+- `arbiter.policy.imap.<policy>.confirmation_required`
 
 ## Future boundary hardening
 
@@ -165,10 +165,10 @@ The current IMAP policy model uses explicit protocol gates plus split IMAP flag
 policy:
 
 - keep coarse protocol gates for:
-  - `policies.imap.<policy>.allow_read`
-  - `policies.imap.<policy>.allow_search`
-  - `policies.imap.<policy>.allow_move`
-  - `policies.imap.<policy>.allow_delete`
+  - `arbiter.policy.imap.<policy>.allow_read`
+  - `arbiter.policy.imap.<policy>.allow_search`
+  - `arbiter.policy.imap.<policy>.allow_move`
+  - `arbiter.policy.imap.<policy>.allow_delete`
 - replace coarse IMAP write gating with two flag-policy groups:
   - `system_flags`
   - `user_flags`

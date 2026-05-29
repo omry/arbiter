@@ -67,8 +67,8 @@ selecting one explicitly for `send_email` or an IMAP tool.
 ```
 
 Return one object per active service. Each service owns its own account names,
-so `accounts.smtp.primary` and `accounts.imap.primary` are related only if the
-deployment chooses to name them the same way.
+so `arbiter.account.smtp.primary` and `arbiter.account.imap.primary` are
+related only if the deployment chooses to name them the same way.
 
 ## Operation details
 

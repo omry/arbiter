@@ -21,4 +21,4 @@ USER 10001:10001
 EXPOSE 8025
 
 ENTRYPOINT ["agent-arbiter"]
-CMD ["--config-path", "/config", "--config-name", "config"]
+CMD ["--config-dir", "/config", "--config-name", "config", "serve"]

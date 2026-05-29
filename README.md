@@ -10,9 +10,9 @@ Current implementation status:
 - account discovery with SMTP and IMAP capability metadata
 - SMTP submission with configured sender identity, TLS/auth settings, text/HTML bodies, and Bcc kept out of message headers
 - IMAP list/get/search/move/mark-read/delete tools scoped to configured accounts and folders
-- top-level `accounts.<service>` and reusable `policies.<service>` objects for
-  per-service account policy
-- `arbiter` client CLI and `arbiter-server` server/operator CLI
+- `arbiter.account.<service>` and reusable `arbiter.policy.<service>` objects
+  for per-service account policy
+- `arbiter` client CLI and `agent-arbiter` server/operator CLI
 - Docker deployment files for a standard SMTP gateway and a hardened read-only IMAP variant
 
 Known open gaps:
@@ -52,6 +52,7 @@ The design is documented in the `docs/` structure used by the MCP server templat
 - [docs/architecture.md](docs/architecture.md)
 - [docs/BACKLOG.md](docs/BACKLOG.md)
 - [docs/config.md](docs/config.md)
+- [docs/config_bootstrap.md](docs/config_bootstrap.md)
 - [docs/policies.md](docs/policies.md)
 - [docs/errors.md](docs/errors.md)
 - [docs/todo.md](docs/todo.md)
@@ -69,93 +70,53 @@ server and point the client at:
 http://127.0.0.1:8025/mcp
 ```
 
-One convenient local setup is to keep secrets in environment variables and run
-with a throwaway Hydra config outside the repository:
+Agent Arbiter does not ship a runnable service config. Bootstrap a local Hydra
+config into an explicit config directory, edit it, then pass that directory with
+`--config-dir`; `config.local/` is ignored scratchspace for this purpose.
+Plugin-owned object templates are created by the plugin command surface:
 
-```yaml
-# /tmp/agent-arbiter-local.yaml
-defaults:
-  - agent_arbiter_app_config_schema
-  - _self_
+```bash
+agent-arbiter --config-dir "$PWD/config.local" bootstrap arbiter
+agent-arbiter --config-dir "$PWD/config.local" bootstrap plugin smtp account primary
+```
 
-server:
-  transport: streamable-http
-  host: 127.0.0.1
-  port: 8025
-  path: /mcp
+Agent Arbiter does not create or load `.env` files itself; `${oc.env:...}` reads
+the process environment that your shell, supervisor, container runtime, or
+secret manager provides.
 
-accounts:
-  smtp:
-    primary:
-      policy: bot
-      description: Local bot mailbox.
-      host: ${etc.mailserver.smtp_host}
-      port: ${etc.mailserver.smtp_port}
-      authenticate: true
-      username: ${oc.env:AGENT_ARBITER_SMTP_USERNAME}
-      password: ${oc.env:AGENT_ARBITER_SMTP_PASSWORD}
-      from_email: ${oc.env:AGENT_ARBITER_SMTP_FROM_EMAIL}
-      from_name: ${oc.env:AGENT_ARBITER_SMTP_FROM_NAME,Agent Arbiter}
-      tls: ${oc.env:AGENT_ARBITER_SMTP_TLS,starttls}
-      verify_peer: ${oc.env:AGENT_ARBITER_SMTP_VERIFY_PEER,true}
-  imap:
-    primary:
-      policy: bot
-      description: Local bot mailbox.
-      host: ${etc.mailserver.imap_host}
-      port: ${etc.mailserver.imap_port}
-      username: ${oc.env:AGENT_ARBITER_IMAP_USERNAME}
-      password: ${oc.env:AGENT_ARBITER_IMAP_PASSWORD}
-      tls: ${oc.env:AGENT_ARBITER_IMAP_TLS,implicit}
-      verify_peer: ${oc.env:AGENT_ARBITER_IMAP_VERIFY_PEER,true}
-      default_folder: INBOX
-      folders:
-        INBOX:
-          description: Primary inbox.
-        Archive:
-          description: Archive folder.
+See [docs/config_bootstrap.md](docs/config_bootstrap.md) for the generated file
+layout and composition flow.
 
-policies:
-  smtp:
-    bot:
-      require_confirmation: false
-      recipient_policy:
-        allowed_domain_patterns:
-          - example.com
-  imap:
-    bot:
-      allow_read: true
-      allow_search: true
-      allow_move: true
-      allow_delete: false
-      confirmation_required: []
-      system_flags:
-        seen: read_write
-        flagged: read_only
-        answered: read_only
-        deleted: read_only
-        draft: read_only
-      user_flags: {}
+For local development, a shell-owned env file can be useful:
 
-etc:
-  mailserver:
-    smtp_host: ${oc.env:AGENT_ARBITER_SMTP_HOST}
-    smtp_port: ${oc.env:AGENT_ARBITER_SMTP_PORT,587}
-    imap_host: ${oc.env:AGENT_ARBITER_IMAP_HOST}
-    imap_port: ${oc.env:AGENT_ARBITER_IMAP_PORT,993}
+```bash
+# config.local/local.env
+SMTP_USERNAME_PRIMARY_ACCOUNT=agent@example.com
+SMTP_PASSWORD_PRIMARY_ACCOUNT=change-me
+AGENT_ARBITER_IMAP_USERNAME=agent@example.com
+AGENT_ARBITER_IMAP_PASSWORD=change-me
+```
 
+Source it before starting Arbiter:
+
+```bash
+set -a
+. config.local/local.env
+set +a
 ```
 
 Then run from this directory:
 
 ```bash
-arbiter-server config check --config-path /tmp --config-name agent-arbiter-local
-arbiter-server serve --config-path /tmp --config-name agent-arbiter-local
+agent-arbiter --config-dir "$PWD/config.local" --config-name config config check
+agent-arbiter --config-dir "$PWD/config.local" --config-name config serve
 ```
 
-Use `arbiter-server plugins list` to inspect installed service plugins before
-validating a config. Once the server is running, use the client CLI against the
-MCP endpoint:
+`config check` and `serve` require at least one configured service account.
+
+Use `agent-arbiter --config-dir "$PWD/config.local" plugins list` to inspect
+installed service plugins before validating a config. Once the server is
+running, use the client CLI against the MCP endpoint:
 
 ```bash
 arbiter --url http://127.0.0.1:8025/mcp tools list

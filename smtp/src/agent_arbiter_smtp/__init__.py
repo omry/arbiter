@@ -327,11 +327,93 @@ HtmlBody = Annotated[
 ]
 
 
+def _smtp_account_bootstrap_template(
+    *,
+    name: str,
+    policy_name: str,
+    env_suffix: str,
+) -> str:
+    return f"""# @package arbiter.account.smtp.{name}
+defaults:
+  # Extend the plugin-owned structured schema, then override values below.
+  - schema@_here_
+  - _self_
+
+# Human-facing summary shown by account listing tools.
+description: SMTP account for (${{.from_email}})
+
+# Matching policy generated alongside this account.
+policy: {policy_name}
+
+# SMTP submission endpoint.
+host: smtp.example.com
+port: 587
+
+# Set to false for unauthenticated local relays.
+authenticate: true
+
+# Credentials are read from the Arbiter process environment.
+username: ${{oc.env:SMTP_USERNAME_{env_suffix}}}
+password: ${{oc.env:SMTP_PASSWORD_{env_suffix}}}
+
+# Sender identity used in message headers.
+from_email: agent@example.com
+from_name: Agent Arbiter
+
+# TLS mode: starttls, implicit, or none.
+tls: starttls
+verify_peer: true
+timeout_seconds: 30
+"""
+
+
+def _smtp_policy_bootstrap_template(*, name: str) -> str:
+    return f"""# @package arbiter.policy.smtp.{name}
+defaults:
+  # Extend the plugin-owned structured schema, then override values below.
+  - schema@_here_
+  - _self_
+
+# Require confirmation before sending through this policy.
+require_confirmation: true
+
+# Basic send-rate limits. Use null to disable a limit.
+limits:
+  max_messages_per_minute: 30
+  max_recipients_per_message: 10
+
+# Dedupe window for repeated send attempts.
+idempotency:
+  expiration_days: 7
+
+# Empty lists do not restrict recipients. Add entries to enforce allow/block rules.
+recipient_policy:
+  allowed_recipients: []
+  blocked_recipients: []
+  allowed_domain_patterns: []
+  blocked_domain_patterns: []
+"""
+
+
 class SMTPServicePlugin:
     name = "smtp"
 
     def register_configs(self, config_store: ConfigStore) -> None:
         register_smtp_configs(config_store)
+
+    def bootstrap_config(self, *, kind: str, name: str) -> object | None:
+        if kind == "account":
+            env_suffix = name.upper().replace("-", "_")
+            if not env_suffix.endswith("_ACCOUNT"):
+                env_suffix = f"{env_suffix}_ACCOUNT"
+            return _smtp_account_bootstrap_template(
+                name=name,
+                policy_name=f"{name}_policy",
+                env_suffix=env_suffix,
+            )
+        if kind == "policy":
+            return _smtp_policy_bootstrap_template(name=name)
+        return None
 
     def build_runtime(
         self,

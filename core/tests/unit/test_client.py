@@ -187,5 +187,5 @@ def test_client_reports_clean_connection_failure(
 
     assert capsys.readouterr().err == (
         "Could not connect to Agent Arbiter at http://127.0.0.1:8000/mcp. "
-        "Is arbiter-server running?\n"
+        "Is agent-arbiter serve running?\n"
     )

@@ -1,6 +1,7 @@
 import logging
 import sys
 from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
 from types import ModuleType
 from types import SimpleNamespace
 from typing import Any, cast
@@ -8,13 +9,14 @@ from typing import Any, cast
 import pytest
 from omegaconf import OmegaConf
 
-from agent_arbiter.config import AppConfig
+from agent_arbiter.config import AppConfig, ArbiterConfig
 from agent_arbiter.main import (
-    _run_hydra_entrypoint,
     _run_server,
     build_app,
     build_server,
+    compose_config,
     config_check_summary,
+    ensure_runnable_config,
     log_startup_summary,
     main,
     service_plugin_names,
@@ -72,7 +74,7 @@ def test_build_app_list_accounts_uses_real_config_shape() -> None:
 
 def test_build_app_rejects_unknown_service_policy_reference() -> None:
     cfg = OmegaConf.structured(_app_config_with_smtp())
-    cfg.accounts.smtp.primary.policy = "missing"
+    cfg.arbiter.account.smtp.primary.policy = "missing"
 
     with pytest.raises(
         ValueError,
@@ -98,6 +100,9 @@ def test_build_app_activates_dynamic_entry_point_service() -> None:
         def register_configs(self, config_store: object) -> None:
             return None
 
+        def bootstrap_config(self, *, kind: str, name: str) -> object | None:
+            return None
+
         def build_runtime(
             self,
             accounts: Mapping[str, object],
@@ -114,23 +119,25 @@ def test_build_app_activates_dynamic_entry_point_service() -> None:
     plugin = FakeExternalPlugin()
     cfg = OmegaConf.create(
         {
-            "server": {},
-            "accounts": {
-                "whatsapp": {
-                    "bot": {
-                        "policy": "bot",
-                        "phone_number": "+15555550100",
+            "arbiter": {
+                "server": {},
+                "account": {
+                    "whatsapp": {
+                        "bot": {
+                            "policy": "bot",
+                            "phone_number": "+15555550100",
+                        }
                     }
-                }
-            },
-            "policies": {
-                "whatsapp": {
-                    "bot": {
-                        "allow_send": True,
+                },
+                "policy": {
+                    "whatsapp": {
+                        "bot": {
+                            "allow_send": True,
+                        }
                     }
-                }
+                },
+                "etc": {},
             },
-            "etc": {},
         }
     )
 
@@ -203,6 +210,18 @@ def test_config_check_summary_validates_runtime_construction() -> None:
     )
 
 
+def test_runnable_config_requires_at_least_one_service_account() -> None:
+    with pytest.raises(
+        ValueError,
+        match=(
+            "config must define at least one service account[\\s\\S]*"
+            "currently installed arbiter plugins: imap, smtp[\\s\\S]*"
+            "bootstrap plugin PLUGIN account NAME"
+        ),
+    ):
+        ensure_runnable_config(AppConfig(), service_plugins=_test_service_plugins())
+
+
 def test_service_plugin_names_are_sorted() -> None:
     assert service_plugin_names(service_plugins=_test_service_plugins()) == [
         "imap",
@@ -219,46 +238,61 @@ def test_cli_lists_plugins(
         lambda: _test_service_plugins(),
     )
 
-    assert main(["plugins", "list"]) == 0
+    assert main(["--config-dir", "/tmp", "plugins", "list"]) == 0
 
     assert capsys.readouterr().out == "imap\nsmtp\n"
 
 
-def test_server_cli_help_uses_arbiter_server_program_name(
+def test_server_cli_help_uses_agent_arbiter_program_name(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     assert main(["--help"]) == 0
 
-    assert capsys.readouterr().out.startswith("usage: arbiter-server ")
+    assert capsys.readouterr().out.startswith("usage: agent-arbiter ")
 
 
 def test_server_cli_reports_clean_keyboard_interrupt(
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def raise_keyboard_interrupt() -> None:
+    def raise_keyboard_interrupt(_server: object, _transport: object) -> None:
         raise KeyboardInterrupt
 
-    assert _run_hydra_entrypoint(raise_keyboard_interrupt, []) == 130
+    monkeypatch.setattr(
+        "agent_arbiter.main.compose_config",
+        lambda **_kwargs: OmegaConf.structured(_app_config_with_smtp()),
+    )
+    monkeypatch.setattr(
+        "agent_arbiter.main.build_server",
+        lambda _cfg: object(),
+    )
+    monkeypatch.setattr("agent_arbiter.main._run_server", raise_keyboard_interrupt)
+
+    assert main(["--config-dir", "/tmp", "serve"]) == 130
 
     assert capsys.readouterr().err == "Agent Arbiter server stopped.\n"
 
 
-def test_hydra_entrypoint_registers_plugin_configs_before_composing(
+def test_compose_config_registers_configs_before_composing(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[str] = []
 
+    (tmp_path / "config.yaml").write_text(
+        "arbiter:\n  server:\n    name: agent-arbiter\n",
+        encoding="utf-8",
+    )
+
     def fake_register_configs() -> None:
         calls.append("register_configs")
 
-    def fake_hydra_entrypoint() -> None:
-        calls.append("hydra_entrypoint")
-
     monkeypatch.setattr("agent_arbiter.main.register_configs", fake_register_configs)
 
-    assert _run_hydra_entrypoint(fake_hydra_entrypoint, []) == 0
+    cfg = compose_config(config_dir=tmp_path, config_name="config")
 
-    assert calls == ["register_configs", "hydra_entrypoint"]
+    assert cfg.arbiter.server.name == "agent-arbiter"
+    assert calls == ["register_configs"]
 
 
 def test_cli_lists_plugins_as_json(
@@ -270,63 +304,618 @@ def test_cli_lists_plugins_as_json(
         lambda: _test_service_plugins(),
     )
 
-    assert main(["plugins", "list", "--json"]) == 0
+    assert main(["--config-dir", "/tmp", "plugins", "list", "--json"]) == 0
 
     assert capsys.readouterr().out == (
         '{"plugins": [{"name": "imap"}, {"name": "smtp"}]}\n'
     )
 
 
-def test_cli_routes_legacy_hydra_args_to_serve(
+def test_cli_serve_subcommand_passes_config_and_overrides(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    serve_calls: list[list[str]] = []
+    serve_calls: list[dict[str, object]] = []
 
-    def fake_serve(args: Sequence[str]) -> int:
-        serve_calls.append(list(args))
+    def fake_serve(**kwargs: object) -> int:
+        serve_calls.append(kwargs)
         return 0
 
     monkeypatch.setattr("agent_arbiter.main._run_serve", fake_serve)
 
-    assert main(["--config-path", "/tmp", "--config-name", "agent-arbiter-local"]) == 0
-    assert main(["server.port=8025"]) == 0
+    assert (
+        main(
+            [
+                "--config-dir",
+                "/tmp",
+                "--config-name",
+                "agent-arbiter-local",
+                "serve",
+                "arbiter.server.port=8025",
+            ]
+        )
+        == 0
+    )
 
     assert serve_calls == [
-        ["--config-path", "/tmp", "--config-name", "agent-arbiter-local"],
-        ["server.port=8025"],
+        {
+            "config_dir": "/tmp",
+            "config_name": "agent-arbiter-local",
+            "overrides": ["arbiter.server.port=8025"],
+        },
     ]
 
 
-def test_cli_serve_subcommand_passes_hydra_args(
+def test_cli_accepts_config_args_after_subcommand(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["bootstrap", "arbiter", "--config-dir", str(tmp_path)]) == 0
+
+    assert (tmp_path / "config.yaml").exists()
+    assert capsys.readouterr().out == (
+        f"wrote {tmp_path / 'config.yaml'}\n"
+        f"wrote {tmp_path / 'arbiter' / 'server.yaml'}\n"
+    )
+
+
+def test_cli_config_check_subcommand_passes_config_and_overrides(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    serve_calls: list[list[str]] = []
+    check_calls: list[dict[str, object]] = []
 
-    def fake_serve(args: Sequence[str]) -> int:
-        serve_calls.append(list(args))
-        return 0
-
-    monkeypatch.setattr("agent_arbiter.main._run_serve", fake_serve)
-
-    assert main(["serve", "--config-path", "/tmp"]) == 0
-
-    assert serve_calls == [["--config-path", "/tmp"]]
-
-
-def test_cli_config_check_subcommand_passes_hydra_args(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    check_calls: list[list[str]] = []
-
-    def fake_check(args: Sequence[str]) -> int:
-        check_calls.append(list(args))
+    def fake_check(**kwargs: object) -> int:
+        check_calls.append(kwargs)
         return 0
 
     monkeypatch.setattr("agent_arbiter.main._run_config_check", fake_check)
 
-    assert main(["config", "check", "--config-path", "/tmp"]) == 0
+    assert (
+        main(["--config-dir", "/tmp", "config", "check", "arbiter.server.port=8025"])
+        == 0
+    )
 
-    assert check_calls == [["--config-path", "/tmp"]]
+    assert check_calls == [
+        {
+            "config_dir": "/tmp",
+            "config_name": "config",
+            "overrides": ["arbiter.server.port=8025"],
+        },
+    ]
+
+
+def test_cli_config_show_subcommand_passes_config_and_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    show_calls: list[dict[str, object]] = []
+
+    def fake_show(**kwargs: object) -> int:
+        show_calls.append(kwargs)
+        return 0
+
+    monkeypatch.setattr("agent_arbiter.main._run_config_show", fake_show)
+
+    assert (
+        main(
+            [
+                "--config-dir",
+                "/tmp",
+                "config",
+                "show",
+                "--resolve",
+                "arbiter.server.port=8025",
+            ]
+        )
+        == 0
+    )
+
+    assert show_calls == [
+        {
+            "config_dir": "/tmp",
+            "config_name": "config",
+            "overrides": ["arbiter.server.port=8025"],
+            "resolve": True,
+        },
+    ]
+
+
+def test_cli_bootstrap_arbiter_requires_config_dir(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["bootstrap", "arbiter"])
+
+    assert exc_info.value.code == 2
+    assert "--config-dir" in capsys.readouterr().err
+
+
+def test_cli_bootstrap_arbiter_writes_main_config(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_dir = tmp_path / "conf"
+
+    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+
+    config_file = config_dir / "config.yaml"
+    assert config_file.read_text(encoding="utf-8") == (
+        "defaults:\n"
+        "# Agent Arbiter composes this config at startup from the defaults "
+        "below.\n"
+        "# Inspect the composed config with:\n"
+        "#   agent-arbiter --config-dir <dir> --config-name config config show\n"
+        "# Override composed values with Hydra overrides, for example:\n"
+        "#   agent-arbiter --config-dir <dir> serve arbiter.server.port=8025\n"
+        "  - arbiter: server\n"
+        "  - _self_\n"
+    )
+    server_file = config_dir / "arbiter" / "server.yaml"
+    assert server_file.read_text(encoding="utf-8") == (
+        "# @package arbiter\n"
+        "server:\n"
+        "  name: agent-arbiter\n"
+        "  transport: streamable-http\n"
+        "  host: 127.0.0.1\n"
+        "  port: 8000\n"
+        "  path: /mcp\n"
+        "  stateless_http: true\n"
+        "  json_response: true\n"
+    )
+    assert capsys.readouterr().out == (
+        f"wrote {config_file}\n" f"wrote {server_file}\n"
+    )
+
+    assert main(["--config-dir", str(config_dir), "config", "check"]) == 1
+    assert capsys.readouterr().err == (
+        "Agent Arbiter config error: config must define at least one service "
+        "account before Agent Arbiter can run\n"
+        "currently installed arbiter plugins: imap, smtp\n"
+        "use `agent-arbiter --config-dir DIR bootstrap plugin PLUGIN account "
+        "NAME` to create an account config\n"
+    )
+
+    served: dict[str, object] = {}
+
+    def fake_run_server(server: object, transport: object) -> None:
+        served["server"] = server
+        served["transport"] = transport
+
+    monkeypatch.setattr("agent_arbiter.main._run_server", fake_run_server)
+    assert main(["--config-dir", str(config_dir), "serve"]) == 1
+    assert capsys.readouterr().err == (
+        "Agent Arbiter config error: config must define at least one service "
+        "account before Agent Arbiter can run\n"
+        "currently installed arbiter plugins: imap, smtp\n"
+        "use `agent-arbiter --config-dir DIR bootstrap plugin PLUGIN account "
+        "NAME` to create an account config\n"
+    )
+    assert served == {}
+
+
+def test_cli_bootstrap_plugin_account_writes_service_example(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_dir = tmp_path / "conf"
+
+    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+    capsys.readouterr()
+    assert (
+        main(
+            [
+                "--config-dir",
+                str(config_dir),
+                "bootstrap",
+                "plugin",
+                "smtp",
+                "account",
+                "personal_account",
+            ]
+        )
+        == 0
+    )
+
+    account_file = (
+        config_dir / "arbiter" / "account" / "smtp" / ("personal_account.yaml")
+    )
+    account_yaml = account_file.read_text(encoding="utf-8")
+    assert "# @package arbiter.account.smtp.personal_account\n" in account_yaml
+    assert "defaults:\n" in account_yaml
+    assert "  - schema@_here_\n" in account_yaml
+    assert "  - _self_\n" in account_yaml
+    assert "# Human-facing summary shown by account listing tools.\n" in account_yaml
+    assert "description: SMTP account for (${.from_email})\n" in account_yaml
+    assert "# Matching policy generated alongside this account.\n" in account_yaml
+    assert "policy: personal_account_policy\n" in account_yaml
+    assert "host: smtp.example.com\n" in account_yaml
+    assert "port: 587\n" in account_yaml
+    assert "# Credentials are read from the Arbiter process environment.\n" in (
+        account_yaml
+    )
+    assert "username: ${oc.env:SMTP_USERNAME_PERSONAL_ACCOUNT}\n" in account_yaml
+    assert "password: ${oc.env:SMTP_PASSWORD_PERSONAL_ACCOUNT}\n" in account_yaml
+    policy_file = (
+        config_dir / "arbiter" / "policy" / "smtp" / "personal_account_policy.yaml"
+    )
+    policy_yaml = policy_file.read_text(encoding="utf-8")
+    assert "# @package arbiter.policy.smtp.personal_account_policy\n" in policy_yaml
+    assert "defaults:\n" in policy_yaml
+    assert "  - schema@_here_\n" in policy_yaml
+    assert "  - _self_\n" in policy_yaml
+    assert "# Require confirmation before sending through this policy.\n" in policy_yaml
+    assert "require_confirmation: true\n" in policy_yaml
+    assert "max_messages_per_minute: 30\n" in policy_yaml
+    assert "allowed_domain_patterns: []\n" in policy_yaml
+    assert "example.com" not in policy_yaml
+    main_config = (config_dir / "config.yaml").read_text(encoding="utf-8")
+    assert (
+        "/arbiter/account/smtp@arbiter.account.smtp.personal_account" not in main_config
+    )
+    assert "/arbiter/policy/smtp@arbiter.policy.smtp.personal_account_policy" not in (
+        main_config
+    )
+    assert capsys.readouterr().out == (
+        f"wrote {account_file}\n"
+        f"wrote {policy_file}\n"
+        "\n"
+        "Edit the generated account and policy files, then activate the account:\n"
+        f"  agent-arbiter --config-dir {config_dir} "
+        "config activate account smtp personal_account\n"
+        "\n"
+        "Then inspect the composed config with:\n"
+        f"  agent-arbiter --config-dir {config_dir} config show\n"
+    )
+
+
+def test_cli_bootstrap_plugin_account_refuses_existing_policy_without_partial_write(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_dir = tmp_path / "conf"
+    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+    capsys.readouterr()
+    policy_file = config_dir / "arbiter" / "policy" / "smtp" / "primary_policy.yaml"
+    policy_file.parent.mkdir(parents=True)
+    policy_file.write_text("existing: true\n", encoding="utf-8")
+
+    assert (
+        main(
+            [
+                "--config-dir",
+                str(config_dir),
+                "bootstrap",
+                "plugin",
+                "smtp",
+                "account",
+                "primary",
+            ]
+        )
+        == 1
+    )
+
+    account_file = config_dir / "arbiter" / "account" / "smtp" / "primary.yaml"
+    assert not account_file.exists()
+    assert policy_file.read_text(encoding="utf-8") == "existing: true\n"
+    assert capsys.readouterr().err == (
+        f"refusing to overwrite existing file: {policy_file}\n"
+    )
+
+
+def test_cli_bootstrap_plugin_policy_writes_service_example(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_dir = tmp_path / "conf"
+
+    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+    capsys.readouterr()
+    assert (
+        main(
+            [
+                "--config-dir",
+                str(config_dir),
+                "bootstrap",
+                "plugin",
+                "smtp",
+                "policy",
+                "readonly",
+            ]
+        )
+        == 0
+    )
+
+    policy_file = config_dir / "arbiter" / "policy" / "smtp" / "readonly.yaml"
+    policy_yaml = policy_file.read_text(encoding="utf-8")
+    assert "# @package arbiter.policy.smtp.readonly\n" in policy_yaml
+    assert "defaults:\n" in policy_yaml
+    assert "  - schema@_here_\n" in policy_yaml
+    assert "  - _self_\n" in policy_yaml
+    assert "# Require confirmation before sending through this policy.\n" in policy_yaml
+    assert "require_confirmation: true\n" in policy_yaml
+    assert "max_messages_per_minute: 30\n" in policy_yaml
+    assert "allowed_domain_patterns: []\n" in policy_yaml
+    assert "example.com" not in policy_yaml
+    main_config = (config_dir / "config.yaml").read_text(encoding="utf-8")
+    assert "/arbiter/policy/smtp@arbiter.policy.smtp.readonly" not in main_config
+    assert capsys.readouterr().out == (
+        f"wrote {policy_file}\n"
+        "\n"
+        f"To activate the generated policy, add this to {config_dir / 'config.yaml'}:\n"
+        "defaults:\n"
+        "  - arbiter/policy:\n"
+        "    - smtp/readonly\n"
+        "\n"
+        "Then inspect the composed config with:\n"
+        f"  agent-arbiter --config-dir {config_dir} config show\n"
+    )
+
+
+def test_cli_config_activate_account_activates_matching_policy(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_dir = tmp_path / "conf"
+    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+    assert (
+        main(
+            [
+                "--config-dir",
+                str(config_dir),
+                "bootstrap",
+                "plugin",
+                "smtp",
+                "account",
+                "personal_account",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "--config-dir",
+                str(config_dir),
+                "config",
+                "activate",
+                "account",
+                "smtp",
+                "personal_account",
+            ]
+        )
+        == 0
+    )
+
+    config_yaml = (config_dir / "config.yaml").read_text(encoding="utf-8")
+    assert "  - arbiter/account:\n" in config_yaml
+    assert "    - smtp/personal_account\n" in config_yaml
+    assert "  - arbiter/policy:\n" in config_yaml
+    assert "    - smtp/personal_account_policy\n" in config_yaml
+    cfg = compose_config(config_dir=config_dir, config_name="config")
+    assert cfg.arbiter.account.smtp.personal_account.policy == "personal_account_policy"
+    assert cfg.arbiter.policy.smtp.personal_account_policy.require_confirmation is True
+    assert capsys.readouterr().out == f"updated {config_dir / 'config.yaml'}\n"
+
+
+def test_cli_config_activate_account_can_alias_policy_file_name(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_dir = tmp_path / "conf"
+    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+    account_dir = config_dir / "arbiter" / "account" / "smtp"
+    policy_dir = config_dir / "arbiter" / "policy" / "smtp"
+    account_dir.mkdir(parents=True)
+    policy_dir.mkdir(parents=True)
+    (account_dir / "bot.yaml").write_text(
+        "# @package arbiter.account.smtp.bot\n"
+        "defaults:\n"
+        "  - schema@_here_\n"
+        "  - _self_\n"
+        "policy: bot_policy\n"
+        "host: smtp.example.com\n"
+        "authenticate: false\n",
+        encoding="utf-8",
+    )
+    (policy_dir / "bot.yaml").write_text(
+        "# @package arbiter.policy.smtp.bot_policy\n"
+        "defaults:\n"
+        "  - schema@_here_\n"
+        "  - _self_\n"
+        "require_confirmation: true\n",
+        encoding="utf-8",
+    )
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "--config-dir",
+                str(config_dir),
+                "config",
+                "activate",
+                "account",
+                "smtp",
+                "bot",
+            ]
+        )
+        == 0
+    )
+
+    config_yaml = (config_dir / "config.yaml").read_text(encoding="utf-8")
+    assert "  - arbiter/account:\n" in config_yaml
+    assert "    - smtp/bot\n" in config_yaml
+    assert "  - arbiter/policy:\n" in config_yaml
+    assert "    - smtp/bot\n" in config_yaml
+    cfg = compose_config(config_dir=config_dir, config_name="config")
+    assert cfg.arbiter.account.smtp.bot.policy == "bot_policy"
+    assert cfg.arbiter.policy.smtp.bot_policy.require_confirmation is True
+
+
+def test_cli_config_deactivate_account_deactivates_unused_policy(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_dir = tmp_path / "conf"
+    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+    assert (
+        main(
+            [
+                "--config-dir",
+                str(config_dir),
+                "bootstrap",
+                "plugin",
+                "smtp",
+                "account",
+                "primary",
+            ]
+        )
+        == 0
+    )
+    assert (
+        main(
+            [
+                "--config-dir",
+                str(config_dir),
+                "config",
+                "activate",
+                "account",
+                "smtp",
+                "primary",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "--config-dir",
+                str(config_dir),
+                "config",
+                "deactivate",
+                "account",
+                "smtp",
+                "primary",
+            ]
+        )
+        == 0
+    )
+
+    config_yaml = (config_dir / "config.yaml").read_text(encoding="utf-8")
+    assert "  - arbiter/account:\n" not in config_yaml
+    assert "  - arbiter/policy:\n" not in config_yaml
+    assert capsys.readouterr().out == f"updated {config_dir / 'config.yaml'}\n"
+
+
+def test_cli_config_deactivate_account_keeps_shared_policy(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_dir = tmp_path / "conf"
+    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+    account_dir = config_dir / "arbiter" / "account" / "smtp"
+    policy_dir = config_dir / "arbiter" / "policy" / "smtp"
+    account_dir.mkdir(parents=True)
+    policy_dir.mkdir(parents=True)
+    for account_name in ("primary", "secondary"):
+        (account_dir / f"{account_name}.yaml").write_text(
+            f"# @package arbiter.account.smtp.{account_name}\n"
+            "defaults:\n"
+            "  - schema@_here_\n"
+            "  - _self_\n"
+            "policy: shared\n"
+            "host: smtp.example.com\n"
+            "authenticate: false\n",
+            encoding="utf-8",
+        )
+    (policy_dir / "shared.yaml").write_text(
+        "# @package arbiter.policy.smtp.shared\n"
+        "defaults:\n"
+        "  - schema@_here_\n"
+        "  - _self_\n"
+        "require_confirmation: true\n",
+        encoding="utf-8",
+    )
+    for account_name in ("primary", "secondary"):
+        assert (
+            main(
+                [
+                    "--config-dir",
+                    str(config_dir),
+                    "config",
+                    "activate",
+                    "account",
+                    "smtp",
+                    account_name,
+                ]
+            )
+            == 0
+        )
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "--config-dir",
+                str(config_dir),
+                "config",
+                "deactivate",
+                "account",
+                "smtp",
+                "primary",
+            ]
+        )
+        == 0
+    )
+
+    config_yaml = (config_dir / "config.yaml").read_text(encoding="utf-8")
+    assert "    - smtp/primary\n" not in config_yaml
+    assert "    - smtp/secondary\n" in config_yaml
+    assert "    - smtp/shared\n" in config_yaml
+    assert (
+        main(
+            [
+                "--config-dir",
+                str(config_dir),
+                "config",
+                "deactivate",
+                "account",
+                "smtp",
+                "secondary",
+            ]
+        )
+        == 0
+    )
+    config_yaml = (config_dir / "config.yaml").read_text(encoding="utf-8")
+    assert "    - smtp/secondary\n" not in config_yaml
+    assert "    - smtp/shared\n" not in config_yaml
+
+
+def test_cli_bootstrap_plugin_refuses_missing_example(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert (
+        main(
+            [
+                "--config-dir",
+                str(tmp_path),
+                "bootstrap",
+                "plugin",
+                "imap",
+                "account",
+                "primary",
+            ]
+        )
+        == 1
+    )
+
+    assert capsys.readouterr().err == (
+        "service plugin does not provide an account bootstrap example: imap\n"
+    )
 
 
 def _test_service_plugins() -> list[ServicePlugin]:
@@ -338,42 +927,46 @@ def _test_service_plugins() -> list[ServicePlugin]:
 
 def _app_config_with_smtp() -> AppConfig:
     return AppConfig(
-        accounts={
-            "smtp": {
-                "primary": SMTPConfig(
-                    description="Bot-owned account for automated email tasks.",
-                    policy="bot",
-                )
+        arbiter=ArbiterConfig(
+            account={
+                "smtp": {
+                    "primary": SMTPConfig(
+                        description="Bot-owned account for automated email tasks.",
+                        policy="bot",
+                    )
+                },
+                "imap": {},
             },
-            "imap": {},
-        },
-        policies={
-            "smtp": {"bot": SMTPServicePolicyConfig(require_confirmation=False)},
-            "imap": {},
-        },
+            policy={
+                "smtp": {"bot": SMTPServicePolicyConfig(require_confirmation=False)},
+                "imap": {},
+            },
+        )
     )
 
 
 def _app_config_with_smtp_imap() -> AppConfig:
     return AppConfig(
-        accounts={
-            "smtp": {
-                "primary": SMTPConfig(
-                    description="Bot-owned account for automated email tasks.",
-                    policy="bot",
-                )
+        arbiter=ArbiterConfig(
+            account={
+                "smtp": {
+                    "primary": SMTPConfig(
+                        description="Bot-owned account for automated email tasks.",
+                        policy="bot",
+                    )
+                },
+                "imap": {
+                    "primary": IMAPConfig(
+                        default_folder="INBOX",
+                        folders={"INBOX": IMAPFolderConfig(description="Inbox")},
+                    )
+                },
             },
-            "imap": {
-                "primary": IMAPConfig(
-                    default_folder="INBOX",
-                    folders={"INBOX": IMAPFolderConfig(description="Inbox")},
-                )
+            policy={
+                "smtp": {"bot": SMTPServicePolicyConfig(require_confirmation=False)},
+                "imap": {"bot": IMAPAccessPolicyConfig()},
             },
-        },
-        policies={
-            "smtp": {"bot": SMTPServicePolicyConfig(require_confirmation=False)},
-            "imap": {"bot": IMAPAccessPolicyConfig()},
-        },
+        )
     )
 
 
@@ -382,7 +975,7 @@ def test_log_startup_summary_includes_safe_runtime_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cfg = _app_config_with_smtp()
-    cast(SMTPConfig, cfg.accounts["smtp"]["primary"]).password = "super-secret"
+    cast(SMTPConfig, cfg.arbiter.account["smtp"]["primary"]).password = "super-secret"
 
     monkeypatch.setattr("agent_arbiter.main.package_version", lambda: "1.2.3")
     caplog.set_level(logging.INFO, logger="agent_arbiter.main")
@@ -410,10 +1003,10 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     mark_message_read_calls: list[dict[str, object]] = []
     delete_message_calls: list[dict[str, object]] = []
     fake_cfg = _app_config_with_smtp_imap()
-    smtp_accounts = fake_cfg.accounts["smtp"]
-    smtp_policies = fake_cfg.policies["smtp"]
-    imap_accounts = fake_cfg.accounts["imap"]
-    imap_policies = fake_cfg.policies["imap"]
+    smtp_accounts = fake_cfg.arbiter.account["smtp"]
+    smtp_policies = fake_cfg.arbiter.policy["smtp"]
+    imap_accounts = fake_cfg.arbiter.account["imap"]
+    imap_policies = fake_cfg.arbiter.policy["imap"]
 
     class FakeSMTPRuntime(SMTPRuntime):
         def send_email(

@@ -3,7 +3,7 @@
 ## Current Shape
 
 The server is one MCP service whose current SMTP and IMAP capabilities are
-loaded through service plugins and activated by `accounts.<service>`
+loaded through service plugins and activated by `arbiter.account.<service>`
 configuration:
 
 - `list_accounts`
@@ -28,8 +28,9 @@ The planned platform direction is captured in
 [ADR 0001: Service Plugin Architecture](adr/0001-service-plugin-architecture.md).
 SMTP and IMAP now register through the plugin boundary, own service-specific
 runtime objects, and receive service-owned account and policy config from
-`accounts.<service>` and `policies.<service>`. They live in independently
-installable service-plugin projects so the core has no built-in service status.
+`arbiter.account.<service>` and `arbiter.policy.<service>`. They live in
+independently installable service-plugin projects so the core has no built-in
+service status.
 
 Agent-facing skills are intentionally not part of this package split yet. A
 future skill integration should sit above the arbiter surface and compose
@@ -40,10 +41,10 @@ across installed services rather than belonging to `core/`, `smtp/`, or `imap/`.
 - MCP handlers:
   accept tool calls, validate input, and return the documented response shapes
 - Config loading:
-  load service-owned account config from `accounts.*`, reusable policy config
-  from `policies.*`, and operator interpolation values from `etc`; before Hydra
-  composes config, core initializes all installed service plugins through their
-  `register_configs` hook
+  load service-owned account config from `arbiter.account.*`, reusable policy
+  config from `arbiter.policy.*`, and operator interpolation values from
+  `arbiter.etc`; before Hydra composes config, core initializes all installed
+  service plugins through their `register_configs` hook
 - Config examples:
   let service plugins register canonical account and policy examples in their
   own Hydra ConfigStore groups beside `schema`

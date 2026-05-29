@@ -484,6 +484,9 @@ class IMAPServicePlugin:
     def register_configs(self, config_store: ConfigStore) -> None:
         register_imap_configs(config_store)
 
+    def bootstrap_config(self, *, kind: str, name: str) -> object | None:
+        return None
+
     def build_runtime(
         self,
         accounts: Mapping[str, object],

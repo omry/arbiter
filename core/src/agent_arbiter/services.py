@@ -61,6 +61,8 @@ class ServicePlugin(Protocol):
     # service-owned schema and example options in their ConfigStore groups here.
     def register_configs(self, config_store: Any) -> None: ...
 
+    def bootstrap_config(self, *, kind: str, name: str) -> object | None: ...
+
     def build_runtime(
         self,
         accounts: Mapping[str, object],

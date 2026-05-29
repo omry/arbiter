@@ -84,13 +84,14 @@ policies:
       allow_search: true
 ```
 
-Every non-empty key under `accounts` is a configured service. The core locates
-the plugin registered for that service key and passes a service runtime config
-containing `accounts.<service>` and `policies.<service>` to it.
+Every non-empty key under `arbiter.account` is a configured service. The core
+locates the plugin registered for that service key and passes a service runtime
+config containing `arbiter.account.<service>` and `arbiter.policy.<service>` to
+it.
 
 Hydra composition should choose service defaults and variants. For example, a
-deployment may compose a Google-specific SMTP schema into `accounts.smtp`
-without changing the service identity from `smtp`.
+deployment may compose a Google-specific SMTP schema into
+`arbiter.account.smtp` without changing the service identity from `smtp`.
 
 The `etc` node is weakly structured operator-owned configuration space. It is
 intended for composition and interpolation material such as shared hostnames,
@@ -108,8 +109,9 @@ etc:
     imap_port: 993
 ```
 
-The core knows that `etc` exists, but should not assign product semantics to
-its contents. Typed service config remains under `accounts.*` and `policies.*`.
+The core knows that `arbiter.etc` exists, but should not assign product
+semantics to its contents. Typed service config remains under
+`arbiter.account.*` and `arbiter.policy.*`.
 
 ## Plugin Discovery
 
@@ -158,10 +160,11 @@ service-specific runtime objects. `AgentArbiterApp` remains only as a transition
 facade for account discovery and existing test helpers.
 
 The third extraction stage introduced the first service-owned config shape.
-The current shape makes accounts and policies top-level service-scoped maps:
-`accounts.smtp`, `accounts.imap`, `policies.smtp`, and `policies.imap`. The
-`etc` node exists as weakly structured operator-owned interpolation space, and
-configured account maps now determine which installed plugins are activated.
+The current shape makes accounts and policies service-scoped maps under
+`arbiter`: `arbiter.account.smtp`, `arbiter.account.imap`,
+`arbiter.policy.smtp`, and `arbiter.policy.imap`. The `arbiter.etc` node exists
+as weakly structured operator-owned interpolation space, and configured account
+maps now determine which installed plugins are activated.
 
 Later stages should continue shrinking `AgentArbiterApp` and perform any chosen
 rename before release.

@@ -1,92 +1,93 @@
 defaults:
   - agent_arbiter_app_config_schema
   - /arbiter/server: streamable-http
-  - /arbiter/account/smtp/schema@accounts.smtp.primary
-  - /arbiter/account/smtp/schema@accounts.smtp.personal
-  - /arbiter/account/imap/schema@accounts.imap.primary
-  - /arbiter/policy/smtp/schema@policies.smtp.bot
-  - /arbiter/policy/smtp/schema@policies.smtp.personal
-  - /arbiter/policy/imap/schema@policies.imap.bot
+  - /arbiter/account/smtp/schema@arbiter.account.smtp.primary
+  - /arbiter/account/smtp/schema@arbiter.account.smtp.personal
+  - /arbiter/account/imap/schema@arbiter.account.imap.primary
+  - /arbiter/policy/smtp/schema@arbiter.policy.smtp.bot
+  - /arbiter/policy/smtp/schema@arbiter.policy.smtp.personal
+  - /arbiter/policy/imap/schema@arbiter.policy.imap.bot
   - _self_
 
-server:
-  name: agent-arbiter-mcp
-  transport: streamable-http
-  host: ${oc.env:AGENT_ARBITER_SERVER_HOST,127.0.0.1}
-  port: ${oc.env:AGENT_ARBITER_SERVER_PORT,8025}
-  path: ${oc.env:AGENT_ARBITER_SERVER_PATH,/mcp}
-  stateless_http: true
-  json_response: true
+arbiter:
+  server:
+    name: agent-arbiter-mcp
+    transport: streamable-http
+    host: ${oc.env:AGENT_ARBITER_SERVER_HOST,127.0.0.1}
+    port: ${oc.env:AGENT_ARBITER_SERVER_PORT,8025}
+    path: ${oc.env:AGENT_ARBITER_SERVER_PATH,/mcp}
+    stateless_http: true
+    json_response: true
 
-accounts:
-  smtp:
-    primary:
-      policy: bot
-      description: Bot account for automated email tasks
-      host: ${etc.bot_mailserver.smtp_host}
-      port: ${etc.bot_mailserver.smtp_port}
-      authenticate: ${oc.env:AGENT_ARBITER_BOT_SMTP_AUTHENTICATE,true}
-      username: ${etc.bot_mailserver.username}
-      password: ${etc.bot_mailserver.password}
-      from_email: ${oc.env:AGENT_ARBITER_BOT_SMTP_FROM_EMAIL}
-      from_name: ${oc.env:AGENT_ARBITER_BOT_SMTP_FROM_NAME,Agent Arbiter Bot}
-      tls: ${oc.env:AGENT_ARBITER_BOT_SMTP_TLS,starttls}
-      verify_peer: ${oc.env:AGENT_ARBITER_BOT_SMTP_VERIFY_PEER,true}
-      timeout_seconds: ${oc.env:AGENT_ARBITER_BOT_SMTP_TIMEOUT_SECONDS,30.0}
-    personal:
-      policy: personal
-      description: Personal account
-      host: ${etc.personal_mailserver.smtp_host}
-      port: ${etc.personal_mailserver.smtp_port}
-      authenticate: ${oc.env:AGENT_ARBITER_PERSONAL_SMTP_AUTHENTICATE,true}
-      username: ${etc.personal_mailserver.username}
-      password: ${etc.personal_mailserver.password}
-      from_email: ${oc.env:AGENT_ARBITER_PERSONAL_SMTP_FROM_EMAIL}
-      from_name: ${oc.env:AGENT_ARBITER_PERSONAL_SMTP_FROM_NAME,Omry}
-      tls: ${oc.env:AGENT_ARBITER_PERSONAL_SMTP_TLS,starttls}
-      verify_peer: ${oc.env:AGENT_ARBITER_PERSONAL_SMTP_VERIFY_PEER,true}
-      timeout_seconds: ${oc.env:AGENT_ARBITER_PERSONAL_SMTP_TIMEOUT_SECONDS,30.0}
-  imap:
-    primary:
-      policy: bot
-      description: Bot account for automated email tasks
-      host: ${etc.bot_mailserver.imap_host}
-      port: ${etc.bot_mailserver.imap_port}
-      username: ${oc.env:AGENT_ARBITER_BOT_IMAP_USERNAME}
-      password: ${oc.env:AGENT_ARBITER_BOT_IMAP_PASSWORD}
-      tls: ${oc.env:AGENT_ARBITER_BOT_IMAP_TLS,implicit}
-      verify_peer: ${oc.env:AGENT_ARBITER_BOT_IMAP_VERIFY_PEER,true}
-      timeout_seconds: ${oc.env:AGENT_ARBITER_BOT_IMAP_TIMEOUT_SECONDS,30.0}
-      default_folder: INBOX
-      folders:
-        INBOX:
-          description: Bot inbox.
+  account:
+    smtp:
+      primary:
+        policy: bot
+        description: Bot account for automated email tasks
+        host: ${arbiter.etc.bot_mailserver.smtp_host}
+        port: ${arbiter.etc.bot_mailserver.smtp_port}
+        authenticate: ${oc.env:AGENT_ARBITER_BOT_SMTP_AUTHENTICATE,true}
+        username: ${arbiter.etc.bot_mailserver.username}
+        password: ${arbiter.etc.bot_mailserver.password}
+        from_email: ${oc.env:AGENT_ARBITER_BOT_SMTP_FROM_EMAIL}
+        from_name: ${oc.env:AGENT_ARBITER_BOT_SMTP_FROM_NAME,Agent Arbiter Bot}
+        tls: ${oc.env:AGENT_ARBITER_BOT_SMTP_TLS,starttls}
+        verify_peer: ${oc.env:AGENT_ARBITER_BOT_SMTP_VERIFY_PEER,true}
+        timeout_seconds: ${oc.env:AGENT_ARBITER_BOT_SMTP_TIMEOUT_SECONDS,30.0}
+      personal:
+        policy: personal
+        description: Personal account
+        host: ${arbiter.etc.personal_mailserver.smtp_host}
+        port: ${arbiter.etc.personal_mailserver.smtp_port}
+        authenticate: ${oc.env:AGENT_ARBITER_PERSONAL_SMTP_AUTHENTICATE,true}
+        username: ${arbiter.etc.personal_mailserver.username}
+        password: ${arbiter.etc.personal_mailserver.password}
+        from_email: ${oc.env:AGENT_ARBITER_PERSONAL_SMTP_FROM_EMAIL}
+        from_name: ${oc.env:AGENT_ARBITER_PERSONAL_SMTP_FROM_NAME,Omry}
+        tls: ${oc.env:AGENT_ARBITER_PERSONAL_SMTP_TLS,starttls}
+        verify_peer: ${oc.env:AGENT_ARBITER_PERSONAL_SMTP_VERIFY_PEER,true}
+        timeout_seconds: ${oc.env:AGENT_ARBITER_PERSONAL_SMTP_TIMEOUT_SECONDS,30.0}
+    imap:
+      primary:
+        policy: bot
+        description: Bot account for automated email tasks
+        host: ${arbiter.etc.bot_mailserver.imap_host}
+        port: ${arbiter.etc.bot_mailserver.imap_port}
+        username: ${oc.env:AGENT_ARBITER_BOT_IMAP_USERNAME}
+        password: ${oc.env:AGENT_ARBITER_BOT_IMAP_PASSWORD}
+        tls: ${oc.env:AGENT_ARBITER_BOT_IMAP_TLS,implicit}
+        verify_peer: ${oc.env:AGENT_ARBITER_BOT_IMAP_VERIFY_PEER,true}
+        timeout_seconds: ${oc.env:AGENT_ARBITER_BOT_IMAP_TIMEOUT_SECONDS,30.0}
+        default_folder: INBOX
+        folders:
+          INBOX:
+            description: Bot inbox.
 
-policies:
-  smtp:
-    bot:
-      require_confirmation: false
-    personal:
-      require_confirmation: true
-  imap:
-    bot:
-      allow_read: true
-      allow_search: true
-      allow_move: true
-      allow_delete: true
-      confirmation_required: []
-      user_flags: {}
+  policy:
+    smtp:
+      bot:
+        require_confirmation: false
+      personal:
+        require_confirmation: true
+    imap:
+      bot:
+        allow_read: true
+        allow_search: true
+        allow_move: true
+        allow_delete: true
+        confirmation_required: []
+        user_flags: {}
 
-etc:
-  bot_mailserver:
-    smtp_host: ${oc.env:AGENT_ARBITER_BOT_SMTP_HOST}
-    smtp_port: ${oc.env:AGENT_ARBITER_BOT_SMTP_PORT,587}
-    imap_host: ${oc.env:AGENT_ARBITER_BOT_IMAP_HOST}
-    imap_port: ${oc.env:AGENT_ARBITER_BOT_IMAP_PORT,993}
-    username: ${oc.env:AGENT_ARBITER_BOT_SMTP_USERNAME}
-    password: ${oc.env:AGENT_ARBITER_BOT_SMTP_PASSWORD}
-  personal_mailserver:
-    smtp_host: ${oc.env:AGENT_ARBITER_PERSONAL_SMTP_HOST}
-    smtp_port: ${oc.env:AGENT_ARBITER_PERSONAL_SMTP_PORT,587}
-    username: ${oc.env:AGENT_ARBITER_PERSONAL_SMTP_USERNAME}
-    password: ${oc.env:AGENT_ARBITER_PERSONAL_SMTP_PASSWORD}
+  etc:
+    bot_mailserver:
+      smtp_host: ${oc.env:AGENT_ARBITER_BOT_SMTP_HOST}
+      smtp_port: ${oc.env:AGENT_ARBITER_BOT_SMTP_PORT,587}
+      imap_host: ${oc.env:AGENT_ARBITER_BOT_IMAP_HOST}
+      imap_port: ${oc.env:AGENT_ARBITER_BOT_IMAP_PORT,993}
+      username: ${oc.env:AGENT_ARBITER_BOT_SMTP_USERNAME}
+      password: ${oc.env:AGENT_ARBITER_BOT_SMTP_PASSWORD}
+    personal_mailserver:
+      smtp_host: ${oc.env:AGENT_ARBITER_PERSONAL_SMTP_HOST}
+      smtp_port: ${oc.env:AGENT_ARBITER_PERSONAL_SMTP_PORT,587}
+      username: ${oc.env:AGENT_ARBITER_PERSONAL_SMTP_USERNAME}
+      password: ${oc.env:AGENT_ARBITER_PERSONAL_SMTP_PASSWORD}

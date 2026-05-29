@@ -109,7 +109,7 @@ Header and envelope rules:
 - the caller must select a configured account explicitly
 
 Idempotency is reserved in config as
-`policies.smtp.<policy>.idempotency.expiration_days`.
+`arbiter.policy.smtp.<policy>.idempotency.expiration_days`.
 The current server rejects non-default values for that field at startup until
 replay/conflict behavior is implemented.
 

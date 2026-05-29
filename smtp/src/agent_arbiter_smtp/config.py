@@ -59,18 +59,18 @@ class SMTPServicePolicyConfig(Policy):
 
 
 SMTP_ACCOUNT_EXAMPLE = SMTPConfig(
-    policy="bot",
-    description="SMTP account used by Agent Arbiter to send mail.",
-    host="${oc.env:AGENT_ARBITER_SMTP_HOST,smtp.example.com}",
-    port="${oc.env:AGENT_ARBITER_SMTP_PORT,587}",  # type: ignore[arg-type]
+    policy="bot_policy",
+    description="SMTP account for (${.from_email})",
+    host="smtp.example.com",
+    port=587,
     authenticate=True,
-    username="${oc.env:AGENT_ARBITER_SMTP_USERNAME,agent@example.com}",
-    password="${oc.env:AGENT_ARBITER_SMTP_PASSWORD,change-me}",
-    from_email="${oc.env:AGENT_ARBITER_SMTP_FROM_EMAIL,agent@example.com}",
-    from_name="${oc.env:AGENT_ARBITER_SMTP_FROM_NAME,Agent Arbiter}",
-    tls="${oc.env:AGENT_ARBITER_SMTP_TLS,starttls}",  # type: ignore[arg-type]
-    verify_peer="${oc.env:AGENT_ARBITER_SMTP_VERIFY_PEER,true}",  # type: ignore[arg-type]
-    timeout_seconds="${oc.env:AGENT_ARBITER_SMTP_TIMEOUT_SECONDS,30}",  # type: ignore[arg-type]
+    username="${oc.env:SMTP_USERNAME_BOT_ACCOUNT}",
+    password="${oc.env:SMTP_PASSWORD_BOT_ACCOUNT}",
+    from_email="agent@example.com",
+    from_name="Agent Arbiter",
+    tls=MailTlsMode.starttls,
+    verify_peer=True,
+    timeout_seconds=30.0,
 )
 
 SMTP_POLICY_EXAMPLE = SMTPServicePolicyConfig(
@@ -80,9 +80,7 @@ SMTP_POLICY_EXAMPLE = SMTPServicePolicyConfig(
         max_recipients_per_message=10,
     ),
     recipient_policy=SMTPRecipientPolicyConfig(
-        allowed_domain_patterns=[
-            "${oc.env:AGENT_ARBITER_SMTP_ALLOWED_DOMAIN,example.com}"
-        ],
+        allowed_domain_patterns=[],
     ),
 )
 
