@@ -193,22 +193,57 @@ Flag modes:
 
 Store credentials outside source control. Deployment config may use
 environment-variable interpolation, secret files, or an external secret manager.
-Agent Arbiter does not own, generate, or load `.env` files; `${oc.env:...}` is
-resolved by OmegaConf from the Arbiter process environment.
+`${oc.env:...}` is resolved by OmegaConf from the Arbiter process environment.
+For local operator convenience, set `arbiter.env_file` in the root config to
+load one dotenv-style file before Hydra composes the config. Existing process
+environment values take precedence over values in the file.
 
 A local env file can still be useful as an operator-owned shell convenience:
 
 ```bash
 # config.local/local.env
-SMTP_USERNAME_PRIMARY_ACCOUNT=agent@example.com
-SMTP_PASSWORD_PRIMARY_ACCOUNT=change-me
+SMTP_PRIMARY_ACCOUNT_USERNAME=agent@example.com
+SMTP_PRIMARY_ACCOUNT_PASSWORD=change-me
 ```
 
-Load it before running Arbiter:
+Reference it from the root config:
+
+```yaml
+arbiter:
+  env_file: local.env
+```
+
+Relative paths are resolved from `--config-dir`. Then run Arbiter normally:
 
 ```bash
-set -a
-. config.local/local.env
-set +a
 agent-arbiter --config-dir "$PWD/config.local" --config-name config config check
+```
+
+Use the env command surface to manage that file:
+
+```bash
+agent-arbiter --config-dir "$PWD/config.local" env check
+agent-arbiter --config-dir "$PWD/config.local" env bootstrap
+```
+
+`env check` verifies every `${oc.env:...}` reference in the composed config is
+satisfied by either the env file or the process environment. `env bootstrap`
+rewrites the configured env file, preserving existing assignments, adding
+missing required variables with empty values, and moving variables not found in
+the config into `# miscellaneous`. If `arbiter.env_file` is missing, bootstrap
+adds `arbiter.env_file: .env` to the root config and writes that file.
+
+Generated env files are grouped into sorted blocks:
+
+```bash
+# agent-arbiter-imap
+IMAP_PRIMARY_ACCOUNT_USERNAME=
+IMAP_PRIMARY_ACCOUNT_PASSWORD=
+
+# agent-arbiter-smtp
+SMTP_PRIMARY_ACCOUNT_USERNAME=
+SMTP_PRIMARY_ACCOUNT_PASSWORD=
+
+# miscellaneous
+EXTRA_LOCAL_VALUE=keep-me
 ```

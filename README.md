@@ -80,9 +80,9 @@ agent-arbiter --config-dir "$PWD/config.local" bootstrap arbiter
 agent-arbiter --config-dir "$PWD/config.local" bootstrap plugin smtp account primary
 ```
 
-Agent Arbiter does not create or load `.env` files itself; `${oc.env:...}` reads
-the process environment that your shell, supervisor, container runtime, or
-secret manager provides.
+`${oc.env:...}` reads the process environment that your shell, supervisor,
+container runtime, or secret manager provides. For local runs, the root config
+can name one optional dotenv-style file to load before composition.
 
 See [docs/config_bootstrap.md](docs/config_bootstrap.md) for the generated file
 layout and composition flow.
@@ -91,19 +91,33 @@ For local development, a shell-owned env file can be useful:
 
 ```bash
 # config.local/local.env
-SMTP_USERNAME_PRIMARY_ACCOUNT=agent@example.com
-SMTP_PASSWORD_PRIMARY_ACCOUNT=change-me
+SMTP_PRIMARY_ACCOUNT_USERNAME=agent@example.com
+SMTP_PRIMARY_ACCOUNT_PASSWORD=change-me
 AGENT_ARBITER_IMAP_USERNAME=agent@example.com
 AGENT_ARBITER_IMAP_PASSWORD=change-me
 ```
 
-Source it before starting Arbiter:
+Point the root config at the env file:
+
+```yaml
+arbiter:
+  env_file: local.env
+```
+
+Existing process environment variables take precedence over values from the env
+file. Relative paths are resolved from `--config-dir`.
+
+Build or refresh that file from the active config:
 
 ```bash
-set -a
-. config.local/local.env
-set +a
+agent-arbiter --config-dir "$PWD/config.local" env bootstrap
+agent-arbiter --config-dir "$PWD/config.local" env check
 ```
+
+`env bootstrap` keeps existing assignments, adds missing config references, and
+groups entries under sorted `# agent-arbiter-*` blocks plus `# miscellaneous`.
+If `arbiter.env_file` is not set yet, it adds `arbiter.env_file: .env` to the
+root config first.
 
 Then run from this directory:
 

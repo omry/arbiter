@@ -181,9 +181,11 @@ service:
 - narrow recipient or mailbox access policies
 - replace credentials with deployment-specific interpolation
 
-Credentials should stay outside source control. Agent Arbiter does not own,
-generate, or load `.env` files. Use OmegaConf environment interpolation such as
-`${oc.env:SMTP_PASSWORD_PERSONAL_ACCOUNT}` or a deployment secret mechanism.
+Credentials should stay outside source control. Use OmegaConf environment
+interpolation such as `${oc.env:SMTP_PERSONAL_ACCOUNT_PASSWORD}` or a deployment
+secret mechanism. For local runs, `arbiter.env_file` can load a dotenv-style
+file before Hydra composes the config; existing process environment values take
+precedence.
 
 ## Validate and inspect
 
@@ -192,6 +194,29 @@ Validate the config before serving:
 ```bash
 agent-arbiter --config-dir "$PWD/config.local" --config-name config config check
 ```
+
+Use a local env file when you want Arbiter to populate process environment
+variables before composition:
+
+```yaml
+arbiter:
+  env_file: local.env
+```
+
+Relative env file paths are resolved from `--config-dir`.
+
+Bootstrap or validate the env file from the composed config:
+
+```bash
+agent-arbiter --config-dir "$PWD/config.local" env bootstrap
+agent-arbiter --config-dir "$PWD/config.local" env check
+```
+
+`env bootstrap` rebuilds the configured env file. It keeps existing assignments,
+adds missing `${oc.env:...}` references, sorts plugin blocks by name, and places
+existing variables that are not referenced by the config under
+`# miscellaneous`. If `arbiter.env_file` is not configured yet, it adds
+`arbiter.env_file: .env` to the root config first.
 
 `config check` validates a runnable server config. A freshly bootstrapped config
 with no accounts is intentionally not runnable yet; add at least one service

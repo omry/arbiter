@@ -353,8 +353,8 @@ port: 587
 authenticate: true
 
 # Credentials are read from the Arbiter process environment.
-username: ${{oc.env:SMTP_USERNAME_{env_suffix}}}
-password: ${{oc.env:SMTP_PASSWORD_{env_suffix}}}
+username: ${{oc.env:SMTP_{env_suffix}_USERNAME}}
+password: ${{oc.env:SMTP_{env_suffix}_PASSWORD}}
 
 # Sender identity used in message headers.
 from_email: agent@example.com

@@ -382,8 +382,8 @@ def test_smtp_configstore_example_composes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     for env_name in (
-        "SMTP_USERNAME_BOT_ACCOUNT",
-        "SMTP_PASSWORD_BOT_ACCOUNT",
+        "SMTP_BOT_ACCOUNT_USERNAME",
+        "SMTP_BOT_ACCOUNT_PASSWORD",
     ):
         monkeypatch.delenv(env_name, raising=False)
 

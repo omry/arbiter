@@ -1,4 +1,5 @@
 import logging
+import os
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -17,6 +18,7 @@ from agent_arbiter.main import (
     compose_config,
     config_check_summary,
     ensure_runnable_config,
+    load_env_file,
     log_startup_summary,
     main,
     service_plugin_names,
@@ -295,6 +297,228 @@ def test_compose_config_registers_configs_before_composing(
     assert calls == ["register_configs"]
 
 
+def test_compose_config_loads_env_file_before_composing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("AGENT_ARBITER_TEST_SERVER_NAME", raising=False)
+    (tmp_path / "config.yaml").write_text(
+        "arbiter:\n"
+        "  env_file: local.env\n"
+        "  server:\n"
+        "    name: ${oc.env:AGENT_ARBITER_TEST_SERVER_NAME}\n",
+        encoding="utf-8",
+    )
+    env_file = tmp_path / "local.env"
+    env_file.write_text(
+        "\n"
+        "# Local operator-owned environment.\n"
+        'export AGENT_ARBITER_TEST_SERVER_NAME="from-env-file" # comment\n',
+        encoding="utf-8",
+    )
+
+    cfg = compose_config(
+        config_dir=tmp_path,
+        config_name="config",
+    )
+
+    assert cfg.arbiter.server.name == "from-env-file"
+    assert cfg.arbiter.env_file == "local.env"
+
+
+def test_load_env_file_keeps_existing_process_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENT_ARBITER_TEST_ENV_FILE_PRECEDENCE", "from-process")
+    env_file = tmp_path / "local.env"
+    env_file.write_text(
+        'AGENT_ARBITER_TEST_ENV_FILE_PRECEDENCE="from file"\n',
+        encoding="utf-8",
+    )
+
+    load_env_file(env_file)
+
+    assert os.environ["AGENT_ARBITER_TEST_ENV_FILE_PRECEDENCE"] == "from-process"
+
+
+def test_load_env_file_reports_invalid_lines(tmp_path: Path) -> None:
+    env_file = tmp_path / "local.env"
+    env_file.write_text("not an assignment\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="invalid env file line 1"):
+        load_env_file(env_file)
+
+
+def test_cli_env_check_accepts_env_file_and_process_env(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HOME", "/home/tester")
+    monkeypatch.delenv("SMTP_PRIMARY_ACCOUNT_PASSWORD", raising=False)
+    (tmp_path / "config.yaml").write_text(
+        "arbiter:\n"
+        "  env_file: local.env\n"
+        "  account:\n"
+        "    smtp:\n"
+        "      primary:\n"
+        "        username: ${oc.env:SMTP_PRIMARY_ACCOUNT_USERNAME}\n"
+        "        password: ${oc.env:SMTP_PRIMARY_ACCOUNT_PASSWORD}\n"
+        "  etc:\n"
+        "    home: ${oc.env:HOME}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "local.env").write_text(
+        "SMTP_PRIMARY_ACCOUNT_USERNAME=agent@example.com\n"
+        "SMTP_PRIMARY_ACCOUNT_PASSWORD=secret\n",
+        encoding="utf-8",
+    )
+
+    assert main(["--config-dir", str(tmp_path), "env", "check"]) == 0
+
+    assert capsys.readouterr().out == "env ok: 3 variables satisfied\n"
+
+
+def test_cli_env_check_reports_missing_env(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("SMTP_PRIMARY_ACCOUNT_PASSWORD", raising=False)
+    (tmp_path / "config.yaml").write_text(
+        "arbiter:\n"
+        "  env_file: local.env\n"
+        "  account:\n"
+        "    smtp:\n"
+        "      primary:\n"
+        "        password: ${oc.env:SMTP_PRIMARY_ACCOUNT_PASSWORD}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "local.env").write_text("", encoding="utf-8")
+
+    assert main(["--config-dir", str(tmp_path), "env", "check"]) == 1
+
+    assert capsys.readouterr().err == (
+        "Agent Arbiter env error: missing required environment variables:\n"
+        "  SMTP_PRIMARY_ACCOUNT_PASSWORD (agent-arbiter-smtp)\n"
+    )
+
+
+def test_cli_env_bootstrap_rebuilds_configured_env_file(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for env_name in (
+        "IMAP_PRIMARY_ACCOUNT_PASSWORD",
+        "IMAP_PRIMARY_ACCOUNT_USERNAME",
+        "SMTP_PRIMARY_ACCOUNT_USERNAME",
+    ):
+        monkeypatch.delenv(env_name, raising=False)
+    monkeypatch.setenv("HOME", "/home/tester")
+    (tmp_path / "config.yaml").write_text(
+        "arbiter:\n"
+        "  env_file: local.env\n"
+        "  account:\n"
+        "    imap:\n"
+        "      primary:\n"
+        "        username: ${oc.env:IMAP_PRIMARY_ACCOUNT_USERNAME}\n"
+        "        password: ${oc.env:IMAP_PRIMARY_ACCOUNT_PASSWORD}\n"
+        "    smtp:\n"
+        "      primary:\n"
+        "        username: ${oc.env:SMTP_PRIMARY_ACCOUNT_USERNAME}\n"
+        "        password: ${oc.env:SMTP_PRIMARY_ACCOUNT_PASSWORD}\n"
+        "  etc:\n"
+        "    home: ${oc.env:HOME}\n",
+        encoding="utf-8",
+    )
+    env_file = tmp_path / "local.env"
+    env_file.write_text(
+        "SMTP_PRIMARY_ACCOUNT_PASSWORD=keep-me\n"
+        "IMAP_PRIMARY_ACCOUNT_USERNAME=imap-user\n"
+        "UNRELATED=value\n",
+        encoding="utf-8",
+    )
+
+    assert main(["--config-dir", str(tmp_path), "env", "bootstrap"]) == 0
+
+    assert env_file.read_text(encoding="utf-8") == (
+        "# agent-arbiter-imap\n"
+        "IMAP_PRIMARY_ACCOUNT_USERNAME=imap-user\n"
+        "IMAP_PRIMARY_ACCOUNT_PASSWORD=\n"
+        "\n"
+        "# agent-arbiter-smtp\n"
+        "SMTP_PRIMARY_ACCOUNT_PASSWORD=keep-me\n"
+        "SMTP_PRIMARY_ACCOUNT_USERNAME=\n"
+        "\n"
+        "# miscellaneous\n"
+        "UNRELATED=value\n"
+    )
+    assert capsys.readouterr().out == f"wrote {env_file}\n"
+
+
+def test_cli_env_bootstrap_reports_noop_when_env_file_is_current(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("SMTP_PRIMARY_ACCOUNT_PASSWORD", raising=False)
+    (tmp_path / "config.yaml").write_text(
+        "arbiter:\n"
+        "  env_file: local.env\n"
+        "  account:\n"
+        "    smtp:\n"
+        "      primary:\n"
+        "        password: ${oc.env:SMTP_PRIMARY_ACCOUNT_PASSWORD}\n",
+        encoding="utf-8",
+    )
+    env_file = tmp_path / "local.env"
+    env_file.write_text(
+        "# agent-arbiter-smtp\n" "SMTP_PRIMARY_ACCOUNT_PASSWORD=\n",
+        encoding="utf-8",
+    )
+
+    assert main(["--config-dir", str(tmp_path), "env", "bootstrap"]) == 0
+
+    assert capsys.readouterr().out == f"env file already up to date: {env_file}\n"
+
+
+def test_cli_env_bootstrap_configures_default_env_file(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("SMTP_PRIMARY_ACCOUNT_PASSWORD", raising=False)
+    (tmp_path / "config.yaml").write_text(
+        "arbiter:\n"
+        "  account:\n"
+        "    smtp:\n"
+        "      primary:\n"
+        "        username: ${oc.env:SMTP_PRIMARY_ACCOUNT_USERNAME}\n"
+        "        password: ${oc.env:SMTP_PRIMARY_ACCOUNT_PASSWORD}\n",
+        encoding="utf-8",
+    )
+
+    assert main(["--config-dir", str(tmp_path), "env", "bootstrap"]) == 0
+
+    assert (tmp_path / "config.yaml").read_text(encoding="utf-8") == (
+        "arbiter:\n"
+        "  env_file: .env\n"
+        "  account:\n"
+        "    smtp:\n"
+        "      primary:\n"
+        "        username: ${oc.env:SMTP_PRIMARY_ACCOUNT_USERNAME}\n"
+        "        password: ${oc.env:SMTP_PRIMARY_ACCOUNT_PASSWORD}\n"
+    )
+    assert (tmp_path / ".env").read_text(encoding="utf-8") == (
+        "# agent-arbiter-smtp\n"
+        "SMTP_PRIMARY_ACCOUNT_USERNAME=\n"
+        "SMTP_PRIMARY_ACCOUNT_PASSWORD=\n"
+    )
+    assert capsys.readouterr().out == f"wrote {tmp_path / '.env'}\n"
+
+
 def test_cli_lists_plugins_as_json(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
@@ -446,6 +670,9 @@ def test_cli_bootstrap_arbiter_writes_main_config(
         "#   agent-arbiter --config-dir <dir> --config-name config config show\n"
         "# Override composed values with Hydra overrides, for example:\n"
         "#   agent-arbiter --config-dir <dir> serve arbiter.server.port=8025\n"
+        "# Optionally load a config-dir-relative dotenv file before composition:\n"
+        "#   arbiter:\n"
+        "#     env_file: local.env\n"
         "  - arbiter: server\n"
         "  - _self_\n"
     )
@@ -532,8 +759,8 @@ def test_cli_bootstrap_plugin_account_writes_service_example(
     assert "# Credentials are read from the Arbiter process environment.\n" in (
         account_yaml
     )
-    assert "username: ${oc.env:SMTP_USERNAME_PERSONAL_ACCOUNT}\n" in account_yaml
-    assert "password: ${oc.env:SMTP_PASSWORD_PERSONAL_ACCOUNT}\n" in account_yaml
+    assert "username: ${oc.env:SMTP_PERSONAL_ACCOUNT_USERNAME}\n" in account_yaml
+    assert "password: ${oc.env:SMTP_PERSONAL_ACCOUNT_PASSWORD}\n" in account_yaml
     policy_file = (
         config_dir / "arbiter" / "policy" / "smtp" / "personal_account_policy.yaml"
     )

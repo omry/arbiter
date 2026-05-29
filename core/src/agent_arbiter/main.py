@@ -3,9 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import re
 import sys
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -39,17 +41,25 @@ LOGGER = logging.getLogger(__name__)
 TransportMode = Literal["stdio", "sse", "streamable-http"]
 HydraConfig = AppConfig | DictConfig
 BootstrapObjectKind = Literal["account", "policy"]
-CLI_COMMANDS = {"serve", "config", "plugins", "bootstrap"}
+CLI_COMMANDS = {"serve", "config", "plugins", "bootstrap", "env"}
 BOOTSTRAP_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+ENV_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+ENV_FILE_CONFIG_KEY = "arbiter.env_file"
+ENV_REFERENCE_PATTERN = re.compile(r"\$\{oc\.env:(?P<name>[^,}\s]+)(?:,[^}]*)?\}")
+DEFAULT_ENV_FILE_NAME = ".env"
 GROUP_SELECTION_PATTERN = re.compile(
     r"^\s*-\s*(?P<item>[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)?)\s*(?:#.*)?$"
 )
+MISC_ENV_BLOCK = "miscellaneous"
 MAIN_CONFIG_TEMPLATE = """defaults:
 # Agent Arbiter composes this config at startup from the defaults below.
 # Inspect the composed config with:
 #   agent-arbiter --config-dir <dir> --config-name config config show
 # Override composed values with Hydra overrides, for example:
 #   agent-arbiter --config-dir <dir> serve arbiter.server.port=8025
+# Optionally load a config-dir-relative dotenv file before composition:
+#   arbiter:
+#     env_file: local.env
   - arbiter: server
   - _self_
 """
@@ -63,6 +73,12 @@ server:
   stateless_http: true
   json_response: true
 """
+
+
+@dataclass(frozen=True)
+class EnvReference:
+    name: str
+    block: str
 
 
 def _to_object(value: Any) -> Any:
@@ -323,14 +339,152 @@ def _strip_arg_separator(args: Sequence[str]) -> list[str]:
     return list(args)
 
 
+def _strip_env_comment(value: str) -> str:
+    in_single_quotes = False
+    in_double_quotes = False
+    escaped = False
+    for index, char in enumerate(value):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\" and in_double_quotes:
+            escaped = True
+            continue
+        if char == "'" and not in_double_quotes:
+            in_single_quotes = not in_single_quotes
+            continue
+        if char == '"' and not in_single_quotes:
+            in_double_quotes = not in_double_quotes
+            continue
+        if (
+            char == "#"
+            and not in_single_quotes
+            and not in_double_quotes
+            and (index == 0 or value[index - 1].isspace())
+        ):
+            return value[:index].rstrip()
+    return value
+
+
+def _decode_double_quoted_env_value(value: str) -> str:
+    replacements = {
+        "\\n": "\n",
+        "\\r": "\r",
+        "\\t": "\t",
+        '\\"': '"',
+        "\\\\": "\\",
+    }
+    for escaped, replacement in replacements.items():
+        value = value.replace(escaped, replacement)
+    return value
+
+
+def _parse_env_value(value: str) -> str:
+    stripped = _strip_env_comment(value.strip()).strip()
+    if len(stripped) >= 2 and stripped[0] == stripped[-1] == "'":
+        return stripped[1:-1]
+    if len(stripped) >= 2 and stripped[0] == stripped[-1] == '"':
+        return _decode_double_quoted_env_value(stripped[1:-1])
+    return stripped
+
+
+def _read_env_file_values(
+    env_file: Path, *, missing_ok: bool = False
+) -> dict[str, str]:
+    env_file_path = env_file.expanduser()
+    if not env_file_path.exists():
+        if missing_ok:
+            return {}
+        raise ValueError(f"env file not found: {env_file_path}")
+    values: dict[str, str] = {}
+    for line_number, raw_line in enumerate(
+        env_file_path.read_text(encoding="utf-8").splitlines(),
+        start=1,
+    ):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line.removeprefix("export ").lstrip()
+        if "=" not in line:
+            raise ValueError(
+                f"invalid env file line {line_number} in {env_file_path}: "
+                "expected KEY=VALUE"
+            )
+        key, raw_value = line.split("=", 1)
+        key = key.strip()
+        if not ENV_NAME_PATTERN.fullmatch(key):
+            raise ValueError(
+                f"invalid env variable name on line {line_number} in "
+                f"{env_file_path}: {key}"
+            )
+        values[key] = _strip_env_comment(raw_value.strip()).strip()
+    return values
+
+
+def load_env_file(env_file: str | Path) -> None:
+    env_file_path = Path(env_file).expanduser()
+    for key, raw_value in _read_env_file_values(env_file_path).items():
+        os.environ.setdefault(key, _parse_env_value(raw_value))
+
+
+def _configured_env_file(
+    *,
+    config_dir: Path,
+    config_name: str,
+) -> Path | None:
+    config_file = config_dir / f"{config_name}.yaml"
+    if not config_file.exists():
+        return None
+    env_file = OmegaConf.select(OmegaConf.load(config_file), ENV_FILE_CONFIG_KEY)
+    if env_file in (None, ""):
+        return None
+    if not isinstance(env_file, str):
+        raise ValueError(f"{ENV_FILE_CONFIG_KEY} must be a string path")
+    env_file_path = Path(env_file).expanduser()
+    if env_file_path.is_absolute():
+        return env_file_path
+    return config_dir / env_file_path
+
+
+def _configure_default_env_file(
+    *,
+    config_dir: Path,
+    config_name: str,
+) -> Path:
+    config_file = config_dir / f"{config_name}.yaml"
+    if not config_file.exists():
+        raise ValueError(f"main config not found: {config_file}")
+    lines = config_file.read_text(encoding="utf-8").splitlines(keepends=True)
+    env_line = f"  env_file: {DEFAULT_ENV_FILE_NAME}\n"
+    for index, line in enumerate(lines):
+        if line.strip() == "arbiter:":
+            lines[index + 1 : index + 1] = [env_line]
+            config_file.write_text("".join(lines), encoding="utf-8")
+            return config_dir / DEFAULT_ENV_FILE_NAME
+    if lines and not lines[-1].endswith("\n"):
+        lines[-1] = f"{lines[-1]}\n"
+    if lines and lines[-1].strip():
+        lines.append("\n")
+    lines.extend(["arbiter:\n", env_line])
+    config_file.write_text("".join(lines), encoding="utf-8")
+    return config_dir / DEFAULT_ENV_FILE_NAME
+
+
 def compose_config(
     *,
     config_dir: str | Path,
     config_name: str,
     overrides: Sequence[str] = (),
 ) -> DictConfig:
-    register_configs()
     config_dir_path = Path(config_dir).expanduser().resolve()
+    env_file = _configured_env_file(
+        config_dir=config_dir_path,
+        config_name=config_name,
+    )
+    if env_file is not None:
+        load_env_file(env_file)
+    register_configs()
     with initialize_config_dir(
         version_base=None,
         config_dir=str(config_dir_path),
@@ -340,6 +494,187 @@ def compose_config(
             config_name=config_name,
             overrides=list(_strip_arg_separator(overrides)),
         )
+
+
+def _env_block_for_path(path: Sequence[str]) -> str:
+    if (
+        len(path) >= 3
+        and path[0] == "arbiter"
+        and path[1]
+        in {
+            "account",
+            "policy",
+        }
+    ):
+        return f"agent-arbiter-{path[2]}"
+    return MISC_ENV_BLOCK
+
+
+def _collect_env_references_from_value(
+    value: object,
+    *,
+    path: Sequence[str],
+    references: dict[str, EnvReference],
+) -> None:
+    if isinstance(value, Mapping):
+        for key, nested_value in value.items():
+            _collect_env_references_from_value(
+                nested_value,
+                path=[*path, str(key)],
+                references=references,
+            )
+        return
+    if isinstance(value, list):
+        for index, nested_value in enumerate(value):
+            _collect_env_references_from_value(
+                nested_value,
+                path=[*path, str(index)],
+                references=references,
+            )
+        return
+    if not isinstance(value, str):
+        return
+    for match in ENV_REFERENCE_PATTERN.finditer(value):
+        name = match.group("name")
+        if not ENV_NAME_PATTERN.fullmatch(name):
+            raise ValueError(f"invalid env variable reference: {name}")
+        block = _env_block_for_path(path)
+        existing = references.get(name)
+        if existing is None or existing.block == MISC_ENV_BLOCK:
+            references[name] = EnvReference(name=name, block=block)
+
+
+def collect_env_references(cfg: DictConfig) -> dict[str, EnvReference]:
+    container = OmegaConf.to_container(cfg, resolve=False)
+    references: dict[str, EnvReference] = {}
+    _collect_env_references_from_value(
+        container,
+        path=[],
+        references=references,
+    )
+    return references
+
+
+def _compose_config_for_env_command(
+    *,
+    config_dir: str,
+    config_name: str,
+    overrides: Sequence[str],
+) -> tuple[Path, Path | None, DictConfig, dict[str, EnvReference]]:
+    config_dir_path = Path(config_dir).expanduser().resolve()
+    env_file = _configured_env_file(
+        config_dir=config_dir_path,
+        config_name=config_name,
+    )
+    register_configs()
+    with initialize_config_dir(
+        version_base=None,
+        config_dir=str(config_dir_path),
+        job_name="agent-arbiter-env",
+    ):
+        cfg = compose(
+            config_name=config_name,
+            overrides=list(_strip_arg_separator(overrides)),
+        )
+    return config_dir_path, env_file, cfg, collect_env_references(cfg)
+
+
+def _run_env_check(
+    *,
+    config_dir: str,
+    config_name: str,
+    overrides: Sequence[str],
+) -> int:
+    try:
+        _config_dir_path, env_file, _cfg, references = _compose_config_for_env_command(
+            config_dir=config_dir,
+            config_name=config_name,
+            overrides=overrides,
+        )
+        env_file_values: dict[str, str] = {}
+        if env_file is not None:
+            env_file_values = _read_env_file_values(env_file)
+        satisfied = set(env_file_values) | set(os.environ)
+        missing = [
+            reference
+            for reference in references.values()
+            if reference.name not in satisfied
+        ]
+    except ValueError as exc:
+        print(f"Agent Arbiter env error: {exc}", file=sys.stderr)
+        return 1
+    if missing:
+        print(
+            "Agent Arbiter env error: missing required environment variables:",
+            file=sys.stderr,
+        )
+        for reference in sorted(missing, key=lambda item: (item.block, item.name)):
+            print(f"  {reference.name} ({reference.block})", file=sys.stderr)
+        return 1
+    print(f"env ok: {len(references)} variables satisfied")
+    return 0
+
+
+def _format_env_file_blocks(block_values: Mapping[str, Mapping[str, str]]) -> str:
+    lines: list[str] = []
+    block_names = sorted(
+        block_name for block_name, values in block_values.items() if values
+    )
+    if MISC_ENV_BLOCK in block_names:
+        block_names = [
+            block_name for block_name in block_names if block_name != MISC_ENV_BLOCK
+        ]
+        block_names.append(MISC_ENV_BLOCK)
+    for block_index, block_name in enumerate(block_names):
+        if block_index:
+            lines.append("")
+        lines.append(f"# {block_name}")
+        for name, value in block_values[block_name].items():
+            lines.append(f"{name}={value}")
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
+def _run_env_bootstrap(
+    *,
+    config_dir: str,
+    config_name: str,
+    overrides: Sequence[str],
+) -> int:
+    try:
+        _config_dir_path, env_file, _cfg, references = _compose_config_for_env_command(
+            config_dir=config_dir,
+            config_name=config_name,
+            overrides=overrides,
+        )
+        if env_file is None:
+            env_file = _configure_default_env_file(
+                config_dir=Path(config_dir).expanduser().resolve(),
+                config_name=config_name,
+            )
+        existing_values = _read_env_file_values(env_file, missing_ok=True)
+    except ValueError as exc:
+        print(f"Agent Arbiter env error: {exc}", file=sys.stderr)
+        return 1
+
+    block_values: dict[str, dict[str, str]] = {}
+    for name, value in existing_values.items():
+        reference = references.get(name)
+        block = reference.block if reference is not None else MISC_ENV_BLOCK
+        block_values.setdefault(block, {})[name] = value
+
+    satisfied = set(existing_values) | set(os.environ)
+    for reference in references.values():
+        if reference.name not in satisfied:
+            block_values.setdefault(reference.block, {})[reference.name] = ""
+
+    content = _format_env_file_blocks(block_values)
+    if env_file.exists() and env_file.read_text(encoding="utf-8") == content:
+        print(f"env file already up to date: {env_file}")
+        return 0
+    env_file.parent.mkdir(parents=True, exist_ok=True)
+    env_file.write_text(content, encoding="utf-8")
+    print(f"wrote {env_file}")
+    return 0
 
 
 def _run_serve(
@@ -374,12 +709,12 @@ def _run_config_check(
     config_name: str,
     overrides: Sequence[str],
 ) -> int:
-    cfg = compose_config(
-        config_dir=config_dir,
-        config_name=config_name,
-        overrides=overrides,
-    )
     try:
+        cfg = compose_config(
+            config_dir=config_dir,
+            config_name=config_name,
+            overrides=overrides,
+        )
         print(config_check_summary(cfg))
     except ValueError as exc:
         print(f"Agent Arbiter config error: {exc}", file=sys.stderr)
@@ -394,12 +729,16 @@ def _run_config_show(
     overrides: Sequence[str],
     resolve: bool,
 ) -> int:
-    cfg = compose_config(
-        config_dir=config_dir,
-        config_name=config_name,
-        overrides=overrides,
-    )
-    print(OmegaConf.to_yaml(cfg, resolve=resolve), end="")
+    try:
+        cfg = compose_config(
+            config_dir=config_dir,
+            config_name=config_name,
+            overrides=overrides,
+        )
+        print(OmegaConf.to_yaml(cfg, resolve=resolve), end="")
+    except ValueError as exc:
+        print(f"Agent Arbiter config error: {exc}", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -1080,6 +1419,25 @@ def _build_parser() -> argparse.ArgumentParser:
         help="overwrite an existing config object file",
     )
 
+    env = subcommands.add_parser("env", help="inspect and bootstrap env files")
+    env_subcommands = env.add_subparsers(dest="env_command", required=True)
+    env_check = env_subcommands.add_parser(
+        "check",
+        help="check that all config env references are satisfied",
+    )
+    _add_override_arguments(
+        env_check,
+        help_text="Hydra-style config overrides applied before checking env",
+    )
+    env_bootstrap = env_subcommands.add_parser(
+        "bootstrap",
+        help="rebuild the configured env file with missing variables",
+    )
+    _add_override_arguments(
+        env_bootstrap,
+        help_text="Hydra-style config overrides applied before bootstrapping env",
+    )
+
     plugins = subcommands.add_parser("plugins", help="inspect service plugins")
     plugin_subcommands = plugins.add_subparsers(dest="plugins_command", required=True)
     plugins_list = plugin_subcommands.add_parser(
@@ -1133,6 +1491,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             config_name=namespace.config_name,
             plugin=namespace.plugin,
             name=namespace.name,
+        )
+    if namespace.command == "env" and namespace.env_command == "check":
+        return _run_env_check(
+            config_dir=namespace.config_dir,
+            config_name=namespace.config_name,
+            overrides=namespace.overrides,
+        )
+    if namespace.command == "env" and namespace.env_command == "bootstrap":
+        return _run_env_bootstrap(
+            config_dir=namespace.config_dir,
+            config_name=namespace.config_name,
+            overrides=namespace.overrides,
         )
     if namespace.command == "plugins" and namespace.plugins_command == "list":
         names = service_plugin_names()
