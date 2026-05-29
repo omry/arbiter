@@ -46,24 +46,15 @@ This file is the day-to-day queue for design and implementation gaps.
 
 ## Post-v1
 
-- [ ] `P2` Decide whether shared policy profiles should remain the long-term
+- [ ] `P2` Decide whether service-scoped policies should remain the long-term
       home for access gates and caller confirmation.
-      The current implementation now uses shared profiles for access gates and
-      caller confirmation. That may still be the right abstraction, but it is
-      also plausible that access control and caller confirmation should not
+      The current implementation uses service-scoped policies for access gates
+      and caller confirmation. That may still be the right abstraction, but it
+      is also plausible that access control and caller confirmation should not
       live in the same container.
-      Acceptance checks: the design notes compare at least the current shared
-      profile approach against one or two clearer alternatives; tradeoffs are
-      recorded; and the chosen direction informs the next config cleanup pass.
-
-- [ ] `P2` Improve the OpenClaw skill installer with dry-run file-change
-      visibility.
-      Operators should be able to see what will change before installation and
-      what did change after installation, without having to inspect the target
-      directory manually.
-      Acceptance checks: the installer can report which files would be added or
-      updated; output stays concise by default; and normal installs provide a
-      readable change summary rather than dumping full file contents.
+      Acceptance checks: the design notes compare the current policy approach
+      against one or two clearer alternatives; tradeoffs are recorded; and the
+      chosen direction informs the next config cleanup pass.
 
 - [ ] `P2` Design durable audit storage and its policy home.
       Audit is parked for post-v1. The v1 release should not ask operators to
@@ -74,7 +65,7 @@ This file is the day-to-day queue for design and implementation gaps.
       Acceptance checks: audit storage, retention, event shape, and privacy
       defaults are defined; SMTP and IMAP audit events are emitted through one
       durable path; docs distinguish audit records from operational logs; the
-      design decides whether audit belongs in shared account access profiles, a
+      design decides whether audit belongs in service-scoped policies, a
       separate audit policy block, or another clearer home; and the resulting
       config shape is materially lighter for operators.
 
@@ -83,7 +74,7 @@ This file is the day-to-day queue for design and implementation gaps.
       a shared secret, bearer token, password, client certificate, or mTLS/PKI
       so deployments can prevent unsafe access to the Agent Arbiter MCP boundary.
       Acceptance checks: candidate mechanisms are compared; the chosen model
-      works for local OpenClaw/Codex use and Docker deployments; and failure
+      works for local agent/Codex use and Docker deployments; and failure
       modes are fail-closed without leaking credentials.
 
 - [ ] `P2` Generate baseline CLI parameters from MCP tool schemas.

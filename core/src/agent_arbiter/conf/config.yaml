@@ -1,0 +1,13 @@
+defaults:
+  - agent_arbiter_app_config_schema
+  - /arbiter/server: streamable-http
+  - _self_
+
+server:
+  name: agent-arbiter
+
+accounts: {}
+
+policies: {}
+
+etc: {}

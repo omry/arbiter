@@ -5,11 +5,13 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-COPY pyproject.toml README.md ./
-COPY src ./src
+COPY README.md ./
+COPY core ./core
+COPY smtp ./smtp
+COPY imap ./imap
 
 RUN python -m pip install --no-cache-dir --upgrade pip \
-    && python -m pip install --no-cache-dir .
+    && python -m pip install --no-cache-dir ./core ./smtp ./imap
 
 RUN addgroup --system --gid 10001 agent-arbiter \
     && adduser --system --uid 10001 --ingroup agent-arbiter \

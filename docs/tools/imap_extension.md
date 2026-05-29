@@ -23,7 +23,7 @@ Define the current IMAP tool family and the shared constraints that apply to IMA
 - Every IMAP tool takes `account` as a mandatory input.
 - That `account` must reference an account with IMAP enabled.
 - IMAP tools may take `folder` explicitly or default to
-  `services.imap.accounts.<account>.default_folder` when omitted.
+  `accounts.imap.<account>.default_folder` when omitted.
 - `message_id` values are IMAP UIDs returned by `list_messages` or `search_messages`; they are scoped to the selected account and folder.
 
 ## Shared behavior constraints
@@ -31,7 +31,7 @@ Define the current IMAP tool family and the shared constraints that apply to IMA
 - operations are scoped to a single selected account
 - folder names are interpreted within that selected account only
 - folder names must be present in the selected account's configured
-  `services.imap.accounts.<account>.folders` map
+  `accounts.imap.<account>.folders` map
 - cross-account search is out of scope
 - cross-account moves are out of scope
 
@@ -43,15 +43,15 @@ Define the current IMAP tool family and the shared constraints that apply to IMA
 
 ## Configuration notes
 
-The IMAP config is organized under `services.imap.accounts`. Within a service
+The IMAP config is organized under `accounts.imap`. Within a service
 account, tools refer to configured folder names rather than arbitrary folder
 strings.
 
 Each IMAP-enabled account should define at least:
 
-- an entry under `services.imap.accounts`
+- an entry under `accounts.imap`
 - a human-readable account description
-- an `account_access_profile` reference
+- a `policy` reference to `policies.imap.<policy>`
 - a `folders` mapping keyed by stable folder names
 
 Each configured folder should define at least:
@@ -59,12 +59,12 @@ Each configured folder should define at least:
 - a stable folder name via the map key
 - an optional description
 
-The current implementation uses `account_access_profile.services.imap` as the
-shared IMAP policy shape for access gates and confirmation requirements.
+The current implementation uses `policies.imap.<policy>` as the shared IMAP
+policy shape for access gates and confirmation requirements.
 Account names such as `bot`, `personal`, or `alerts_readonly` are
 deployment-owned conventions.
 
-Write-capable behavior follows the selected profile's IMAP policy plus any
+Write-capable behavior follows the selected account's IMAP policy plus any
 caller-side confirmation rules for actions listed in `confirmation_required`.
 
 Confirmed policy model:
@@ -109,4 +109,3 @@ The future audit model is:
 - write one tool document per IMAP operation
 - decide what caller authentication or authorization model, if any, should
   protect the bot-to-Agent Arbiter MCP connection
-- add OpenClaw wrapper coverage for IMAP tools if OpenClaw should use them before native MCP support exists

@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-arbiter-core"
+version = "0.1.1.dev1"
+description = "Core policy-controlled MCP gateway for agent-accessible services"
+readme = { text = "Core package for Agent Arbiter.", content-type = "text/markdown" }
+requires-python = ">=3.10"
+authors = [
+  { name = "Omry Yadan", email = "omry@yadan.net" },
+]
+maintainers = [
+  { name = "Omry Yadan", email = "omry@yadan.net" },
+]
+keywords = ["agent", "policy", "mcp", "access-control", "security"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+  "hydra-core>=1.3,<2.0",
+  "mcp>=1.9.4,<2.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/omry/agent-arbiter"
+Repository = "https://github.com/omry/agent-arbiter"
+
+[project.scripts]
+agent-arbiter = "agent_arbiter.main:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"agent_arbiter" = ["py.typed"]
+"agent_arbiter.conf" = ["*.yaml"]

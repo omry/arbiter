@@ -22,31 +22,31 @@ This file tracks the highest-value gaps between:
   - Why: fail-closed transport security
   - Level: integration
   - Status: `done`
-  - Coverage: `tests/integration/test_smtp_integration.py`
+  - Coverage: `smtp/tests/integration/test_smtp_integration.py`
 
 - SMTP authentication failure is surfaced cleanly
   - Why: core submission behavior
   - Level: unit + integration
   - Status: `done`
-  - Coverage: `tests/unit/test_smtp.py`, `tests/integration/test_smtp_integration.py`
+  - Coverage: `smtp/tests/unit/test_smtp.py`, `smtp/tests/integration/test_smtp_integration.py`
 
 - Server unavailable / connection failure is surfaced
   - Why: common operational failure mode
   - Level: unit + integration
   - Status: `done`
-  - Coverage: `tests/unit/test_smtp.py`, `tests/integration/test_smtp_integration.py`
+  - Coverage: `smtp/tests/unit/test_smtp.py`, `smtp/tests/integration/test_smtp_integration.py`
 
 - SMTP rejection after `RCPT TO` or `DATA`
   - Why: needed to distinguish submission rejection from connection failure
   - Level: integration
   - Status: `done`
-  - Coverage: `tests/integration/test_smtp_integration.py`
+  - Coverage: `smtp/tests/integration/test_smtp_integration.py`
 
 - Submission status unknown after partial SMTP progress
   - Why: needed for retry/idempotency semantics
   - Level: integration
   - Status: `done`
-  - Coverage: `tests/integration/test_smtp_integration.py`
+  - Coverage: `smtp/tests/integration/test_smtp_integration.py`
 
 ## P1
 
@@ -60,20 +60,20 @@ This file tracks the highest-value gaps between:
   - Why: avoid ambiguous runtime behavior
   - Level: unit
   - Status: `done`
-  - Coverage: `tests/unit/test_config.py`, `tests/unit/test_smtp.py`
+  - Coverage: `core/tests/unit/test_config.py`, `smtp/tests/unit/test_smtp.py`
   - Examples: unknown TLS mode, auth enabled without both username and password, credentials set while auth is disabled
 
 - HTML-only message serialization
   - Why: MIME behavior is user-visible
   - Level: unit + integration
   - Status: `done`
-  - Coverage: `tests/unit/test_app.py`, `tests/integration/test_smtp_integration.py`
+  - Coverage: `core/tests/unit/test_app.py`, `smtp/tests/integration/test_smtp_integration.py`
 
 - Non-ASCII subject and display-name handling
   - Why: common real-world interoperability case
   - Level: unit + integration
   - Status: `done`
-  - Coverage: `tests/unit/test_app.py`, `tests/integration/test_smtp_integration.py`
+  - Coverage: `core/tests/unit/test_app.py`, `smtp/tests/integration/test_smtp_integration.py`
 
 ## P2
 
@@ -81,7 +81,7 @@ This file tracks the highest-value gaps between:
   - Why: improves transport diagnostics
   - Level: unit + integration
   - Status: `done`
-  - Coverage: `tests/unit/test_smtp.py`, `tests/integration/test_smtp_integration.py`
+  - Coverage: `smtp/tests/unit/test_smtp.py`, `smtp/tests/integration/test_smtp_integration.py`
 
 - Logging coverage for connection attempt, submission result, and failure paths
   - Why: operational debugging and auditability
@@ -105,5 +105,5 @@ This file tracks the highest-value gaps between:
   - Why: policy correctness
   - Level: unit + integration
   - Status: `done`
-  - Coverage: `tests/unit/test_app.py`
+  - Coverage: `core/tests/unit/test_app.py`
   - Note: unit coverage is in place for the current per-process sliding-window implementation; add integration coverage if a transport-level seam becomes useful

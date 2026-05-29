@@ -24,11 +24,12 @@ services:
       if [ "$$install_target" = /source/agent-arbiter ]; then
         rm -rf /tmp/agent-arbiter-source &&
         mkdir -p /tmp/agent-arbiter-source &&
-        cp -a /source/agent-arbiter/pyproject.toml /source/agent-arbiter/README.md /source/agent-arbiter/src /tmp/agent-arbiter-source/ &&
+        cp -a /source/agent-arbiter/README.md /source/agent-arbiter/core /source/agent-arbiter/smtp /source/agent-arbiter/imap /tmp/agent-arbiter-source/ &&
         find /tmp/agent-arbiter-source -type d \( -name "*.egg-info" -o -name "__pycache__" \) -prune -exec rm -rf {} + &&
-        install_target=/tmp/agent-arbiter-source;
+        python -m pip install --no-cache-dir /tmp/agent-arbiter-source/core /tmp/agent-arbiter-source/smtp /tmp/agent-arbiter-source/imap;
+      else
+        python -m pip install --no-cache-dir "$$install_target";
       fi &&
-      python -m pip install --no-cache-dir "$$install_target" &&
       exec agent-arbiter --config-path /config --config-name config'
 
 networks:

@@ -46,7 +46,7 @@ The current tool set is:
 - Attachment handling
 - Per-call transport parameter overrides such as host, port, TLS mode, credentials, or sender identity
 - Open-ended access to arbitrary IMAP folders outside the configured folder map
-- Native OpenClaw MCP integration
+- Agent-facing skill integration
 
 ## Core design principles
 
@@ -85,14 +85,14 @@ Every tool call should produce structured operational logs and normalized result
 
 - `account`: the credential and identity boundary used for SMTP submission and IMAP access
 - `folder`: an IMAP folder within an account, such as `INBOX` or `Alerts`
-- `account_access_profile`: the shared policy profile attached to an account and used for per-service SMTP and IMAP policy
+- `policy`: the reusable service-scoped policy selected by a configured account
 
 This document uses these terms deliberately:
 
 - SMTP is tied to an `account`
 - IMAP is tied to an `account`
 - IMAP operations target a `folder`
-- current access control still comes from the account's configured `account_access_profile`
+- current access control comes from the account's configured service policy
 - caller confirmation metadata comes from SMTP `require_confirmation` and IMAP `confirmation_required`
 - multiple configured accounts may coexist in one server deployment
 
@@ -112,8 +112,8 @@ Implications of the current trust model:
 Implemented:
 
 - shared configuration loading
-- profile-based enforcement for SMTP recipient policy, `max_recipients_per_message`, and IMAP read/search/move/delete
-- profile-based confirmation metadata through service-local SMTP and IMAP fields
+- policy-based enforcement for SMTP recipient policy, `max_recipients_per_message`, and IMAP read/search/move/delete
+- policy-based confirmation metadata through service-local SMTP and IMAP fields
 - IMAP flag visibility and `seen` mutation policy
 - `list_accounts`
 - `send_email`
@@ -136,7 +136,8 @@ Still open:
 - Whether to expose MCP resources in addition to tools
 - Whether message drafts should exist as a separate future tool
 - Whether attachments belong in v2 or later
-- Whether account access profiles should continue to own confirmation policy as well as access policy
+- Whether service-scoped policies should remain the long-term home for caller
+  confirmation metadata as well as runtime access policy
 - What caller authentication or authorization model, if any, should protect
   the bot-to-Agent Arbiter MCP connection
 

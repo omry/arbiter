@@ -8,6 +8,10 @@ response describing how you used it and how many steps it covered.
 This checkout is a Sapling repository. Use Sapling commands such as
 `sl status` to inspect repository state.
 
+Prefer repo-local virtualenv tools when they exist, such as `.venv/bin/python`,
+`.venv/bin/nox`, `.venv/bin/pytest`, `.venv/bin/black`, and `.venv/bin/mypy`,
+instead of relying on globally installed commands from `PATH`.
+
 Never force-push or otherwise rewrite remote history unless I explicitly
 request it and then confirm again after you explain the effect.
 

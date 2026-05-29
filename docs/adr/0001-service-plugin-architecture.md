@@ -50,36 +50,46 @@ the whole application config by default.
 ## Configuration Model
 
 Service activation is config-driven. Installed plugins are only available;
-configured service nodes activate them.
+configured service account maps activate them.
 
 Conceptually:
 
 ```yaml
-services:
+accounts:
   smtp:
-    accounts:
-      primary:
-        host: ${etc.mailserver.host}
-        port: ${etc.mailserver.smtp_port}
-        username: ${etc.mailserver.username}
-        password: ${etc.mailserver.password}
-        from_email: ${etc.mailserver.username}
+    primary:
+      policy: bot
+      host: ${etc.mailserver.host}
+      port: ${etc.mailserver.smtp_port}
+      username: ${etc.mailserver.username}
+      password: ${etc.mailserver.password}
+      from_email: ${etc.mailserver.username}
 
   imap:
-    accounts:
-      primary:
-        host: ${etc.mailserver.host}
-        port: ${etc.mailserver.imap_port}
-        username: ${etc.mailserver.username}
-        password: ${etc.mailserver.password}
-        default_folder: INBOX
+    primary:
+      policy: bot
+      host: ${etc.mailserver.host}
+      port: ${etc.mailserver.imap_port}
+      username: ${etc.mailserver.username}
+      password: ${etc.mailserver.password}
+      default_folder: INBOX
+
+policies:
+  smtp:
+    bot:
+      require_confirmation: false
+  imap:
+    bot:
+      allow_read: true
+      allow_search: true
 ```
 
-Every key under `services` is a configured service. The core locates the plugin
-registered for that service key and passes `services.<service>` to it.
+Every non-empty key under `accounts` is a configured service. The core locates
+the plugin registered for that service key and passes a service runtime config
+containing `accounts.<service>` and `policies.<service>` to it.
 
 Hydra composition should choose service defaults and variants. For example, a
-deployment may compose a Google-specific SMTP schema into `services.smtp`
+deployment may compose a Google-specific SMTP schema into `accounts.smtp`
 without changing the service identity from `smtp`.
 
 The `etc` node is weakly structured operator-owned configuration space. It is
@@ -99,7 +109,7 @@ etc:
 ```
 
 The core knows that `etc` exists, but should not assign product semantics to
-its contents. Typed service config remains under `services.*`.
+its contents. Typed service config remains under `accounts.*` and `policies.*`.
 
 ## Plugin Discovery
 
@@ -109,8 +119,8 @@ Conceptually:
 
 ```toml
 [project.entry-points."agent_arbiter.services"]
-smtp = "agent_arbiter.plugins.smtp:plugin"
-imap = "agent_arbiter.plugins.imap:plugin"
+smtp = "agent_arbiter_smtp:plugin"
+imap = "agent_arbiter_imap:plugin"
 ```
 
 Namespace packages are not required for discovery. Plugin distributions can be
@@ -147,15 +157,14 @@ The second extraction stage moved SMTP and IMAP operation behavior into
 service-specific runtime objects. `AgentArbiterApp` remains only as a transitional
 facade for account discovery and existing test helpers.
 
-The third extraction stage introduced the first `services.*` config shape.
-Account metadata remains under `mail.accounts`, service-owned account transport
-config moved under `services.smtp.accounts` and `services.imap.accounts`, `etc`
-exists as weakly structured operator-owned interpolation space, and configured
-service nodes now determine which installed plugins are activated.
+The third extraction stage introduced the first service-owned config shape.
+The current shape makes accounts and policies top-level service-scoped maps:
+`accounts.smtp`, `accounts.imap`, `policies.smtp`, and `policies.imap`. The
+`etc` node exists as weakly structured operator-owned interpolation space, and
+configured account maps now determine which installed plugins are activated.
 
-Later stages should continue shrinking `AgentArbiterApp`, decide whether shared
-access profiles remain the policy home, and perform any chosen rename before
-release.
+Later stages should continue shrinking `AgentArbiterApp` and perform any chosen
+rename before release.
 
 ## Consequences
 

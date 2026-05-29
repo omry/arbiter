@@ -1,5 +1,8 @@
 defaults:
   - agent_arbiter_app_config_schema
+  - /arbiter/server: streamable-http
+  - /arbiter/account/imap/schema@accounts.imap.primary
+  - /arbiter/policy/imap/schema@policies.imap.alerts_readonly
   - _self_
 
 hydra:
@@ -18,27 +21,40 @@ server:
   stateless_http: true
   json_response: true
 
-mail:
-  account_access_profiles:
-    alerts_readonly:
-      services:
-        imap:
-          allow_read: true
-          allow_search: true
-          allow_move: false
-          allow_delete: false
-          confirmation_required: []
-          system_flags:
-            seen: read_only
-            flagged: read_only
-            answered: read_only
-            deleted: read_only
-            draft: read_only
-          user_flags: {}
-  accounts:
+accounts:
+  smtp: {}
+  imap:
     primary:
+      policy: alerts_readonly
       description: Read-only view of a selected alert folder.
-      account_access_profile: alerts_readonly
+      host: ${etc.mailserver.host}
+      port: ${etc.mailserver.port}
+      username: ${etc.mailserver.username}
+      password: ${etc.mailserver.password}
+      tls: ${oc.env:AGENT_ARBITER_IMAP_TLS,implicit}
+      verify_peer: ${oc.env:AGENT_ARBITER_IMAP_VERIFY_PEER,true}
+      timeout_seconds: ${oc.env:AGENT_ARBITER_IMAP_TIMEOUT_SECONDS,30.0}
+      default_folder: TARGET_IMAP_FOLDER
+      folders:
+        TARGET_IMAP_FOLDER:
+          description: Selected read-only alert folder.
+
+policies:
+  smtp: {}
+  imap:
+    alerts_readonly:
+      allow_read: true
+      allow_search: true
+      allow_move: false
+      allow_delete: false
+      confirmation_required: []
+      system_flags:
+        seen: read_only
+        flagged: read_only
+        answered: read_only
+        deleted: read_only
+        draft: read_only
+      user_flags: {}
 
 etc:
   mailserver:
@@ -46,20 +62,3 @@ etc:
     port: ${oc.env:AGENT_ARBITER_IMAP_PORT,993}
     username: ${secret_file:${oc.env:AGENT_ARBITER_IMAP_USERNAME_FILE,/run/secrets/imap_username}}
     password: ${secret_file:${oc.env:AGENT_ARBITER_IMAP_PASSWORD_FILE,/run/secrets/imap_password}}
-
-services:
-  smtp: null
-  imap:
-    accounts:
-      primary:
-        host: ${etc.mailserver.host}
-        port: ${etc.mailserver.port}
-        username: ${etc.mailserver.username}
-        password: ${etc.mailserver.password}
-        tls: ${oc.env:AGENT_ARBITER_IMAP_TLS,implicit}
-        verify_peer: ${oc.env:AGENT_ARBITER_IMAP_VERIFY_PEER,true}
-        timeout_seconds: ${oc.env:AGENT_ARBITER_IMAP_TIMEOUT_SECONDS,30.0}
-        default_folder: TARGET_IMAP_FOLDER
-        folders:
-          TARGET_IMAP_FOLDER:
-            description: Selected read-only alert folder.

@@ -3,7 +3,8 @@
 ## Current Shape
 
 The server is one MCP service whose current SMTP and IMAP capabilities are
-loaded through service plugins and activated by `services.*` configuration:
+loaded through service plugins and activated by `accounts.<service>`
+configuration:
 
 - `list_accounts`
 - `send_email`
@@ -26,19 +27,21 @@ The point of the implementation is not to build a generic mail framework. It is 
 The planned platform direction is captured in
 [ADR 0001: Service Plugin Architecture](adr/0001-service-plugin-architecture.md).
 SMTP and IMAP now register through the plugin boundary, own service-specific
-runtime objects, and receive service-owned account config from `services.smtp`
-or `services.imap`. They are still temporarily in-tree; the target package
-shape is independently installable service plugins with no built-in service
-status in the core.
+runtime objects, and receive service-owned account and policy config from
+`accounts.<service>` and `policies.<service>`. They live in independently
+installable service-plugin projects so the core has no built-in service status.
+
+Agent-facing skills are intentionally not part of this package split yet. A
+future skill integration should sit above the arbiter surface and compose
+across installed services rather than belonging to `core/`, `smtp/`, or `imap/`.
 
 ## Main responsibilities
 
 - MCP handlers:
   accept tool calls, validate input, and return the documented response shapes
 - Config loading:
-  load account metadata from `mail.accounts`, service-owned connection config
-  from `services.*`, operator interpolation values from `etc`, and access
-  policy from `mail.account_access_profiles`
+  load service-owned account config from `accounts.*`, reusable policy config
+  from `policies.*`, and operator interpolation values from `etc`
 - Send-email flow:
   resolve the selected account, apply policy checks, build the RFC 5322/MIME message, and submit it through the SMTP runtime
 - IMAP flow:
@@ -62,6 +65,36 @@ status in the core.
 ```text
 agent-arbiter/
   README.md
+  pyproject.toml     # shared test/type/format tool config, not a package
+  noxfile.py         # repo-level orchestration across packages
+  Dockerfile         # composed runnable product image
+  core/
+    pyproject.toml
+    src/
+      agent_arbiter/
+        app.py       # account discovery facade
+        config.py    # dataclass config schema and validation
+        main.py      # FastMCP server bootstrap and core tool registration
+        services.py  # service plugin contract and runtime registry
+    tests/
+  smtp/
+    pyproject.toml
+    src/
+      agent_arbiter_smtp/
+        __init__.py  # SMTP service plugin and runtime
+        client.py    # SMTP transport adapter
+    tests/
+  imap/
+    pyproject.toml
+    src/
+      agent_arbiter_imap/
+        __init__.py  # IMAP service plugin and runtime
+        client.py    # IMAP transport adapter
+    tests/
+  deploy/
+    compose.yaml
+    config.yaml
+    readonly-imap/
   docs/
     overview.md
     architecture.md
@@ -72,18 +105,6 @@ agent-arbiter/
       list_accounts.md
       send_email.md
       imap_extension.md
-  src/
-    agent_arbiter/
-      app.py       # transitional facade and account discovery
-      config.py    # dataclass config schema and validation
-      main.py      # FastMCP server bootstrap and core tool registration
-      services.py  # service plugin contract and runtime registry
-      plugins/
-        smtp.py    # SMTP service plugin and runtime
-        imap.py    # IMAP service plugin and runtime
-      smtp.py      # SMTP transport adapter
-      imap.py      # IMAP transport adapter
-  tests/
 ```
 
 ## Implementation notes
@@ -93,4 +114,5 @@ agent-arbiter/
 - Keep account/folder access policy in service runtimes rather than transport adapters.
 - Centralize logging and error normalization when those hardening pieces are implemented.
 - Keep durable audit storage and audit policy configuration as post-v1 work.
-- Keep `AgentArbiterApp` temporary; it should shrink as `services.*` config and service discovery mature.
+- Keep repo-level integration adapters out of service packages unless they
+  become distributable plugin packages themselves.

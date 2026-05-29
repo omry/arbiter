@@ -10,9 +10,9 @@ Current implementation status:
 - account discovery with SMTP and IMAP capability metadata
 - SMTP submission with configured sender identity, TLS/auth settings, text/HTML bodies, and Bcc kept out of message headers
 - IMAP list/get/search/move/mark-read/delete tools scoped to configured accounts and folders
-- `account_access_profile` as the current shared policy object for per-service SMTP and IMAP policy
+- top-level `accounts.<service>` and reusable `policies.<service>` objects for
+  per-service account policy
 - Docker deployment files for a standard SMTP gateway and a hardened read-only IMAP variant
-- temporary OpenClaw wrapper skills for SMTP send flows
 
 Known open gaps:
 
@@ -22,7 +22,8 @@ Known open gaps:
   the v1 observability focus
 - normalized error-code responses are still a design contract, while the
   implementation currently surfaces Python/MCP errors
-- OpenClaw wrapper skills currently cover SMTP send flows, not the IMAP tools
+- the agent-facing skill integration path is intentionally not implemented in
+  this repository yet
 
 ## Development
 
@@ -30,7 +31,7 @@ Create and use the repo-local virtualenv with:
 
 - `python3 -m venv .venv`
 - `.venv/bin/python -m pip install --upgrade pip`
-- `.venv/bin/python -m pip install -e ".[dev]"`
+- `.venv/bin/python -m pip install -e core -e smtp -e imap`
 
 Run the test suite from the repo root with:
 
@@ -41,18 +42,14 @@ The `lint` session runs both `black --check` and the Agent Arbiter `mypy` passes
 
 For focused local runs without `nox`, use the same environment directly, for example:
 
-- `.venv/bin/python -m pytest tests/unit/test_config.py`
-- `.venv/bin/python -m pytest tests/unit/test_app.py`
+- `.venv/bin/python -m pytest core/tests/unit/test_config.py`
+- `.venv/bin/python -m pytest core/tests/unit/test_app.py`
 
 The design is documented in the `docs/` structure used by the MCP server template:
 
 - [docs/overview.md](docs/overview.md)
 - [docs/architecture.md](docs/architecture.md)
 - [docs/BACKLOG.md](docs/BACKLOG.md)
-- [docs/openclaw-integration/README.md](docs/openclaw-integration/README.md)
-- [docs/openclaw-integration/wrapper-skill-decision.md](docs/openclaw-integration/wrapper-skill-decision.md)
-- [docs/openclaw-integration/send-email-skills.md](docs/openclaw-integration/send-email-skills.md)
-- [openclaw_skills/README.md](openclaw_skills/README.md)
 - [docs/config.md](docs/config.md)
 - [docs/policies.md](docs/policies.md)
 - [docs/errors.md](docs/errors.md)
@@ -86,32 +83,58 @@ server:
   port: 8025
   path: /mcp
 
-mail:
-  account_access_profiles:
-    bot:
-      services:
-        smtp:
-          require_confirmation: false
-          recipient_policy:
-            allowed_domain_patterns:
-              - example.com
-        imap:
-          allow_read: true
-          allow_search: true
-          allow_move: true
-          allow_delete: false
-          confirmation_required: []
-          system_flags:
-            seen: read_write
-            flagged: read_only
-            answered: read_only
-            deleted: read_only
-            draft: read_only
-          user_flags: {}
-  accounts:
+accounts:
+  smtp:
     primary:
+      policy: bot
       description: Local bot mailbox.
-      account_access_profile: bot
+      host: ${etc.mailserver.smtp_host}
+      port: ${etc.mailserver.smtp_port}
+      authenticate: true
+      username: ${oc.env:AGENT_ARBITER_SMTP_USERNAME}
+      password: ${oc.env:AGENT_ARBITER_SMTP_PASSWORD}
+      from_email: ${oc.env:AGENT_ARBITER_SMTP_FROM_EMAIL}
+      from_name: ${oc.env:AGENT_ARBITER_SMTP_FROM_NAME,Agent Arbiter}
+      tls: ${oc.env:AGENT_ARBITER_SMTP_TLS,starttls}
+      verify_peer: ${oc.env:AGENT_ARBITER_SMTP_VERIFY_PEER,true}
+  imap:
+    primary:
+      policy: bot
+      description: Local bot mailbox.
+      host: ${etc.mailserver.imap_host}
+      port: ${etc.mailserver.imap_port}
+      username: ${oc.env:AGENT_ARBITER_IMAP_USERNAME}
+      password: ${oc.env:AGENT_ARBITER_IMAP_PASSWORD}
+      tls: ${oc.env:AGENT_ARBITER_IMAP_TLS,implicit}
+      verify_peer: ${oc.env:AGENT_ARBITER_IMAP_VERIFY_PEER,true}
+      default_folder: INBOX
+      folders:
+        INBOX:
+          description: Primary inbox.
+        Archive:
+          description: Archive folder.
+
+policies:
+  smtp:
+    bot:
+      require_confirmation: false
+      recipient_policy:
+        allowed_domain_patterns:
+          - example.com
+  imap:
+    bot:
+      allow_read: true
+      allow_search: true
+      allow_move: true
+      allow_delete: false
+      confirmation_required: []
+      system_flags:
+        seen: read_write
+        flagged: read_only
+        answered: read_only
+        deleted: read_only
+        draft: read_only
+      user_flags: {}
 
 etc:
   mailserver:
@@ -120,34 +143,6 @@ etc:
     imap_host: ${oc.env:AGENT_ARBITER_IMAP_HOST}
     imap_port: ${oc.env:AGENT_ARBITER_IMAP_PORT,993}
 
-services:
-  smtp:
-    accounts:
-      primary:
-        host: ${etc.mailserver.smtp_host}
-        port: ${etc.mailserver.smtp_port}
-        authenticate: true
-        username: ${oc.env:AGENT_ARBITER_SMTP_USERNAME}
-        password: ${oc.env:AGENT_ARBITER_SMTP_PASSWORD}
-        from_email: ${oc.env:AGENT_ARBITER_SMTP_FROM_EMAIL}
-        from_name: ${oc.env:AGENT_ARBITER_SMTP_FROM_NAME,Agent Arbiter}
-        tls: ${oc.env:AGENT_ARBITER_SMTP_TLS,starttls}
-        verify_peer: ${oc.env:AGENT_ARBITER_SMTP_VERIFY_PEER,true}
-  imap:
-    accounts:
-      primary:
-        host: ${etc.mailserver.imap_host}
-        port: ${etc.mailserver.imap_port}
-        username: ${oc.env:AGENT_ARBITER_IMAP_USERNAME}
-        password: ${oc.env:AGENT_ARBITER_IMAP_PASSWORD}
-        tls: ${oc.env:AGENT_ARBITER_IMAP_TLS,implicit}
-        verify_peer: ${oc.env:AGENT_ARBITER_IMAP_VERIFY_PEER,true}
-        default_folder: INBOX
-        folders:
-          INBOX:
-            description: Primary inbox.
-          Archive:
-            description: Archive folder.
 ```
 
 Then run from this directory:

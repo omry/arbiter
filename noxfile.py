@@ -1,44 +1,50 @@
 from __future__ import annotations
 
-from pathlib import Path
-
-import nox
+import nox  # type: ignore[import-not-found]
 
 
 nox.options.sessions = ["tests", "lint"]
 
 BLACK_TARGETS = [
-    "src",
-    "tests",
-    "openclaw_skills/_shared/scripts",
-    "openclaw_skills/send-email-interactive/scripts",
-    "openclaw_skills/send-email-predefined/scripts",
+    "core/src",
+    "core/tests",
+    "smtp/src",
+    "smtp/tests",
+    "imap/src",
+    "imap/tests",
     "noxfile.py",
 ]
-STRICT_MYPY_TARGETS = ["src"]
+STRICT_MYPY_TARGETS = ["core/src", "smtp/src", "imap/src"]
 SUPPLEMENTAL_MYPY_TARGETS = [
-    "tests",
+    "core/tests",
+    "smtp/tests",
+    "imap/tests",
     "noxfile.py",
 ]
-SHARED_SKILL_MYPY_TARGETS = ["openclaw_skills/_shared/scripts/agent_arbiter_client.py"]
-SKILL_SCRIPT_MYPY_TARGETS = [
-    "openclaw_skills/send-email-interactive/scripts/send_email_interactive.py",
-    "openclaw_skills/send-email-predefined/scripts/send_email_predefined.py",
-]
-SHARED_SKILL_SCRIPTS_DIR = str(Path("openclaw_skills/_shared/scripts").resolve())
 
 
 def install_project(session: nox.Session) -> None:
-    session.install("-e", ".[dev]")
+    session.install(
+        "aiosmtpd>=1.4.6,<2.0",
+        "black>=25.0,<26.0",
+        "mypy>=1.11,<2.0",
+        "pytest>=7.4,<9.0",
+        "trustme>=1.2,<2.0",
+    )
+    session.install("-e", "core")
+    session.install("-e", "smtp")
+    session.install("-e", "imap")
 
 
-@nox.session
+@nox.session  # type: ignore[untyped-decorator]
 def tests(session: nox.Session) -> None:
     install_project(session)
-    session.run("pytest", *(session.posargs or ["tests"]))
+    session.run(
+        "pytest", *(session.posargs or ["core/tests", "smtp/tests", "imap/tests"])
+    )
 
 
-@nox.session
+@nox.session  # type: ignore[untyped-decorator]
 def lint(session: nox.Session) -> None:
     install_project(session)
     session.run("black", "--check", *BLACK_TARGETS)
@@ -49,19 +55,4 @@ def lint(session: nox.Session) -> None:
         "--allow-incomplete-defs",
         "--check-untyped-defs",
         *SUPPLEMENTAL_MYPY_TARGETS,
-    )
-    session.run(
-        "mypy",
-        "--allow-untyped-defs",
-        "--allow-incomplete-defs",
-        "--check-untyped-defs",
-        *SHARED_SKILL_MYPY_TARGETS,
-    )
-    session.run(
-        "mypy",
-        "--allow-untyped-defs",
-        "--allow-incomplete-defs",
-        "--check-untyped-defs",
-        *SKILL_SCRIPT_MYPY_TARGETS,
-        env={"MYPYPATH": SHARED_SKILL_SCRIPTS_DIR},
     )

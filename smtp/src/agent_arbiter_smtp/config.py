@@ -1,0 +1,73 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import Enum
+
+from agent_arbiter.config import Policy
+from hydra.core.config_store import ConfigStore
+
+
+class MailTlsMode(str, Enum):
+    none = "none"
+    starttls = "starttls"
+    implicit = "implicit"
+
+
+@dataclass
+class SMTPLimitsConfig:
+    max_messages_per_minute: int | None = None
+    max_recipients_per_message: int | None = None
+
+
+@dataclass
+class SMTPIdempotencyConfig:
+    expiration_days: int = 7
+
+
+@dataclass
+class SMTPRecipientPolicyConfig:
+    allowed_recipients: list[str] = field(default_factory=list)
+    blocked_recipients: list[str] = field(default_factory=list)
+    allowed_domain_patterns: list[str] = field(default_factory=list)
+    blocked_domain_patterns: list[str] = field(default_factory=list)
+
+
+@dataclass
+class SMTPConfig(Policy):
+    policy: str = "bot"
+    description: str = ""
+    host: str = "localhost"
+    port: int = 587
+    authenticate: bool = False
+    username: str = ""
+    password: str = ""
+    from_email: str = "agent@example.com"
+    from_name: str = "Agent Arbiter"
+    tls: MailTlsMode = MailTlsMode.starttls
+    verify_peer: bool = True
+    timeout_seconds: float = 30.0
+
+
+@dataclass
+class SMTPServicePolicyConfig(Policy):
+    require_confirmation: bool = False
+    limits: SMTPLimitsConfig = field(default_factory=SMTPLimitsConfig)
+    idempotency: SMTPIdempotencyConfig = field(default_factory=SMTPIdempotencyConfig)
+    recipient_policy: SMTPRecipientPolicyConfig = field(
+        default_factory=SMTPRecipientPolicyConfig
+    )
+
+
+def register_configs(config_store: ConfigStore) -> None:
+    config_store.store(
+        group="arbiter/account/smtp",
+        name="schema",
+        node=SMTPConfig,
+        provider="agent-arbiter-smtp",
+    )
+    config_store.store(
+        group="arbiter/policy/smtp",
+        name="schema",
+        node=SMTPServicePolicyConfig,
+        provider="agent-arbiter-smtp",
+    )

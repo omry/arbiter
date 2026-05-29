@@ -17,12 +17,16 @@ Current implications:
 - at this stage, policy enforcement is configuration-driven rather than caller-identity-driven
 - Agent Arbiter is the authority boundary: the bot can access whatever Agent
   Arbiter exposes through configured accounts, enabled services, and policy
-  profiles
+  objects
 - account names and descriptions, including labels such as `personal`, are
   advisory context for caller behavior, not built-in enforcement tiers
 
-The current implementation uses `account_access_profile` as the shared policy
-object for per-service SMTP and IMAP policy.
+The current implementation uses top-level service-scoped policies:
+
+- SMTP accounts reference `policies.smtp.<policy>` through
+  `accounts.smtp.<account>.policy`
+- IMAP accounts reference `policies.imap.<policy>` through
+  `accounts.imap.<account>.policy`
 
 ## Current Runtime Policies
 
@@ -82,7 +86,8 @@ The durable audit log should:
 
 Future protocol-specific audit policy:
 
-- decide whether audit belongs under `mail.account_access_profiles.<profile>.services` or a separate policy block
+- decide whether audit belongs under `policies.<service>.<policy>` or a
+  separate policy block
 - define the final SMTP audit settings shape
 - define the final IMAP audit settings shape
 - there is no per-account audit override in the current design
@@ -119,13 +124,13 @@ The durable audit log should be treated as a distinct storage and retention conc
 
 The config schema includes these SMTP safety controls:
 
-- `mail.account_access_profiles.<profile>.services.smtp.limits.max_messages_per_minute`
-- `mail.account_access_profiles.<profile>.services.smtp.limits.max_recipients_per_message`
-- `mail.account_access_profiles.<profile>.services.smtp.recipient_policy.allowed_recipients`
-- `mail.account_access_profiles.<profile>.services.smtp.recipient_policy.blocked_recipients`
-- `mail.account_access_profiles.<profile>.services.smtp.recipient_policy.allowed_domain_patterns`
-- `mail.account_access_profiles.<profile>.services.smtp.recipient_policy.blocked_domain_patterns`
-- `mail.account_access_profiles.<profile>.services.smtp.idempotency.expiration_days`
+- `policies.smtp.<policy>.limits.max_messages_per_minute`
+- `policies.smtp.<policy>.limits.max_recipients_per_message`
+- `policies.smtp.<policy>.recipient_policy.allowed_recipients`
+- `policies.smtp.<policy>.recipient_policy.blocked_recipients`
+- `policies.smtp.<policy>.recipient_policy.allowed_domain_patterns`
+- `policies.smtp.<policy>.recipient_policy.blocked_domain_patterns`
+- `policies.smtp.<policy>.idempotency.expiration_days`
 
 Current runtime status:
 
@@ -138,8 +143,8 @@ Current runtime status:
 
 Caller confirmation policy is configured through:
 
-- `mail.account_access_profiles.<profile>.services.smtp.require_confirmation`
-- `mail.account_access_profiles.<profile>.services.imap.confirmation_required`
+- `policies.smtp.<policy>.require_confirmation`
+- `policies.imap.<policy>.confirmation_required`
 
 ## Future boundary hardening
 
@@ -156,14 +161,14 @@ Before broadening deployment, revisit at least these questions:
 
 ## Current IMAP flag policy
 
-The current profile model uses explicit protocol gates plus split IMAP flag
+The current IMAP policy model uses explicit protocol gates plus split IMAP flag
 policy:
 
 - keep coarse protocol gates for:
-  - `services.imap.allow_read`
-  - `services.imap.allow_search`
-  - `services.imap.allow_move`
-  - `services.imap.allow_delete`
+  - `policies.imap.<policy>.allow_read`
+  - `policies.imap.<policy>.allow_search`
+  - `policies.imap.<policy>.allow_move`
+  - `policies.imap.<policy>.allow_delete`
 - replace coarse IMAP write gating with two flag-policy groups:
   - `system_flags`
   - `user_flags`

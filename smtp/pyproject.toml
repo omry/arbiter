@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-arbiter-smtp"
+version = "0.1.1.dev1"
+description = "SMTP service plugin for Agent Arbiter"
+readme = { text = "SMTP service plugin for Agent Arbiter.", content-type = "text/markdown" }
+requires-python = ">=3.10"
+authors = [
+  { name = "Omry Yadan", email = "omry@yadan.net" },
+]
+maintainers = [
+  { name = "Omry Yadan", email = "omry@yadan.net" },
+]
+keywords = ["agent", "mcp", "smtp", "email"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Communications :: Email",
+]
+dependencies = [
+  "agent-arbiter-core==0.1.1.dev1",
+  "pydantic>=2,<3",
+]
+
+[project.urls]
+Homepage = "https://github.com/omry/agent-arbiter"
+Repository = "https://github.com/omry/agent-arbiter"
+
+[project.entry-points."agent_arbiter.services"]
+smtp = "agent_arbiter_smtp:plugin"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"agent_arbiter_smtp" = ["py.typed"]
