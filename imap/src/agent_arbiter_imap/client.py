@@ -79,8 +79,7 @@ class IMAPClient:
         with self._session() as server:
             self._select_folder(server, folder, readonly=False)
             self._mark_deleted(server, uid)
-            status, data = server.expunge()
-            self._expect_ok(status, data, "expunge deleted message")
+            self._expunge_uid(server, uid, "expunge deleted message")
 
     def _session(self) -> IMAPSession:
         return IMAPSession(self._connect())
@@ -214,8 +213,7 @@ class IMAPClient:
         status, data = server.uid("COPY", uid, destination_folder)
         self._expect_ok(status, data, "copy message")
         self._mark_deleted(server, uid)
-        status, data = server.expunge()
-        self._expect_ok(status, data, "expunge moved message")
+        self._expunge_uid(server, uid, "expunge moved message")
 
     def _mark_deleted(
         self,
@@ -224,6 +222,15 @@ class IMAPClient:
     ) -> None:
         status, data = server.uid("STORE", uid, "+FLAGS.SILENT", r"(\Deleted)")
         self._expect_ok(status, data, "mark message deleted")
+
+    def _expunge_uid(
+        self,
+        server: imaplib.IMAP4 | imaplib.IMAP4_SSL,
+        uid: str,
+        action: str,
+    ) -> None:
+        status, data = server.uid("EXPUNGE", uid)
+        self._expect_ok(status, data, action)
 
     def _expect_ok(self, status: str, data: list[Any], action: str) -> None:
         if status.upper() != "OK":

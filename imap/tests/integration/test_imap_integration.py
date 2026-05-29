@@ -202,6 +202,11 @@ class _LocalIMAPServerRunner:
             ).encode()
         if subcommand == "COPY":
             return f"{tag} OK COPY completed\r\n".encode()
+        if subcommand == "EXPUNGE":
+            uid = args.strip()
+            return (
+                f"* {uid} EXPUNGE\r\n" f"{tag} OK UID EXPUNGE completed\r\n"
+            ).encode()
         return f"{tag} BAD unsupported UID command\r\n".encode()
 
     def _mailbox_name(self, value: str) -> str:
@@ -319,7 +324,7 @@ def test_imap_client_mutations_against_local_server(
         command.endswith(r"UID STORE 42 +FLAGS.SILENT (\Deleted)")
         for command in imap_server.commands
     )
-    assert any(command.endswith("EXPUNGE") for command in imap_server.commands)
+    assert any(command.endswith("UID EXPUNGE 42") for command in imap_server.commands)
 
 
 def test_imap_client_falls_back_when_move_is_unsupported(
@@ -340,7 +345,7 @@ def test_imap_client_falls_back_when_move_is_unsupported(
         command.endswith(r"UID STORE 42 +FLAGS.SILENT (\Deleted)")
         for command in imap_server.commands
     )
-    assert any(command.endswith("EXPUNGE") for command in imap_server.commands)
+    assert any(command.endswith("UID EXPUNGE 42") for command in imap_server.commands)
 
 
 def test_imap_client_quotes_text_search_query(

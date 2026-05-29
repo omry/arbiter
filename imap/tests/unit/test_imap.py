@@ -30,7 +30,6 @@ class FakeIMAPServer:
         self.login_args: tuple[str, str] | None = None
         self.starttls_context: ssl.SSLContext | None = None
         self.logged_out = False
-        self.expunge_calls = 0
         self.raise_on_move = False
 
     def select(self, mailbox: str, readonly: bool = False) -> tuple[str, list[bytes]]:
@@ -54,10 +53,6 @@ class FakeIMAPServer:
 
     def login(self, username: str, password: str) -> None:
         self.login_args = (username, password)
-
-    def expunge(self) -> tuple[str, list[bytes]]:
-        self.expunge_calls += 1
-        return "OK", [b"42"]
 
     def logout(self) -> tuple[str, list[bytes]]:
         self.logged_out = True
@@ -137,7 +132,7 @@ def test_starttls_uses_configured_context(monkeypatch: pytest.MonkeyPatch) -> No
     assert fake_server.starttls_context.verify_mode == ssl.CERT_NONE
 
 
-def test_move_falls_back_to_copy_delete_and_expunge(
+def test_move_falls_back_to_copy_delete_and_uid_expunge(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake_server = FakeIMAPServer()
@@ -165,7 +160,29 @@ def test_move_falls_back_to_copy_delete_and_expunge(
     assert fake_server.selected == [{"mailbox": "INBOX", "readonly": False}]
     assert ("COPY", ("42", "Archive")) in fake_server.uid_calls
     assert ("STORE", ("42", "+FLAGS.SILENT", r"(\Deleted)")) in fake_server.uid_calls
-    assert fake_server.expunge_calls == 1
+    assert ("EXPUNGE", ("42",)) in fake_server.uid_calls
+
+
+def test_delete_message_uses_uid_expunge(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_server = FakeIMAPServer()
+
+    def fake_imap4_ssl(
+        host: str,
+        port: int,
+        *,
+        ssl_context: ssl.SSLContext,
+        timeout: float,
+    ) -> FakeIMAPServer:
+        return fake_server
+
+    monkeypatch.setattr("agent_arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+
+    client = IMAPClient(IMAPConfig())
+
+    client.delete_message(folder="INBOX", uid="42")
+
+    assert ("STORE", ("42", "+FLAGS.SILENT", r"(\Deleted)")) in fake_server.uid_calls
+    assert ("EXPUNGE", ("42",)) in fake_server.uid_calls
 
 
 def test_fetch_without_rfc822_data_raises(monkeypatch: pytest.MonkeyPatch) -> None:

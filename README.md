@@ -31,7 +31,7 @@ Create and use the repo-local virtualenv with:
 
 - `python3 -m venv .venv`
 - `.venv/bin/python -m pip install --upgrade pip`
-- `.venv/bin/python -m pip install -e core -e smtp -e imap`
+- `.venv/bin/python -m pip install -e ".[dev]" -e core -e smtp -e imap`
 
 Run the test suite from the repo root with:
 

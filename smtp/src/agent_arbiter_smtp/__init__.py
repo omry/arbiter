@@ -63,6 +63,7 @@ class SMTPRuntime:
         self._smtp_client_factory = smtp_client_factory
         self._time_provider = time_provider
         self._attempt_timestamps: dict[str, list[float]] = {}
+        self._validate_policy_references()
 
     def account_summaries(self) -> dict[str, object]:
         return {
@@ -149,6 +150,14 @@ class SMTPRuntime:
             )
 
         return smtp_config, smtp_policy
+
+    def _validate_policy_references(self) -> None:
+        for account_name, smtp_config in sorted(self._accounts.items()):
+            if smtp_config.policy not in self._policies:
+                raise ValueError(
+                    "SMTP account references an unknown policy: "
+                    f"{account_name} -> {smtp_config.policy}"
+                )
 
     def _normalize_recipients(
         self,

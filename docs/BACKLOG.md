@@ -46,6 +46,14 @@ This file is the day-to-day queue for design and implementation gaps.
 
 ## Post-v1
 
+- [ ] `P2` Design live config reload for service runtimes. A future reload path
+      should apply validated configuration changes without interrupting
+      in-flight tool calls. Acceptance checks: define whether reload happens by
+      rebuilding the full server, swapping only affected service runtimes, or
+      refreshing selected subsystem state; new connections or tool calls see
+      the new config only after validation succeeds; failed reloads keep the
+      previous runtime active; and logs expose which services changed.
+
 - [ ] `P2` Decide whether service-scoped policies should remain the long-term
       home for access gates and caller confirmation.
       The current implementation uses service-scoped policies for access gates

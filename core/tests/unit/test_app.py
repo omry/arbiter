@@ -335,6 +335,14 @@ def test_send_email_rejects_unconfigured_account() -> None:
         )
 
 
+def test_smtp_runtime_rejects_unknown_policy_reference() -> None:
+    with pytest.raises(
+        ValueError,
+        match="SMTP account references an unknown policy: primary -> missing",
+    ):
+        _smtp_runtime(accounts={"primary": SMTPConfig(policy="missing")}, policies={})
+
+
 def test_send_email_enforces_recipient_policy() -> None:
     runtime = _smtp_runtime(
         policies={
@@ -413,6 +421,16 @@ def test_list_messages_uses_account_policy_and_folder_config() -> None:
         }
     ]
     assert factory.clients[0].list_calls == [{"folder": "INBOX", "limit": 1}]
+
+
+def test_imap_runtime_rejects_unknown_policy_reference() -> None:
+    with pytest.raises(
+        ValueError,
+        match="IMAP account references an unknown policy: personal -> missing",
+    ):
+        _imap_runtime(
+            accounts={"personal": _imap_config(policy="missing")}, policies={}
+        )
 
 
 def test_get_message_includes_body() -> None:

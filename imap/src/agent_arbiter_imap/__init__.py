@@ -77,6 +77,7 @@ class IMAPRuntime:
             policies,
         )
         self._imap_client_factory = imap_client_factory
+        self._validate_policy_references()
 
     def account_summaries(self) -> dict[str, object]:
         summaries: dict[str, object] = {}
@@ -281,6 +282,14 @@ class IMAPRuntime:
                 f"{tool_name} account references an unknown IMAP policy: {account_name}"
             )
         return imap_config, imap_policy, folder_name
+
+    def _validate_policy_references(self) -> None:
+        for account_name, imap_config in sorted(self._accounts.items()):
+            if imap_config.policy not in self._policies:
+                raise ValueError(
+                    "IMAP account references an unknown policy: "
+                    f"{account_name} -> {imap_config.policy}"
+                )
 
     def _resolve_optional_folder(
         self,

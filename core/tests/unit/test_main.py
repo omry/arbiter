@@ -61,13 +61,15 @@ def test_build_app_list_accounts_uses_real_config_shape() -> None:
     }
 
 
-def test_build_app_leaves_policy_reference_validation_to_plugins() -> None:
+def test_build_app_rejects_unknown_service_policy_reference() -> None:
     cfg = OmegaConf.structured(_app_config_with_smtp())
     cfg.accounts.smtp.primary.policy = "missing"
 
-    app = build_app(cfg, service_plugins=_test_service_plugins())
-
-    assert app.tool_names() == ["list_accounts", "send_email"]
+    with pytest.raises(
+        ValueError,
+        match="SMTP account references an unknown policy: primary -> missing",
+    ):
+        build_app(cfg, service_plugins=_test_service_plugins())
 
 
 def test_build_app_activates_dynamic_entry_point_service() -> None:
