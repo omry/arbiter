@@ -390,8 +390,8 @@ def test_arbiter_client_console_script_reports_clean_connection_failure(
     assert result.returncode == 1
     assert result.stdout == ""
     assert result.stderr == (
-        "Could not connect to Agent Arbiter at http://127.0.0.1:9/mcp. "
-        "Is arbiter-server serve running?\n"
+        "Agent Arbiter connection error: could not connect to Agent Arbiter at "
+        "http://127.0.0.1:9/mcp. Is arbiter-server serve running?\n"
     )
 
 
@@ -411,8 +411,8 @@ def test_arbiter_client_console_script_reads_client_config(
     assert result.returncode == 1
     assert result.stdout == ""
     assert result.stderr == (
-        "Could not connect to Agent Arbiter at http://127.0.0.1:9/mcp. "
-        "Is arbiter-server serve running?\n"
+        "Agent Arbiter connection error: could not connect to Agent Arbiter at "
+        "http://127.0.0.1:9/mcp. Is arbiter-server serve running?\n"
     )
 
 

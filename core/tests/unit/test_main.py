@@ -716,8 +716,8 @@ def test_cli_bootstrap_arbiter_writes_main_config(
     assert capsys.readouterr().err == (
         "Agent Arbiter config error: config must define at least one service "
         "account before Agent Arbiter can run\n"
-        "currently installed arbiter plugins: imap, smtp\n"
-        "use `arbiter-server --config-dir DIR bootstrap plugin PLUGIN account "
+        "  currently installed arbiter plugins: imap, smtp\n"
+        "  use `arbiter-server --config-dir DIR bootstrap plugin PLUGIN account "
         "NAME` to create an account config\n"
     )
 
@@ -732,8 +732,8 @@ def test_cli_bootstrap_arbiter_writes_main_config(
     assert capsys.readouterr().err == (
         "Agent Arbiter config error: config must define at least one service "
         "account before Agent Arbiter can run\n"
-        "currently installed arbiter plugins: imap, smtp\n"
-        "use `arbiter-server --config-dir DIR bootstrap plugin PLUGIN account "
+        "  currently installed arbiter plugins: imap, smtp\n"
+        "  use `arbiter-server --config-dir DIR bootstrap plugin PLUGIN account "
         "NAME` to create an account config\n"
     )
     assert served == {}
@@ -844,7 +844,8 @@ def test_cli_bootstrap_plugin_account_refuses_existing_policy_without_partial_wr
     assert not account_file.exists()
     assert policy_file.read_text(encoding="utf-8") == "existing: true\n"
     assert capsys.readouterr().err == (
-        f"refusing to overwrite existing file: {policy_file}\n"
+        "Agent Arbiter bootstrap error: refusing to overwrite existing file: "
+        f"{policy_file}\n"
     )
 
 
@@ -1161,7 +1162,8 @@ def test_cli_bootstrap_plugin_refuses_missing_example(
     )
 
     assert capsys.readouterr().err == (
-        "service plugin does not provide an account bootstrap example: imap\n"
+        "Agent Arbiter bootstrap error: service plugin does not provide an "
+        "account bootstrap example: imap\n"
     )
 
 

@@ -327,7 +327,8 @@ def test_client_bootstrap_refuses_to_overwrite_existing_config(
 
     assert client.main(["--config-dir", str(tmp_path), "bootstrap", "client"]) == 1
     assert capsys.readouterr().err == (
-        f"refusing to overwrite existing file: {config_file}\n"
+        "Agent Arbiter client config error: refusing to overwrite existing file: "
+        f"{config_file}\n"
     )
 
 
@@ -632,6 +633,64 @@ def test_client_describes_account(
     )
 
 
+def test_client_describes_account_with_colon_shorthand(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        assert name == "describe_cap"
+        assert arguments == {"capability": "imap"}
+        return SimpleNamespace(
+            structuredContent={"accounts": {"bot": {"enabled": True}}},
+        )
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert client.main(["accounts", "desc", "imap:bot"]) == 0
+
+    assert capsys.readouterr().out == (
+        '{"account": "bot", "capability": "imap", '
+        '"details": {"enabled": true}}\n'
+    )
+
+
+def test_client_unwraps_mcp_tool_errors_for_high_level_commands(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        assert name == "describe_cap"
+        assert arguments == {"capability": "imap:bot"}
+        return SimpleNamespace(
+            content=[
+                SimpleNamespace(
+                    text=(
+                        "Error executing tool describe_cap: "
+                        "unknown capability: imap:bot"
+                    )
+                )
+            ],
+            isError=True,
+            structuredContent=None,
+        )
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert client.main(["cap", "desc", "imap:bot"]) == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "Agent Arbiter tool error: unknown capability: imap:bot\n"
+
+
 def test_client_lists_accounts_accepts_plain_payload(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
@@ -734,6 +793,6 @@ def test_client_reports_clean_connection_failure(
     assert client.main(["mcp", "tools"]) == 1
 
     assert capsys.readouterr().err == (
-        "Could not connect to Agent Arbiter at http://127.0.0.1:8000/mcp. "
-        "Is arbiter-server serve running?\n"
+        "Agent Arbiter connection error: could not connect to Agent Arbiter at "
+        "http://127.0.0.1:8000/mcp. Is arbiter-server serve running?\n"
     )

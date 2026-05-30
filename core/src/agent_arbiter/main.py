@@ -15,6 +15,7 @@ from hydra import compose, initialize_config_dir
 from omegaconf import DictConfig, OmegaConf
 
 from .app import AgentArbiterApp
+from .cli_errors import print_cli_error
 from .config import (
     AppConfig,
     ArbiterConfig,
@@ -652,15 +653,19 @@ def _run_env_check(
             if reference.name not in satisfied
         ]
     except ValueError as exc:
-        print(f"Agent Arbiter env error: {exc}", file=sys.stderr)
+        print_cli_error(str(exc), area="env")
         return 1
     if missing:
-        print(
-            "Agent Arbiter env error: missing required environment variables:",
-            file=sys.stderr,
+        print_cli_error(
+            "missing required environment variables:",
+            area="env",
+            details=[
+                f"{reference.name} ({reference.block})"
+                for reference in sorted(
+                    missing, key=lambda item: (item.block, item.name)
+                )
+            ],
         )
-        for reference in sorted(missing, key=lambda item: (item.block, item.name)):
-            print(f"  {reference.name} ({reference.block})", file=sys.stderr)
         return 1
     print(f"env ok: {len(references)} variables satisfied")
     return 0
@@ -704,7 +709,7 @@ def _run_env_bootstrap(
             )
         existing_values = _read_env_file_values(env_file, missing_ok=True)
     except ValueError as exc:
-        print(f"Agent Arbiter env error: {exc}", file=sys.stderr)
+        print_cli_error(str(exc), area="env")
         return 1
 
     block_values: dict[str, dict[str, str]] = {}
@@ -749,7 +754,7 @@ def _run_serve(
         print("Agent Arbiter server stopped.", file=sys.stderr)
         return 130
     except ValueError as exc:
-        print(f"Agent Arbiter config error: {exc}", file=sys.stderr)
+        print_cli_error(str(exc), area="config")
         return 1
     return 0
 
@@ -768,7 +773,7 @@ def _run_config_check(
         )
         print(config_check_summary(cfg))
     except ValueError as exc:
-        print(f"Agent Arbiter config error: {exc}", file=sys.stderr)
+        print_cli_error(str(exc), area="config")
         return 1
     return 0
 
@@ -788,7 +793,7 @@ def _run_config_show(
         )
         print(OmegaConf.to_yaml(cfg, resolve=resolve), end="")
     except ValueError as exc:
-        print(f"Agent Arbiter config error: {exc}", file=sys.stderr)
+        print_cli_error(str(exc), area="config")
         return 1
     return 0
 
@@ -799,7 +804,10 @@ def _ensure_config_dir(config_dir: str | None) -> Path | None:
 
 def _write_bootstrap_file(path: Path, content: str, *, force: bool) -> int:
     if path.exists() and not force:
-        print(f"refusing to overwrite existing file: {path}", file=sys.stderr)
+        print_cli_error(
+            f"refusing to overwrite existing file: {path}",
+            area="bootstrap",
+        )
         return 1
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
@@ -814,7 +822,10 @@ def _write_bootstrap_files(
 ) -> int:
     for path, _content in files:
         if path.exists() and not force:
-            print(f"refusing to overwrite existing file: {path}", file=sys.stderr)
+            print_cli_error(
+                f"refusing to overwrite existing file: {path}",
+                area="bootstrap",
+            )
             return 1
     for path, content in files:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -833,10 +844,10 @@ def _run_bootstrap_arbiter(
     if config_dir_path is None:
         return 2
     if not BOOTSTRAP_NAME_PATTERN.fullmatch(config_name):
-        print(
+        print_cli_error(
             "config name must contain only letters, numbers, underscores, and "
             "dashes.",
-            file=sys.stderr,
+            area="bootstrap",
         )
         return 2
     return _write_bootstrap_files(
@@ -861,10 +872,10 @@ def _bootstrap_object_path(
 def _validate_bootstrap_object_args(plugin: str, name: str) -> bool:
     for label, value in (("plugin", plugin), ("name", name)):
         if not BOOTSTRAP_NAME_PATTERN.fullmatch(value):
-            print(
+            print_cli_error(
                 f"{label} must contain only letters, numbers, underscores, and "
                 "dashes.",
-                file=sys.stderr,
+                area="bootstrap",
             )
             return False
     return True
@@ -878,14 +889,14 @@ def _load_plugin_example_yaml(
     plugins = _service_plugin_map(discover_service_plugins())
     service_plugin = plugins.get(plugin)
     if service_plugin is None:
-        print(f"service plugin is not installed: {plugin}", file=sys.stderr)
+        print_cli_error(f"service plugin is not installed: {plugin}", area="bootstrap")
         return None
 
     node = service_plugin.bootstrap_config(kind=kind, name=name)
     if node is None:
-        print(
+        print_cli_error(
             f"service plugin does not provide an {kind} bootstrap example: {plugin}",
-            file=sys.stderr,
+            area="bootstrap",
         )
         return None
     if isinstance(node, str):
@@ -911,16 +922,16 @@ def _config_file_path(config_dir: Path, config_name: str) -> Path:
 
 def _load_main_config_lines(config_file: Path) -> list[str] | None:
     if not config_file.exists():
-        print(
+        print_cli_error(
             f"main config not found: {config_file}; run bootstrap arbiter first",
-            file=sys.stderr,
+            area="config",
         )
         return None
     lines = config_file.read_text(encoding="utf-8").splitlines(keepends=True)
     if "defaults:\n" not in lines:
-        print(
+        print_cli_error(
             f"main config does not contain a defaults list: {config_file}",
-            file=sys.stderr,
+            area="config",
         )
         return None
     return lines
@@ -1031,14 +1042,14 @@ def _read_account_policy(
         name=account_name,
     )
     if not account_file.exists():
-        print(f"account config not found: {account_file}", file=sys.stderr)
+        print_cli_error(f"account config not found: {account_file}", area="config")
         return None
     cfg = OmegaConf.load(account_file)
     policy = OmegaConf.select(cfg, "policy")
     if not isinstance(policy, str) or not policy:
-        print(
+        print_cli_error(
             f"account config must define a non-empty policy: {account_file}",
-            file=sys.stderr,
+            area="config",
         )
         return None
     return policy
@@ -1058,7 +1069,7 @@ def _ensure_config_object_file(
         name=name,
     )
     if not object_file.exists():
-        print(f"{kind} config not found: {object_file}", file=sys.stderr)
+        print_cli_error(f"{kind} config not found: {object_file}", area="config")
         return False
     return True
 
@@ -1093,13 +1104,13 @@ def _resolve_policy_config_name(
             name=candidate,
         ):
             return candidate
-    print(
+    print_cli_error(
         "policy config not found for account policy "
         f"{policy_name}: expected "
         f"{config_dir / 'arbiter' / 'policy' / plugin / f'{policy_name}.yaml'} "
         "or "
         f"{config_dir / 'arbiter' / 'policy' / plugin / f'{account_name}.yaml'}",
-        file=sys.stderr,
+        area="config",
     )
     return None
 
@@ -1156,7 +1167,7 @@ def _run_config_activate_account(
             _config_group_item(plugin, policy_config_name),
         )
     except ValueError as exc:
-        print(f"Agent Arbiter config error: {exc}", file=sys.stderr)
+        print_cli_error(str(exc), area="config")
         return 1
     if changed_account or changed_policy:
         _write_main_config_lines(config_file, lines)

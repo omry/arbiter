@@ -17,6 +17,7 @@ from mcp.client.streamable_http import streamablehttp_client
 from omegaconf import DictConfig, OmegaConf
 from omegaconf.errors import OmegaConfBaseException
 
+from .cli_errors import print_cli_error
 from .version import package_version
 
 
@@ -30,6 +31,10 @@ BOOTSTRAP_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 @dataclass(frozen=True)
 class ClientConfig:
     mcp_url: str | None = None
+
+
+class ToolCallError(RuntimeError):
+    pass
 
 
 def _json_default(value: object) -> object:
@@ -53,7 +58,32 @@ def _print_account_summary(accounts: Mapping[str, object]) -> None:
                 print(f"  {name}")
 
 
+def _mapping_or_attr(value: object, name: str, default: object = None) -> object:
+    if isinstance(value, Mapping):
+        return value.get(name, default)
+    return getattr(value, name, default)
+
+
+def _tool_result_error_message(result: object) -> str | None:
+    is_error = _mapping_or_attr(result, "isError", False)
+    if is_error is not True:
+        return None
+
+    content = _mapping_or_attr(result, "content", [])
+    if isinstance(content, Sequence) and not isinstance(content, str):
+        for item in content:
+            text = _mapping_or_attr(item, "text")
+            if isinstance(text, str) and text:
+                match = re.fullmatch(r"Error executing tool [^:]+: (.*)", text)
+                return match.group(1) if match else text
+    return "tool call failed"
+
+
 def _tool_result_payload(result: object) -> object:
+    error_message = _tool_result_error_message(result)
+    if error_message is not None:
+        raise ToolCallError(error_message)
+
     if isinstance(result, Mapping) and "structuredContent" in result:
         structured_content = result["structuredContent"]
         if structured_content is not None:
@@ -64,6 +94,18 @@ def _tool_result_payload(result: object) -> object:
         return structured_content
 
     return result
+
+
+def _split_account_selector(
+    capability: str,
+    account: str | None,
+) -> tuple[str, str | None]:
+    if account is not None or ":" not in capability:
+        return capability, account
+    split_capability, split_account = capability.split(":", 1)
+    if not split_capability or not split_account:
+        return capability, account
+    return split_capability, split_account
 
 
 def _contains_exception(exc: BaseException, exc_type: type[BaseException]) -> bool:
@@ -162,21 +204,24 @@ def _client_config_yaml(config: ClientConfig) -> str:
 
 def _run_bootstrap_client(namespace: argparse.Namespace) -> int:
     if not BOOTSTRAP_NAME_PATTERN.fullmatch(namespace.config_name):
-        print(
+        print_cli_error(
             "config name must contain only letters, numbers, underscores, and "
             "dashes.",
-            file=sys.stderr,
+            area="client config",
         )
         return 2
     try:
         override_config = _override_client_config(namespace.overrides)
     except ValueError as exc:
-        print(f"Agent Arbiter client config error: {exc}", file=sys.stderr)
+        print_cli_error(str(exc), area="client config")
         return 1
 
     config_path = _client_config_path(namespace.config_dir, namespace.config_name)
     if config_path.exists() and not namespace.force:
-        print(f"refusing to overwrite existing file: {config_path}", file=sys.stderr)
+        print_cli_error(
+            f"refusing to overwrite existing file: {config_path}",
+            area="client config",
+        )
         return 1
 
     config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -580,22 +625,26 @@ async def _run_async(namespace: argparse.Namespace) -> int:
         "describe",
         "desc",
     }:
+        capability, account_name = _split_account_selector(
+            namespace.capability,
+            namespace.account,
+        )
         details = await call_tool(
             namespace.mcp_url,
             "describe_cap",
-            {"capability": namespace.capability},
+            {"capability": capability},
         )
         payload = _tool_result_payload(details)
         if (
-            namespace.account is not None
+            account_name is not None
             and isinstance(payload, Mapping)
             and isinstance(payload.get("accounts"), Mapping)
         ):
-            account = payload["accounts"].get(namespace.account)
+            account = payload["accounts"].get(account_name)
             _print_json(
                 {
-                    "capability": namespace.capability,
-                    "account": namespace.account,
+                    "capability": capability,
+                    "account": account_name,
                     "details": account,
                 }
             )
@@ -621,19 +670,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         namespace.mcp_url = _resolve_mcp_url(namespace)
     except (FileNotFoundError, ValueError) as exc:
-        print(f"Agent Arbiter client config error: {exc}", file=sys.stderr)
+        print_cli_error(str(exc), area="client config")
         return 1
     try:
         return anyio.run(_run_async, namespace)
     except KeyboardInterrupt:
         print("Agent Arbiter client stopped.", file=sys.stderr)
         return 130
+    except ToolCallError as exc:
+        print_cli_error(str(exc), area="tool")
+        return 1
     except BaseException as exc:
         if _contains_exception(exc, httpx.ConnectError):
-            print(
-                f"Could not connect to Agent Arbiter at {namespace.mcp_url}. "
+            print_cli_error(
+                f"could not connect to Agent Arbiter at {namespace.mcp_url}. "
                 "Is arbiter-server serve running?",
-                file=sys.stderr,
+                area="connection",
             )
             return 1
         raise
