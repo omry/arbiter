@@ -1,4 +1,4 @@
-# Tool: send_email
+# Operation: smtp:send_email
 
 ## Status
 
@@ -24,7 +24,7 @@ Use this when the agent has enough information to send a complete message to one
     "account": {
       "type": "string",
       "minLength": 1,
-      "description": "Configured account name returned by list_accounts"
+      "description": "Configured SMTP account name returned by describe_cap"
     },
     "to": {
       "type": "array",
@@ -89,7 +89,9 @@ If recipient-level diagnostics are returned, they are best-effort transport deta
 
 ## Operation details
 
-`send_email` is a one-shot message submission operation. It does not create drafts, manage conversation state, or confirm final delivery to a recipient inbox.
+`smtp:send_email` is a one-shot message submission operation. It does not
+create drafts, manage conversation state, or confirm final delivery to a
+recipient inbox.
 
 Expected behavior:
 

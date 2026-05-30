@@ -1,4 +1,4 @@
-# Tool: list_accounts
+# Capability Discovery: Account Summaries
 
 ## Status
 
@@ -7,57 +7,147 @@
 
 ## Purpose
 
-Return the configured service accounts available to the caller, along with
-lightweight metadata needed to choose an account for SMTP or IMAP operations.
+Document the account-summary payload returned by `describe_caps` and
+`describe_cap`, along with lightweight metadata needed to choose an account for
+SMTP or IMAP operations.
 
 ## Intended usage
 
 Use this when the caller needs to discover which accounts exist before
-selecting one explicitly for `send_email` or an IMAP tool.
+selecting one explicitly for `smtp:send_email` or an IMAP operation.
 
 ## Input shape
+
+`describe_caps` accepts optional preview limits:
 
 ```json
 {
   "type": "object",
   "additionalProperties": false,
-  "properties": {}
+  "properties": {
+    "account_preview_limit": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Maximum account names to preview per capability"
+    },
+    "operation_preview_limit": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Maximum operation names to preview per capability"
+    }
+  }
+}
+```
+
+`describe_cap` takes one capability name:
+
+```json
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["capability"],
+  "properties": {
+    "capability": {
+      "type": "string",
+      "description": "Capability name returned by list_caps"
+    }
+  }
 }
 ```
 
 ## Output shape
 
+`describe_caps` returns bounded capability summaries:
+
 ```json
 {
-  "accounts": {
-    "smtp": {
-      "primary": {
-        "description": "Bot-owned account for automated email tasks",
-        "policy": "bot",
-        "enabled": true,
-        "send": "allowed",
-        "require_confirmation": false
-      }
+  "capabilities": [
+    {
+      "id": "smtp",
+      "description": "Send email through configured SMTP accounts.",
+      "account_count": 1,
+      "accounts": ["primary"],
+      "accounts_truncated": false,
+      "operation_count": 1,
+      "operations": ["send_email"],
+      "operations_truncated": false
     },
-    "imap": {
-      "primary": {
-        "description": "Bot inbox",
-        "policy": "bot",
-        "enabled": true,
-        "confirmation_required": ["delete"],
-        "message": {
-          "read_allowed": true,
-          "move_allowed": true,
-          "delete_allowed": true,
-          "flags": {
-            "seen": "read_only",
-            "flagged": "read_write",
-            "answered": "read_only",
-            "deleted": "hidden",
-            "draft": "hidden",
-            "user": {
-              "bot.followed_up": "read_write"
-            }
+    {
+      "id": "imap",
+      "description": "Read and manage mail through configured IMAP accounts.",
+      "account_count": 1,
+      "accounts": ["primary"],
+      "accounts_truncated": false,
+      "operation_count": 6,
+      "operations": [
+        "delete_message",
+        "get_message",
+        "list_messages",
+        "mark_message_read",
+        "move_message",
+        "search_messages"
+      ],
+      "operations_truncated": false
+    }
+  ]
+}
+```
+
+Callers may pass `account_preview_limit` and `operation_preview_limit` to request
+a smaller or larger preview. The server clamps those values to
+`arbiter.discovery.max_account_preview_limit` and
+`arbiter.discovery.max_operation_preview_limit`. A `*_truncated` field is `true`
+when the returned preview is smaller than the full set.
+
+`describe_cap` returns the detailed account map for one capability:
+
+```json
+{
+  "id": "smtp",
+  "description": "Send email through configured SMTP accounts.",
+  "accounts": {
+    "primary": {
+      "description": "Bot-owned account for automated email tasks",
+      "policy": "bot",
+      "enabled": true,
+      "send": "allowed",
+      "require_confirmation": false
+    }
+  },
+  "operations": [
+    {
+      "id": "smtp:send_email",
+      "name": "send_email",
+      "description": "Send a single email message through the configured SMTP submission server for the selected account."
+    }
+  ]
+}
+```
+
+For IMAP, the `accounts` map includes IMAP-specific message and flag
+capabilities:
+
+```json
+{
+  "id": "imap",
+  "accounts": {
+    "primary": {
+      "description": "Bot inbox",
+      "policy": "bot",
+      "enabled": true,
+      "confirmation_required": ["delete"],
+      "message": {
+        "read_allowed": true,
+        "move_allowed": true,
+        "delete_allowed": true,
+        "flags": {
+          "seen": "read_only",
+          "flagged": "read_write",
+          "answered": "read_only",
+          "deleted": "hidden",
+          "draft": "hidden",
+          "user": {
+            "bot.followed_up": "read_write"
           }
         }
       }
@@ -66,18 +156,22 @@ selecting one explicitly for `send_email` or an IMAP tool.
 }
 ```
 
-Return one object per active service. Each service owns its own account names,
-so `arbiter.account.smtp.primary` and `arbiter.account.imap.primary` are
-related only if the deployment chooses to name them the same way.
+The `arbiter accounts list` CLI command derives a compact view from
+`describe_caps`, while `arbiter accounts desc <capability> [account]` uses
+`describe_cap`.
+
+Each service owns its own account names, so `arbiter.account.smtp.primary` and
+`arbiter.account.imap.primary` are related only if the deployment chooses to
+name them the same way.
 
 ## Operation details
 
-`list_accounts` is a discovery operation.
+Account summaries are discovery data returned by capability-description tools.
 
 Expected behavior:
 
 1. Ask each configured service runtime for its account summaries.
-2. Return summaries grouped under `accounts.<service>`.
+2. Return summaries grouped under the described capability.
 3. Do not expose credentials or raw transport configuration.
 
 ### SMTP
@@ -89,7 +183,8 @@ Expected behavior:
 
 `send` is a one-state availability enum in the current SMTP summary:
 
-- `allowed`: SMTP is configured and this account may be used for `send_email`
+- `allowed`: SMTP is configured and this account may be used for
+  `smtp:send_email`
 
 ### IMAP
 

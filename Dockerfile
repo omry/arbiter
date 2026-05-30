@@ -20,5 +20,5 @@ RUN addgroup --system --gid 10001 agent-arbiter \
 USER 10001:10001
 EXPOSE 8025
 
-ENTRYPOINT ["agent-arbiter"]
+ENTRYPOINT ["arbiter-server"]
 CMD ["--config-dir", "/config", "--config-name", "config", "serve"]

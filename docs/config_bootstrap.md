@@ -45,6 +45,9 @@ defaults:
   #   arbiter-server --config-dir <dir> --config-name arbiter-server config show
   # Override composed values with Hydra overrides, for example:
   #   arbiter-server --config-dir <dir> serve arbiter.server.port=8025
+  # Optionally load a config-dir-relative dotenv file before composition:
+  #   arbiter:
+  #     env_file: local.env
   - arbiter: server
   - _self_
 ```
@@ -55,8 +58,9 @@ Bootstrap also writes the default server option:
 config.local/arbiter/server.yaml
 ```
 
-The server option owns the default streamable HTTP server values. Operators can
-edit that file or override individual values from the command line.
+The server option owns the default streamable HTTP server values and discovery
+preview caps. Operators can edit that file or override individual values from
+the command line.
 
 Use `--config-name` to write a different main config file name:
 

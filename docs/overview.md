@@ -17,18 +17,19 @@ The default deployment target is a bot or gateway account with deployment-owned 
 
 ## Scope
 
-The server is a single MCP service that exposes multiple tools over a shared configuration, policy, and transport layer.
+The server is a single MCP service that exposes capability discovery and
+operation execution over a shared configuration, policy, and transport layer.
 
-The current tool set is:
+The current MCP tool set is:
 
-- `list_accounts`
-- `send_email`
-- `list_messages`
-- `get_message`
-- `search_messages`
-- `move_message`
-- `mark_message_read`
-- `delete_message`
+- `list_caps`
+- `describe_caps`
+- `describe_cap`
+- `describe_op`
+- `run_op`
+
+Service operations are addressed as `capability:operation` ids, for example
+`smtp:send_email`, `imap:list_messages`, and `imap:get_message`.
 
 ## Goals
 
@@ -52,7 +53,10 @@ The current tool set is:
 
 ### 1. Capability-first interface
 
-The server exposes message-level, account-level, and folder-level operations such as `send_email`, `list_messages`, and `get_message`, while keeping SMTP and IMAP session management internal.
+The server exposes a small discovery surface first, then lets callers drill
+down into message-level, account-level, and folder-level operations such as
+`smtp:send_email`, `imap:list_messages`, and `imap:get_message`, while keeping
+SMTP and IMAP session management internal.
 
 ### 2. Deployment-owned configuration
 
@@ -102,7 +106,7 @@ The current design assumes the caller is trusted once connected to the MCP serve
 
 Implications of the current trust model:
 
-- `list_accounts` returns all configured accounts
+- `describe_caps` and `describe_cap` return configured account summaries
 - callers may explicitly select any configured account
 - caller authentication between the bot and the MCP server is out of scope for the current design
 - Agent Arbiter config is the enforcement boundary for v1
@@ -115,14 +119,13 @@ Implemented:
 - policy-based enforcement for SMTP recipient policy, `max_recipients_per_message`, and IMAP read/search/move/delete
 - policy-based confirmation metadata through service-local SMTP and IMAP fields
 - IMAP flag visibility and `seen` mutation policy
-- `list_accounts`
-- `send_email`
-- `list_messages`
-- `get_message`
-- `search_messages`
-- `move_message`
-- `mark_message_read`
-- `delete_message`
+- capability discovery through `list_caps`, `describe_caps`, and `describe_cap`
+- operation discovery through `describe_op`
+- operation execution through `run_op`
+- SMTP operation `smtp:send_email`
+- IMAP operations `imap:list_messages`, `imap:get_message`,
+  `imap:search_messages`, `imap:move_message`, `imap:mark_message_read`, and
+  `imap:delete_message`
 
 Still open:
 

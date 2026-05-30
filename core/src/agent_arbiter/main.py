@@ -18,6 +18,7 @@ from .app import AgentArbiterApp
 from .config import (
     AppConfig,
     ArbiterConfig,
+    DiscoveryConfig,
     FastMCPConfig,
     configured_service_names,
     register_configs,
@@ -75,6 +76,9 @@ server:
   path: /mcp
   stateless_http: true
   json_response: true
+discovery:
+  max_account_preview_limit: 25
+  max_operation_preview_limit: 25
 """
 
 
@@ -107,9 +111,21 @@ def _instantiate_app_config_from_hydra(cfg: DictConfig) -> AppConfig:
         FastMCPConfig,
         _to_object(server_cfg),
     )
+    discovery_cfg = cast(
+        DictConfig,
+        OmegaConf.merge(
+            OmegaConf.structured(DiscoveryConfig),
+            OmegaConf.select(cfg, "arbiter.discovery", default={}),
+        ),
+    )
+    discovery = cast(
+        DiscoveryConfig,
+        _to_object(discovery_cfg),
+    )
     return AppConfig(
         arbiter=ArbiterConfig(
             server=server,
+            discovery=discovery,
             account=cast(dict[str, Any], _select_object(cfg, "arbiter.account", {})),
             policy=cast(dict[str, Any], _select_object(cfg, "arbiter.policy", {})),
             etc=cast(dict[str, Any], _select_object(cfg, "arbiter.etc", {})),
@@ -332,6 +348,8 @@ def build_server(
     catalog = OperationCatalog(
         active_service_plugins,
         ServicePluginContext(runtimes=app.runtime_registry),
+        max_account_preview_limit=app_config.arbiter.discovery.max_account_preview_limit,
+        max_operation_preview_limit=app_config.arbiter.discovery.max_operation_preview_limit,
     )
     _register_core_tools(server, catalog)
 

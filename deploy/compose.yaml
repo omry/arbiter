@@ -30,7 +30,7 @@ services:
       else
         python -m pip install --no-cache-dir "$$install_target";
       fi &&
-      exec agent-arbiter --config-dir /config --config-name config serve'
+      exec arbiter-server --config-dir /config --config-name config serve'
 
 networks:
   agent-arbiter:

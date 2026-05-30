@@ -2,18 +2,19 @@
 
 ## Current Shape
 
-The server is one MCP service whose current SMTP and IMAP capabilities are
-loaded through service plugins and activated by `arbiter.account.<service>`
-configuration:
+The server is one MCP service whose SMTP and IMAP capabilities are loaded
+through service plugins and activated by `arbiter.account.<service>`
+configuration. The MCP surface is intentionally hierarchical:
 
-- `list_accounts`
-- `send_email`
-- `list_messages`
-- `get_message`
-- `search_messages`
-- `move_message`
-- `mark_message_read`
-- `delete_message`
+- `list_caps`
+- `describe_caps`
+- `describe_cap`
+- `describe_op`
+- `run_op`
+
+Service operations are addressed through `run_op` with
+`<capability>:<operation>` ids such as `smtp:send_email` and
+`imap:list_messages`.
 
 Those tools should share the same:
 
@@ -39,7 +40,8 @@ across installed services rather than belonging to `core/`, `smtp/`, or `imap/`.
 ## Main responsibilities
 
 - MCP handlers:
-  accept tool calls, validate input, and return the documented response shapes
+  accept capability discovery and operation calls, validate input, and return
+  the documented response shapes
 - Config loading:
   load service-owned account config from `arbiter.account.*`, reusable policy
   config from `arbiter.policy.*`, and operator interpolation values from

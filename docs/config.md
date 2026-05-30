@@ -47,6 +47,10 @@ Two surrounding areas are still only partially implemented:
 
 ```yaml
 arbiter:
+  discovery:
+    max_account_preview_limit: 25
+    max_operation_preview_limit: 25
+
   account:
     smtp:
       primary:
@@ -133,6 +137,11 @@ arbiter:
 The `arbiter.etc` node is weakly structured operator-owned space for
 interpolation and composition. The server does not assign product semantics to
 keys under `arbiter.etc`.
+
+The `arbiter.discovery` node controls how much preview data broad capability
+discovery may return. Callers may request smaller or larger previews with
+`describe_caps`, but the server clamps those requests to the configured maximums
+before returning account and operation lists.
 
 ## Policy model
 

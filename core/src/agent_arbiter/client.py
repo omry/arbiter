@@ -458,9 +458,14 @@ def _normalize_command_aliases(args: Sequence[str]) -> list[str]:
             normalized.append("list")
         return normalized
 
-    if normalized[index] in {"cap", "accounts"} and "=" in normalized[index + 1]:
+    next_arg = normalized[index + 1]
+    if next_arg in {"-h", "--help"}:
+        return normalized
+    if normalized[index] in {"cap", "accounts"} and (
+        "=" in next_arg or next_arg.startswith("-")
+    ):
         normalized.insert(index + 1, "list")
-    if normalized[index] == "mcp" and "=" in normalized[index + 1]:
+    if normalized[index] == "mcp" and ("=" in next_arg or next_arg.startswith("-")):
         normalized.insert(index + 1, "tools")
 
     if (

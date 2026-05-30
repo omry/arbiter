@@ -112,6 +112,23 @@ def test_client_lists_tools_as_json(
     )
 
 
+def test_client_mcp_default_tools_accepts_json_option(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_list_tools(url: str) -> list[Mapping[str, object]]:
+        assert url == "http://127.0.0.1:8000/mcp"
+        return [{"name": "list_caps", "description": "", "input_schema": {}}]
+
+    monkeypatch.setattr(client, "list_tools", fake_list_tools)
+
+    assert client.main(["mcp", "--json"]) == 0
+
+    assert capsys.readouterr().out == (
+        '{"tools": [{"description": "", "input_schema": {}, "name": "list_caps"}]}\n'
+    )
+
+
 def test_client_reads_mcp_url_from_client_config(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
@@ -391,6 +408,26 @@ def test_client_cap_defaults_to_list(
     assert capsys.readouterr().out == "smtp\n"
 
 
+def test_client_cap_default_list_accepts_json_option(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        assert name == "list_caps"
+        assert arguments == {}
+        return SimpleNamespace(structuredContent={"capabilities": ["smtp"]})
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert client.main(["cap", "--json"]) == 0
+
+    assert capsys.readouterr().out == '{"capabilities": ["smtp"]}\n'
+
+
 def test_client_cap_desc_alias_describes_capability(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
@@ -542,6 +579,30 @@ def test_client_lists_accounts_as_json(
     monkeypatch.setattr(client, "call_tool", fake_call_tool)
 
     assert client.main(["accounts", "list", "--json"]) == 0
+
+    assert capsys.readouterr().out == '{"accounts": {"smtp": ["primary"]}}\n'
+
+
+def test_client_accounts_default_list_accepts_json_option(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        assert name == "describe_caps"
+        assert arguments == {}
+        return SimpleNamespace(
+            structuredContent={
+                "capabilities": [{"id": "smtp", "accounts": ["primary"]}]
+            },
+        )
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert client.main(["accounts", "--json"]) == 0
 
     assert capsys.readouterr().out == '{"accounts": {"smtp": ["primary"]}}\n'
 

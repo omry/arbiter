@@ -7,7 +7,7 @@ Agent Arbiter is a policy-controlled MCP gateway for exposing configured service
 Current implementation status:
 
 - MCP server over stdio, SSE, or streamable HTTP via FastMCP
-- account discovery with SMTP and IMAP capability metadata
+- capability discovery with SMTP and IMAP account and operation metadata
 - SMTP submission with configured sender identity, TLS/auth settings, text/HTML bodies, and Bcc kept out of message headers
 - IMAP list/get/search/move/mark-read/delete tools scoped to configured accounts and folders
 - `arbiter.account.<service>` and reusable `arbiter.policy.<service>` objects
@@ -134,7 +134,8 @@ installed service plugins before validating a config. Once the server is
 running, use the client CLI against the MCP endpoint:
 
 ```bash
-arbiter tools list mcp_url=http://127.0.0.1:8025/mcp
+arbiter mcp tools mcp_url=http://127.0.0.1:8025/mcp
+arbiter cap mcp_url=http://127.0.0.1:8025/mcp
 arbiter accounts list mcp_url=http://127.0.0.1:8025/mcp
 ```
 
@@ -152,9 +153,10 @@ command, or bootstrap the client config:
 arbiter bootstrap client mcp_url=http://127.0.0.1:8025/mcp
 ```
 
-The IMAP tools use folder-scoped UIDs returned by `list_messages` and
-`search_messages`; pass those ids back to `get_message`, `move_message`,
-`mark_message_read`, or `delete_message` with the same account and folder.
+IMAP operations use folder-scoped UIDs returned by `imap:list_messages` and
+`imap:search_messages`; pass those ids back to `imap:get_message`,
+`imap:move_message`, `imap:mark_message_read`, or `imap:delete_message` with
+the same account and folder.
 
 ## Read-Only Real Inbox Docker Run
 

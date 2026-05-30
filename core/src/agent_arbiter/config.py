@@ -28,6 +28,18 @@ class FastMCPConfig:
 
 
 @dataclass
+class DiscoveryConfig:
+    max_account_preview_limit: int = 25
+    max_operation_preview_limit: int = 25
+
+    def __post_init__(self) -> None:
+        if self.max_account_preview_limit < 1:
+            raise ValueError("max_account_preview_limit must be >= 1")
+        if self.max_operation_preview_limit < 1:
+            raise ValueError("max_operation_preview_limit must be >= 1")
+
+
+@dataclass
 class Policy:
     pass
 
@@ -35,6 +47,7 @@ class Policy:
 @dataclass
 class ArbiterConfig:
     server: FastMCPConfig = field(default_factory=FastMCPConfig)
+    discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
     account: dict[str, Any] = field(default_factory=dict)
     policy: dict[str, Any] = field(default_factory=dict)
     etc: dict[str, Any] = field(default_factory=dict)

@@ -12,7 +12,7 @@ scope for v1.
 
 Current implications:
 
-- `list_accounts` returns all configured accounts
+- `describe_caps` and `describe_cap` return configured account summaries
 - callers may explicitly select any configured account
 - at this stage, policy enforcement is configuration-driven rather than caller-identity-driven
 - Agent Arbiter is the authority boundary: the bot can access whatever Agent
@@ -31,15 +31,17 @@ The current implementation uses service-scoped policies under `arbiter`:
 ## Current Runtime Policies
 
 - The caller may choose recipients, subject, and body.
-- The caller must choose a configured account explicitly for `send_email`.
+- The caller must choose a configured account explicitly for `smtp:send_email`.
 - The caller may not override SMTP transport settings.
 - The caller may not override the `From` address.
 - The caller may not override `Reply-To` in v1.
 - The server validates basic recipient shape.
 - The server enforces configured SMTP recipient policy and `max_recipients_per_message` before submission.
 - The server enforces IMAP read/search/move/delete gates before IMAP operations.
-- `mark_message_read` requires `read_write` access to the standard `seen` flag.
-- `list_accounts` exposes SMTP `require_confirmation` and IMAP `confirmation_required` metadata for each account.
+- `imap:mark_message_read` requires `read_write` access to the standard `seen`
+  flag.
+- `describe_caps` and `describe_cap` expose SMTP `require_confirmation` and
+  IMAP `confirmation_required` metadata for each account.
 - IMAP operations are scoped to configured accounts and configured folders.
 - Operational logging is v1 hardening work.
 - Durable audit records are parked for post-v1.

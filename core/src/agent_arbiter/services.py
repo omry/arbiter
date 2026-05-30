@@ -119,11 +119,20 @@ class OperationCatalog:
         self,
         service_plugins: Sequence[ServicePlugin],
         context: ServicePluginContext,
+        *,
+        max_account_preview_limit: int,
+        max_operation_preview_limit: int,
     ) -> None:
+        if max_account_preview_limit < 1:
+            raise ValueError("max_account_preview_limit must be >= 1")
+        if max_operation_preview_limit < 1:
+            raise ValueError("max_operation_preview_limit must be >= 1")
         self._context = context
         self._capabilities: dict[str, CapabilityDescriptor] = {}
         self._operations: dict[str, dict[str, OperationDescriptor]] = {}
         self._plugins: dict[str, ServicePlugin] = {}
+        self._max_account_preview_limit = max_account_preview_limit
+        self._max_operation_preview_limit = max_operation_preview_limit
 
         for plugin in service_plugins:
             capability = plugin.describe_capability(context)
@@ -149,12 +158,24 @@ class OperationCatalog:
         operation_preview_limit: int = 8,
         account_preview_limit: int = 8,
     ) -> dict[str, object]:
+        if operation_preview_limit < 0:
+            raise ValueError("operation_preview_limit must be >= 0")
+        if account_preview_limit < 0:
+            raise ValueError("account_preview_limit must be >= 0")
+        effective_operation_preview_limit = min(
+            operation_preview_limit,
+            self._max_operation_preview_limit,
+        )
+        effective_account_preview_limit = min(
+            account_preview_limit,
+            self._max_account_preview_limit,
+        )
         return {
             "capabilities": [
                 self._capability_summary(
                     capability,
-                    operation_preview_limit=operation_preview_limit,
-                    account_preview_limit=account_preview_limit,
+                    operation_preview_limit=effective_operation_preview_limit,
+                    account_preview_limit=effective_account_preview_limit,
                 )
                 for capability in sorted(self._capabilities)
             ]

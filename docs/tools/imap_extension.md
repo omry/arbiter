@@ -1,4 +1,4 @@
-# Tool Family: IMAP
+# Capability: IMAP
 
 ## Status
 
@@ -7,24 +7,26 @@
 
 ## Purpose
 
-Define the current IMAP tool family and the shared constraints that apply to IMAP operations.
+Define the current IMAP capability and the shared constraints that apply to
+IMAP operations.
 
-## Tools
+## Operations
 
-- `list_messages`
-- `get_message`
-- `search_messages`
-- `move_message`
-- `mark_message_read`
-- `delete_message`
+- `imap:list_messages`
+- `imap:get_message`
+- `imap:search_messages`
+- `imap:move_message`
+- `imap:mark_message_read`
+- `imap:delete_message`
 
 ## Common input rules
 
-- Every IMAP tool takes `account` as a mandatory input.
+- Every IMAP operation takes `account` as a mandatory input.
 - That `account` must reference an account with IMAP enabled.
 - IMAP tools may take `folder` explicitly or default to
   `arbiter.account.imap.<account>.default_folder` when omitted.
-- `message_id` values are IMAP UIDs returned by `list_messages` or `search_messages`; they are scoped to the selected account and folder.
+- `message_id` values are IMAP UIDs returned by `imap:list_messages` or
+  `imap:search_messages`; they are scoped to the selected account and folder.
 
 ## Shared behavior constraints
 
@@ -84,7 +86,8 @@ Confirmed policy model:
   - `read_write`
 - `hidden` on a configured user flag is redundant and behaves like omitting that user flag from config
 - default unspecified `system_flags` to `read_only`
-- treat `mark_message_read` as a mutation of the standard `seen` system flag, requiring `read_write`
+- treat `imap:mark_message_read` as a mutation of the standard `seen` system
+  flag, requiring `read_write`
 - treat bot-owned follow-up markers as explicit `user_flags` entries rather than implicit write access
 
 ## Audit behavior

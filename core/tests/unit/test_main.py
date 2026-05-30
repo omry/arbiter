@@ -10,7 +10,7 @@ from typing import Any, cast
 import pytest
 from omegaconf import OmegaConf
 
-from agent_arbiter.config import AppConfig, ArbiterConfig
+from agent_arbiter.config import AppConfig, ArbiterConfig, DiscoveryConfig
 from agent_arbiter.app import CORE_TOOL_NAMES
 from agent_arbiter.main import (
     _run_server,
@@ -704,6 +704,9 @@ def test_cli_bootstrap_arbiter_writes_main_config(
         "  path: /mcp\n"
         "  stateless_http: true\n"
         "  json_response: true\n"
+        "discovery:\n"
+        "  max_account_preview_limit: 25\n"
+        "  max_operation_preview_limit: 25\n"
     )
     assert capsys.readouterr().out == (
         f"wrote {config_file}\n" f"wrote {server_file}\n"
@@ -1619,6 +1622,22 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
         },
     ]
 
+    limited_capabilities = cast(
+        dict[str, Any],
+        tools["describe_caps"](operation_preview_limit=3, account_preview_limit=1),
+    )
+    imap_limited = limited_capabilities["capabilities"][0]
+    assert imap_limited["id"] == "imap"
+    assert imap_limited["operations"] == [
+        "delete_message",
+        "get_message",
+        "list_messages",
+    ]
+    assert imap_limited["operations_truncated"] is True
+
+    with pytest.raises(ValueError, match="operation_preview_limit must be >= 0"):
+        tools["describe_caps"](operation_preview_limit=-1)
+
     smtp_capability = tools["describe_cap"](capability="smtp")
     assert smtp_capability == {
         "id": "smtp",
@@ -1733,6 +1752,37 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
         "folder": "INBOX",
         "message": {},
     }
+
+    capped_tools: dict[str, Callable[..., object]] = {}
+
+    class CappedFakeFastMCP(FakeFastMCP):
+        def tool(
+            self, **kwargs: object
+        ) -> Callable[[Callable[..., object]], Callable[..., object]]:
+            def decorator(func: Callable[..., object]) -> Callable[..., object]:
+                capped_tools[func.__name__] = func
+                return func
+
+            return decorator
+
+    setattr(fastmcp_module, "FastMCP", CappedFakeFastMCP)
+    capped_cfg = _app_config_with_smtp_imap()
+    capped_cfg.arbiter.discovery = DiscoveryConfig(
+        max_account_preview_limit=25,
+        max_operation_preview_limit=2,
+    )
+    build_server(
+        OmegaConf.structured(capped_cfg), service_plugins=_test_service_plugins()
+    )
+    capped_capabilities = cast(
+        dict[str, Any],
+        capped_tools["describe_caps"](operation_preview_limit=99),
+    )
+    assert capped_capabilities["capabilities"][0]["operations"] == [
+        "delete_message",
+        "get_message",
+    ]
+    assert capped_capabilities["capabilities"][0]["operations_truncated"] is True
     assert get_message_calls == [
         {"account": "primary", "message_id": "42", "folder": "INBOX"}
     ]
