@@ -27,8 +27,6 @@ This file is the day-to-day queue for design and implementation gaps.
 ## Direction
 
 - Current platform name: `Agent Arbiter`.
-  `Oversight` remains a possible future rename if the package name becomes
-  available.
 - Architecture direction: one service equals one independently installable
   plugin. SMTP and IMAP should move out of the core package into separate
   plugin distributions so future services such as CalDAV, CardDAV, and Sieve

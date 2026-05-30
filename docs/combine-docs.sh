@@ -13,9 +13,9 @@ docs=(
   "$script_dir/policies.md"
   "$script_dir/errors.md"
   "$script_dir/todo.md"
-  "$script_dir/tools/list_accounts.md"
-  "$script_dir/tools/send_email.md"
-  "$script_dir/tools/imap_extension.md"
+  "$script_dir/tools/account_summaries.md"
+  "$script_dir/tools/smtp_send_email.md"
+  "$script_dir/tools/imap.md"
   "$script_dir/testing_backlog.md"
 )
 

@@ -120,46 +120,6 @@ def test_hydra_config_preserves_lazy_interpolations() -> None:
     assert cfg.arbiter.account.smtp.primary.from_name == "agent-arbiter"
 
 
-def test_mailgateway_schema_alias_composes(tmp_path: Path) -> None:
-    config_file = tmp_path / "config.yaml"
-    config_file.write_text(
-        """
-defaults:
-  - mailgateway_app_config_schema
-  - _self_
-
-arbiter:
-  server:
-    name: agent-arbiter-mcp
-  account:
-    smtp:
-      primary:
-        policy: bot
-        description: Bot account.
-        host: localhost
-        authenticate: false
-        username: ""
-        password: ""
-        from_email: bot@example.com
-    imap: {}
-  policy:
-    smtp:
-      bot:
-        require_confirmation: false
-    imap: {}
-""",
-        encoding="utf-8",
-    )
-
-    _register_all_configs()
-    with initialize_config_dir(version_base=None, config_dir=str(tmp_path)):
-        cfg = compose(config_name="config")
-
-    assert cfg.arbiter.server.name == "agent-arbiter-mcp"
-    assert cfg.arbiter.policy.smtp.bot.require_confirmation is False
-    assert cfg.arbiter.account.smtp.primary.from_email == "bot@example.com"
-
-
 def test_standard_deployment_config_composes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -57,9 +57,9 @@ The design is documented in the `docs/` structure used by the MCP server templat
 - [docs/errors.md](docs/errors.md)
 - [docs/todo.md](docs/todo.md)
 - [docs/testing_backlog.md](docs/testing_backlog.md)
-- [docs/tools/list_accounts.md](docs/tools/list_accounts.md)
-- [docs/tools/send_email.md](docs/tools/send_email.md)
-- [docs/tools/imap_extension.md](docs/tools/imap_extension.md)
+- [docs/tools/account_summaries.md](docs/tools/account_summaries.md)
+- [docs/tools/smtp_send_email.md](docs/tools/smtp_send_email.md)
+- [docs/tools/imap.md](docs/tools/imap.md)
 
 ## Local Streamable HTTP Run
 

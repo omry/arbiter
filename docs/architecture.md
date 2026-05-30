@@ -110,9 +110,9 @@ agent-arbiter/
     policies.md
     errors.md
     tools/
-      list_accounts.md
-      send_email.md
-      imap_extension.md
+      account_summaries.md
+      smtp_send_email.md
+      imap.md
 ```
 
 ## Implementation notes

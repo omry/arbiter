@@ -107,10 +107,7 @@ def service_policies_for(
     return _service_config_mapping(config.arbiter.policy, service_name)
 
 
-_CONFIG_SCHEMA_NAMES = (
-    "agent_arbiter_app_config_schema",
-    "mailgateway_app_config_schema",
-)
+_CONFIG_SCHEMA_NAMES = ("agent_arbiter_app_config_schema",)
 _CONFIG_REGISTERED = False
 _RESOLVERS_REGISTERED = False
 
