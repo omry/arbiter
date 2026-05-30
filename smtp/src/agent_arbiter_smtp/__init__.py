@@ -12,9 +12,10 @@ from pydantic import Field
 from hydra.core.config_store import ConfigStore
 
 from agent_arbiter.services import (
+    CapabilityDescriptor,
+    OperationDescriptor,
     ServicePluginContext,
     ServiceRuntimeContext,
-    ToolServer,
 )
 
 from .config import (
@@ -44,9 +45,54 @@ SMTPClientFactory = Callable[[SMTPConfig], SMTPClientProtocol]
 TimeProvider = Callable[[], float]
 
 
+SEND_EMAIL_DESCRIPTION = (
+    "Send a single email message through the configured SMTP submission server "
+    "for the selected account. Use at least one recipient in to and at least "
+    "one of text_body or html_body."
+)
+
+SEND_EMAIL_INPUT_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "account": {
+            "type": "string",
+            "description": "Configured SMTP account name.",
+        },
+        "to": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Primary recipient email addresses.",
+        },
+        "subject": {
+            "type": "string",
+            "description": "Email subject line.",
+        },
+        "text_body": {
+            "type": "string",
+            "description": "Plain text body.",
+        },
+        "html_body": {
+            "type": "string",
+            "description": "HTML body.",
+        },
+        "cc": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "CC recipient email addresses.",
+        },
+        "bcc": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "BCC recipient email addresses.",
+        },
+    },
+    "required": ["account", "to", "subject"],
+    "additionalProperties": False,
+}
+
+
 class SMTPRuntime:
     service_name = "smtp"
-    tool_names = ("send_email",)
 
     def __init__(
         self,
@@ -293,7 +339,7 @@ AccountName = Annotated[
     str,
     Field(
         description=(
-            "Configured account name returned by list_accounts. The selected account "
+            "Configured account name returned by describe_cap. The selected account "
             "must have SMTP enabled."
         ),
         examples=["primary"],
@@ -438,44 +484,51 @@ class SMTPServicePlugin:
             time_provider=time_provider,
         )
 
-    def register_tools(
+    def describe_capability(
         self,
-        server: ToolServer,
         context: ServicePluginContext,
-    ) -> None:
-        runtime = context.runtimes.require(self.name, SMTPRuntime)
-
-        @server.tool(
-            description=(
-                "Send a single email message through the configured SMTP submission "
-                "server for the selected account. Use an account name returned by "
-                "list_accounts, JSON arrays for to, cc, and bcc, at least one "
-                "recipient in to, and at least one of text_body or html_body."
-            )
+    ) -> CapabilityDescriptor:
+        return CapabilityDescriptor(
+            name=self.name,
+            description="Send email through configured SMTP accounts.",
         )
-        def send_email(
-            account: AccountName,
-            to: RecipientList,
-            subject: SubjectLine,
-            text_body: TextBody = None,
-            html_body: HtmlBody = None,
-            cc: OptionalRecipientList = None,
-            bcc: OptionalRecipientList = None,
-        ) -> dict[str, object]:
-            result = runtime.send_email(
-                account=account,
-                to=to,
-                subject=subject,
-                text_body=text_body,
-                html_body=html_body,
-                cc=cc,
-                bcc=bcc,
-            )
-            return {
-                "ok": True,
-                "message_id": result.message_id,
-                "recipient_count": result.recipient_count,
-            }
+
+    def describe_operations(
+        self,
+        context: ServicePluginContext,
+    ) -> tuple[OperationDescriptor, ...]:
+        return (
+            OperationDescriptor(
+                name="send_email",
+                description=SEND_EMAIL_DESCRIPTION,
+                input_schema=SEND_EMAIL_INPUT_SCHEMA,
+            ),
+        )
+
+    def invoke_operation(
+        self,
+        operation: str,
+        arguments: Mapping[str, object],
+        context: ServicePluginContext,
+    ) -> object:
+        if operation != "send_email":
+            raise ValueError(f"unknown SMTP operation: {operation}")
+
+        runtime = context.runtimes.require(self.name, SMTPRuntime)
+        result = runtime.send_email(
+            account=cast(str, arguments.get("account")),
+            to=cast(list[str], arguments.get("to")),
+            subject=cast(str, arguments.get("subject")),
+            text_body=cast(str | None, arguments.get("text_body")),
+            html_body=cast(str | None, arguments.get("html_body")),
+            cc=cast(list[str] | None, arguments.get("cc")),
+            bcc=cast(list[str] | None, arguments.get("bcc")),
+        )
+        return {
+            "ok": True,
+            "message_id": result.message_id,
+            "recipient_count": result.recipient_count,
+        }
 
 
 def plugin() -> SMTPServicePlugin:

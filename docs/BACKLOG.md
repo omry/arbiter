@@ -55,6 +55,18 @@ This file is the day-to-day queue for design and implementation gaps.
       examples; and document how generated config tooling fits into the docs
       workflow.
 
+- [ ] `P2` Revisit service-first config shape.
+      The MCP discovery surface is moving toward capability-first drill-down,
+      and the server config may want the same shape: `smtp.accounts`,
+      `smtp.policies`, `imap.accounts`, and `imap.policies` instead of
+      top-level account and policy containers. Also decide whether the
+      placeholder `etc` config surface should be removed until a concrete use
+      exists.
+      Acceptance checks: compare the current Hydra composition shape against a
+      service-first shape; decide whether activation remains readable and easy
+      to generate; remove or justify `etc`; and document the chosen operator
+      model.
+
 - [ ] `P2` Design live config reload for service runtimes. A future reload path
       should apply validated configuration changes without interrupting
       in-flight tool calls. Acceptance checks: define whether reload happens by
@@ -62,6 +74,18 @@ This file is the day-to-day queue for design and implementation gaps.
       refreshing selected subsystem state; new connections or tool calls see
       the new config only after validation succeeds; failed reloads keep the
       previous runtime active; and logs expose which services changed.
+
+- [ ] `P2` Let Hydra own server logging configuration.
+      Agent Arbiter is a server process, so operators need proper logging
+      without a parallel Arbiter-specific logging surface. Hydra should remain
+      the owner of server logging configuration, including job and Hydra
+      logging groups, while the CLI stays simple and prints user-facing
+      messages.
+      Acceptance checks: document how operators configure server logs through
+      Hydra; confirm no library configures logging before server composition;
+      decide whether bootstrap should generate any logging config or only
+      document it; and keep operational logs separate from future audit
+      records.
 
 - [ ] `P2` Decide whether service-scoped policies should remain the long-term
       home for access gates and caller confirmation.

@@ -8,9 +8,10 @@ from pydantic import Field
 from hydra.core.config_store import ConfigStore
 
 from agent_arbiter.services import (
+    CapabilityDescriptor,
+    OperationDescriptor,
     ServicePluginContext,
     ServiceRuntimeContext,
-    ToolServer,
 )
 
 from .config import (
@@ -54,16 +55,141 @@ class IMAPClientProtocol(Protocol):
 IMAPClientFactory = Callable[[IMAPConfig], IMAPClientProtocol]
 
 
+def _object_schema(
+    properties: Mapping[str, object],
+    required: list[str],
+) -> dict[str, object]:
+    return {
+        "type": "object",
+        "properties": dict(properties),
+        "required": required,
+        "additionalProperties": False,
+    }
+
+
+ACCOUNT_PROPERTY = {
+    "type": "string",
+    "description": "Configured IMAP account name.",
+}
+FOLDER_PROPERTY = {
+    "type": "string",
+    "description": "Configured IMAP folder name. Defaults to the account default folder.",
+}
+MESSAGE_ID_PROPERTY = {
+    "type": "string",
+    "description": "IMAP UID scoped to the selected account and folder.",
+}
+LIMIT_PROPERTY = {
+    "type": "integer",
+    "minimum": 1,
+    "maximum": 100,
+    "description": "Maximum number of messages to return.",
+}
+
+IMAP_OPERATION_DESCRIPTORS = (
+    OperationDescriptor(
+        name="list_messages",
+        description=(
+            "List recent messages from a configured IMAP folder on the selected "
+            "account."
+        ),
+        input_schema=_object_schema(
+            {
+                "account": ACCOUNT_PROPERTY,
+                "folder": FOLDER_PROPERTY,
+                "limit": LIMIT_PROPERTY,
+            },
+            ["account"],
+        ),
+    ),
+    OperationDescriptor(
+        name="get_message",
+        description=(
+            "Fetch one message by IMAP UID from a configured folder on the selected "
+            "account."
+        ),
+        input_schema=_object_schema(
+            {
+                "account": ACCOUNT_PROPERTY,
+                "message_id": MESSAGE_ID_PROPERTY,
+                "folder": FOLDER_PROPERTY,
+            },
+            ["account", "message_id"],
+        ),
+    ),
+    OperationDescriptor(
+        name="search_messages",
+        description=(
+            "Search messages in a configured IMAP folder using an IMAP TEXT query."
+        ),
+        input_schema=_object_schema(
+            {
+                "account": ACCOUNT_PROPERTY,
+                "query": {
+                    "type": "string",
+                    "description": "IMAP TEXT search query.",
+                },
+                "folder": FOLDER_PROPERTY,
+                "limit": LIMIT_PROPERTY,
+            },
+            ["account", "query"],
+        ),
+    ),
+    OperationDescriptor(
+        name="move_message",
+        description=(
+            "Move one message by IMAP UID from a configured source folder to a "
+            "configured destination folder."
+        ),
+        input_schema=_object_schema(
+            {
+                "account": ACCOUNT_PROPERTY,
+                "message_id": MESSAGE_ID_PROPERTY,
+                "destination_folder": {
+                    "type": "string",
+                    "description": "Configured destination folder name.",
+                },
+                "folder": FOLDER_PROPERTY,
+            },
+            ["account", "message_id", "destination_folder"],
+        ),
+    ),
+    OperationDescriptor(
+        name="mark_message_read",
+        description="Set or clear the IMAP seen flag for one message by UID.",
+        input_schema=_object_schema(
+            {
+                "account": ACCOUNT_PROPERTY,
+                "message_id": MESSAGE_ID_PROPERTY,
+                "folder": FOLDER_PROPERTY,
+                "read": {
+                    "type": "boolean",
+                    "description": "Whether the message should be marked read.",
+                },
+            },
+            ["account", "message_id"],
+        ),
+    ),
+    OperationDescriptor(
+        name="delete_message",
+        description=(
+            "Delete one message by IMAP UID from a configured folder on the selected "
+            "account."
+        ),
+        input_schema=_object_schema(
+            {
+                "account": ACCOUNT_PROPERTY,
+                "message_id": MESSAGE_ID_PROPERTY,
+                "folder": FOLDER_PROPERTY,
+            },
+            ["account", "message_id"],
+        ),
+    ),
+)
+
+
 class IMAPRuntime:
     service_name = "imap"
-    tool_names = (
-        "list_messages",
-        "get_message",
-        "search_messages",
-        "move_message",
-        "mark_message_read",
-        "delete_message",
-    )
 
     def __init__(
         self,
@@ -418,7 +544,7 @@ IMAPAccountName = Annotated[
     str,
     Field(
         description=(
-            "Configured account name returned by list_accounts. The selected account "
+            "Configured account name returned by describe_cap. The selected account "
             "must have IMAP enabled."
         ),
         examples=["primary"],
@@ -505,116 +631,68 @@ class IMAPServicePlugin:
             imap_client_factory=imap_client_factory,
         )
 
-    def register_tools(
+    def describe_capability(
         self,
-        server: ToolServer,
         context: ServicePluginContext,
-    ) -> None:
+    ) -> CapabilityDescriptor:
+        return CapabilityDescriptor(
+            name=self.name,
+            description="Read and manage mail through configured IMAP accounts.",
+        )
+
+    def describe_operations(
+        self,
+        context: ServicePluginContext,
+    ) -> tuple[OperationDescriptor, ...]:
+        return IMAP_OPERATION_DESCRIPTORS
+
+    def invoke_operation(
+        self,
+        operation: str,
+        arguments: Mapping[str, object],
+        context: ServicePluginContext,
+    ) -> object:
         runtime = context.runtimes.require(self.name, IMAPRuntime)
-
-        @server.tool(
-            description=(
-                "List recent messages from a configured IMAP folder on the selected "
-                "account. Message ids are IMAP UIDs scoped to that account and folder."
+        if operation == "list_messages":
+            return runtime.list_messages(
+                account=cast(str, arguments.get("account")),
+                folder=cast(str | None, arguments.get("folder")),
+                limit=cast(int, arguments.get("limit", 20)),
             )
-        )
-        def list_messages(
-            account: IMAPAccountName,
-            folder: OptionalFolderName = None,
-            limit: IMAPMessageLimit = 20,
-        ) -> dict[str, object]:
-            return runtime.list_messages(account=account, folder=folder, limit=limit)
-
-        @server.tool(
-            description=(
-                "Fetch one message by IMAP UID from a configured folder on the selected "
-                "account, including plain text and HTML bodies when present."
-            )
-        )
-        def get_message(
-            account: IMAPAccountName,
-            message_id: IMAPMessageId,
-            folder: OptionalFolderName = None,
-        ) -> dict[str, object]:
+        if operation == "get_message":
             return runtime.get_message(
-                account=account,
-                message_id=message_id,
-                folder=folder,
+                account=cast(str, arguments.get("account")),
+                message_id=cast(str, arguments.get("message_id")),
+                folder=cast(str | None, arguments.get("folder")),
             )
-
-        @server.tool(
-            description=(
-                "Search messages in a configured IMAP folder using an IMAP TEXT query. "
-                "Results include message ids that can be passed to get_message."
-            )
-        )
-        def search_messages(
-            account: IMAPAccountName,
-            query: IMAPSearchQuery,
-            folder: OptionalFolderName = None,
-            limit: IMAPMessageLimit = 20,
-        ) -> dict[str, object]:
+        if operation == "search_messages":
             return runtime.search_messages(
-                account=account,
-                query=query,
-                folder=folder,
-                limit=limit,
+                account=cast(str, arguments.get("account")),
+                query=cast(str, arguments.get("query")),
+                folder=cast(str | None, arguments.get("folder")),
+                limit=cast(int, arguments.get("limit", 20)),
             )
-
-        @server.tool(
-            description=(
-                "Move one message by IMAP UID from a configured source folder to a "
-                "configured destination folder on the selected account."
-            )
-        )
-        def move_message(
-            account: IMAPAccountName,
-            message_id: IMAPMessageId,
-            destination_folder: FolderName,
-            folder: OptionalFolderName = None,
-        ) -> dict[str, object]:
+        if operation == "move_message":
             return runtime.move_message(
-                account=account,
-                message_id=message_id,
-                destination_folder=destination_folder,
-                folder=folder,
+                account=cast(str, arguments.get("account")),
+                message_id=cast(str, arguments.get("message_id")),
+                destination_folder=cast(str, arguments.get("destination_folder")),
+                folder=cast(str | None, arguments.get("folder")),
             )
-
-        @server.tool(
-            description=(
-                "Set or clear the IMAP seen flag for one message by UID. The selected "
-                "account must grant read_write access to the standard seen flag."
-            )
-        )
-        def mark_message_read(
-            account: IMAPAccountName,
-            message_id: IMAPMessageId,
-            folder: OptionalFolderName = None,
-            read: bool = True,
-        ) -> dict[str, object]:
+        if operation == "mark_message_read":
             return runtime.mark_message_read(
-                account=account,
-                message_id=message_id,
-                folder=folder,
-                read=read,
+                account=cast(str, arguments.get("account")),
+                message_id=cast(str, arguments.get("message_id")),
+                folder=cast(str | None, arguments.get("folder")),
+                read=cast(bool, arguments.get("read", True)),
             )
-
-        @server.tool(
-            description=(
-                "Delete one message by IMAP UID from a configured folder on the selected "
-                "account. The account policy must explicitly allow IMAP delete."
-            )
-        )
-        def delete_message(
-            account: IMAPAccountName,
-            message_id: IMAPMessageId,
-            folder: OptionalFolderName = None,
-        ) -> dict[str, object]:
+        if operation == "delete_message":
             return runtime.delete_message(
-                account=account,
-                message_id=message_id,
-                folder=folder,
+                account=cast(str, arguments.get("account")),
+                message_id=cast(str, arguments.get("message_id")),
+                folder=cast(str | None, arguments.get("folder")),
             )
+        raise ValueError(f"unknown IMAP operation: {operation}")
 
 
 def plugin() -> IMAPServicePlugin:

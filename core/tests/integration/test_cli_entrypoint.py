@@ -114,13 +114,25 @@ def test_agent_arbiter_console_script_help(
     ("args", "expected"),
     [
         (("--help",), "usage: arbiter "),
-        (("tools", "--help"), "usage: arbiter tools "),
-        (("tools", "list", "--help"), "usage: arbiter tools list "),
-        (("tools", "call", "--help"), "usage: arbiter tools call "),
+        (("mcp", "--help"), "usage: arbiter mcp "),
+        (("mcp", "tools", "--help"), "usage: arbiter mcp tools "),
+        (("mcp", "call", "--help"), "usage: arbiter mcp call "),
+        (("cap", "--help"), "usage: arbiter cap "),
+        (("capabilities", "--help"), "usage: arbiter cap "),
+        (("cap", "desc", "--help"), "usage: arbiter cap desc "),
+        (("cap", "describe", "--help"), "usage: arbiter cap desc "),
+        (("op", "--help"), "usage: arbiter op "),
+        (("operation", "--help"), "usage: arbiter op "),
+        (("op", "desc", "--help"), "usage: arbiter op desc "),
+        (("op", "describe", "--help"), "usage: arbiter op desc "),
+        (("op", "run", "--help"), "usage: arbiter op run "),
         (("accounts", "--help"), "usage: arbiter accounts "),
         (("accounts", "list", "--help"), "usage: arbiter accounts list "),
+        (("accounts", "desc", "--help"), "usage: arbiter accounts desc "),
+        (("accounts", "describe", "--help"), "usage: arbiter accounts desc "),
         (("bootstrap", "--help"), "usage: arbiter bootstrap "),
         (("bootstrap", "client", "--help"), "usage: arbiter bootstrap client "),
+        (("--version",), "arbiter "),
     ],
 )
 def test_arbiter_client_console_script_help(
@@ -356,10 +368,15 @@ def test_agent_arbiter_console_script_serve_reports_unrunnable_config(
 @pytest.mark.parametrize(
     "args",
     [
-        ("tools", "list"),
-        ("tools", "list", "--json"),
-        ("tools", "call", "list_accounts"),
+        ("mcp", "tools"),
+        ("mcp",),
+        ("mcp", "tools", "--json"),
+        ("mcp", "call", "list_caps"),
+        ("cap",),
         ("accounts", "list"),
+        ("accounts", "list", "--json"),
+        ("accounts", "desc", "smtp"),
+        ("accounts",),
     ],
 )
 def test_arbiter_client_console_script_reports_clean_connection_failure(

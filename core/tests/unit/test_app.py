@@ -2,7 +2,7 @@ from email.message import EmailMessage
 
 import pytest
 
-from agent_arbiter.app import AgentArbiterApp
+from agent_arbiter.app import CORE_TOOL_NAMES, AgentArbiterApp
 from agent_arbiter_imap.config import (
     IMAPAccessPolicyConfig,
     IMAPConfig,
@@ -200,19 +200,10 @@ def _app(
     return AgentArbiterApp(RuntimeRegistry(runtimes))
 
 
-def test_tool_names_contains_list_accounts_and_service_tools() -> None:
+def test_tool_names_contains_core_discovery_tools() -> None:
     app = _app(smtp_runtime=_smtp_runtime(), imap_runtime=_imap_runtime())
 
-    assert app.tool_names() == [
-        "list_accounts",
-        "send_email",
-        "list_messages",
-        "get_message",
-        "search_messages",
-        "move_message",
-        "mark_message_read",
-        "delete_message",
-    ]
+    assert app.tool_names() == list(CORE_TOOL_NAMES)
 
 
 def test_list_accounts_returns_service_grouped_summaries() -> None:
@@ -257,8 +248,6 @@ def test_list_accounts_returns_service_grouped_summaries() -> None:
 
 def test_list_accounts_accepts_entry_point_supplied_service_runtime() -> None:
     class FakeRuntime:
-        tool_names = ("external_action",)
-
         def account_summaries(self) -> dict[str, object]:
             return {
                 "primary": {
@@ -269,7 +258,7 @@ def test_list_accounts_accepts_entry_point_supplied_service_runtime() -> None:
 
     app = AgentArbiterApp(RuntimeRegistry({"external": FakeRuntime()}))
 
-    assert app.tool_names() == ["list_accounts", "external_action"]
+    assert app.tool_names() == list(CORE_TOOL_NAMES)
     assert app.list_accounts() == {
         "external": {
             "primary": {

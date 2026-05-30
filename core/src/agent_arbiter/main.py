@@ -26,6 +26,7 @@ from .config import (
 )
 from .plugins import discover_service_plugins
 from .services import (
+    OperationCatalog,
     RuntimeRegistry,
     ServicePlugin,
     ServicePluginContext,
@@ -245,28 +246,61 @@ def service_plugin_names(
     return sorted(service_plugin.name for service_plugin in plugins)
 
 
-def _register_core_tools(server: "FastMCP", app: AgentArbiterApp) -> None:
+def _register_core_tools(server: "FastMCP", catalog: OperationCatalog) -> None:
     @server.tool(
         description=(
-            "Return the configured accounts available to the caller, along with "
-            "lightweight metadata needed to choose an account for later SMTP or "
-            "IMAP operations."
+            "Return the available Agent Arbiter capability names. Use "
+            "describe_caps or describe_cap to drill down before "
+            "choosing an operation."
         )
     )
-    def list_accounts() -> dict[str, object]:
-        return {
-            "accounts": app.list_accounts(),
-        }
+    def list_caps() -> dict[str, object]:
+        return catalog.list_capabilities()
 
+    @server.tool(
+        description=(
+            "Return bounded summaries of all Agent Arbiter capabilities, including "
+            "account and operation previews."
+        )
+    )
+    def describe_caps(
+        operation_preview_limit: int = 8,
+        account_preview_limit: int = 8,
+    ) -> dict[str, object]:
+        return catalog.describe_capabilities(
+            operation_preview_limit=operation_preview_limit,
+            account_preview_limit=account_preview_limit,
+        )
 
-def _register_service_plugins(
-    server: "FastMCP",
-    app: AgentArbiterApp,
-    service_plugins: Sequence[ServicePlugin],
-) -> None:
-    context = ServicePluginContext(runtimes=app.runtime_registry)
-    for service_plugin in service_plugins:
-        service_plugin.register_tools(server, context)
+    @server.tool(
+        description=(
+            "Return focused account and operation context for one Agent Arbiter "
+            "capability."
+        )
+    )
+    def describe_cap(capability: str) -> dict[str, object]:
+        return catalog.describe_capability(capability)
+
+    @server.tool(
+        description=(
+            "Return the description and input schema for one Agent Arbiter "
+            "operation. Operation ids use CAPABILITY:OPERATION syntax."
+        )
+    )
+    def describe_op(id: str) -> dict[str, object]:
+        return catalog.describe_operation(id)
+
+    @server.tool(
+        description=(
+            "Run one Agent Arbiter operation by id. Operation ids use "
+            "CAPABILITY:OPERATION syntax."
+        )
+    )
+    def run_op(
+        id: str,
+        arguments: dict[str, Any] | None = None,
+    ) -> object:
+        return catalog.invoke_operation(id, arguments)
 
 
 def build_server(
@@ -295,8 +329,11 @@ def build_server(
     if mcp_server is not None:
         mcp_server.version = package_version()
 
-    _register_core_tools(server, app)
-    _register_service_plugins(server, app, active_service_plugins)
+    catalog = OperationCatalog(
+        active_service_plugins,
+        ServicePluginContext(runtimes=app.runtime_registry),
+    )
+    _register_core_tools(server, catalog)
 
     return server
 

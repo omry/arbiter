@@ -11,6 +11,7 @@ import pytest
 from omegaconf import OmegaConf
 
 from agent_arbiter.config import AppConfig, ArbiterConfig
+from agent_arbiter.app import CORE_TOOL_NAMES
 from agent_arbiter.main import (
     _run_server,
     build_app,
@@ -34,8 +35,11 @@ from agent_arbiter_smtp import SendEmailResult, SMTPRuntime, SMTPServicePlugin
 from agent_arbiter_smtp.config import SMTPConfig, SMTPServicePolicyConfig
 from agent_arbiter.services import (
     SERVICE_PLUGIN_ENTRY_POINT_GROUP,
+    CapabilityDescriptor,
+    OperationDescriptor,
     RuntimeRegistry,
     ServicePlugin,
+    ServicePluginContext,
 )
 
 
@@ -44,16 +48,7 @@ def test_build_app_accepts_hydra_config() -> None:
 
     app = build_app(cfg, service_plugins=_test_service_plugins())
 
-    assert app.tool_names() == [
-        "list_accounts",
-        "send_email",
-        "list_messages",
-        "get_message",
-        "search_messages",
-        "move_message",
-        "mark_message_read",
-        "delete_message",
-    ]
+    assert app.tool_names() == list(CORE_TOOL_NAMES)
 
 
 def test_build_app_list_accounts_uses_real_config_shape() -> None:
@@ -87,8 +82,6 @@ def test_build_app_rejects_unknown_service_policy_reference() -> None:
 
 def test_build_app_activates_dynamic_entry_point_service() -> None:
     class FakeExternalRuntime:
-        tool_names = ("send_whatsapp",)
-
         def account_summaries(self) -> dict[str, object]:
             return {"bot": {"enabled": True}}
 
@@ -115,8 +108,28 @@ def test_build_app_activates_dynamic_entry_point_service() -> None:
             self.policies = policies
             return FakeExternalRuntime()
 
-        def register_tools(self, server: object, context: object) -> None:
-            return None
+        def describe_capability(
+            self,
+            context: ServicePluginContext,
+        ) -> CapabilityDescriptor:
+            return CapabilityDescriptor(
+                name=self.name,
+                description="Send messages through WhatsApp.",
+            )
+
+        def describe_operations(
+            self,
+            context: ServicePluginContext,
+        ) -> tuple[OperationDescriptor, ...]:
+            return ()
+
+        def invoke_operation(
+            self,
+            operation: str,
+            arguments: Mapping[str, Any],
+            context: ServicePluginContext,
+        ) -> object:
+            raise ValueError(f"unknown WhatsApp operation: {operation}")
 
     plugin = FakeExternalPlugin()
     cfg = OmegaConf.create(
@@ -149,7 +162,7 @@ def test_build_app_activates_dynamic_entry_point_service() -> None:
     assert plugin.policies is not None
     assert set(plugin.accounts) == {"bot"}
     assert set(plugin.policies) == {"bot"}
-    assert app.tool_names() == ["list_accounts", "send_whatsapp"]
+    assert app.tool_names() == list(CORE_TOOL_NAMES)
     assert app.list_accounts() == {"whatsapp": {"bot": {"enabled": True}}}
 
 
@@ -170,9 +183,6 @@ def test_discover_service_plugins_loads_entry_point_factories(
             context: object,
         ) -> object:
             return object()
-
-        def register_tools(self, server: object, context: object) -> None:
-            return None
 
     smtp_plugin = FakePlugin("smtp")
     imap_plugin = FakePlugin("imap")
@@ -1574,46 +1584,116 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     assert server.settings.port == 8000
     assert server.settings.streamable_http_path == "/mcp"
     assert server._mcp_server.version != ""
-    assert "list_accounts" in tools
-    assert "send_email" in tools
-    assert "list_messages" in tools
-    assert "get_message" in tools
-    assert "search_messages" in tools
-    assert "move_message" in tools
-    assert "mark_message_read" in tools
-    assert "delete_message" in tools
+    assert sorted(tools) == sorted(CORE_TOOL_NAMES)
 
-    list_result = tools["list_accounts"]()
+    assert tools["list_caps"]() == {"capabilities": ["imap", "smtp"]}
 
-    assert list_result == {
+    capabilities = cast(dict[str, Any], tools["describe_caps"]())
+    assert capabilities["capabilities"] == [
+        {
+            "id": "imap",
+            "description": "Read and manage mail through configured IMAP accounts.",
+            "account_count": 1,
+            "accounts": ["primary"],
+            "accounts_truncated": False,
+            "operation_count": 6,
+            "operations": [
+                "delete_message",
+                "get_message",
+                "list_messages",
+                "mark_message_read",
+                "move_message",
+                "search_messages",
+            ],
+            "operations_truncated": False,
+        },
+        {
+            "id": "smtp",
+            "description": "Send email through configured SMTP accounts.",
+            "account_count": 1,
+            "accounts": ["primary"],
+            "accounts_truncated": False,
+            "operation_count": 1,
+            "operations": ["send_email"],
+            "operations_truncated": False,
+        },
+    ]
+
+    smtp_capability = tools["describe_cap"](capability="smtp")
+    assert smtp_capability == {
+        "id": "smtp",
+        "description": "Send email through configured SMTP accounts.",
         "accounts": {
-            "imap": {
-                "primary": {
-                    "description": "Primary account",
-                    "policy": "bot",
-                    "enabled": True,
-                },
+            "primary": {
+                "description": "Bot-owned account for automated email tasks.",
+                "policy": "bot",
+                "enabled": True,
+                "send": "allowed",
+                "require_confirmation": False,
             },
-            "smtp": {
-                "primary": {
-                    "description": "Primary account",
-                    "policy": "bot",
-                    "enabled": True,
-                    "send": "allowed",
-                    "require_confirmation": False,
+        },
+        "operations": [
+            {
+                "id": "smtp:send_email",
+                "name": "send_email",
+                "description": (
+                    "Send a single email message through the configured SMTP "
+                    "submission server for the selected account. Use at least one "
+                    "recipient in to and at least one of text_body or html_body."
+                ),
+            },
+        ],
+    }
+
+    imap_capability = cast(
+        dict[str, Any],
+        tools["describe_cap"](capability="imap"),
+    )
+    assert imap_capability["accounts"] == {
+        "primary": {
+            "description": "",
+            "policy": "bot",
+            "enabled": True,
+            "confirmation_required": [],
+            "message": {
+                "read_allowed": True,
+                "move_allowed": True,
+                "delete_allowed": True,
+                "flags": {
+                    "seen": "read_only",
+                    "flagged": "read_only",
+                    "answered": "read_only",
+                    "deleted": "read_only",
+                    "draft": "read_only",
                 },
             },
         }
     }
-    assert list_accounts_calls == 1
+    assert [operation["id"] for operation in imap_capability["operations"]] == [
+        "imap:delete_message",
+        "imap:get_message",
+        "imap:list_messages",
+        "imap:mark_message_read",
+        "imap:move_message",
+        "imap:search_messages",
+    ]
 
-    send_result = tools["send_email"](
-        account="primary",
-        to=["to@example.com"],
-        cc=["cc@example.com"],
-        bcc=["bcc@example.com"],
-        subject="Hello",
-        text_body="Plain body",
+    smtp_operation = cast(
+        dict[str, Any],
+        tools["describe_op"](id="smtp:send_email"),
+    )
+    assert smtp_operation["input_schema"]["required"] == ["account", "to", "subject"]
+
+    send_result = tools["run_op"](
+        id="smtp:send_email",
+        arguments={
+            "account": "primary",
+            "to": ["to@example.com"],
+            "cc": ["cc@example.com"],
+            "bcc": ["bcc@example.com"],
+            "subject": "Hello",
+            "text_body": "Plain body",
+        },
     )
 
     assert send_result == {
@@ -1633,7 +1713,10 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
         }
     ]
 
-    assert tools["list_messages"](account="primary", folder="INBOX", limit=5) == {
+    assert tools["run_op"](
+        id="imap:list_messages",
+        arguments={"account": "primary", "folder": "INBOX", "limit": 5},
+    ) == {
         "account": "primary",
         "folder": "INBOX",
         "messages": [],
@@ -1642,7 +1725,10 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
         {"account": "primary", "folder": "INBOX", "limit": 5}
     ]
 
-    assert tools["get_message"](account="primary", folder="INBOX", message_id="42") == {
+    assert tools["run_op"](
+        id="imap:get_message",
+        arguments={"account": "primary", "folder": "INBOX", "message_id": "42"},
+    ) == {
         "account": "primary",
         "folder": "INBOX",
         "message": {},
@@ -1651,8 +1737,14 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
         {"account": "primary", "message_id": "42", "folder": "INBOX"}
     ]
 
-    assert tools["search_messages"](
-        account="primary", query="invoice", folder="INBOX", limit=10
+    assert tools["run_op"](
+        id="imap:search_messages",
+        arguments={
+            "account": "primary",
+            "query": "invoice",
+            "folder": "INBOX",
+            "limit": 10,
+        },
     ) == {
         "account": "primary",
         "folder": "INBOX",
@@ -1668,11 +1760,14 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
         }
     ]
 
-    assert tools["move_message"](
-        account="primary",
-        message_id="42",
-        destination_folder="Archive",
-        folder="INBOX",
+    assert tools["run_op"](
+        id="imap:move_message",
+        arguments={
+            "account": "primary",
+            "message_id": "42",
+            "destination_folder": "Archive",
+            "folder": "INBOX",
+        },
     ) == {"ok": True}
     assert move_message_calls == [
         {
@@ -1683,8 +1778,14 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
         }
     ]
 
-    assert tools["mark_message_read"](
-        account="primary", message_id="42", folder="INBOX", read=False
+    assert tools["run_op"](
+        id="imap:mark_message_read",
+        arguments={
+            "account": "primary",
+            "message_id": "42",
+            "folder": "INBOX",
+            "read": False,
+        },
     ) == {"ok": True}
     assert mark_message_read_calls == [
         {
@@ -1695,12 +1796,45 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
         }
     ]
 
-    assert tools["delete_message"](
-        account="primary", message_id="42", folder="INBOX"
+    assert tools["run_op"](
+        id="imap:delete_message",
+        arguments={"account": "primary", "message_id": "42", "folder": "INBOX"},
     ) == {"ok": True}
     assert delete_message_calls == [
         {"account": "primary", "message_id": "42", "folder": "INBOX"}
     ]
+
+    with pytest.raises(
+        ValueError,
+        match="smtp:send_email missing required argument\\(s\\): subject",
+    ):
+        tools["run_op"](
+            id="smtp:send_email",
+            arguments={"account": "primary", "to": ["to@example.com"]},
+        )
+
+    with pytest.raises(
+        ValueError,
+        match="smtp:send_email received unknown argument\\(s\\): reply_to",
+    ):
+        tools["run_op"](
+            id="smtp:send_email",
+            arguments={
+                "account": "primary",
+                "to": ["to@example.com"],
+                "subject": "Hello",
+                "reply_to": "reply@example.com",
+            },
+        )
+
+    with pytest.raises(
+        ValueError,
+        match="imap:list_messages argument limit must be integer",
+    ):
+        tools["run_op"](
+            id="imap:list_messages",
+            arguments={"account": "primary", "limit": "5"},
+        )
 
 
 @pytest.mark.parametrize(
@@ -1785,62 +1919,22 @@ def test_build_server_describes_send_email_tool_schema() -> None:
         ),
     )
 
-    list_accounts_tool = server._tool_manager._tools["list_accounts"]
-    assert (
-        "configured accounts available to the caller" in list_accounts_tool.description
-    )
-    assert list_accounts_tool.parameters["properties"] == {}
+    assert sorted(server._tool_manager._tools) == sorted(CORE_TOOL_NAMES)
 
-    send_email_tool = server._tool_manager._tools["send_email"]
-    parameters = send_email_tool.parameters["properties"]
+    describe_op_tool = server._tool_manager._tools["describe_op"]
+    assert "Operation ids use CAPABILITY:OPERATION syntax" in (
+        describe_op_tool.description
+    )
+    assert describe_op_tool.parameters["properties"]["id"]["type"] == "string"
 
-    assert "selected account" in send_email_tool.description
-    assert parameters["account"]["type"] == "string"
-    assert parameters["account"]["description"] == (
-        "Configured account name returned by list_accounts. The selected account "
-        "must have SMTP enabled."
-    )
-    assert parameters["account"]["examples"] == ["primary"]
-    assert parameters["to"]["type"] == "array"
-    assert parameters["to"]["description"] == "JSON array of recipient email addresses."
-    assert parameters["to"]["examples"] == [["to@example.com"]]
-    assert parameters["subject"]["type"] == "string"
-    assert parameters["subject"]["description"] == "Email subject line."
-    assert parameters["text_body"]["description"] == (
-        "Optional plain-text body. Provide this or html_body."
-    )
-    assert parameters["html_body"]["description"] == (
-        "Optional HTML body. Provide this or text_body."
-    )
-    assert parameters["cc"]["description"] == (
-        "Optional JSON array of recipient email addresses."
-    )
-    assert parameters["bcc"]["description"] == (
-        "Optional JSON array of recipient email addresses."
-    )
-
-    list_messages_tool = server._tool_manager._tools["list_messages"]
-    list_messages_parameters = list_messages_tool.parameters["properties"]
-    assert "List recent messages" in list_messages_tool.description
-    assert list_messages_parameters["account"]["type"] == "string"
-    assert list_messages_parameters["folder"]["anyOf"] == [
-        {"type": "string"},
+    run_op_tool = server._tool_manager._tools["run_op"]
+    assert "Run one Agent Arbiter operation by id" in run_op_tool.description
+    run_parameters = run_op_tool.parameters["properties"]
+    assert run_parameters["id"]["type"] == "string"
+    assert run_parameters["arguments"]["anyOf"] == [
+        {
+            "additionalProperties": True,
+            "type": "object",
+        },
         {"type": "null"},
     ]
-    assert list_messages_parameters["limit"]["minimum"] == 1
-    assert list_messages_parameters["limit"]["maximum"] == 100
-
-    get_message_parameters = server._tool_manager._tools["get_message"].parameters[
-        "properties"
-    ]
-    assert get_message_parameters["message_id"]["type"] == "string"
-
-    search_messages_parameters = server._tool_manager._tools[
-        "search_messages"
-    ].parameters["properties"]
-    assert search_messages_parameters["query"]["type"] == "string"
-
-    move_message_parameters = server._tool_manager._tools["move_message"].parameters[
-        "properties"
-    ]
-    assert move_message_parameters["destination_folder"]["type"] == "string"

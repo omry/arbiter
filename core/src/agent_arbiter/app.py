@@ -5,6 +5,15 @@ from typing import Protocol, cast
 from .services import RuntimeRegistry
 
 
+CORE_TOOL_NAMES = (
+    "list_caps",
+    "describe_caps",
+    "describe_cap",
+    "describe_op",
+    "run_op",
+)
+
+
 class AccountSummariesRuntime(Protocol):
     def account_summaries(self) -> dict[str, object]: ...
 
@@ -19,10 +28,7 @@ class AgentArbiterApp:
         self.runtime_registry = runtime_registry
 
     def tool_names(self) -> list[str]:
-        names = ["list_accounts"]
-        for _, runtime in self.runtime_registry.items():
-            names.extend(cast(tuple[str, ...], getattr(runtime, "tool_names", ())))
-        return names
+        return list(CORE_TOOL_NAMES)
 
     def list_accounts(self) -> dict[str, object]:
         summaries: dict[str, object] = {}

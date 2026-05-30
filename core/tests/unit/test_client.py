@@ -27,7 +27,29 @@ def test_client_help_uses_arbiter_program_name(
         client.main(["--help"])
 
     assert exc_info.value.code == 0
-    assert capsys.readouterr().out.startswith("usage: arbiter ")
+    output = capsys.readouterr().out
+    assert output.startswith("usage: arbiter ")
+    assert "--config-name" in output
+    assert "--version" in output
+    assert "bootstrap" in output
+
+
+def test_client_without_args_prints_short_usage(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert client.main([]) == 2
+
+    assert capsys.readouterr().out == (
+        "usage: arbiter {cap,op,accounts} ...\n" "Run 'arbiter --help' for full help.\n"
+    )
+
+
+def test_client_version(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        client.main(["--version"])
+
+    assert exc_info.value.code == 0
+    assert capsys.readouterr().out.startswith("arbiter ")
 
 
 def test_client_lists_tool_names(
@@ -37,15 +59,30 @@ def test_client_lists_tool_names(
     async def fake_list_tools(url: str) -> list[Mapping[str, object]]:
         assert url == "http://127.0.0.1:8000/mcp"
         return [
-            {"name": "list_accounts", "description": "", "input_schema": {}},
-            {"name": "send_email", "description": "", "input_schema": {}},
+            {"name": "list_caps", "description": "", "input_schema": {}},
+            {"name": "run_op", "description": "", "input_schema": {}},
         ]
 
     monkeypatch.setattr(client, "list_tools", fake_list_tools)
 
-    assert client.main(["tools", "list"]) == 0
+    assert client.main(["mcp", "tools"]) == 0
 
-    assert capsys.readouterr().out == "list_accounts\nsend_email\n"
+    assert capsys.readouterr().out == "list_caps\nrun_op\n"
+
+
+def test_client_tools_defaults_to_list(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_list_tools(url: str) -> list[Mapping[str, object]]:
+        assert url == "http://127.0.0.1:8000/mcp"
+        return [{"name": "list_caps", "description": "", "input_schema": {}}]
+
+    monkeypatch.setattr(client, "list_tools", fake_list_tools)
+
+    assert client.main(["mcp"]) == 0
+
+    assert capsys.readouterr().out == "list_caps\n"
 
 
 def test_client_lists_tools_as_json(
@@ -56,8 +93,8 @@ def test_client_lists_tools_as_json(
         assert url == "http://localhost:9000/mcp"
         return [
             {
-                "name": "list_accounts",
-                "description": "List configured accounts.",
+                "name": "list_caps",
+                "description": "List Agent Arbiter capability names.",
                 "input_schema": {"type": "object"},
             },
         ]
@@ -65,13 +102,13 @@ def test_client_lists_tools_as_json(
     monkeypatch.setattr(client, "list_tools", fake_list_tools)
 
     assert (
-        client.main(["tools", "list", "--json", "mcp_url=http://localhost:9000/mcp"])
+        client.main(["mcp", "tools", "--json", "mcp_url=http://localhost:9000/mcp"])
         == 0
     )
 
     assert capsys.readouterr().out == (
-        '{"tools": [{"description": "List configured accounts.", '
-        '"input_schema": {"type": "object"}, "name": "list_accounts"}]}\n'
+        '{"tools": [{"description": "List Agent Arbiter capability names.", '
+        '"input_schema": {"type": "object"}, "name": "list_caps"}]}\n'
     )
 
 
@@ -85,7 +122,7 @@ def test_client_reads_mcp_url_from_client_config(
 
     async def fake_list_tools(url: str) -> list[Mapping[str, object]]:
         assert url == "http://localhost:9001/mcp"
-        return [{"name": "list_accounts", "description": "", "input_schema": {}}]
+        return [{"name": "list_caps", "description": "", "input_schema": {}}]
 
     monkeypatch.setattr(client, "list_tools", fake_list_tools)
 
@@ -96,14 +133,14 @@ def test_client_reads_mcp_url_from_client_config(
                 str(tmp_path),
                 "--config-name",
                 "local-client",
+                "mcp",
                 "tools",
-                "list",
             ]
         )
         == 0
     )
 
-    assert capsys.readouterr().out == "list_accounts\n"
+    assert capsys.readouterr().out == "list_caps\n"
 
 
 def test_client_uses_default_client_config_path(
@@ -120,13 +157,13 @@ def test_client_uses_default_client_config_path(
 
     async def fake_list_tools(url: str) -> list[Mapping[str, object]]:
         assert url == "http://localhost:9002/mcp"
-        return [{"name": "list_accounts", "description": "", "input_schema": {}}]
+        return [{"name": "list_caps", "description": "", "input_schema": {}}]
 
     monkeypatch.setattr(client, "list_tools", fake_list_tools)
 
-    assert client.main(["tools", "list"]) == 0
+    assert client.main(["mcp", "tools"]) == 0
 
-    assert capsys.readouterr().out == "list_accounts\n"
+    assert capsys.readouterr().out == "list_caps\n"
 
 
 def test_client_mcp_url_env_overrides_client_config(
@@ -140,7 +177,7 @@ def test_client_mcp_url_env_overrides_client_config(
 
     async def fake_list_tools(url: str) -> list[Mapping[str, object]]:
         assert url == "http://localhost:9004/mcp"
-        return [{"name": "list_accounts", "description": "", "input_schema": {}}]
+        return [{"name": "list_caps", "description": "", "input_schema": {}}]
 
     monkeypatch.setattr(client, "list_tools", fake_list_tools)
 
@@ -151,14 +188,14 @@ def test_client_mcp_url_env_overrides_client_config(
                 str(tmp_path),
                 "--config-name",
                 "local-client",
+                "mcp",
                 "tools",
-                "list",
             ]
         )
         == 0
     )
 
-    assert capsys.readouterr().out == "list_accounts\n"
+    assert capsys.readouterr().out == "list_caps\n"
 
 
 def test_client_override_overrides_env_and_client_config(
@@ -172,7 +209,7 @@ def test_client_override_overrides_env_and_client_config(
 
     async def fake_list_tools(url: str) -> list[Mapping[str, object]]:
         assert url == "http://localhost:9007/mcp"
-        return [{"name": "list_accounts", "description": "", "input_schema": {}}]
+        return [{"name": "list_caps", "description": "", "input_schema": {}}]
 
     monkeypatch.setattr(client, "list_tools", fake_list_tools)
 
@@ -183,21 +220,45 @@ def test_client_override_overrides_env_and_client_config(
                 str(tmp_path),
                 "--config-name",
                 "local-client",
+                "mcp",
                 "tools",
-                "list",
                 "mcp_url=http://localhost:9007/mcp",
             ]
         )
         == 0
     )
 
-    assert capsys.readouterr().out == "list_accounts\n"
+    assert capsys.readouterr().out == "list_caps\n"
+
+
+def test_client_override_after_optional_positional_is_not_consumed(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        assert url == "http://localhost:9010/mcp"
+        assert name == "describe_cap"
+        assert arguments == {"capability": "smtp"}
+        return SimpleNamespace(structuredContent={"accounts": {}})
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert (
+        client.main(["accounts", "desc", "smtp", "mcp_url=http://localhost:9010/mcp"])
+        == 0
+    )
+
+    assert capsys.readouterr().out == '{"accounts": {}}\n'
 
 
 def test_client_rejects_unknown_client_override(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    assert client.main(["tools", "list", "unknown=value"]) == 1
+    assert client.main(["mcp", "tools", "unknown=value"]) == 1
 
     assert capsys.readouterr().err == (
         "Agent Arbiter client config error: unsupported client override key(s): "
@@ -208,7 +269,7 @@ def test_client_rejects_unknown_client_override(
 def test_client_rejects_malformed_client_override(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    assert client.main(["tools", "list", "--unknown"]) == 1
+    assert client.main(["mcp", "tools", "--unknown"]) == 1
 
     assert capsys.readouterr().err == (
         "Agent Arbiter client config error: client override must use KEY=VALUE "
@@ -263,8 +324,11 @@ def test_client_calls_tool_with_json_args(
         arguments: Mapping[str, Any],
     ) -> object:
         assert url == "http://127.0.0.1:8000/mcp"
-        assert name == "send_email"
-        assert arguments == {"account": "primary"}
+        assert name == "run_op"
+        assert arguments == {
+            "id": "smtp:send_email",
+            "arguments": {"account": "primary"},
+        }
         return {"ok": True}
 
     monkeypatch.setattr(client, "call_tool", fake_call_tool)
@@ -272,9 +336,128 @@ def test_client_calls_tool_with_json_args(
     assert (
         client.main(
             [
-                "tools",
+                "mcp",
                 "call",
-                "send_email",
+                "run_op",
+                "--args",
+                '{"id": "smtp:send_email", "arguments": {"account": "primary"}}',
+            ]
+        )
+        == 0
+    )
+
+    assert capsys.readouterr().out == '{"ok": true}\n'
+
+
+def test_client_cap_alias_lists_capabilities(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        assert url == "http://127.0.0.1:8000/mcp"
+        assert name == "list_caps"
+        assert arguments == {}
+        return SimpleNamespace(structuredContent={"capabilities": ["imap", "smtp"]})
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert client.main(["cap", "list"]) == 0
+
+    assert capsys.readouterr().out == "imap\nsmtp\n"
+
+
+def test_client_cap_defaults_to_list(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        assert url == "http://127.0.0.1:8000/mcp"
+        assert name == "list_caps"
+        assert arguments == {}
+        return SimpleNamespace(structuredContent={"capabilities": ["smtp"]})
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert client.main(["cap"]) == 0
+
+    assert capsys.readouterr().out == "smtp\n"
+
+
+def test_client_cap_desc_alias_describes_capability(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        assert url == "http://127.0.0.1:8000/mcp"
+        assert name == "describe_cap"
+        assert arguments == {"capability": "smtp"}
+        return SimpleNamespace(structuredContent={"id": "smtp"})
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert client.main(["cap", "desc", "smtp"]) == 0
+
+    assert capsys.readouterr().out == '{"id": "smtp"}\n'
+
+
+def test_client_op_desc_alias_describes_operation(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        assert url == "http://127.0.0.1:8000/mcp"
+        assert name == "describe_op"
+        assert arguments == {"id": "smtp:send_email"}
+        return SimpleNamespace(structuredContent={"id": "smtp:send_email"})
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert client.main(["op", "desc", "smtp:send_email"]) == 0
+
+    assert capsys.readouterr().out == '{"id": "smtp:send_email"}\n'
+
+
+def test_client_op_alias_runs_operation(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        assert url == "http://127.0.0.1:8000/mcp"
+        assert name == "run_op"
+        assert arguments == {
+            "id": "smtp:send_email",
+            "arguments": {"account": "primary"},
+        }
+        return SimpleNamespace(structuredContent={"ok": True})
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert (
+        client.main(
+            [
+                "op",
+                "run",
+                "smtp:send_email",
                 "--args",
                 '{"account": "primary"}',
             ]
@@ -289,30 +472,102 @@ def test_client_lists_accounts(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    calls: list[tuple[str, Mapping[str, Any]]] = []
+
     async def fake_call_tool(
         url: str,
         name: str,
         arguments: Mapping[str, Any],
     ) -> object:
         assert url == "http://127.0.0.1:8000/mcp"
-        assert name == "list_accounts"
-        assert arguments == {}
-        return SimpleNamespace(
-            content=[
-                SimpleNamespace(
-                    type="text",
-                    text='{\n  "accounts": {\n    "smtp": {}\n  }\n}',
-                )
-            ],
-            structuredContent={"accounts": {"smtp": {"primary": {"enabled": True}}}},
-        )
+        calls.append((name, arguments))
+        if name == "describe_caps":
+            assert arguments == {}
+            return SimpleNamespace(
+                structuredContent={
+                    "capabilities": [{"id": "smtp", "accounts": ["primary"]}]
+                },
+            )
+        raise AssertionError(f"unexpected tool call: {name}")
 
     monkeypatch.setattr(client, "call_tool", fake_call_tool)
 
     assert client.main(["accounts", "list"]) == 0
 
+    assert capsys.readouterr().out == "smtp\n  primary\n"
+    assert calls == [("describe_caps", {})]
+
+
+def test_client_accounts_defaults_to_list(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        if name == "describe_caps":
+            return SimpleNamespace(
+                structuredContent={
+                    "capabilities": [{"id": "smtp", "accounts": ["primary"]}]
+                },
+            )
+        raise AssertionError(f"unexpected tool call: {name}")
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert client.main(["accounts"]) == 0
+
+    assert capsys.readouterr().out == "smtp\n  primary\n"
+
+
+def test_client_lists_accounts_as_json(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        assert name == "describe_caps"
+        assert arguments == {}
+        return SimpleNamespace(
+            structuredContent={
+                "capabilities": [{"id": "smtp", "accounts": ["primary"]}]
+            },
+        )
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert client.main(["accounts", "list", "--json"]) == 0
+
+    assert capsys.readouterr().out == '{"accounts": {"smtp": ["primary"]}}\n'
+
+
+def test_client_describes_account(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        assert name == "describe_cap"
+        assert arguments == {"capability": "smtp"}
+        return SimpleNamespace(
+            structuredContent={"accounts": {"primary": {"enabled": True}}},
+        )
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert client.main(["accounts", "desc", "smtp", "primary"]) == 0
+
     assert capsys.readouterr().out == (
-        '{"accounts": {"smtp": {"primary": {"enabled": true}}}}\n'
+        '{"account": "primary", "capability": "smtp", '
+        '"details": {"enabled": true}}\n'
     )
 
 
@@ -325,13 +580,13 @@ def test_client_lists_accounts_accepts_plain_payload(
         name: str,
         arguments: Mapping[str, Any],
     ) -> object:
-        return {"accounts": {}}
+        return {"capabilities": []}
 
     monkeypatch.setattr(client, "call_tool", fake_call_tool)
 
     assert client.main(["accounts", "list"]) == 0
 
-    assert capsys.readouterr().out == '{"accounts": {}}\n'
+    assert capsys.readouterr().out == ""
 
 
 def test_client_warns_when_remote_version_differs(
@@ -380,7 +635,7 @@ def test_client_does_not_warn_when_local_version_is_unknown(
 
 def test_client_rejects_non_object_json_args() -> None:
     with pytest.raises(SystemExit) as exc_info:
-        client.main(["tools", "call", "send_email", "--args", "[]"])
+        client.main(["mcp", "call", "run_op", "--args", "[]"])
 
     assert exc_info.value.code == 2
 
@@ -394,7 +649,7 @@ def test_client_reports_clean_keyboard_interrupt(
 
     monkeypatch.setattr("agent_arbiter.client.anyio.run", raise_keyboard_interrupt)
 
-    assert client.main(["tools", "list"]) == 130
+    assert client.main(["mcp", "tools"]) == 130
 
     assert capsys.readouterr().err == "Agent Arbiter client stopped.\n"
 
@@ -415,7 +670,7 @@ def test_client_reports_clean_connection_failure(
 
     monkeypatch.setattr("agent_arbiter.client.anyio.run", raise_connection_error)
 
-    assert client.main(["tools", "list"]) == 1
+    assert client.main(["mcp", "tools"]) == 1
 
     assert capsys.readouterr().err == (
         "Could not connect to Agent Arbiter at http://127.0.0.1:8000/mcp. "
