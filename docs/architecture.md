@@ -25,8 +25,6 @@ Those tools should share the same:
 
 The point of the implementation is not to build a generic mail framework. It is to provide a small, explicit server that can discover configured accounts, submit SMTP mail, and operate on configured IMAP folders safely.
 
-The planned platform direction is captured in
-[ADR 0001: Service Plugin Architecture](adr/0001-service-plugin-architecture.md).
 SMTP and IMAP now register through the plugin boundary, own service-specific
 runtime objects, and receive service-owned account and policy config from
 `arbiter.account.<service>` and `arbiter.policy.<service>`. They live in
