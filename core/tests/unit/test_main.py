@@ -250,7 +250,7 @@ def test_server_cli_help_uses_agent_arbiter_program_name(
 ) -> None:
     assert main(["--help"]) == 0
 
-    assert capsys.readouterr().out.startswith("usage: agent-arbiter ")
+    assert capsys.readouterr().out.startswith("usage: arbiter-server ")
 
 
 def test_server_cli_reports_clean_keyboard_interrupt(
@@ -357,7 +357,7 @@ def test_cli_env_check_accepts_env_file_and_process_env(
 ) -> None:
     monkeypatch.setenv("HOME", "/home/tester")
     monkeypatch.delenv("SMTP_PRIMARY_ACCOUNT_PASSWORD", raising=False)
-    (tmp_path / "config.yaml").write_text(
+    (tmp_path / "arbiter-server.yaml").write_text(
         "arbiter:\n"
         "  env_file: local.env\n"
         "  account:\n"
@@ -386,7 +386,7 @@ def test_cli_env_check_reports_missing_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("SMTP_PRIMARY_ACCOUNT_PASSWORD", raising=False)
-    (tmp_path / "config.yaml").write_text(
+    (tmp_path / "arbiter-server.yaml").write_text(
         "arbiter:\n"
         "  env_file: local.env\n"
         "  account:\n"
@@ -417,7 +417,7 @@ def test_cli_env_bootstrap_rebuilds_configured_env_file(
     ):
         monkeypatch.delenv(env_name, raising=False)
     monkeypatch.setenv("HOME", "/home/tester")
-    (tmp_path / "config.yaml").write_text(
+    (tmp_path / "arbiter-server.yaml").write_text(
         "arbiter:\n"
         "  env_file: local.env\n"
         "  account:\n"
@@ -464,7 +464,7 @@ def test_cli_env_bootstrap_reports_noop_when_env_file_is_current(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("SMTP_PRIMARY_ACCOUNT_PASSWORD", raising=False)
-    (tmp_path / "config.yaml").write_text(
+    (tmp_path / "arbiter-server.yaml").write_text(
         "arbiter:\n"
         "  env_file: local.env\n"
         "  account:\n"
@@ -490,7 +490,7 @@ def test_cli_env_bootstrap_configures_default_env_file(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("SMTP_PRIMARY_ACCOUNT_PASSWORD", raising=False)
-    (tmp_path / "config.yaml").write_text(
+    (tmp_path / "arbiter-server.yaml").write_text(
         "arbiter:\n"
         "  account:\n"
         "    smtp:\n"
@@ -502,7 +502,7 @@ def test_cli_env_bootstrap_configures_default_env_file(
 
     assert main(["--config-dir", str(tmp_path), "env", "bootstrap"]) == 0
 
-    assert (tmp_path / "config.yaml").read_text(encoding="utf-8") == (
+    assert (tmp_path / "arbiter-server.yaml").read_text(encoding="utf-8") == (
         "arbiter:\n"
         "  env_file: .env\n"
         "  account:\n"
@@ -552,7 +552,7 @@ def test_cli_serve_subcommand_passes_config_and_overrides(
                 "--config-dir",
                 "/tmp",
                 "--config-name",
-                "agent-arbiter-local",
+                "arbiter-server-local",
                 "serve",
                 "arbiter.server.port=8025",
             ]
@@ -563,7 +563,7 @@ def test_cli_serve_subcommand_passes_config_and_overrides(
     assert serve_calls == [
         {
             "config_dir": "/tmp",
-            "config_name": "agent-arbiter-local",
+            "config_name": "arbiter-server-local",
             "overrides": ["arbiter.server.port=8025"],
         },
     ]
@@ -575,9 +575,9 @@ def test_cli_accepts_config_args_after_subcommand(
 ) -> None:
     assert main(["bootstrap", "arbiter", "--config-dir", str(tmp_path)]) == 0
 
-    assert (tmp_path / "config.yaml").exists()
+    assert (tmp_path / "arbiter-server.yaml").exists()
     assert capsys.readouterr().out == (
-        f"wrote {tmp_path / 'config.yaml'}\n"
+        f"wrote {tmp_path / 'arbiter-server.yaml'}\n"
         f"wrote {tmp_path / 'arbiter' / 'server.yaml'}\n"
     )
 
@@ -601,7 +601,7 @@ def test_cli_config_check_subcommand_passes_config_and_overrides(
     assert check_calls == [
         {
             "config_dir": "/tmp",
-            "config_name": "config",
+            "config_name": "arbiter-server",
             "overrides": ["arbiter.server.port=8025"],
         },
     ]
@@ -635,21 +635,28 @@ def test_cli_config_show_subcommand_passes_config_and_overrides(
     assert show_calls == [
         {
             "config_dir": "/tmp",
-            "config_name": "config",
+            "config_name": "arbiter-server",
             "overrides": ["arbiter.server.port=8025"],
             "resolve": True,
         },
     ]
 
 
-def test_cli_bootstrap_arbiter_requires_config_dir(
+def test_cli_bootstrap_arbiter_uses_default_config_dir(
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    with pytest.raises(SystemExit) as exc_info:
-        main(["bootstrap", "arbiter"])
+    monkeypatch.setenv("HOME", str(tmp_path))
 
-    assert exc_info.value.code == 2
-    assert "--config-dir" in capsys.readouterr().err
+    assert main(["bootstrap", "arbiter"]) == 0
+
+    config_dir = tmp_path / ".arbiter"
+    assert (config_dir / "arbiter-server.yaml").exists()
+    assert capsys.readouterr().out == (
+        f"wrote {config_dir / 'arbiter-server.yaml'}\n"
+        f"wrote {config_dir / 'arbiter' / 'server.yaml'}\n"
+    )
 
 
 def test_cli_bootstrap_arbiter_writes_main_config(
@@ -661,15 +668,15 @@ def test_cli_bootstrap_arbiter_writes_main_config(
 
     assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
 
-    config_file = config_dir / "config.yaml"
+    config_file = config_dir / "arbiter-server.yaml"
     assert config_file.read_text(encoding="utf-8") == (
         "defaults:\n"
         "# Agent Arbiter composes this config at startup from the defaults "
         "below.\n"
         "# Inspect the composed config with:\n"
-        "#   agent-arbiter --config-dir <dir> --config-name config config show\n"
+        "#   arbiter-server --config-dir <dir> --config-name arbiter-server config show\n"
         "# Override composed values with Hydra overrides, for example:\n"
-        "#   agent-arbiter --config-dir <dir> serve arbiter.server.port=8025\n"
+        "#   arbiter-server --config-dir <dir> serve arbiter.server.port=8025\n"
         "# Optionally load a config-dir-relative dotenv file before composition:\n"
         "#   arbiter:\n"
         "#     env_file: local.env\n"
@@ -697,7 +704,7 @@ def test_cli_bootstrap_arbiter_writes_main_config(
         "Agent Arbiter config error: config must define at least one service "
         "account before Agent Arbiter can run\n"
         "currently installed arbiter plugins: imap, smtp\n"
-        "use `agent-arbiter --config-dir DIR bootstrap plugin PLUGIN account "
+        "use `arbiter-server --config-dir DIR bootstrap plugin PLUGIN account "
         "NAME` to create an account config\n"
     )
 
@@ -713,7 +720,7 @@ def test_cli_bootstrap_arbiter_writes_main_config(
         "Agent Arbiter config error: config must define at least one service "
         "account before Agent Arbiter can run\n"
         "currently installed arbiter plugins: imap, smtp\n"
-        "use `agent-arbiter --config-dir DIR bootstrap plugin PLUGIN account "
+        "use `arbiter-server --config-dir DIR bootstrap plugin PLUGIN account "
         "NAME` to create an account config\n"
     )
     assert served == {}
@@ -774,7 +781,7 @@ def test_cli_bootstrap_plugin_account_writes_service_example(
     assert "max_messages_per_minute: 30\n" in policy_yaml
     assert "allowed_domain_patterns: []\n" in policy_yaml
     assert "example.com" not in policy_yaml
-    main_config = (config_dir / "config.yaml").read_text(encoding="utf-8")
+    main_config = (config_dir / "arbiter-server.yaml").read_text(encoding="utf-8")
     assert (
         "/arbiter/account/smtp@arbiter.account.smtp.personal_account" not in main_config
     )
@@ -786,11 +793,11 @@ def test_cli_bootstrap_plugin_account_writes_service_example(
         f"wrote {policy_file}\n"
         "\n"
         "Edit the generated account and policy files, then activate the account:\n"
-        f"  agent-arbiter --config-dir {config_dir} "
+        f"  arbiter-server --config-dir {config_dir} "
         "config activate account smtp personal_account\n"
         "\n"
         "Then inspect the composed config with:\n"
-        f"  agent-arbiter --config-dir {config_dir} config show\n"
+        f"  arbiter-server --config-dir {config_dir} config show\n"
     )
 
 
@@ -862,18 +869,18 @@ def test_cli_bootstrap_plugin_policy_writes_service_example(
     assert "max_messages_per_minute: 30\n" in policy_yaml
     assert "allowed_domain_patterns: []\n" in policy_yaml
     assert "example.com" not in policy_yaml
-    main_config = (config_dir / "config.yaml").read_text(encoding="utf-8")
+    main_config = (config_dir / "arbiter-server.yaml").read_text(encoding="utf-8")
     assert "/arbiter/policy/smtp@arbiter.policy.smtp.readonly" not in main_config
     assert capsys.readouterr().out == (
         f"wrote {policy_file}\n"
         "\n"
-        f"To activate the generated policy, add this to {config_dir / 'config.yaml'}:\n"
+        f"To activate the generated policy, add this to {config_dir / 'arbiter-server.yaml'}:\n"
         "defaults:\n"
         "  - arbiter/policy:\n"
         "    - smtp/readonly\n"
         "\n"
         "Then inspect the composed config with:\n"
-        f"  agent-arbiter --config-dir {config_dir} config show\n"
+        f"  arbiter-server --config-dir {config_dir} config show\n"
     )
 
 
@@ -914,15 +921,15 @@ def test_cli_config_activate_account_activates_matching_policy(
         == 0
     )
 
-    config_yaml = (config_dir / "config.yaml").read_text(encoding="utf-8")
+    config_yaml = (config_dir / "arbiter-server.yaml").read_text(encoding="utf-8")
     assert "  - arbiter/account:\n" in config_yaml
     assert "    - smtp/personal_account\n" in config_yaml
     assert "  - arbiter/policy:\n" in config_yaml
     assert "    - smtp/personal_account_policy\n" in config_yaml
-    cfg = compose_config(config_dir=config_dir, config_name="config")
+    cfg = compose_config(config_dir=config_dir, config_name="arbiter-server")
     assert cfg.arbiter.account.smtp.personal_account.policy == "personal_account_policy"
     assert cfg.arbiter.policy.smtp.personal_account_policy.require_confirmation is True
-    assert capsys.readouterr().out == f"updated {config_dir / 'config.yaml'}\n"
+    assert capsys.readouterr().out == f"updated {config_dir / 'arbiter-server.yaml'}\n"
 
 
 def test_cli_config_activate_account_can_alias_policy_file_name(
@@ -970,12 +977,12 @@ def test_cli_config_activate_account_can_alias_policy_file_name(
         == 0
     )
 
-    config_yaml = (config_dir / "config.yaml").read_text(encoding="utf-8")
+    config_yaml = (config_dir / "arbiter-server.yaml").read_text(encoding="utf-8")
     assert "  - arbiter/account:\n" in config_yaml
     assert "    - smtp/bot\n" in config_yaml
     assert "  - arbiter/policy:\n" in config_yaml
     assert "    - smtp/bot\n" in config_yaml
-    cfg = compose_config(config_dir=config_dir, config_name="config")
+    cfg = compose_config(config_dir=config_dir, config_name="arbiter-server")
     assert cfg.arbiter.account.smtp.bot.policy == "bot_policy"
     assert cfg.arbiter.policy.smtp.bot_policy.require_confirmation is True
 
@@ -1031,10 +1038,10 @@ def test_cli_config_deactivate_account_deactivates_unused_policy(
         == 0
     )
 
-    config_yaml = (config_dir / "config.yaml").read_text(encoding="utf-8")
+    config_yaml = (config_dir / "arbiter-server.yaml").read_text(encoding="utf-8")
     assert "  - arbiter/account:\n" not in config_yaml
     assert "  - arbiter/policy:\n" not in config_yaml
-    assert capsys.readouterr().out == f"updated {config_dir / 'config.yaml'}\n"
+    assert capsys.readouterr().out == f"updated {config_dir / 'arbiter-server.yaml'}\n"
 
 
 def test_cli_config_deactivate_account_keeps_shared_policy(
@@ -1098,7 +1105,7 @@ def test_cli_config_deactivate_account_keeps_shared_policy(
         == 0
     )
 
-    config_yaml = (config_dir / "config.yaml").read_text(encoding="utf-8")
+    config_yaml = (config_dir / "arbiter-server.yaml").read_text(encoding="utf-8")
     assert "    - smtp/primary\n" not in config_yaml
     assert "    - smtp/secondary\n" in config_yaml
     assert "    - smtp/shared\n" in config_yaml
@@ -1116,7 +1123,7 @@ def test_cli_config_deactivate_account_keeps_shared_policy(
         )
         == 0
     )
-    config_yaml = (config_dir / "config.yaml").read_text(encoding="utf-8")
+    config_yaml = (config_dir / "arbiter-server.yaml").read_text(encoding="utf-8")
     assert "    - smtp/secondary\n" not in config_yaml
     assert "    - smtp/shared\n" not in config_yaml
 
@@ -1528,6 +1535,7 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
                 port=0,
                 streamable_http_path="",
             )
+            self._mcp_server = SimpleNamespace(version="")
             self.run_transport = ""
 
         def tool(
@@ -1565,6 +1573,7 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     assert server.settings.host == "127.0.0.1"
     assert server.settings.port == 8000
     assert server.settings.streamable_http_path == "/mcp"
+    assert server._mcp_server.version != ""
     assert "list_accounts" in tools
     assert "send_email" in tools
     assert "list_messages" in tools

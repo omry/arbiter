@@ -216,14 +216,14 @@ arbiter:
 Relative paths are resolved from `--config-dir`. Then run Arbiter normally:
 
 ```bash
-agent-arbiter --config-dir "$PWD/config.local" --config-name config config check
+arbiter-server --config-dir "$PWD/config.local" config check
 ```
 
 Use the env command surface to manage that file:
 
 ```bash
-agent-arbiter --config-dir "$PWD/config.local" env check
-agent-arbiter --config-dir "$PWD/config.local" env bootstrap
+arbiter-server --config-dir "$PWD/config.local" env check
+arbiter-server --config-dir "$PWD/config.local" env bootstrap
 ```
 
 `env check` verifies every `${oc.env:...}` reference in the composed config is

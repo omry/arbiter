@@ -8,7 +8,6 @@ import re
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -32,6 +31,7 @@ from .services import (
     ServicePluginContext,
     ServiceRuntimeContext,
 )
+from .version import package_version
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -47,6 +47,8 @@ ENV_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 ENV_FILE_CONFIG_KEY = "arbiter.env_file"
 ENV_REFERENCE_PATTERN = re.compile(r"\$\{oc\.env:(?P<name>[^,}\s]+)(?:,[^}]*)?\}")
 DEFAULT_ENV_FILE_NAME = ".env"
+DEFAULT_CONFIG_DIR = "~/.arbiter"
+DEFAULT_SERVER_CONFIG_NAME = "arbiter-server"
 GROUP_SELECTION_PATTERN = re.compile(
     r"^\s*-\s*(?P<item>[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)?)\s*(?:#.*)?$"
 )
@@ -54,9 +56,9 @@ MISC_ENV_BLOCK = "miscellaneous"
 MAIN_CONFIG_TEMPLATE = """defaults:
 # Agent Arbiter composes this config at startup from the defaults below.
 # Inspect the composed config with:
-#   agent-arbiter --config-dir <dir> --config-name config config show
+#   arbiter-server --config-dir <dir> --config-name arbiter-server config show
 # Override composed values with Hydra overrides, for example:
-#   agent-arbiter --config-dir <dir> serve arbiter.server.port=8025
+#   arbiter-server --config-dir <dir> serve arbiter.server.port=8025
 # Optionally load a config-dir-relative dotenv file before composition:
 #   arbiter:
 #     env_file: local.env
@@ -171,15 +173,6 @@ def build_app(
     return AgentArbiterApp(RuntimeRegistry(runtimes))
 
 
-def package_version() -> str:
-    for package_name in ("agent-arbiter", "agent-arbiter-core"):
-        try:
-            return version(package_name)
-        except PackageNotFoundError:
-            continue
-    return "unknown"
-
-
 def _csv_or_none(values: list[str]) -> str:
     return ",".join(values) if values else "none"
 
@@ -226,7 +219,7 @@ def ensure_runnable_config(
             "Arbiter can run\n"
             f"currently installed arbiter plugins: "
             f"{_installed_plugin_summary(service_plugins)}\n"
-            "use `agent-arbiter --config-dir DIR bootstrap plugin PLUGIN "
+            "use `arbiter-server --config-dir DIR bootstrap plugin PLUGIN "
             "account NAME` to create an account config"
         )
 
@@ -298,6 +291,9 @@ def build_server(
     server.settings.host = app_config.arbiter.server.host
     server.settings.port = app_config.arbiter.server.port
     server.settings.streamable_http_path = app_config.arbiter.server.path
+    mcp_server = getattr(server, "_mcp_server", None)
+    if mcp_server is not None:
+        mcp_server.version = package_version()
 
     _register_core_tools(server, app)
     _register_service_plugins(server, app, active_service_plugins)
@@ -488,7 +484,7 @@ def compose_config(
     with initialize_config_dir(
         version_base=None,
         config_dir=str(config_dir_path),
-        job_name="agent-arbiter",
+        job_name="arbiter-server",
     ):
         return compose(
             config_name=config_name,
@@ -570,7 +566,7 @@ def _compose_config_for_env_command(
     with initialize_config_dir(
         version_base=None,
         config_dir=str(config_dir_path),
-        job_name="agent-arbiter-env",
+        job_name="arbiter-server-env",
     ):
         cfg = compose(
             config_name=config_name,
@@ -743,14 +739,7 @@ def _run_config_show(
 
 
 def _ensure_config_dir(config_dir: str | None) -> Path | None:
-    if config_dir is None:
-        print(
-            "Agent Arbiter bootstrap requires an explicit config directory; "
-            "pass --config-dir DIR.",
-            file=sys.stderr,
-        )
-        return None
-    return Path(config_dir).expanduser()
+    return Path(DEFAULT_CONFIG_DIR if config_dir is None else config_dir).expanduser()
 
 
 def _write_bootstrap_file(path: Path, content: str, *, force: bool) -> int:
@@ -1228,12 +1217,12 @@ def _print_bootstrap_activation_hint(
     if kind == "account":
         print("Edit the generated account and policy files, then activate the account:")
         print(
-            f"  agent-arbiter --config-dir {config_dir} "
+            f"  arbiter-server --config-dir {config_dir} "
             f"config activate account {plugin} {name}"
         )
         print("")
         print("Then inspect the composed config with:")
-        print(f"  agent-arbiter --config-dir {config_dir} config show")
+        print(f"  arbiter-server --config-dir {config_dir} config show")
         return
     print(f"To activate the generated policy, add this to {config_file}:")
     print("defaults:")
@@ -1241,7 +1230,7 @@ def _print_bootstrap_activation_hint(
     print(f"    - {_config_group_item(plugin, name)}")
     print("")
     print("Then inspect the composed config with:")
-    print(f"  agent-arbiter --config-dir {config_dir} config show")
+    print(f"  arbiter-server --config-dir {config_dir} config show")
 
 
 def _run_plugin_bootstrap(
@@ -1339,17 +1328,17 @@ def _extract_global_config_args(args: Sequence[str]) -> list[str]:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="agent-arbiter",
+        prog="arbiter-server",
         description="Policy-controlled MCP gateway for agent-accessible services.",
     )
     parser.add_argument(
         "--config-dir",
-        required=True,
-        help="filesystem directory containing the root Hydra config",
+        default=DEFAULT_CONFIG_DIR,
+        help=f"filesystem directory containing the root Hydra config (default: {DEFAULT_CONFIG_DIR})",
     )
     parser.add_argument(
         "--config-name",
-        default="config",
+        default=DEFAULT_SERVER_CONFIG_NAME,
         help="root config file name without .yaml",
     )
     subcommands = parser.add_subparsers(dest="command", required=True)

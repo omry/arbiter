@@ -4,16 +4,18 @@
 
 Create deployment-owned Agent Arbiter config files from canonical templates.
 
-Agent Arbiter does not ship a runnable service config. Operators create a local
-Hydra config directory, edit the generated files, then pass that directory with
-`--config-dir` when checking or serving.
+Agent Arbiter does not ship a runnable service config. Operators create a Hydra
+config directory, edit the generated files, then run the server against that
+directory.
 
 ## Config directory
 
-All bootstrap commands require an explicit target directory:
+By default, `arbiter-server` uses `~/.arbiter` as its config directory and
+`arbiter-server.yaml` as its root config. For repository-local development, pass
+an explicit scratch directory:
 
 ```bash
-agent-arbiter --config-dir "$PWD/config.local" bootstrap arbiter
+arbiter-server --config-dir "$PWD/config.local" bootstrap arbiter
 ```
 
 `config.local/` is intended as repo-local scratchspace for development and is
@@ -25,13 +27,13 @@ config directory instead.
 Create the main Agent Arbiter config:
 
 ```bash
-agent-arbiter --config-dir "$PWD/config.local" bootstrap arbiter
+arbiter-server --config-dir "$PWD/config.local" bootstrap arbiter
 ```
 
 This writes the root config:
 
 ```text
-config.local/config.yaml
+config.local/arbiter-server.yaml
 ```
 
 The root config is intentionally only a defaults list:
@@ -40,9 +42,9 @@ The root config is intentionally only a defaults list:
 defaults:
   # Agent Arbiter composes this config at startup from the defaults below.
   # Inspect the composed config with:
-  #   agent-arbiter --config-dir <dir> --config-name config config show
+  #   arbiter-server --config-dir <dir> --config-name arbiter-server config show
   # Override composed values with Hydra overrides, for example:
-  #   agent-arbiter --config-dir <dir> serve arbiter.server.port=8025
+  #   arbiter-server --config-dir <dir> serve arbiter.server.port=8025
   - arbiter: server
   - _self_
 ```
@@ -59,7 +61,7 @@ edit that file or override individual values from the command line.
 Use `--config-name` to write a different main config file name:
 
 ```bash
-agent-arbiter --config-dir "$PWD/config.local" --config-name local bootstrap arbiter
+arbiter-server --config-dir "$PWD/config.local" --config-name local bootstrap arbiter
 ```
 
 That writes `config.local/local.yaml` while still writing the server option to
@@ -73,7 +75,7 @@ provides account and policy bootstrap examples.
 Create an SMTP account option and its matching default policy:
 
 ```bash
-agent-arbiter --config-dir "$PWD/config.local" bootstrap plugin smtp account personal_account
+arbiter-server --config-dir "$PWD/config.local" bootstrap plugin smtp account personal_account
 ```
 
 This writes both files:
@@ -86,7 +88,7 @@ config.local/arbiter/policy/smtp/personal_account_policy.yaml
 Edit both files, then activate the account:
 
 ```bash
-agent-arbiter --config-dir "$PWD/config.local" config activate account smtp personal_account
+arbiter-server --config-dir "$PWD/config.local" config activate account smtp personal_account
 ```
 
 Activation updates the main config defaults list and also activates the policy
@@ -95,7 +97,7 @@ named by the account's `policy` field.
 Create an additional SMTP policy option:
 
 ```bash
-agent-arbiter --config-dir "$PWD/config.local" bootstrap plugin smtp policy readonly
+arbiter-server --config-dir "$PWD/config.local" bootstrap plugin smtp policy readonly
 ```
 
 This writes:
@@ -154,7 +156,7 @@ policy: readonly
 You can also let the CLI update the main defaults list for an account:
 
 ```bash
-agent-arbiter --config-dir "$PWD/config.local" config activate account smtp personal_account
+arbiter-server --config-dir "$PWD/config.local" config activate account smtp personal_account
 ```
 
 Activating an account also activates the policy named by the account's
@@ -165,7 +167,7 @@ account's `policy` value.
 Deactivate an account when you want to remove it from composition:
 
 ```bash
-agent-arbiter --config-dir "$PWD/config.local" config deactivate account smtp personal_account
+arbiter-server --config-dir "$PWD/config.local" config deactivate account smtp personal_account
 ```
 
 Deactivating an account removes its policy entry only when no other active
@@ -192,7 +194,7 @@ precedence.
 Validate the config before serving:
 
 ```bash
-agent-arbiter --config-dir "$PWD/config.local" --config-name config config check
+arbiter-server --config-dir "$PWD/config.local" config check
 ```
 
 Use a local env file when you want Arbiter to populate process environment
@@ -208,8 +210,8 @@ Relative env file paths are resolved from `--config-dir`.
 Bootstrap or validate the env file from the composed config:
 
 ```bash
-agent-arbiter --config-dir "$PWD/config.local" env bootstrap
-agent-arbiter --config-dir "$PWD/config.local" env check
+arbiter-server --config-dir "$PWD/config.local" env bootstrap
+arbiter-server --config-dir "$PWD/config.local" env check
 ```
 
 `env bootstrap` rebuilds the configured env file. It keeps existing assignments,
@@ -225,19 +227,19 @@ account and policy before expecting this command or `serve` to pass.
 Show the composed Hydra job config:
 
 ```bash
-agent-arbiter --config-dir "$PWD/config.local" --config-name config config show
+arbiter-server --config-dir "$PWD/config.local" config show
 ```
 
 Resolve interpolations while showing the composed config:
 
 ```bash
-agent-arbiter --config-dir "$PWD/config.local" --config-name config config show --resolve
+arbiter-server --config-dir "$PWD/config.local" config show --resolve
 ```
 
 Run the server with the same explicit config directory:
 
 ```bash
-agent-arbiter --config-dir "$PWD/config.local" --config-name config serve
+arbiter-server --config-dir "$PWD/config.local" serve
 ```
 
 ## Overwrites
@@ -246,5 +248,5 @@ Bootstrap commands refuse to overwrite existing files by default. Use `--force`
 only when replacing the target file is intentional:
 
 ```bash
-agent-arbiter --config-dir "$PWD/config.local" bootstrap plugin smtp account personal_account --force
+arbiter-server --config-dir "$PWD/config.local" bootstrap plugin smtp account personal_account --force
 ```

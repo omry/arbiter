@@ -86,13 +86,17 @@ This file is the day-to-day queue for design and implementation gaps.
       separate audit policy block, or another clearer home; and the resulting
       config shape is materially lighter for operators.
 
-- [ ] `P2` Design bot-to-Agent Arbiter caller authentication or authorization.
-      V1 assumes the caller is trusted once connected. Future hardening may use
-      a shared secret, bearer token, password, client certificate, or mTLS/PKI
-      so deployments can prevent unsafe access to the Agent Arbiter MCP boundary.
-      Acceptance checks: candidate mechanisms are compared; the chosen model
-      works for local agent/Codex use and Docker deployments; and failure
-      modes are fail-closed without leaking credentials.
+- [ ] `P2` Design client identification and caller authentication.
+      V1 assumes the caller is trusted once connected. Future hardening should
+      decide whether Agent Arbiter needs to identify CLI and MCP clients, only
+      authenticate them, or do both. Candidate mechanisms may include a shared
+      secret, bearer token, password, client certificate, or mTLS/PKI so
+      deployments can prevent unsafe access to the Agent Arbiter MCP boundary.
+      Acceptance checks: candidate mechanisms are compared; the design defines
+      whether client identity is stable, user-visible, and recorded in logs or
+      audit events; the chosen model works for local agent/Codex use, generic
+      MCP clients, and Docker deployments; and failure modes are fail-closed
+      without leaking credentials.
 
 - [ ] `P2` Generate baseline CLI parameters from MCP tool schemas.
       The MCP surface already defines rich input shape metadata, and that

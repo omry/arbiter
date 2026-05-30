@@ -12,7 +12,7 @@ Current implementation status:
 - IMAP list/get/search/move/mark-read/delete tools scoped to configured accounts and folders
 - `arbiter.account.<service>` and reusable `arbiter.policy.<service>` objects
   for per-service account policy
-- `arbiter` client CLI and `agent-arbiter` server/operator CLI
+- `arbiter` client CLI and `arbiter-server` server/operator CLI
 - Docker deployment files for a standard SMTP gateway and a hardened read-only IMAP variant
 
 Known open gaps:
@@ -71,13 +71,14 @@ http://127.0.0.1:8025/mcp
 ```
 
 Agent Arbiter does not ship a runnable service config. Bootstrap a local Hydra
-config into an explicit config directory, edit it, then pass that directory with
-`--config-dir`; `config.local/` is ignored scratchspace for this purpose.
+config, edit it, then run the server against that directory. The default config
+directory is `~/.arbiter`; `config.local/` is ignored scratchspace for
+repository-local development.
 Plugin-owned object templates are created by the plugin command surface:
 
 ```bash
-agent-arbiter --config-dir "$PWD/config.local" bootstrap arbiter
-agent-arbiter --config-dir "$PWD/config.local" bootstrap plugin smtp account primary
+arbiter-server --config-dir "$PWD/config.local" bootstrap arbiter
+arbiter-server --config-dir "$PWD/config.local" bootstrap plugin smtp account primary
 ```
 
 `${oc.env:...}` reads the process environment that your shell, supervisor,
@@ -110,8 +111,8 @@ file. Relative paths are resolved from `--config-dir`.
 Build or refresh that file from the active config:
 
 ```bash
-agent-arbiter --config-dir "$PWD/config.local" env bootstrap
-agent-arbiter --config-dir "$PWD/config.local" env check
+arbiter-server --config-dir "$PWD/config.local" env bootstrap
+arbiter-server --config-dir "$PWD/config.local" env check
 ```
 
 `env bootstrap` keeps existing assignments, adds missing config references, and
@@ -122,19 +123,33 @@ root config first.
 Then run from this directory:
 
 ```bash
-agent-arbiter --config-dir "$PWD/config.local" --config-name config config check
-agent-arbiter --config-dir "$PWD/config.local" --config-name config serve
+arbiter-server --config-dir "$PWD/config.local" config check
+arbiter-server --config-dir "$PWD/config.local" serve
 ```
 
 `config check` and `serve` require at least one configured service account.
 
-Use `agent-arbiter --config-dir "$PWD/config.local" plugins list` to inspect
+Use `arbiter-server --config-dir "$PWD/config.local" plugins list` to inspect
 installed service plugins before validating a config. Once the server is
 running, use the client CLI against the MCP endpoint:
 
 ```bash
-arbiter --url http://127.0.0.1:8025/mcp tools list
-arbiter --url http://127.0.0.1:8025/mcp accounts list
+arbiter tools list mcp_url=http://127.0.0.1:8025/mcp
+arbiter accounts list mcp_url=http://127.0.0.1:8025/mcp
+```
+
+The client can also read the endpoint from a small config file:
+`~/.arbiter/arbiter-client.yaml`.
+
+```yaml
+mcp_url: http://127.0.0.1:8025/mcp
+```
+
+Override config values with Hydra-style `key=value` arguments after the
+command, or bootstrap the client config:
+
+```bash
+arbiter bootstrap client mcp_url=http://127.0.0.1:8025/mcp
 ```
 
 The IMAP tools use folder-scoped UIDs returned by `list_messages` and
