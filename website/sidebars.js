@@ -19,7 +19,18 @@ const sidebars = {
       collapsed: false,
       items: [
         'operate/configuration-model',
-        'operate/deployment',
+        {
+          type: 'category',
+          label: 'Deployment',
+          link: {type: 'doc', id: 'operate/deployment'},
+          items: [
+            'operate/deployment/docker-prepare',
+            'operate/deployment/linux-install',
+            'operate/deployment/operations',
+            'operate/deployment/packages',
+            'operate/deployment/networking',
+          ],
+        },
         'operate/security',
       ],
     },
