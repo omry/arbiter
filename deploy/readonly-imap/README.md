@@ -28,6 +28,10 @@ Root and users in the Docker group can still inspect Docker secrets and
 container state. Keep ordinary coding agents out of the Docker group if the goal
 is to make credentials inaccessible during normal agent work.
 
+Docker Compose may warn that `uid`, `gid`, and `mode` metadata for local
+file-backed secrets are ignored. The host-side ownership and modes below are
+therefore the important permission boundary for the secret files.
+
 ## Setup
 
 Create host-side secret files outside the repo. They are owned by root and

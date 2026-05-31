@@ -1,0 +1,108 @@
+.heroBanner {
+  padding: 5rem 0 4rem;
+}
+
+.heroInner {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(460px, 1.1fr);
+  gap: 4rem;
+  align-items: center;
+}
+
+.heroCopy {
+  min-width: 0;
+}
+
+.heroSide {
+  position: relative;
+  min-height: 320px;
+}
+
+.heroLogo {
+  display: block;
+  width: min(330px, 26vw);
+  height: auto;
+  position: absolute;
+  left: clamp(-3rem, -4vw, -1rem);
+  top: 50%;
+  transform: translateY(-43%);
+}
+
+.pluginStack {
+  display: grid;
+  gap: 0.5rem;
+  width: 290px;
+  position: absolute;
+  top: 1rem;
+  right: clamp(-10rem, -8vw, -4rem);
+}
+
+.pluginEyebrow {
+  color: #b5d6ff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.pluginLink {
+  display: grid;
+  gap: 0.12rem;
+  padding: 0.55rem 0.7rem;
+  color: #f5f8ff;
+  border: 1px solid rgba(125, 183, 255, 0.32);
+  border-radius: 8px;
+  background: rgba(13, 24, 43, 0.7);
+  text-decoration: none;
+}
+
+.pluginLink:hover {
+  color: #ffffff;
+  border-color: rgba(125, 183, 255, 0.72);
+  background: rgba(27, 43, 69, 0.84);
+  text-decoration: none;
+}
+
+.pluginName {
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.pluginBody {
+  color: #d8e2f2;
+  font-size: 0.76rem;
+  line-height: 1.3;
+}
+
+.buttons {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+@media screen and (max-width: 768px) {
+  .heroInner {
+    grid-template-columns: 1fr;
+    gap: 2rem;
+  }
+
+  .heroLogo {
+    width: min(280px, 72vw);
+    position: static;
+    transform: none;
+  }
+
+  .heroSide {
+    display: grid;
+    gap: 1rem;
+    min-height: 0;
+    justify-items: start;
+    order: -1;
+  }
+
+  .pluginStack {
+    position: static;
+    width: 100%;
+  }
+}

@@ -9,6 +9,9 @@ dist/
 outputs/
 src/agent_arbiter/conf/real_config.yaml
 docs/agent_arbiter_design_docs.md
+website/.docusaurus/
+website/build/
+website/node_modules/
 
 # Local Docker deployment files. These may contain secrets or host-specific
 # commands and should not be committed.

@@ -1,6 +1,6 @@
 # Agent Arbiter
 
-Agent Arbiter is a policy-controlled MCP gateway for exposing configured services to agents. The current service surface covers sending mail over SMTP and reading IMAP folders through explicit account policies.
+Agent Arbiter provides policy-controlled access to configured services for agents. Today it exposes that access through MCP and a client CLI; additional interfaces may be added later. The current service surface covers sending mail over SMTP and reading IMAP folders through explicit account policies.
 
 ## Project Status
 
@@ -46,6 +46,12 @@ For focused local runs without `nox`, use the same environment directly, for exa
 - `.venv/bin/python -m pytest core/tests/unit/test_config.py`
 - `.venv/bin/python -m pytest core/tests/unit/test_app.py`
 
+The Docusaurus website lives in [website/](website/):
+
+- `cd website && npm install`
+- `cd website && npm run start`
+- `cd website && npm run build`
+
 The design is documented in the `docs/` structure used by the MCP server template:
 
 - [docs/overview.md](docs/overview.md)
@@ -70,15 +76,16 @@ server and point the client at:
 http://127.0.0.1:8025/mcp
 ```
 
-Agent Arbiter does not ship a runnable service config. Bootstrap a local Hydra
-config, edit it, then run the server against that directory. The default config
-directory is `~/.arbiter`; `config.local/` is ignored scratchspace for
-repository-local development.
+Agent Arbiter does not ship a runnable service config. Bootstrap a Hydra
+config, edit it, then run the server. The default config directory is
+`~/.arbiter`; pass `--config-dir <dir>` before a subcommand to use a different
+location. `config.local/` is ignored scratchspace for repository-local
+development.
 Plugin-owned object templates are created by the plugin command surface:
 
 ```bash
-arbiter-server --config-dir "$PWD/config.local" bootstrap arbiter
-arbiter-server --config-dir "$PWD/config.local" bootstrap plugin smtp account primary
+arbiter-server bootstrap arbiter
+arbiter-server bootstrap plugin smtp account primary
 ```
 
 `${oc.env:...}` reads the process environment that your shell, supervisor,
@@ -91,7 +98,7 @@ layout and composition flow.
 For local development, a shell-owned env file can be useful:
 
 ```bash
-# config.local/local.env
+# ~/.arbiter/local.env
 SMTP_PRIMARY_ACCOUNT_USERNAME=agent@example.com
 SMTP_PRIMARY_ACCOUNT_PASSWORD=change-me
 AGENT_ARBITER_IMAP_USERNAME=agent@example.com
@@ -106,13 +113,13 @@ arbiter:
 ```
 
 Existing process environment variables take precedence over values from the env
-file. Relative paths are resolved from `--config-dir`.
+file. Relative paths are resolved from the config directory.
 
 Build or refresh that file from the active config:
 
 ```bash
-arbiter-server --config-dir "$PWD/config.local" env bootstrap
-arbiter-server --config-dir "$PWD/config.local" env check
+arbiter-server env bootstrap
+arbiter-server env check
 ```
 
 `env bootstrap` keeps existing assignments, adds missing config references, and
@@ -123,15 +130,15 @@ root config first.
 Then run from this directory:
 
 ```bash
-arbiter-server --config-dir "$PWD/config.local" config check
-arbiter-server --config-dir "$PWD/config.local" serve
+arbiter-server config check
+arbiter-server serve
 ```
 
 `config check` and `serve` require at least one configured service account.
 
-Use `arbiter-server --config-dir "$PWD/config.local" plugins list` to inspect
-installed service plugins before validating a config. Once the server is
-running, use the client CLI against the MCP endpoint:
+Use `arbiter-server plugins list` to inspect installed service plugins before
+validating a config. Once the server is running, use the client CLI against the
+MCP endpoint:
 
 ```bash
 arbiter mcp tools mcp_url=http://127.0.0.1:8025/mcp

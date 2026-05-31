@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "agent-arbiter"
 version = "0.1.1.dev1"
-description = "Policy-controlled MCP gateway for agent-accessible services"
+description = "Policy-controlled access to configured services for agents"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [

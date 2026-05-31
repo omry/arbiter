@@ -1,0 +1,31 @@
+{
+  "name": "agent-arbiter-website",
+  "version": "0.1.1-dev",
+  "private": true,
+  "scripts": {
+    "start": "NO_UPDATE_NOTIFIER=1 docusaurus start --host 127.0.0.1 --port 4670",
+    "build": "NO_UPDATE_NOTIFIER=1 docusaurus build",
+    "serve": "NO_UPDATE_NOTIFIER=1 docusaurus serve --host 127.0.0.1",
+    "clear": "NO_UPDATE_NOTIFIER=1 docusaurus clear"
+  },
+  "dependencies": {
+    "@docusaurus/core": "^3.8.1",
+    "@docusaurus/preset-classic": "^3.8.1",
+    "@docusaurus/theme-mermaid": "^3.10.1",
+    "@mdx-js/react": "^3.0.0",
+    "@mermaid-js/layout-elk": "^0.1.9",
+    "clsx": "^2.1.1",
+    "prism-react-renderer": "^2.4.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@docusaurus/module-type-aliases": "^3.8.1"
+  },
+  "overrides": {
+    "serialize-javascript": "7.0.5"
+  },
+  "engines": {
+    "node": ">=18.0"
+  }
+}

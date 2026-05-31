@@ -120,6 +120,18 @@ This file is the day-to-day queue for design and implementation gaps.
       MCP clients, and Docker deployments; and failure modes are fail-closed
       without leaking credentials.
 
+- [ ] `P2` Add an installation security evaluator.
+      Operators need a tool that checks whether an Agent Arbiter installation
+      is safe to run: config files, env files, installed package files, plugin
+      packages, and startup scripts should not be writable by agent-controlled
+      users, and the server should not run as root/admin in normal production
+      deployments.
+      Acceptance checks: define the inspected paths and platform-specific
+      permission checks; add a command that reports actionable findings; decide
+      whether startup should run the evaluator by default, warn, or refuse to
+      run on failure; and document how operators intentionally override checks
+      for local development.
+
 - [ ] `P2` Generate baseline CLI parameters from MCP tool schemas.
       The MCP surface already defines rich input shape metadata, and that
       contract should become the default source for a generic CLI layer rather
@@ -131,3 +143,25 @@ This file is the day-to-day queue for design and implementation gaps.
       into valid tool arguments; and the design clearly separates generic
       schema-driven CLI generation from optional task-specific wrapper
       behavior.
+
+- [ ] `P2` Consider programmatic access and language bindings.
+      CLI and MCP are the first access surfaces, but some integrations may want
+      direct programmatic clients. Future work should decide whether Agent
+      Arbiter should provide official bindings for popular languages such as
+      Python, TypeScript, Rust, and Go, or instead publish enough protocol and
+      schema contracts for community clients.
+      Acceptance checks: identify likely embedding use cases; compare official
+      bindings against generated clients or protocol-only documentation; define
+      versioning and compatibility expectations; and choose the first language
+      target, if any.
+
+- [ ] `P2` Evaluate SQL as a future Agent Arbiter service plugin.
+      SQL is a valuable agent use case because database access is high-stakes
+      and policy control can materially reduce blast radius. It is also
+      technically challenging: query input, result output, and large result
+      sets may require streaming or pagination instead of simple request/response
+      tool calls.
+      Acceptance checks: define the initial SQL threat model; decide which
+      primitives are safe enough for v1 of a SQL plugin; design policy controls
+      for read/write scope, row limits, timeouts, and schema visibility; and
+      decide whether MCP/client support needs streaming, pagination, or both.
