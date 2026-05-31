@@ -171,3 +171,7 @@ For a hardened Docker setup that reads a single real IMAP folder with Docker
 secrets and no SMTP access, see:
 
 - [deploy/readonly-imap/README.md](deploy/readonly-imap/README.md)
+
+## License
+
+Agent Arbiter is distributed under the MIT License. See [LICENSE](LICENSE).

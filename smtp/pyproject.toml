@@ -8,6 +8,7 @@ version = "0.1.1.dev1"
 description = "SMTP service plugin for Agent Arbiter"
 readme = { text = "SMTP service plugin for Agent Arbiter.", content-type = "text/markdown" }
 requires-python = ">=3.10,<3.15"
+license = { text = "MIT" }
 authors = [
   { name = "Omry Yadan", email = "omry@yadan.net" },
 ]
@@ -18,6 +19,7 @@ keywords = ["agent", "mcp", "smtp", "email"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
