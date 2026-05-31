@@ -1,5 +1,19 @@
 # Agent Arbiter VM Docker Deployment
 
+The installed deployment surface is now:
+
+```bash
+arbiter-server deploy docker docker.dir=/opt/arbiter-server init
+```
+
+That command writes a deployment-local `arbiter-docker` helper into
+`docker.dir`. It keeps Docker wrapper settings in `docker.env`, separate from
+the Agent Arbiter runtime/credential env file. The repository-local
+`agent-arbiterctl` material below is retained as the original checkout-oriented
+deployment helper, but most users should use the installed
+`arbiter-server deploy docker` flow documented in
+`website/docs/operate/deployment.md`.
+
 This deployment path uses Docker Compose and does not require building a custom image.
 
 It runs the stock `python:3.11-slim` image, installs the requested Agent Arbiter package target at container startup, and keeps deployment-specific config and secrets on the host.

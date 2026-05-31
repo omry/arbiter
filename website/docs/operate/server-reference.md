@@ -88,6 +88,44 @@ arbiter-server env check [override...]
 - `env check`: verify every referenced environment variable is available from
   the env file or process environment.
 
+## deploy
+
+Create or update deployment files from the installed `arbiter-server` command.
+
+```bash
+arbiter-server deploy docker init [docker.dir=PATH] [docker.requirement=REQ ...]
+arbiter-server deploy docker update [docker.dir=PATH] [docker.requirement=REQ ...]
+```
+
+- `deploy docker init`: write a local Docker deployment directory. Defaults to
+  `./arbiter-docker`, refuses to overwrite existing managed files, and does not
+  create config, start Docker, or run the server. When run from a local dev
+  checkout, it seeds source-path requirements and a read-only source mount
+  override.
+- `deploy docker update`: refresh manifest-owned templates
+  (`compose.yaml` and `arbiter-docker`) only when they are missing or still
+  match the recorded manifest hash. Existing untracked or modified template
+  files are skipped. It regenerates `docker.env` while preserving known and
+  extra local values and never rewrites an existing `requirements.txt`. If it
+  creates missing local-checkout source requirements, it also creates the
+  read-only source mount override when missing.
+- `docker.dir=PATH`: deployment directory to create or update.
+- `docker.requirement=REQ`: package requirement to seed into
+  `requirements.txt` when it is created. Package requirements must be exact
+  pins such as `agent-arbiter-core==0.1.1`; absolute container paths are allowed
+  for local source testing when a local Compose override mounts the source tree.
+  May be repeated for explicit core and plugin pins.
+
+The generated deployment directory includes `docker.env` for Compose/container
+settings, a default `conf/` config directory, and its own `arbiter-docker`
+helper for local operations such as `up`, `logs`, `restart`, `sync-env`, `info`,
+and `doctor`. Use
+`arbiter-docker doctor --agent-user USER` to check common filesystem and
+Docker socket mistakes for an agent identity. `doctor`, `up`, and `restart`
+also reject unpinned package requirements. Agent Arbiter config and `.env` are
+supplied separately through the config tooling using the directory named by
+`AGENT_ARBITER_CONFIG_DIR` and `AGENT_ARBITER_CONFIG_NAME` in `docker.env`.
+
 ## plugins
 
 Inspect installed service plugins.

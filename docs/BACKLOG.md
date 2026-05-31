@@ -39,10 +39,19 @@ This file is the day-to-day queue for design and implementation gaps.
       The service plugin/config reroute is in place, so the package/release
       surface needs one explicit readiness pass before initial release.
       Acceptance checks: the intended version target is chosen; package
-      metadata and install-target docs agree; release notes and status notes
+      metadata and deployment requirements docs agree; release notes and status notes
       are current; and a build/install smoke path is verified.
 
 ## Post-v1
+
+- [ ] `P2` Clean up the legacy `docs/` directory now that the website exists.
+      Most or all of the old markdown docs may be redundant after the Docusaurus
+      website became the operator-facing documentation home. Acceptance checks:
+      audit every file under `docs/`; move any still-current content into
+      `website/docs/` or link to the website equivalent; delete obsolete or
+      duplicated files; keep only intentionally internal planning/reference
+      files; and update README or contributor references that still point at
+      removed docs.
 
 - [ ] `P2` Build a proper documentation site, likely with Docusaurus.
       The README and markdown docs are enough for early development, but the
@@ -64,6 +73,15 @@ This file is the day-to-day queue for design and implementation gaps.
       service-first shape; decide whether activation remains readable and easy
       to generate; remove or justify `etc`; and document the chosen operator
       model.
+
+- [ ] `P2` Define third-party service plugin naming standards.
+      Plugin authors need consistent conventions for distribution package
+      names, Python module names, entry point names, capability names, and
+      config group names. Acceptance checks: recommend a PyPI package naming
+      pattern, a Python module naming pattern, and an entry point convention;
+      document how those names map to `arbiter-server plugins list`,
+      `bootstrap plugin <plugin> ...`, config paths, and capability ids; and
+      update the plugin author guide with one complete example.
 
 - [ ] `P2` Design live config reload for service runtimes. A future reload path
       should apply validated configuration changes without interrupting
