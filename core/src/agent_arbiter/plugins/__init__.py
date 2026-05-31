@@ -8,6 +8,7 @@ from ..services import (
     SERVICE_PLUGIN_ENTRY_POINT_GROUP,
     ServicePlugin,
     ServicePluginFactory,
+    validate_service_plugin_compatibility,
 )
 
 
@@ -29,5 +30,7 @@ def discover_service_plugins(
                 exc,
             )
             continue
-        discovered.append(plugin_factory())
+        service_plugin = plugin_factory()
+        validate_service_plugin_compatibility(service_plugin)
+        discovered.append(service_plugin)
     return sorted(discovered, key=lambda plugin: plugin.name)

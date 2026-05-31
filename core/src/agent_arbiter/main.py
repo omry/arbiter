@@ -30,11 +30,15 @@ from .config import (
 )
 from .plugins import discover_service_plugins
 from .services import (
+    CORE_API_VERSION,
+    CORE_VERSION,
     OperationCatalog,
     RuntimeRegistry,
     ServicePlugin,
     ServicePluginContext,
     ServiceRuntimeContext,
+    service_plugin_runtime_info,
+    validate_service_plugins,
 )
 from .version import package_version
 
@@ -46,7 +50,7 @@ LOGGER = logging.getLogger(__name__)
 TransportMode = Literal["stdio", "sse", "streamable-http"]
 HydraConfig = AppConfig | DictConfig
 BootstrapObjectKind = Literal["account", "policy"]
-CLI_COMMANDS = {"serve", "config", "plugins", "bootstrap", "env", "deploy"}
+CLI_COMMANDS = {"serve", "config", "plugins", "bootstrap", "env", "deploy", "version"}
 BOOTSTRAP_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 ENV_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 ENV_FILE_CONFIG_KEY = "arbiter.env_file"
@@ -186,6 +190,7 @@ def _instantiate_app_config(cfg: HydraConfig) -> AppConfig:
 def _service_plugin_map(
     service_plugins: Sequence[ServicePlugin],
 ) -> dict[str, ServicePlugin]:
+    validate_service_plugins(service_plugins)
     return {service_plugin.name: service_plugin for service_plugin in service_plugins}
 
 
@@ -303,10 +308,78 @@ def service_plugin_names(
     service_plugins: Sequence[ServicePlugin] | None = None,
 ) -> list[str]:
     plugins = discover_service_plugins() if service_plugins is None else service_plugins
+    validate_service_plugins(plugins)
     return sorted(service_plugin.name for service_plugin in plugins)
 
 
-def _register_core_tools(server: "FastMCP", catalog: OperationCatalog) -> None:
+def service_plugin_infos(
+    service_plugins: Sequence[ServicePlugin] | None = None,
+) -> list[dict[str, str]]:
+    plugins = discover_service_plugins() if service_plugins is None else service_plugins
+    validate_service_plugins(plugins)
+    return [
+        {
+            "name": info.name,
+            "version": info.version,
+            "core_api_version": info.core_api_version,
+        }
+        for info in sorted(
+            (service_plugin_runtime_info(service_plugin) for service_plugin in plugins),
+            key=lambda plugin_info: plugin_info.name,
+        )
+    ]
+
+
+def runtime_version_info(
+    service_plugins: Sequence[ServicePlugin] | None = None,
+) -> dict[str, object]:
+    return {
+        "core": {
+            "version": CORE_VERSION,
+            "api_version": CORE_API_VERSION,
+        },
+        "plugins": service_plugin_infos(service_plugins),
+    }
+
+
+def _print_runtime_version_info(
+    service_plugins: Sequence[ServicePlugin] | None = None,
+    *,
+    as_json: bool,
+) -> None:
+    version_info = runtime_version_info(service_plugins)
+    if as_json:
+        print(json.dumps(version_info))
+        return
+
+    core = cast(dict[str, str], version_info["core"])
+    print(f"core {core['version']} (api {core['api_version']})")
+    print("plugins:")
+    plugins = cast(list[dict[str, str]], version_info["plugins"])
+    if not plugins:
+        print("  none")
+        return
+    for plugin in plugins:
+        print(
+            f"  {plugin['name']} {plugin['version']} "
+            f"(core api {plugin['core_api_version']})"
+        )
+
+
+def _register_core_tools(
+    server: "FastMCP",
+    catalog: OperationCatalog,
+    service_plugins: Sequence[ServicePlugin],
+) -> None:
+    @server.tool(
+        description=(
+            "Return Agent Arbiter core and loaded service plugin version "
+            "information."
+        )
+    )
+    def version_info() -> dict[str, object]:
+        return runtime_version_info(service_plugins)
+
     @server.tool(
         description=(
             "Return the available Agent Arbiter capability names. Use "
@@ -395,7 +468,7 @@ def build_server(
         max_account_preview_limit=app_config.arbiter.discovery.max_account_preview_limit,
         max_operation_preview_limit=app_config.arbiter.discovery.max_operation_preview_limit,
     )
-    _register_core_tools(server, catalog)
+    _register_core_tools(server, catalog, active_service_plugins)
 
     return server
 
@@ -1962,6 +2035,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help_text="Hydra-style config overrides applied before bootstrapping env",
     )
 
+    version_command = subcommands.add_parser(
+        "version",
+        help="print Agent Arbiter core and plugin versions",
+    )
+    version_command.add_argument(
+        "--json",
+        action="store_true",
+        help="print version information as JSON",
+    )
+
     deploy = subcommands.add_parser("deploy", help="create deployment files")
     deploy_subcommands = deploy.add_subparsers(dest="deploy_target", required=True)
     deploy_docker = deploy_subcommands.add_parser(
@@ -2043,14 +2126,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             config_name=namespace.config_name,
             overrides=namespace.overrides,
         )
+    if namespace.command == "version":
+        _print_runtime_version_info(as_json=namespace.json)
+        return 0
     if namespace.command == "deploy" and namespace.deploy_target == "docker":
         return _run_deploy_docker(namespace.args)
     if namespace.command == "plugins" and namespace.plugins_command == "list":
-        names = service_plugin_names()
         if namespace.json:
-            print(json.dumps({"plugins": [{"name": name} for name in names]}))
+            _print_runtime_version_info(as_json=True)
         else:
-            for name in names:
+            for name in service_plugin_names():
                 print(name)
         return 0
     if namespace.command == "bootstrap" and namespace.bootstrap_command == "arbiter":

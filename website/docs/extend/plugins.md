@@ -11,6 +11,7 @@ A plugin provides:
 
 - structured config schemas
 - account and policy bootstrap examples
+- runtime version metadata
 - runtime construction
 - capability descriptor
 - operation descriptors and schemas
@@ -24,6 +25,31 @@ Plugins are discovered through Python package entry points:
 ```toml
 [project.entry-points."agent_arbiter.services"]
 smtp = "agent_arbiter_smtp:plugin"
+```
+
+## Version contract
+
+Plugins use compatibility-line versions. A plugin for Agent Arbiter core
+`0.8.x` should use a plugin version on the `0.8` line, such as `0.8.0` or
+`0.8.1`, and declare the same core API line at runtime:
+
+```python
+class ExampleServicePlugin:
+    name = "example"
+    version = "0.8.0"
+    core_api_version = "0.8"
+```
+
+At plugin discovery and config registration time, Agent Arbiter rejects plugins
+whose `core_api_version` does not match the loaded core API line. It also
+rejects plugin package versions that are not on that same `major.minor` line.
+
+Package dependencies should express the same compatibility line:
+
+```toml
+dependencies = [
+  "agent-arbiter-core>=0.8.0,<0.9.0",
+]
 ```
 
 ## Runtime boundary

@@ -38,6 +38,7 @@ from agent_arbiter_imap.config import (
 from agent_arbiter_smtp import SendEmailResult, SMTPRuntime, SMTPServicePlugin
 from agent_arbiter_smtp.config import SMTPConfig, SMTPServicePolicyConfig
 from agent_arbiter.services import (
+    CORE_API_VERSION,
     SERVICE_PLUGIN_ENTRY_POINT_GROUP,
     CapabilityDescriptor,
     OperationDescriptor,
@@ -91,6 +92,8 @@ def test_build_app_activates_dynamic_entry_point_service() -> None:
 
     class FakeExternalPlugin:
         name = "whatsapp"
+        version = "0.8.0"
+        core_api_version = CORE_API_VERSION
 
         def __init__(self) -> None:
             self.accounts: Mapping[str, object] | None = None
@@ -176,6 +179,8 @@ def test_discover_service_plugins_loads_entry_point_factories(
     class FakePlugin:
         def __init__(self, name: str) -> None:
             self.name = name
+            self.version = "0.8.0"
+            self.core_api_version = CORE_API_VERSION
 
         def register_configs(self, config_store: object) -> None:
             return None
@@ -214,6 +219,82 @@ def test_discover_service_plugins_loads_entry_point_factories(
     )
 
     assert [plugin.name for plugin in discover_service_plugins()] == ["imap", "smtp"]
+
+
+def test_discover_service_plugins_rejects_wrong_core_api_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakePlugin:
+        name = "stale"
+        version = "0.7.9"
+        core_api_version = "0.7"
+
+    class FakeEntryPoint:
+        name = "stale"
+        value = "stale:plugin"
+
+        def load(self) -> Callable[[], FakePlugin]:
+            return FakePlugin
+
+    class FakeEntryPoints(list[FakeEntryPoint]):
+        def select(self, *, group: str) -> "FakeEntryPoints":
+            assert group == SERVICE_PLUGIN_ENTRY_POINT_GROUP
+            return self
+
+    monkeypatch.setattr(
+        "agent_arbiter.plugins.entry_points",
+        lambda: FakeEntryPoints([FakeEntryPoint()]),
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            "service plugin stale targets Agent Arbiter core API 0.7, "
+            "but loaded core API is 0.8"
+        ),
+    ):
+        discover_service_plugins()
+
+
+def test_build_app_rejects_plugin_version_outside_core_line() -> None:
+    class FakeExternalPlugin:
+        name = "whatsapp"
+        version = "0.7.9"
+        core_api_version = CORE_API_VERSION
+
+        def register_configs(self, config_store: object) -> None:
+            return None
+
+        def bootstrap_config(self, *, kind: str, name: str) -> object | None:
+            return None
+
+        def build_runtime(
+            self,
+            accounts: Mapping[str, object],
+            policies: Mapping[str, object],
+            context: object,
+        ) -> object:
+            return object()
+
+    cfg = OmegaConf.create(
+        {
+            "arbiter": {
+                "server": {},
+                "account": {"whatsapp": {"bot": {"policy": "bot"}}},
+                "policy": {"whatsapp": {"bot": {}}},
+                "etc": {},
+            },
+        }
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            "service plugin whatsapp version 0.7.9 is not on loaded "
+            "core API line 0.8"
+        ),
+    ):
+        build_app(cfg, service_plugins=[FakeExternalPlugin()])
 
 
 def test_config_check_summary_validates_runtime_construction() -> None:
@@ -705,7 +786,7 @@ def test_cli_deploy_docker_init_uses_local_checkout_default_requirements(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("agent_arbiter.main.package_version", lambda: "0.1.1.dev1")
+    monkeypatch.setattr("agent_arbiter.main.package_version", lambda: "0.8.0.dev1")
     checkout = tmp_path / "checkout"
     checkout.mkdir()
     (checkout / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
@@ -737,7 +818,7 @@ def test_cli_deploy_docker_init_rejects_unlocated_local_dev_default_requirement(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("agent_arbiter.main.package_version", lambda: "0.1.1.dev1")
+    monkeypatch.setattr("agent_arbiter.main.package_version", lambda: "0.8.0.dev1")
     outside_checkout = tmp_path / "outside"
     outside_checkout.mkdir()
     monkeypatch.chdir(outside_checkout)
@@ -1082,8 +1163,7 @@ def test_cli_deploy_docker_generated_helper_preinstall_rejects_source_override(
         f"{deploy_dir / 'compose.override.yaml'}\n"
     ) in result.stdout
     assert (
-        "      remove the /source/agent-arbiter mount after switching "
-        "requirements\n"
+        "      remove the /source/agent-arbiter mount after switching " "requirements\n"
     ) in result.stdout
 
 
@@ -1412,7 +1492,7 @@ def test_cli_deploy_docker_update_creates_local_checkout_source_override(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("agent_arbiter.main.package_version", lambda: "0.1.1.dev1")
+    monkeypatch.setattr("agent_arbiter.main.package_version", lambda: "0.8.0.dev1")
     checkout = tmp_path / "checkout"
     checkout.mkdir()
     (checkout / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
@@ -1559,7 +1639,48 @@ def test_cli_lists_plugins_as_json(
     assert main(["--config-dir", "/tmp", "plugins", "list", "--json"]) == 0
 
     assert capsys.readouterr().out == (
-        '{"plugins": [{"name": "imap"}, {"name": "smtp"}]}\n'
+        '{"core": {"version": "0.8.0", "api_version": "0.8"}, '
+        '"plugins": [{"name": "imap", "version": "0.8.0", '
+        '"core_api_version": "0.8"}, {"name": "smtp", "version": "0.8.0", '
+        '"core_api_version": "0.8"}]}\n'
+    )
+
+
+def test_cli_version_prints_core_and_plugin_versions(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "agent_arbiter.main.discover_service_plugins",
+        lambda: _test_service_plugins(),
+    )
+
+    assert main(["--config-dir", "/tmp", "version"]) == 0
+
+    assert capsys.readouterr().out == (
+        "core 0.8.0 (api 0.8)\n"
+        "plugins:\n"
+        "  imap 0.8.0 (core api 0.8)\n"
+        "  smtp 0.8.0 (core api 0.8)\n"
+    )
+
+
+def test_cli_version_can_print_json(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "agent_arbiter.main.discover_service_plugins",
+        lambda: _test_service_plugins(),
+    )
+
+    assert main(["--config-dir", "/tmp", "version", "--json"]) == 0
+
+    assert capsys.readouterr().out == (
+        '{"core": {"version": "0.8.0", "api_version": "0.8"}, '
+        '"plugins": [{"name": "imap", "version": "0.8.0", '
+        '"core_api_version": "0.8"}, {"name": "smtp", "version": "0.8.0", '
+        '"core_api_version": "0.8"}]}\n'
     )
 
 
@@ -2609,6 +2730,13 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     assert server._mcp_server.version != ""
     assert sorted(tools) == sorted(CORE_TOOL_NAMES)
 
+    assert tools["version_info"]() == {
+        "core": {"version": "0.8.0", "api_version": "0.8"},
+        "plugins": [
+            {"name": "imap", "version": "0.8.0", "core_api_version": "0.8"},
+            {"name": "smtp", "version": "0.8.0", "core_api_version": "0.8"},
+        ],
+    }
     assert tools["list_caps"]() == {"capabilities": ["imap", "smtp"]}
 
     capabilities = cast(dict[str, Any], tools["describe_caps"]())

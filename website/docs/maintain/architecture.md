@@ -24,6 +24,7 @@ through MCP and CLI surfaces.
 
 ## Current MCP surface
 
+- `version_info`
 - `list_caps`
 - `describe_caps`
 - `describe_cap`

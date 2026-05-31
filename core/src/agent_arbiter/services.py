@@ -4,8 +4,12 @@ from collections.abc import Callable, ItemsView, KeysView, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, NoReturn, Protocol, TypeVar
 
+from .version import compatibility_line, core_api_version, core_version
+
 
 RuntimeT = TypeVar("RuntimeT")
+CORE_VERSION = core_version()
+CORE_API_VERSION = core_api_version()
 
 
 class ToolServer(Protocol):
@@ -82,6 +86,8 @@ def parse_operation_id(value: str) -> tuple[str, str]:
 
 class ServicePlugin(Protocol):
     name: str
+    version: str
+    core_api_version: str
 
     # Called before Hydra composes application config. Plugins register all
     # service-owned schema and example options in their ConfigStore groups here.
@@ -112,6 +118,63 @@ class ServicePlugin(Protocol):
         arguments: Mapping[str, Any],
         context: ServicePluginContext,
     ) -> object: ...
+
+
+@dataclass(frozen=True)
+class ServicePluginRuntimeInfo:
+    name: str
+    version: str
+    core_api_version: str
+
+
+def service_plugin_runtime_info(
+    service_plugin: ServicePlugin,
+) -> ServicePluginRuntimeInfo:
+    try:
+        plugin_version = service_plugin.version
+    except AttributeError as exc:
+        raise RuntimeError(
+            f"service plugin {service_plugin.name} does not declare a version"
+        ) from exc
+
+    try:
+        plugin_core_api_version = service_plugin.core_api_version
+    except AttributeError as exc:
+        raise RuntimeError(
+            f"service plugin {service_plugin.name} does not declare "
+            "an Agent Arbiter core API version"
+        ) from exc
+
+    return ServicePluginRuntimeInfo(
+        name=service_plugin.name,
+        version=plugin_version,
+        core_api_version=plugin_core_api_version,
+    )
+
+
+def validate_service_plugin_compatibility(
+    service_plugin: ServicePlugin,
+) -> None:
+    info = service_plugin_runtime_info(service_plugin)
+    if info.core_api_version != CORE_API_VERSION:
+        raise RuntimeError(
+            f"service plugin {info.name} targets Agent Arbiter core API "
+            f"{info.core_api_version}, but loaded core API is {CORE_API_VERSION}"
+        )
+
+    plugin_line = compatibility_line(info.version)
+    if plugin_line != CORE_API_VERSION:
+        raise RuntimeError(
+            f"service plugin {info.name} version {info.version} is not on "
+            f"loaded core API line {CORE_API_VERSION}"
+        )
+
+
+def validate_service_plugins(
+    service_plugins: Sequence[ServicePlugin],
+) -> None:
+    for service_plugin in service_plugins:
+        validate_service_plugin_compatibility(service_plugin)
 
 
 class OperationCatalog:

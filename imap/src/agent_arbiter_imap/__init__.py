@@ -23,6 +23,9 @@ from .config import (
 
 from .client import FetchedIMAPMessage
 
+__version__ = "0.8.0"
+CORE_API_VERSION = "0.8"
+
 
 class IMAPClientProtocol(Protocol):
     def list_messages(self, *, folder: str, limit: int) -> list[FetchedIMAPMessage]: ...
@@ -540,6 +543,8 @@ class IMAPRuntime:
 
 class IMAPServicePlugin:
     name = "imap"
+    version = __version__
+    core_api_version = CORE_API_VERSION
 
     def register_configs(self, config_store: ConfigStore) -> None:
         register_imap_configs(config_store)

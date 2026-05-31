@@ -22,6 +22,9 @@ from .config import (
     register_configs as register_smtp_configs,
 )
 
+__version__ = "0.8.0"
+CORE_API_VERSION = "0.8"
+
 
 @dataclass(frozen=True)
 class SendEmailResult:
@@ -387,6 +390,8 @@ recipient_policy:
 
 class SMTPServicePlugin:
     name = "smtp"
+    version = __version__
+    core_api_version = CORE_API_VERSION
 
     def register_configs(self, config_store: ConfigStore) -> None:
         register_smtp_configs(config_store)

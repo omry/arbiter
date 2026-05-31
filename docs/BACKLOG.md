@@ -77,11 +77,17 @@ This file is the day-to-day queue for design and implementation gaps.
 - [ ] `P2` Define third-party service plugin naming standards.
       Plugin authors need consistent conventions for distribution package
       names, Python module names, entry point names, capability names, and
-      config group names. Acceptance checks: recommend a PyPI package naming
-      pattern, a Python module naming pattern, and an entry point convention;
-      document how those names map to `arbiter-server plugins list`,
-      `bootstrap plugin <plugin> ...`, config paths, and capability ids; and
-      update the plugin author guide with one complete example.
+      config group names. Version policy should use compatibility-line
+      versions: plugins stay on the Agent Arbiter core `major.minor` line
+      they support, with the plugin patch/sub-version free for plugin-only
+      fixes. Runtime plugin loading should enforce that the plugin's declared
+      compatibility line matches the loaded core line. Acceptance checks:
+      recommend a PyPI package naming pattern, a Python module naming pattern,
+      an entry point convention, and a version/dependency convention for third-
+      party plugins; document how those names map to `arbiter-server plugins
+      list`, `bootstrap plugin <plugin> ...`, config paths, capability ids, and
+      runtime compatibility checks; and update the plugin author guide with one
+      complete example.
 
 - [ ] `P2` Design live config reload for service runtimes. A future reload path
       should apply validated configuration changes without interrupting

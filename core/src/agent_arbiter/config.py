@@ -11,6 +11,7 @@ from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
 
 from .services import SERVICE_PLUGIN_ENTRY_POINT_GROUP, ServicePluginFactory
+from .services import validate_service_plugin_compatibility
 
 
 LOGGER = logging.getLogger(__name__)
@@ -180,6 +181,7 @@ def _register_service_plugin_configs(config_store: ConfigStore) -> None:
             )
             continue
         service_plugin = plugin_factory()
+        validate_service_plugin_compatibility(service_plugin)
         service_plugin.register_configs(config_store)
 
 

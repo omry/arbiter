@@ -88,6 +88,18 @@ arbiter-server env check [override...]
 - `env check`: verify every referenced environment variable is available from
   the env file or process environment.
 
+## version
+
+Print core and plugin runtime versions.
+
+```bash
+arbiter-server version [--json]
+```
+
+- `version`: print the loaded Agent Arbiter core version, core API line, and
+  installed service plugin versions.
+- `version --json`: print the same information as JSON.
+
 ## deploy
 
 Create or update deployment files from the installed `arbiter-server` command.
@@ -112,7 +124,7 @@ arbiter-server deploy docker update [docker.dir=PATH] [docker.requirement=REQ ..
 - `docker.dir=PATH`: deployment directory to create or update.
 - `docker.requirement=REQ`: package requirement to seed into
   `requirements.txt` when it is created. Package requirements must be exact
-  pins such as `agent-arbiter-core==0.1.1`; absolute container paths are allowed
+  pins such as `agent-arbiter-core==0.8.0`; absolute container paths are allowed
   for local source testing when a local Compose override mounts the source tree.
   May be repeated for explicit core and plugin pins.
 
@@ -140,4 +152,5 @@ arbiter-server plugins list [--json]
 ```
 
 - `plugins list`: print installed plugin names.
-- `plugins list --json`: print plugin names as JSON.
+- `plugins list --json`: print core runtime version info and plugin names,
+  versions, and core API compatibility lines as JSON.
