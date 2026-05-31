@@ -653,8 +653,7 @@ def test_client_describes_account_with_colon_shorthand(
     assert client.main(["accounts", "desc", "imap:bot"]) == 0
 
     assert capsys.readouterr().out == (
-        '{"account": "bot", "capability": "imap", '
-        '"details": {"enabled": true}}\n'
+        '{"account": "bot", "capability": "imap", ' '"details": {"enabled": true}}\n'
     )
 
 

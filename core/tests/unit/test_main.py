@@ -276,6 +276,29 @@ def test_build_app_rejects_plugin_version_outside_core_line() -> None:
         ) -> object:
             return object()
 
+        def describe_capability(
+            self,
+            context: ServicePluginContext,
+        ) -> CapabilityDescriptor:
+            return CapabilityDescriptor(
+                name=self.name,
+                description="Send messages through WhatsApp.",
+            )
+
+        def describe_operations(
+            self,
+            context: ServicePluginContext,
+        ) -> tuple[OperationDescriptor, ...]:
+            return ()
+
+        def invoke_operation(
+            self,
+            operation: str,
+            arguments: Mapping[str, Any],
+            context: ServicePluginContext,
+        ) -> object:
+            raise ValueError(f"unknown WhatsApp operation: {operation}")
+
     cfg = OmegaConf.create(
         {
             "arbiter": {
