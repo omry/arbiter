@@ -987,6 +987,155 @@ def test_cli_deploy_docker_generated_helper_doctor_can_disable_color(
     assert "\033[" not in result.stdout
 
 
+def test_cli_deploy_docker_generated_helper_preinstall_skips_docker_checks(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=agent-arbiter==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    config_dir = deploy_dir / "conf"
+    (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / ".env").write_text("", encoding="utf-8")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "doctor", "--preinstall"],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert "Docker Compose" not in result.stdout
+    assert "ok: preinstall checks passed\n" in result.stdout
+
+
+def test_cli_deploy_docker_generated_helper_preinstall_rejects_source_override(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=agent-arbiter==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    config_dir = deploy_dir / "conf"
+    (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / ".env").write_text("", encoding="utf-8")
+    (deploy_dir / "compose.override.yaml").write_text(
+        "services:\n"
+        "  agent-arbiter:\n"
+        "    volumes:\n"
+        "      - /home/example/agent-arbiter:/source/agent-arbiter:ro\n",
+        encoding="utf-8",
+    )
+    (deploy_dir / "requirements.txt").write_text(
+        "/source/agent-arbiter/core\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "doctor", "--preinstall"],
+        check=False,
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert (
+        "fail: preinstall cannot promote local source requirements: "
+        f"{deploy_dir / 'requirements.txt'}\n"
+    ) in result.stdout
+    assert (
+        "      use pinned packages (name==version) or /wheels/*.whl entries "
+        "before install\n"
+    ) in result.stdout
+    assert (
+        "fail: preinstall cannot promote a local source mount: "
+        f"{deploy_dir / 'compose.override.yaml'}\n"
+    ) in result.stdout
+    assert (
+        "      remove the /source/agent-arbiter mount after switching "
+        "requirements\n"
+    ) in result.stdout
+
+
+def test_cli_deploy_docker_generated_helper_install_dry_run_plans_promotion(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=agent-arbiter==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    config_dir = deploy_dir / "conf"
+    (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / ".env").write_text("", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            deploy_dir / "arbiter-docker",
+            "install",
+            "--dry-run",
+            "--to",
+            "/opt/arbiter",
+            "--user",
+            "arbiter",
+        ],
+        check=False,
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert "ok: preinstall checks passed\n" in result.stdout
+    assert f"would copy deployment: {deploy_dir} -> /opt/arbiter\n" in result.stdout
+    assert "would create system group if missing: arbiter\n" in result.stdout
+    assert "would create system user if missing: arbiter\n" in result.stdout
+    assert "would write systemd unit: /etc/systemd/system/arbiter.service\n" in (
+        result.stdout
+    )
+    assert "would run: systemctl restart arbiter.service\n" in result.stdout
+
+
 def test_cli_deploy_docker_generated_helper_doctor_colors_tty_by_default(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

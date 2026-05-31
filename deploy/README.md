@@ -3,12 +3,16 @@
 The installed deployment surface is now:
 
 ```bash
-arbiter-server deploy docker docker.dir=/opt/arbiter-server init
+arbiter-server deploy docker init
+./arbiter-docker/arbiter-docker doctor --preinstall
+sudo ./arbiter-docker/arbiter-docker install --to /opt/arbiter --user arbiter
 ```
 
-That command writes a deployment-local `arbiter-docker` helper into
-`docker.dir`. It keeps Docker wrapper settings in `docker.env`, separate from
-the Agent Arbiter runtime/credential env file. The repository-local
+The first command writes a deployment-local `arbiter-docker` helper into
+`./arbiter-docker`. Prepare config and env there as an unprivileged operator,
+then use the helper's `install` command to promote the checked directory to
+`/opt/arbiter`. It keeps Docker wrapper settings in `docker.env`, separate
+from the Agent Arbiter runtime/credential env file. The repository-local
 `agent-arbiterctl` material below is retained as the original checkout-oriented
 deployment helper, but most users should use the installed
 `arbiter-server deploy docker` flow documented in

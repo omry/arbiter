@@ -25,10 +25,20 @@ Commands:
   logs          Follow Docker Compose logs
   info          Show deployment paths and Docker Compose version
   doctor        Check generated files, Docker Compose, and optional agent access
+  install       Promote this prepared deployment directory to a Linux host
 
 Doctor options:
+  --preinstall       Check this directory before sudo install; skip Docker daemon checks
   --agent-user USER   Check that USER cannot read/write deployment state
   --agent-uid UID     Check that UID cannot read/write deployment state
+
+Install options:
+  --to DIR            Install target directory, default /opt/arbiter
+  --user USER         Dedicated service config owner, default arbiter
+  --group GROUP       Dedicated service config group, default USER
+  --service NAME      systemd service name, default arbiter
+  --no-start          Install and enable the service without starting it
+  --dry-run           Print the install plan without changing the host
 
 Environment:
   AGENT_ARBITER_DOCKER_DIR   Deployment directory, default script directory
@@ -219,6 +229,7 @@ doctor_agent_uid=""
 doctor_agent_user=""
 doctor_agent_groups=""
 doctor_agent_group_names=""
+doctor_preinstall=0
 
 color_enabled() {
   [[ "${AGENT_ARBITER_COLOR:-}" == always ]] && return 0
@@ -267,6 +278,28 @@ doctor_check_file() {
     doctor_ok "$description exists: $path"
   else
     doctor_fail "$description is missing: $path"
+  fi
+}
+
+path_is_under_deploy_dir() {
+  local path="$1"
+  local real_deploy_dir
+  local real_path
+
+  real_deploy_dir="$(readlink -f "$deploy_dir")"
+  real_path="$(readlink -f "$path")"
+  [[ "$real_path" == "$real_deploy_dir" || "$real_path" == "$real_deploy_dir/"* ]]
+}
+
+doctor_check_path_under_deploy_dir() {
+  local path="$1"
+  local description="$2"
+
+  [[ -e "$path" ]] || return
+  if path_is_under_deploy_dir "$path"; then
+    doctor_ok "$description is inside deployment directory"
+  else
+    doctor_fail "$description is outside deployment directory: $path"
   fi
 }
 
@@ -437,6 +470,31 @@ doctor_check_docker_socket() {
   fi
 }
 
+doctor_check_preinstall_ready() {
+  local active_config_dir
+  local active_app_env
+
+  active_config_dir="$(config_dir_path)"
+  active_app_env="$(app_env_path)"
+
+  doctor_check_path_under_deploy_dir "$active_config_dir" "config directory"
+  doctor_check_path_under_deploy_dir "$active_app_env" "app env file"
+
+  if [[ -f "$requirements_file" ]] && grep -Eq '^[[:space:]]*/source/agent-arbiter(/|$)' "$requirements_file"; then
+    doctor_fail "preinstall cannot promote local source requirements: $requirements_file"
+    printf '      use pinned packages (name==version) or /wheels/*.whl entries before install\n'
+  fi
+
+  if [[ -f "$compose_override_file" ]] && grep -q '/source/agent-arbiter' "$compose_override_file"; then
+    doctor_fail "preinstall cannot promote a local source mount: $compose_override_file"
+    printf '      remove the /source/agent-arbiter mount after switching requirements\n'
+  fi
+
+  if [[ "$doctor_status" -eq 0 ]]; then
+    doctor_ok "preinstall checks passed"
+  fi
+}
+
 doctor_check_docker_network_subnet() {
   local configured_network
   local configured_subnet
@@ -537,9 +595,14 @@ doctor() {
   doctor_agent_user=""
   doctor_agent_groups=""
   doctor_agent_group_names=""
+  doctor_preinstall=0
 
   while (($#)); do
     case "$1" in
+      --preinstall)
+        doctor_preinstall=1
+        shift
+        ;;
       --agent-user)
         [[ $# -ge 2 ]] || {
           printf 'error: --agent-user requires a value\n' >&2
@@ -588,6 +651,11 @@ doctor() {
   doctor_check_env_file "$compose_env_file" "docker env file"
   doctor_check_requirements_file "$requirements_file"
 
+  if [[ "$doctor_preinstall" -eq 1 ]]; then
+    doctor_check_preinstall_ready
+    return "$doctor_status"
+  fi
+
   if docker compose version >/dev/null 2>&1; then
     doctor_ok "$(docker compose version)"
   else
@@ -597,6 +665,263 @@ doctor() {
 
   doctor_check_agent_access
   return "$doctor_status"
+}
+
+shell_quote() {
+  printf '%q' "$1"
+}
+
+print_command() {
+  local arg
+
+  printf 'would run:'
+  for arg in "$@"; do
+    printf ' '
+    shell_quote "$arg"
+  done
+  printf '\n'
+}
+
+run_install_command() {
+  if [[ "$install_dry_run" -eq 1 ]]; then
+    print_command "$@"
+  else
+    "$@"
+  fi
+}
+
+install_require_root() {
+  if [[ "$(id -u)" != 0 ]]; then
+    printf 'error: install requires root; rerun with sudo\n' >&2
+    exit 1
+  fi
+}
+
+install_relative_path() {
+  local path="$1"
+  local real_deploy_dir
+  local real_path
+
+  real_deploy_dir="$(readlink -f "$deploy_dir")"
+  real_path="$(readlink -f "$path")"
+  printf '%s\n' "${real_path#"$real_deploy_dir"/}"
+}
+
+install_ensure_identity() {
+  if [[ "$install_dry_run" -eq 1 ]]; then
+    printf 'would create system group if missing: %s\n' "$install_group"
+    printf 'would create system user if missing: %s\n' "$install_user"
+    return
+  fi
+
+  if ! getent group "$install_group" >/dev/null; then
+    groupadd --system "$install_group"
+  fi
+
+  if ! id -u "$install_user" >/dev/null 2>&1; then
+    useradd \
+      --system \
+      --gid "$install_group" \
+      --home-dir "$install_target_dir" \
+      --shell /usr/sbin/nologin \
+      --comment "Agent Arbiter service user" \
+      "$install_user"
+  fi
+}
+
+install_copy_deployment() {
+  local source_dir
+  local target_dir
+
+  source_dir="$(readlink -f "$deploy_dir")"
+  target_dir="$install_target_dir"
+
+  if [[ "$install_dry_run" -eq 1 ]]; then
+    printf 'would copy deployment: %s -> %s\n' "$source_dir" "$target_dir"
+    return
+  fi
+
+  mkdir -p "$target_dir"
+  if [[ "$(readlink -f "$target_dir")" != "$source_dir" ]]; then
+    cp -a "$source_dir/." "$target_dir/"
+  fi
+}
+
+install_apply_permissions() {
+  local app_env_rel
+  local app_env_target
+
+  if [[ "$install_dry_run" -eq 1 ]]; then
+    printf 'would chown/chmod deployment for %s:%s: %s\n' \
+      "$install_user" "$install_group" "$install_target_dir"
+    return
+  fi
+
+  chown -R "$install_user:$install_group" "$install_target_dir"
+  find "$install_target_dir" -type d -exec chmod 0750 {} +
+  find "$install_target_dir" -type f -exec chmod 0640 {} +
+  chmod 0750 "$install_target_dir/arbiter-docker"
+
+  app_env_rel="$(install_relative_path "$(app_env_path)")"
+  app_env_target="$install_target_dir/$app_env_rel"
+  if [[ -f "$app_env_target" ]]; then
+    chmod 0600 "$app_env_target"
+  fi
+}
+
+install_write_systemd_unit() {
+  local unit_file
+  local docker_bin
+  local compose_files
+
+  unit_file="/etc/systemd/system/${install_service}.service"
+
+  if [[ "$install_dry_run" -eq 1 ]]; then
+    printf 'would write systemd unit: %s\n' "$unit_file"
+    return
+  fi
+
+  docker_bin="$(command -v docker || true)"
+  if [[ -z "$docker_bin" ]]; then
+    printf 'error: docker command not found\n' >&2
+    exit 1
+  fi
+  if ! command -v systemctl >/dev/null; then
+    printf 'error: systemctl command not found\n' >&2
+    exit 1
+  fi
+  compose_files="-f $install_target_dir/compose.yaml"
+  if [[ -f "$compose_override_file" || -f "$install_target_dir/compose.override.yaml" ]]; then
+    compose_files="$compose_files -f $install_target_dir/compose.override.yaml"
+  fi
+
+  cat >"$unit_file" <<EOF
+[Unit]
+Description=Agent Arbiter Docker service
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=$install_target_dir
+ExecStart=$docker_bin compose --env-file $install_target_dir/docker.env $compose_files up
+ExecStop=$docker_bin compose --env-file $install_target_dir/docker.env $compose_files down
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  chmod 0644 "$unit_file"
+}
+
+install_deployment() {
+  install_target_dir="/opt/arbiter"
+  install_user="arbiter"
+  install_group=""
+  install_service="arbiter"
+  install_start=1
+  install_dry_run=0
+
+  while (($#)); do
+    case "$1" in
+      --to)
+        [[ $# -ge 2 ]] || {
+          printf 'error: --to requires a value\n' >&2
+          exit 2
+        }
+        install_target_dir="$2"
+        shift 2
+        ;;
+      --user)
+        [[ $# -ge 2 ]] || {
+          printf 'error: --user requires a value\n' >&2
+          exit 2
+        }
+        install_user="$2"
+        shift 2
+        ;;
+      --group)
+        [[ $# -ge 2 ]] || {
+          printf 'error: --group requires a value\n' >&2
+          exit 2
+        }
+        install_group="$2"
+        shift 2
+        ;;
+      --service)
+        [[ $# -ge 2 ]] || {
+          printf 'error: --service requires a value\n' >&2
+          exit 2
+        }
+        install_service="$2"
+        shift 2
+        ;;
+      --no-start)
+        install_start=0
+        shift
+        ;;
+      --start)
+        install_start=1
+        shift
+        ;;
+      --dry-run)
+        install_dry_run=1
+        shift
+        ;;
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      *)
+        printf 'error: unknown install option: %s\n\n' "$1" >&2
+        usage >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  if [[ "$install_target_dir" != /* ]]; then
+    printf 'error: --to must be an absolute path: %s\n' "$install_target_dir" >&2
+    exit 2
+  fi
+  if [[ "$install_target_dir" =~ [[:space:]] ]]; then
+    printf 'error: --to must not contain whitespace: %s\n' "$install_target_dir" >&2
+    exit 2
+  fi
+  if [[ ! "$install_service" =~ ^[A-Za-z0-9_.@-]+$ ]]; then
+    printf 'error: --service contains unsupported characters: %s\n' "$install_service" >&2
+    exit 2
+  fi
+  if [[ ! "$install_user" =~ ^[A-Za-z_][A-Za-z0-9_.-]*[$]?$ ]]; then
+    printf 'error: --user contains unsupported characters: %s\n' "$install_user" >&2
+    exit 2
+  fi
+  if [[ -z "$install_group" ]]; then
+    install_group="$install_user"
+  fi
+  if [[ ! "$install_group" =~ ^[A-Za-z_][A-Za-z0-9_.-]*[$]?$ ]]; then
+    printf 'error: --group contains unsupported characters: %s\n' "$install_group" >&2
+    exit 2
+  fi
+
+  doctor --preinstall
+
+  if [[ "$install_dry_run" -ne 1 ]]; then
+    install_require_root
+  fi
+
+  install_ensure_identity
+  install_copy_deployment
+  install_apply_permissions
+  install_write_systemd_unit
+  run_install_command systemctl daemon-reload
+  run_install_command systemctl enable "${install_service}.service"
+  if [[ "$install_start" -eq 1 ]]; then
+    run_install_command systemctl restart "${install_service}.service"
+  else
+    printf 'installed systemd service without starting it: %s.service\n' \
+      "$install_service"
+  fi
 }
 
 command="${1:-}"
@@ -643,6 +968,9 @@ case "$command" in
     ;;
   doctor)
     doctor "$@"
+    ;;
+  install)
+    install_deployment "$@"
     ;;
   "" | -h | --help | help)
     usage

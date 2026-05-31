@@ -119,10 +119,15 @@ arbiter-server deploy docker update [docker.dir=PATH] [docker.requirement=REQ ..
 The generated deployment directory includes `docker.env` for Compose/container
 settings, a default `conf/` config directory, and its own `arbiter-docker`
 helper for local operations such as `up`, `logs`, `restart`, `sync-env`, `info`,
-and `doctor`. Use
-`arbiter-docker doctor --agent-user USER` to check common filesystem and
-Docker socket mistakes for an agent identity. `doctor`, `up`, and `restart`
-also reject unpinned package requirements. Agent Arbiter config and `.env` are
+`doctor`, and `install`. Use `arbiter-docker doctor --preinstall` to check a
+prepared directory before promoting it to a Linux host with
+`sudo ./arbiter-docker install --to /opt/arbiter --user arbiter`. The install
+step copies the prepared directory, creates the dedicated user/group if
+missing, sets ownership and modes, installs a root-managed systemd unit, and
+does not add the `arbiter` user to the Docker group. Use
+`arbiter-docker doctor --agent-user USER` to check common filesystem and Docker
+socket mistakes for an agent identity. `doctor`, `up`, and `restart` also
+reject unpinned package requirements. Agent Arbiter config and `.env` are
 supplied separately through the config tooling using the directory named by
 `AGENT_ARBITER_CONFIG_DIR` and `AGENT_ARBITER_CONFIG_NAME` in `docker.env`.
 
