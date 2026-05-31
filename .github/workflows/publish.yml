@@ -1,0 +1,133 @@
+name: Publish
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      release_line:
+        description: "Release line to validate and build, for example 0.9"
+        required: true
+        type: string
+      publish_to_pypi:
+        description: "Publish built distributions to PyPI"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build distributions
+    runs-on: ubuntu-latest
+
+    outputs:
+      release_line: ${{ steps.release.outputs.release_line }}
+      release_version: ${{ steps.release.outputs.release_version }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Resolve release version
+        id: release
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_LINE_INPUT: ${{ inputs.release_line }}
+        run: |
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            tag="$RELEASE_TAG"
+            if [[ ! "$tag" =~ ^v([0-9]+)\.([0-9]+)\.0$ ]]; then
+              echo "Release tags must use vMAJOR.MINOR.0, got: $tag" >&2
+              exit 1
+            fi
+            release_line="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
+            release_version="${release_line}.0"
+          else
+            release_line="$RELEASE_LINE_INPUT"
+            if [[ ! "$release_line" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+              echo "Release line must use MAJOR.MINOR, got: $release_line" >&2
+              exit 1
+            fi
+            release_version="${release_line}.0"
+          fi
+          echo "release_line=$release_line" >> "$GITHUB_OUTPUT"
+          echo "release_version=$release_version" >> "$GITHUB_OUTPUT"
+
+      - name: Set up bootstrap Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install build tools
+        run: python -m pip install "nox[pbs]>=2024.10,<2026.0" build
+
+      - name: Verify release line
+        run: tools/upgrade_release_version "${{ steps.release.outputs.release_line }}" --check
+
+      - name: Run lint
+        run: nox -s lint
+
+      - name: Run compatibility tests
+        run: nox -s compat
+
+      - name: Build core distribution
+        run: python -m build --sdist --wheel --outdir dist core
+
+      - name: Build SMTP plugin distribution
+        run: python -m build --sdist --wheel --outdir dist smtp
+
+      - name: Build IMAP plugin distribution
+        run: python -m build --sdist --wheel --outdir dist imap
+
+      - name: Build meta distribution
+        run: python -m build --sdist --wheel --outdir dist .
+
+      - name: Smoke install built release
+        run: |
+          python -m venv .release-smoke
+          .release-smoke/bin/python -m pip install --upgrade pip
+          .release-smoke/bin/python -m pip install \
+            --find-links dist \
+            "agent-arbiter==${{ steps.release.outputs.release_version }}"
+          .release-smoke/bin/arbiter-server version --json
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-distributions
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'release' ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.ref == 'refs/heads/main' &&
+       inputs.publish_to_pypi)
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: python-distributions
+          path: dist
+
+      - name: Publish distributions
+        uses: pypa/gh-action-pypi-publish@release/v1

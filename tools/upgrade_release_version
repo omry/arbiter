@@ -1,0 +1,349 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import difflib
+import re
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+
+PACKAGE_FILES = (
+    Path("pyproject.toml"),
+    Path("core/pyproject.toml"),
+    Path("smtp/pyproject.toml"),
+    Path("imap/pyproject.toml"),
+    Path("core/src/agent_arbiter/version.py"),
+    Path("smtp/src/agent_arbiter_smtp/__init__.py"),
+    Path("imap/src/agent_arbiter_imap/__init__.py"),
+)
+DOC_FILES = (
+    Path("docs/overview.md"),
+    Path("website/docs/operate/deployment/packages.md"),
+    Path("website/docs/operate/server-reference.md"),
+    Path("website/docs/extend/plugins.md"),
+)
+DOC_EXPECTATIONS = {
+    Path("docs/overview.md"): (
+        "- Version: `{version}`",
+    ),
+    Path("website/docs/operate/deployment/packages.md"): (
+        "agent-arbiter=={version}",
+        "agent-arbiter-core=={version}",
+        "agent-arbiter-smtp=={version}",
+        "/wheels/agent_arbiter_core-{version}-py3-none-any.whl",
+        "/wheels/agent_arbiter_smtp-{version}-py3-none-any.whl",
+        "{version}.dev1",
+    ),
+    Path("website/docs/operate/server-reference.md"): (
+        "agent-arbiter-core=={version}",
+    ),
+    Path("website/docs/extend/plugins.md"): (
+        "`{line}.x`",
+        "`{line}` line",
+        "`{version}`",
+        "`{line}.1`",
+        'version = "{version}"',
+        'core_api_version = "{line}"',
+        '"agent-arbiter-core>={version},<{next_version}"',
+    ),
+}
+META_PACKAGE_DEPENDENCIES = (
+    "agent-arbiter-core",
+    "agent-arbiter-smtp",
+    "agent-arbiter-imap",
+)
+PLUGIN_PACKAGE_FILES = (
+    Path("smtp/pyproject.toml"),
+    Path("imap/pyproject.toml"),
+)
+PLUGIN_RUNTIME_FILES = (
+    Path("smtp/src/agent_arbiter_smtp/__init__.py"),
+    Path("imap/src/agent_arbiter_imap/__init__.py"),
+)
+
+
+@dataclass(frozen=True, order=True)
+class ReleaseLine:
+    major: int
+    minor: int
+
+    @classmethod
+    def parse(cls, value: str) -> "ReleaseLine":
+        match = re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", value)
+        if match is None:
+            raise ValueError("release line must be MAJOR.MINOR, for example 0.9")
+        return cls(major=int(match.group(1)), minor=int(match.group(2)))
+
+    @property
+    def text(self) -> str:
+        return f"{self.major}.{self.minor}"
+
+    @property
+    def version(self) -> str:
+        return f"{self.text}.0"
+
+    @property
+    def next_version(self) -> str:
+        return f"{self.major}.{self.minor + 1}.0"
+
+
+@dataclass(frozen=True)
+class Change:
+    path: Path
+    before: str
+    after: str
+
+
+def _read(root: Path, path: Path) -> str:
+    full_path = root / path
+    if not full_path.exists():
+        raise FileNotFoundError(f"expected release file is missing: {path}")
+    return full_path.read_text(encoding="utf-8")
+
+
+def _replace_one(text: str, pattern: str, replacement: str, path: Path) -> str:
+    updated, count = re.subn(pattern, replacement, text, count=1, flags=re.MULTILINE)
+    if count != 1:
+        raise ValueError(f"expected exactly one match in {path}: {pattern}")
+    return updated
+
+
+def _extract_version(text: str, path: Path) -> str:
+    match = re.search(r'^version = "([0-9]+\.[0-9]+\.[0-9]+)"$', text, re.MULTILINE)
+    if match is None:
+        raise ValueError(f"could not find project version in {path}")
+    return match.group(1)
+
+
+def _version_line(version: str) -> ReleaseLine:
+    match = re.fullmatch(r"([0-9]+)\.([0-9]+)\.[0-9]+", version)
+    if match is None:
+        raise ValueError(f"invalid package version: {version}")
+    return ReleaseLine(major=int(match.group(1)), minor=int(match.group(2)))
+
+
+def _validate_current_state(root: Path) -> ReleaseLine:
+    root_pyproject = _read(root, Path("pyproject.toml"))
+    current_version = _extract_version(root_pyproject, Path("pyproject.toml"))
+    current_line = _version_line(current_version)
+    expected_next = current_line.next_version
+
+    for path in PACKAGE_FILES:
+        text = _read(root, path)
+        if path.name == "pyproject.toml":
+            found = _extract_version(text, path)
+            if found != current_version:
+                raise ValueError(
+                    f"{path} version {found} does not match root {current_version}"
+                )
+        elif f'__version__ = "{current_version}"' not in text:
+            raise ValueError(f"{path} does not declare __version__ {current_version}")
+
+    for package_name in META_PACKAGE_DEPENDENCIES:
+        dependency = f'"{package_name}=={current_version}"'
+        if dependency not in root_pyproject:
+            raise ValueError(f"root pyproject is missing dependency {dependency}")
+
+    for path in PLUGIN_PACKAGE_FILES:
+        text = _read(root, path)
+        dependency = f'"agent-arbiter-core>={current_version},<{expected_next}"'
+        if dependency not in text:
+            raise ValueError(f"{path} is missing dependency {dependency}")
+
+    for path in PLUGIN_RUNTIME_FILES:
+        text = _read(root, path)
+        if f'CORE_API_VERSION = "{current_line.text}"' not in text:
+            raise ValueError(f"{path} does not declare API line {current_line.text}")
+
+    return current_line
+
+
+def _validate_docs(root: Path, target: ReleaseLine) -> None:
+    for path, expected_templates in DOC_EXPECTATIONS.items():
+        text = _read(root, path)
+        for expected_template in expected_templates:
+            expected = expected_template.format(
+                line=target.text,
+                version=target.version,
+                next_version=target.next_version,
+            )
+            if expected not in text:
+                raise ValueError(f"{path} is missing release text: {expected}")
+
+
+def check_release_state(root: Path, target: ReleaseLine) -> None:
+    current = _validate_current_state(root)
+    if current != target:
+        raise ValueError(
+            f"target release line {target.text} does not match "
+            f"current line {current.text}"
+        )
+    _validate_docs(root, target)
+
+
+def _update_pyproject(
+    text: str,
+    path: Path,
+    target: ReleaseLine,
+) -> str:
+    updated = _replace_one(
+        text,
+        r'^version = "[0-9]+\.[0-9]+\.[0-9]+"$',
+        f'version = "{target.version}"',
+        path,
+    )
+    if path == Path("pyproject.toml"):
+        for package_name in META_PACKAGE_DEPENDENCIES:
+            updated = re.sub(
+                rf'"{re.escape(package_name)}==[0-9]+\.[0-9]+\.[0-9]+"',
+                f'"{package_name}=={target.version}"',
+                updated,
+            )
+    if path in PLUGIN_PACKAGE_FILES:
+        updated = re.sub(
+            r'"agent-arbiter-core>=[0-9]+\.[0-9]+\.[0-9]+,' r'<[0-9]+\.[0-9]+\.[0-9]+"',
+            f'"agent-arbiter-core>={target.version},<{target.next_version}"',
+            updated,
+        )
+    return updated
+
+
+def _update_runtime_file(
+    text: str,
+    path: Path,
+    target: ReleaseLine,
+) -> str:
+    updated = _replace_one(
+        text,
+        r'^__version__ = "[0-9]+\.[0-9]+\.[0-9]+"$',
+        f'__version__ = "{target.version}"',
+        path,
+    )
+    if path in PLUGIN_RUNTIME_FILES:
+        updated = _replace_one(
+            updated,
+            r'^CORE_API_VERSION = "[0-9]+\.[0-9]+"$',
+            f'CORE_API_VERSION = "{target.text}"',
+            path,
+        )
+    return updated
+
+
+def _update_doc(
+    text: str,
+    current: ReleaseLine,
+    target: ReleaseLine,
+) -> str:
+    updated = text
+    updated = updated.replace(
+        f">={current.version},<{current.next_version}",
+        f">={target.version},<{target.next_version}",
+    )
+    replacements = (
+        (current.version, target.version),
+        (f"{current.text}.x", f"{target.text}.x"),
+        (f"{current.text}.1", f"{target.text}.1"),
+        (f"{current.text}`", f"{target.text}`"),
+        (f'"{current.text}"', f'"{target.text}"'),
+    )
+    for old, new in replacements:
+        updated = updated.replace(old, new)
+    return updated
+
+
+def build_changes(root: Path, target: ReleaseLine) -> list[Change]:
+    current = _validate_current_state(root)
+    if target <= current:
+        raise ValueError(
+            f"target release line {target.text} must be greater than "
+            f"current line {current.text}"
+        )
+
+    changes: list[Change] = []
+    for path in PACKAGE_FILES:
+        before = _read(root, path)
+        if path.name == "pyproject.toml":
+            after = _update_pyproject(before, path, target)
+        else:
+            after = _update_runtime_file(before, path, target)
+        if after != before:
+            changes.append(Change(path=path, before=before, after=after))
+
+    for path in DOC_FILES:
+        before = _read(root, path)
+        after = _update_doc(before, current, target)
+        if after != before:
+            changes.append(Change(path=path, before=before, after=after))
+
+    return changes
+
+
+def _print_diff(changes: list[Change]) -> None:
+    for change in changes:
+        diff = difflib.unified_diff(
+            change.before.splitlines(keepends=True),
+            change.after.splitlines(keepends=True),
+            fromfile=str(change.path),
+            tofile=str(change.path),
+        )
+        sys.stdout.writelines(diff)
+
+
+def _write_changes(root: Path, changes: list[Change]) -> None:
+    for change in changes:
+        (root / change.path).write_text(change.after, encoding="utf-8")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Upgrade Agent Arbiter core and bundled plugin packages to a new "
+            "MAJOR.MINOR release line."
+        )
+    )
+    parser.add_argument("release_line", help="target release line, for example 0.9")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print the patch without changing files",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="verify files already match the requested release line",
+    )
+    parser.add_argument(
+        "--root",
+        default=".",
+        help=argparse.SUPPRESS,
+    )
+    namespace = parser.parse_args(argv)
+
+    try:
+        target = ReleaseLine.parse(namespace.release_line)
+        root = Path(namespace.root).resolve()
+        if namespace.check:
+            check_release_state(root, target)
+            print(f"release line check passed: {target.text} ({target.version})")
+            return 0
+        changes = build_changes(root, target)
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"upgrade_release_version: {exc}", file=sys.stderr)
+        return 1
+
+    if namespace.dry_run:
+        _print_diff(changes)
+        print(f"would update {len(changes)} file(s)")
+        return 0
+
+    _write_changes(root, changes)
+    for change in changes:
+        print(f"updated {change.path}")
+    print(f"release line is now {target.text} ({target.version})")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
