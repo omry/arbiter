@@ -664,6 +664,11 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
         "python -m pip install --no-cache-dir -r /tmp/requirements.pinned "
         "/tmp/agent-arbiter-wheels/*.whl"
     ) in compose_text
+    assert "AGENT_ARBITER_SERVER_HOST: 0.0.0.0" in compose_text
+    assert (
+        '"arbiter.server.host=$AGENT_ARBITER_SERVER_HOST" '
+        '"arbiter.server.port=$AGENT_ARBITER_CONTAINER_PORT"'
+    ) in compose_text
     assert not (deploy_dir / "config.yaml").exists()
     assert (deploy_dir / "conf").is_dir()
     assert not (deploy_dir / "conf" / ".env").exists()

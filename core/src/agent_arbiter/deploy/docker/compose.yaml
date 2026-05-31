@@ -45,7 +45,7 @@ services:
       else
         python -m pip install --no-cache-dir -r /requirements.txt;
       fi &&
-      exec arbiter-server --config-dir /config --config-name "$AGENT_ARBITER_CONFIG_NAME" serve "arbiter.server.port=$AGENT_ARBITER_CONTAINER_PORT"'
+      exec arbiter-server --config-dir /config --config-name "$AGENT_ARBITER_CONFIG_NAME" serve "arbiter.server.host=$AGENT_ARBITER_SERVER_HOST" "arbiter.server.port=$AGENT_ARBITER_CONTAINER_PORT"'
 
 networks:
   agent-arbiter:

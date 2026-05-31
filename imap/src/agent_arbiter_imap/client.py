@@ -64,6 +64,9 @@ class IMAPClient:
             self._select_folder(server, source_folder, readonly=False)
             try:
                 status, data = server.uid("MOVE", uid, destination_folder)
+                if self._move_status_supports_fallback(status, data):
+                    self._copy_then_delete(server, uid, destination_folder)
+                    return
                 self._expect_ok(status, data, "move message")
             except imaplib.IMAP4.error:
                 self._copy_then_delete(server, uid, destination_folder)
@@ -235,6 +238,30 @@ class IMAPClient:
     def _expect_ok(self, status: str, data: list[Any], action: str) -> None:
         if status.upper() != "OK":
             raise IMAPOperationError(f"IMAP {action} failed: {status} {data!r}")
+
+    def _move_status_supports_fallback(self, status: str, data: list[Any]) -> bool:
+        normalized_status = status.upper()
+        if normalized_status not in {"BAD", "NO"}:
+            return False
+
+        response_text = " ".join(
+            (
+                item.decode("utf-8", errors="replace")
+                if isinstance(item, bytes)
+                else str(item)
+            )
+            for item in data
+        ).lower()
+        return any(
+            marker in response_text
+            for marker in (
+                "move unsupported",
+                "move unavailable",
+                "move not supported",
+                "unknown command",
+                "unrecognized command",
+            )
+        )
 
     def _raw_fetch_item(self, item: object) -> bytes | None:
         if isinstance(item, bytes):

@@ -31,6 +31,7 @@ class FakeIMAPServer:
         self.starttls_context: ssl.SSLContext | None = None
         self.logged_out = False
         self.raise_on_move = False
+        self.move_response: tuple[str, list[Any]] | None = None
 
     def select(self, mailbox: str, readonly: bool = False) -> tuple[str, list[bytes]]:
         self.selected.append({"mailbox": mailbox, "readonly": readonly})
@@ -40,6 +41,8 @@ class FakeIMAPServer:
         self.uid_calls.append((command, args))
         if command == "MOVE" and self.raise_on_move:
             raise imaplib.IMAP4.error("MOVE unavailable")
+        if command == "MOVE" and self.move_response is not None:
+            return self.move_response
         if command == "SEARCH":
             return "OK", [b"40 41 42"]
         if command == "FETCH" and args[1] == "(FLAGS)":
@@ -161,6 +164,97 @@ def test_move_falls_back_to_copy_delete_and_uid_expunge(
     assert ("COPY", ("42", "Archive")) in fake_server.uid_calls
     assert ("STORE", ("42", "+FLAGS.SILENT", r"(\Deleted)")) in fake_server.uid_calls
     assert ("EXPUNGE", ("42",)) in fake_server.uid_calls
+
+
+def test_move_falls_back_when_server_returns_unsupported_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_server = FakeIMAPServer()
+    fake_server.move_response = ("NO", [b"MOVE unsupported"])
+
+    def fake_imap4_ssl(
+        host: str,
+        port: int,
+        *,
+        ssl_context: ssl.SSLContext,
+        timeout: float,
+    ) -> FakeIMAPServer:
+        return fake_server
+
+    monkeypatch.setattr("agent_arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+
+    client = IMAPClient(IMAPConfig())
+
+    client.move_message(
+        source_folder="INBOX",
+        uid="42",
+        destination_folder="Archive",
+    )
+
+    assert fake_server.uid_calls == [
+        ("MOVE", ("42", "Archive")),
+        ("COPY", ("42", "Archive")),
+        ("STORE", ("42", "+FLAGS.SILENT", r"(\Deleted)")),
+        ("EXPUNGE", ("42",)),
+    ]
+
+
+def test_move_non_fallback_status_raises_without_copying(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_server = FakeIMAPServer()
+    fake_server.move_response = ("NO", [b"destination mailbox does not exist"])
+
+    def fake_imap4_ssl(
+        host: str,
+        port: int,
+        *,
+        ssl_context: ssl.SSLContext,
+        timeout: float,
+    ) -> FakeIMAPServer:
+        return fake_server
+
+    monkeypatch.setattr("agent_arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+
+    client = IMAPClient(IMAPConfig())
+
+    with pytest.raises(IMAPOperationError, match="move message"):
+        client.move_message(
+            source_folder="INBOX",
+            uid="42",
+            destination_folder="Archive",
+        )
+
+    assert fake_server.uid_calls == [("MOVE", ("42", "Archive"))]
+
+
+def test_move_bad_status_without_unsupported_marker_raises_without_copying(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_server = FakeIMAPServer()
+    fake_server.move_response = ("BAD", [b"invalid destination mailbox"])
+
+    def fake_imap4_ssl(
+        host: str,
+        port: int,
+        *,
+        ssl_context: ssl.SSLContext,
+        timeout: float,
+    ) -> FakeIMAPServer:
+        return fake_server
+
+    monkeypatch.setattr("agent_arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+
+    client = IMAPClient(IMAPConfig())
+
+    with pytest.raises(IMAPOperationError, match="move message"):
+        client.move_message(
+            source_folder="INBOX",
+            uid="42",
+            destination_folder="Archive",
+        )
+
+    assert fake_server.uid_calls == [("MOVE", ("42", "Archive"))]
 
 
 def test_delete_message_uses_uid_expunge(monkeypatch: pytest.MonkeyPatch) -> None:
