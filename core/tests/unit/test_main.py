@@ -1,5 +1,9 @@
+import hashlib
+import json
 import logging
 import os
+import shutil
+import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -527,6 +531,871 @@ def test_cli_env_bootstrap_configures_default_env_file(
         "SMTP_PRIMARY_ACCOUNT_PASSWORD=\n"
     )
     assert capsys.readouterr().out == f"wrote {tmp_path / '.env'}\n"
+
+
+def test_cli_deploy_docker_init_writes_local_deploy_dir(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("agent_arbiter.main.package_version", lambda: "1.2.3")
+    deploy_dir = tmp_path / "docker"
+
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "init",
+            ]
+        )
+        == 0
+    )
+
+    assert (deploy_dir / "compose.yaml").exists()
+    compose_text = (deploy_dir / "compose.yaml").read_text(encoding="utf-8")
+    assert "python -m pip wheel --no-cache-dir --no-deps --wheel-dir" in compose_text
+    assert (
+        "python -m pip install --no-cache-dir -r /tmp/requirements.pinned "
+        "/tmp/agent-arbiter-wheels/*.whl"
+    ) in compose_text
+    assert not (deploy_dir / "config.yaml").exists()
+    assert (deploy_dir / "conf").is_dir()
+    assert not (deploy_dir / "conf" / ".env").exists()
+    docker_env = (deploy_dir / "docker.env").read_text(encoding="utf-8")
+    assert "AGENT_ARBITER_HOST_BIND=127.0.0.1\n" in docker_env
+    assert "AGENT_ARBITER_HOST_PORT=8025\n" in docker_env
+    assert "AGENT_ARBITER_DOCKER_NETWORK_NAME=agent-arbiter\n" in docker_env
+    assert "AGENT_ARBITER_DOCKER_SUBNET=172.31.250.0/24\n" in docker_env
+    assert "AGENT_ARBITER_LOCAL_SOURCE_DIR" not in docker_env
+    assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
+        "agent-arbiter==1.2.3\n"
+    )
+    assert not (deploy_dir / "compose.override.yaml").exists()
+    helper = deploy_dir / "arbiter-docker"
+    assert helper.exists()
+    assert helper.stat().st_mode & 0o111
+    manifest = json.loads(
+        (deploy_dir / ".agent-arbiter-deploy.json").read_text(encoding="utf-8")
+    )
+    assert manifest["generator"] == "arbiter-server deploy docker"
+    assert sorted(manifest["files"]) == [
+        "arbiter-docker",
+        "compose.yaml",
+    ]
+    assert not (deploy_dir / "empty-source").exists()
+    assert "Next steps:\n" in capsys.readouterr().out
+
+
+def test_cli_deploy_docker_init_preserves_existing_config(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    deploy_dir.mkdir()
+    config_file = deploy_dir / "conf" / "arbiter-server.yaml"
+    config_file.parent.mkdir()
+    config_file.write_text("operator config\n", encoding="utf-8")
+
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=agent-arbiter==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+
+    assert config_file.read_text(encoding="utf-8") == "operator config\n"
+    assert (deploy_dir / "compose.yaml").exists()
+    assert (deploy_dir / "arbiter-docker").exists()
+    capsys.readouterr()
+
+
+def test_cli_deploy_docker_init_refuses_existing_file(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    deploy_dir.mkdir()
+    compose_file = deploy_dir / "compose.yaml"
+    compose_file.write_text("existing\n", encoding="utf-8")
+
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                "init",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=agent-arbiter==1.2.3",
+            ]
+        )
+        == 1
+    )
+
+    assert compose_file.read_text(encoding="utf-8") == "existing\n"
+    assert capsys.readouterr().err == (
+        "Agent Arbiter deploy error: refusing to overwrite existing deployment "
+        f"file: {compose_file}\n"
+        "  use update to refresh generated files\n"
+    )
+
+
+def test_cli_deploy_docker_init_accepts_multiple_requirements(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=agent-arbiter-core==1.2.3",
+                "docker.requirement=agent-arbiter-smtp==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+
+    assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
+        "agent-arbiter-core==1.2.3\n" "agent-arbiter-smtp==1.2.3\n"
+    )
+    capsys.readouterr()
+
+
+def test_cli_deploy_docker_init_rejects_unpinned_requirement(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=agent-arbiter",
+                "init",
+            ]
+        )
+        == 2
+    )
+
+    assert capsys.readouterr().err == (
+        "Agent Arbiter deploy error: docker.requirement must be an exact "
+        "package pin (name==version) or an absolute container path\n"
+        "  value: agent-arbiter\n"
+    )
+    assert not deploy_dir.exists()
+
+
+def test_cli_deploy_docker_init_uses_local_checkout_default_requirements(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("agent_arbiter.main.package_version", lambda: "0.1.1.dev1")
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    (checkout / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+    for package_dir in ("core", "smtp", "imap"):
+        package_path = checkout / package_dir
+        package_path.mkdir()
+        (package_path / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+    monkeypatch.chdir(checkout)
+    deploy_dir = tmp_path / "docker"
+
+    assert main(["deploy", "docker", f"docker.dir={deploy_dir}", "init"]) == 0
+
+    assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
+        "/source/agent-arbiter/core\n"
+        "/source/agent-arbiter/smtp\n"
+        "/source/agent-arbiter/imap\n"
+    )
+    assert (deploy_dir / "compose.override.yaml").read_text(encoding="utf-8") == (
+        "services:\n"
+        "  agent-arbiter:\n"
+        "    volumes:\n"
+        f"      - {checkout.resolve()}:/source/agent-arbiter:ro\n"
+    )
+    capsys.readouterr()
+
+
+def test_cli_deploy_docker_init_rejects_unlocated_local_dev_default_requirement(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("agent_arbiter.main.package_version", lambda: "0.1.1.dev1")
+    outside_checkout = tmp_path / "outside"
+    outside_checkout.mkdir()
+    monkeypatch.chdir(outside_checkout)
+    deploy_dir = tmp_path / "docker"
+
+    assert main(["deploy", "docker", f"docker.dir={deploy_dir}", "init"]) == 2
+
+    assert capsys.readouterr().err == (
+        "Agent Arbiter deploy error: cannot infer default docker requirements\n"
+        "  pass docker.requirement=agent-arbiter==VERSION for a published "
+        "package\n"
+        "  for a local checkout, run this command from the checkout or pass "
+        "absolute container source paths\n"
+    )
+    assert not deploy_dir.exists()
+
+
+def test_cli_deploy_docker_init_accepts_absolute_path_requirement(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=/source/agent-arbiter/core",
+                "init",
+            ]
+        )
+        == 0
+    )
+
+    assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
+        "/source/agent-arbiter/core\n"
+    )
+    capsys.readouterr()
+
+
+def test_cli_deploy_docker_init_accepts_wheelhouse_requirement(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=/wheels/agent_arbiter-1.2.3-py3-none-any.whl",
+                "init",
+            ]
+        )
+        == 0
+    )
+
+    assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
+        "/wheels/agent_arbiter-1.2.3-py3-none-any.whl\n"
+    )
+    compose_text = (deploy_dir / "compose.yaml").read_text(encoding="utf-8")
+    assert "--no-index --find-links /wheels -r /requirements.txt" in compose_text
+    assert not (deploy_dir / "wheels").exists()
+    capsys.readouterr()
+
+
+def test_cli_deploy_docker_generated_helper_doctor_rejects_unpinned_requirements(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=agent-arbiter==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    config_dir = deploy_dir / "conf"
+    (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / ".env").write_text("", encoding="utf-8")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env sh\n"
+        'if [ "$1" = compose ] && [ "$2" = version ]; then\n'
+        "  printf 'Docker Compose version v2.fake\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+
+    valid_result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "doctor"],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    assert valid_result.returncode == 0
+    assert (
+        "ok: requirements file uses exact pins or absolute container paths"
+        in valid_result.stdout
+    )
+
+    (deploy_dir / "requirements.txt").write_text("agent-arbiter\n", encoding="utf-8")
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "doctor"],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert (
+        "requirement must be an exact package pin (name==version) or an "
+        "absolute container path"
+    ) in result.stdout
+    assert (
+        "fail: requirements file contains unpinned package requirements"
+        in result.stdout
+    )
+    assert "\033[" not in result.stdout
+
+
+def test_cli_deploy_docker_generated_helper_doctor_can_color_status_prefixes(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=agent-arbiter==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    config_dir = deploy_dir / "conf"
+    (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / ".env").write_text("", encoding="utf-8")
+    (deploy_dir / "requirements.txt").write_text("agent-arbiter\n", encoding="utf-8")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env sh\n"
+        'if [ "$1" = compose ] && [ "$2" = version ]; then\n'
+        "  printf 'Docker Compose version v2.fake\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+    env["AGENT_ARBITER_COLOR"] = "always"
+    env["NO_COLOR"] = "1"
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "doctor"],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert "\033[32mok\033[0m:" in result.stdout
+    assert "\033[33mwarn\033[0m:" in result.stdout
+    assert "\033[31mfail\033[0m:" in result.stdout
+
+
+def test_cli_deploy_docker_generated_helper_doctor_can_disable_color(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=agent-arbiter==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    config_dir = deploy_dir / "conf"
+    (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / ".env").write_text("", encoding="utf-8")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env sh\n"
+        'if [ "$1" = compose ] && [ "$2" = version ]; then\n'
+        "  printf 'Docker Compose version v2.fake\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+    env["AGENT_ARBITER_COLOR"] = "never"
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "doctor"],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert "\033[" not in result.stdout
+
+
+def test_cli_deploy_docker_generated_helper_doctor_colors_tty_by_default(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    if not shutil.which("script"):
+        pytest.skip("script command is not available")
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=agent-arbiter==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    config_dir = deploy_dir / "conf"
+    (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / ".env").write_text("", encoding="utf-8")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env sh\n"
+        'if [ "$1" = compose ] && [ "$2" = version ]; then\n'
+        "  printf 'Docker Compose version v2.fake\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+    env.pop("AGENT_ARBITER_COLOR", None)
+
+    result = subprocess.run(
+        ["script", "-q", "-c", f"{deploy_dir / 'arbiter-docker'} doctor", "/dev/null"],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert "\033[32mok\033[0m:" in result.stdout
+
+
+def test_cli_deploy_docker_generated_helper_doctor_rejects_docker_subnet_overlap(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=agent-arbiter==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    config_dir = deploy_dir / "conf"
+    (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / ".env").write_text("", encoding="utf-8")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env sh\n"
+        'if [ "$1" = compose ] && [ "$2" = version ]; then\n'
+        "  printf 'Docker Compose version v2.fake\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        'if [ "$1" = network ] && [ "$2" = ls ]; then\n'
+        "  if [ \"${3:-}\" = -q ]; then printf 'network-id\\n'; fi\n"
+        "  exit 0\n"
+        "fi\n"
+        'if [ "$1" = network ] && [ "$2" = inspect ]; then\n'
+        "  printf 'mail-sentry 172.31.250.0/24 \\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "doctor"],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert (
+        "fail: Docker subnet 172.31.250.0/24 already belongs to network "
+        "mail-sentry\n"
+    ) in result.stdout
+
+
+def test_cli_deploy_docker_generated_helper_preserves_requirements_after_bad_edit(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=agent-arbiter==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    requirements_file = deploy_dir / "requirements.txt"
+    original_requirements = requirements_file.read_text(encoding="utf-8")
+    editor = tmp_path / "bad-editor"
+    editor.write_text(
+        "#!/usr/bin/env sh\n" "printf 'agent-arbiter\\n' > \"$1\"\n",
+        encoding="utf-8",
+    )
+    editor.chmod(0o755)
+    env = os.environ.copy()
+    env["AGENT_ARBITER_EDITOR"] = str(editor)
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "edit-requirements"],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert requirements_file.read_text(encoding="utf-8") == original_requirements
+    assert (
+        "requirement must be an exact package pin (name==version) or an "
+        "absolute container path"
+    ) in result.stdout
+    assert f"error: requirements unchanged: {requirements_file}\n" in result.stderr
+
+
+def test_cli_deploy_docker_generated_helper_sync_env_uses_env_bootstrap(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=agent-arbiter==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    (deploy_dir / "conf" / "arbiter-server.yaml").write_text(
+        "arbiter: {}\n",
+        encoding="utf-8",
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    calls_file = tmp_path / "arbiter-server-calls"
+    fake_arbiter_server = fake_bin / "arbiter-server"
+    fake_arbiter_server.write_text(
+        "#!/usr/bin/env sh\n" 'printf \'%s\\n\' "$*" > "$ARBITER_SERVER_CALLS"\n',
+        encoding="utf-8",
+    )
+    fake_arbiter_server.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+    env["ARBITER_SERVER_CALLS"] = str(calls_file)
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "sync-env"],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert calls_file.read_text(encoding="utf-8") == (
+        f"--config-dir {deploy_dir / 'conf'} --config-name arbiter-server "
+        "env bootstrap\n"
+    )
+
+
+def test_cli_deploy_docker_update_preserves_local_config_and_env_values(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    deploy_dir.mkdir()
+    config_file = deploy_dir / "conf" / "arbiter-server.yaml"
+    config_file.parent.mkdir()
+    config_file.write_text(
+        "arbiter:\n"
+        "  server:\n"
+        "    host: ${oc.env:AGENT_ARBITER_SERVER_HOST,127.0.0.1}\n"
+        "  etc:\n"
+        "    token: ${oc.env:EXISTING_TOKEN}\n"
+        "    timeout: ${oc.env:NEW_TIMEOUT,30}\n",
+        encoding="utf-8",
+    )
+    env_file = deploy_dir / "conf" / ".env"
+    env_file.write_text("EXISTING_TOKEN=keep\n", encoding="utf-8")
+    docker_env_file = deploy_dir / "docker.env"
+    docker_env_file.write_text(
+        "AGENT_ARBITER_HOST_PORT=9000\n" "LOCAL_ONLY=value\n",
+        encoding="utf-8",
+    )
+    requirements_file = deploy_dir / "requirements.txt"
+    requirements_file.write_text("agent-arbiter==old\n", encoding="utf-8")
+
+    assert main(["deploy", "docker", f"docker.dir={deploy_dir}", "update"]) == 0
+
+    assert config_file.read_text(encoding="utf-8").startswith("arbiter:\n")
+    assert requirements_file.read_text(encoding="utf-8") == "agent-arbiter==old\n"
+    assert env_file.read_text(encoding="utf-8") == "EXISTING_TOKEN=keep\n"
+    assert docker_env_file.read_text(encoding="utf-8") == (
+        "# Docker Compose settings for the Agent Arbiter deployment.\n"
+        "# These values control the container wrapper, not Agent Arbiter runtime "
+        "config.\n"
+        "\n"
+        "AGENT_ARBITER_IMAGE=python:3.11-slim\n"
+        "AGENT_ARBITER_CONTAINER_NAME=agent-arbiter\n"
+        "AGENT_ARBITER_RESTART=unless-stopped\n"
+        "AGENT_ARBITER_APP_ENV_FILE=./conf/.env\n"
+        "AGENT_ARBITER_CONFIG_DIR=./conf\n"
+        "AGENT_ARBITER_CONFIG_NAME=arbiter-server\n"
+        "AGENT_ARBITER_REQUIREMENTS_FILE=./requirements.txt\n"
+        "AGENT_ARBITER_HOST_BIND=127.0.0.1\n"
+        "AGENT_ARBITER_HOST_PORT=9000\n"
+        "AGENT_ARBITER_CONTAINER_PORT=8025\n"
+        "AGENT_ARBITER_DOCKER_NETWORK_NAME=agent-arbiter\n"
+        "AGENT_ARBITER_DOCKER_BRIDGE_NAME=agent-arbiter0\n"
+        "AGENT_ARBITER_DOCKER_SUBNET=172.31.250.0/24\n"
+        "\n"
+        "# Extra local Compose values.\n"
+        "LOCAL_ONLY=value\n"
+    )
+    assert (deploy_dir / "compose.yaml").exists()
+    assert (deploy_dir / "arbiter-docker").exists()
+    capsys.readouterr()
+
+
+def test_cli_deploy_docker_update_creates_local_checkout_source_override(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("agent_arbiter.main.package_version", lambda: "0.1.1.dev1")
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    (checkout / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+    for package_dir in ("core", "smtp", "imap"):
+        package_path = checkout / package_dir
+        package_path.mkdir()
+        (package_path / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+    monkeypatch.chdir(checkout)
+    deploy_dir = tmp_path / "docker"
+
+    assert main(["deploy", "docker", f"docker.dir={deploy_dir}", "update"]) == 0
+
+    assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
+        "/source/agent-arbiter/core\n"
+        "/source/agent-arbiter/smtp\n"
+        "/source/agent-arbiter/imap\n"
+    )
+    assert (deploy_dir / "compose.override.yaml").read_text(encoding="utf-8") == (
+        "services:\n"
+        "  agent-arbiter:\n"
+        "    volumes:\n"
+        f"      - {checkout.resolve()}:/source/agent-arbiter:ro\n"
+    )
+    capsys.readouterr()
+
+
+def test_cli_deploy_docker_update_reports_compact_noop_status(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=agent-arbiter==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert main(["deploy", "docker", f"docker.dir={deploy_dir}", "update"]) == 0
+
+    assert capsys.readouterr().out == f"Files already up to date: {deploy_dir}\n"
+
+
+def test_cli_deploy_docker_update_repairs_stale_template_manifest(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=agent-arbiter==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    compose_file = deploy_dir / "compose.yaml"
+    helper_file = deploy_dir / "arbiter-docker"
+    compose_hash = hashlib.sha256(compose_file.read_bytes()).hexdigest()
+    helper_hash = hashlib.sha256(helper_file.read_bytes()).hexdigest()
+    manifest_path = deploy_dir / ".agent-arbiter-deploy.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["files"]["compose.yaml"]["sha256"] = "stale-compose"
+    manifest["files"]["arbiter-docker"]["sha256"] = "stale-helper"
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+    assert main(["deploy", "docker", f"docker.dir={deploy_dir}", "update"]) == 0
+
+    output = capsys.readouterr().out
+    assert f"skipped modified file: {compose_file}\n" not in output
+    assert f"skipped modified file: {helper_file}\n" not in output
+    assert f"template already up to date: {compose_file}\n" not in output
+    assert f"template already up to date: {helper_file}\n" not in output
+    assert f"wrote {manifest_path}\n" in output
+    repaired_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert repaired_manifest["files"]["compose.yaml"]["sha256"] == compose_hash
+    assert repaired_manifest["files"]["arbiter-docker"]["sha256"] == helper_hash
+
+
+def test_cli_deploy_docker_update_skips_modified_manifest_owned_files(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=agent-arbiter==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    compose_file = deploy_dir / "compose.yaml"
+    compose_file.write_text("operator change\n", encoding="utf-8")
+    manifest_path = deploy_dir / ".agent-arbiter-deploy.json"
+    original_manifest = manifest_path.read_text(encoding="utf-8")
+
+    assert main(["deploy", "docker", f"docker.dir={deploy_dir}", "update"]) == 0
+
+    assert compose_file.read_text(encoding="utf-8") == "operator change\n"
+    assert manifest_path.read_text(encoding="utf-8") == original_manifest
+    output = capsys.readouterr().out
+    assert f"skipped modified file: {compose_file}\n" in output
+    assert f"wrote {manifest_path}\n" not in output
+    assert "Files already up to date:" not in output
+
+
+def test_cli_deploy_docker_reports_unknown_override(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["deploy", "docker", "docker.image=python", "init"]) == 2
+
+    assert capsys.readouterr().err == (
+        "Agent Arbiter deploy error: unknown docker deploy override: docker.image\n"
+    )
 
 
 def test_cli_lists_plugins_as_json(

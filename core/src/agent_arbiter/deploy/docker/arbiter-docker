@@ -1,0 +1,655 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+deploy_dir="${AGENT_ARBITER_DOCKER_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)}"
+compose_file="$deploy_dir/compose.yaml"
+compose_env_file="$deploy_dir/docker.env"
+requirements_file="$deploy_dir/requirements.txt"
+compose_override_file="$deploy_dir/compose.override.yaml"
+
+usage() {
+  cat <<'EOF'
+Usage: arbiter-docker COMMAND
+
+Commands:
+  sync-env      Run arbiter-server env bootstrap for the configured config
+  edit-config   Edit the main config file with $AGENT_ARBITER_EDITOR, $EDITOR, or vi
+  edit-requirements
+                Edit Python requirements installed inside the container
+  edit-env      Edit the configured env file with $AGENT_ARBITER_EDITOR, $EDITOR, or vi
+  edit-docker   Edit docker.env with $AGENT_ARBITER_EDITOR, $EDITOR, or vi
+  up            Start or update the Docker Compose service
+  restart       Recreate the Docker Compose service
+  down          Stop and remove the Docker Compose service
+  ps            Show Docker Compose service status
+  logs          Follow Docker Compose logs
+  info          Show deployment paths and Docker Compose version
+  doctor        Check generated files, Docker Compose, and optional agent access
+
+Doctor options:
+  --agent-user USER   Check that USER cannot read/write deployment state
+  --agent-uid UID     Check that UID cannot read/write deployment state
+
+Environment:
+  AGENT_ARBITER_DOCKER_DIR   Deployment directory, default script directory
+  AGENT_ARBITER_EDITOR       Editor for edit-config/edit-env
+EOF
+}
+
+require_file() {
+  local path="$1"
+  [[ -f "$path" ]] || {
+    printf 'error: missing file: %s\n' "$path" >&2
+    exit 1
+  }
+}
+
+require_dir() {
+  local path="$1"
+  [[ -d "$path" ]] || {
+    printf 'error: missing directory: %s\n' "$path" >&2
+    exit 1
+  }
+}
+
+validate_requirements_file() {
+  local path="$1"
+
+  awk '
+    {
+      line = $0
+      sub(/^[[:space:]]+/, "", line)
+      sub(/[[:space:]]+$/, "", line)
+      if (line == "" || line ~ /^#/) {
+        next
+      }
+      sub(/[[:space:]]+#.*$/, "", line)
+      sub(/[[:space:]]+$/, "", line)
+      if (line ~ /^\//) {
+        next
+      }
+      if (line ~ /^[A-Za-z0-9][A-Za-z0-9_.-]*(\[[A-Za-z0-9_.-]+(,[A-Za-z0-9_.-]+)*\])?==[^<>=!~[:space:]#]+$/) {
+        next
+      }
+      printf "%s:%d: requirement must be an exact package pin (name==version) or an absolute container path: %s\n", FILENAME, FNR, $0
+      invalid = 1
+    }
+    END { exit invalid }
+  ' "$path"
+}
+
+edit_requirements() {
+  local edited_requirements
+
+  require_file "$requirements_file"
+  edited_requirements="$(mktemp "${TMPDIR:-/tmp}/arbiter-docker-requirements.XXXXXX")"
+  cp "$requirements_file" "$edited_requirements"
+
+  if ! run_editor "$edited_requirements"; then
+    rm -f "$edited_requirements"
+    return 1
+  fi
+
+  if ! validate_requirements_file "$edited_requirements"; then
+    printf 'error: requirements unchanged: %s\n' "$requirements_file" >&2
+    rm -f "$edited_requirements"
+    return 1
+  fi
+
+  cp "$edited_requirements" "$requirements_file"
+  rm -f "$edited_requirements"
+  printf 'updated requirements file: %s\n' "$requirements_file"
+}
+
+env_file_value() {
+  local env_path="$1"
+  local key="$2"
+  [[ -f "$env_path" ]] || return 1
+
+  awk -v key="$key" '
+    $0 ~ "^[[:space:]]*#" { next }
+    index($0, key "=") == 1 {
+      print substr($0, length(key) + 2)
+      found = 1
+      exit
+    }
+    END {
+      if (!found) {
+        exit 1
+      }
+    }
+  ' "$env_path"
+}
+
+compose_env_value() {
+  local key="$1"
+  local default="$2"
+
+  env_file_value "$compose_env_file" "$key" || printf '%s\n' "$default"
+}
+
+deploy_path_from_compose_value() {
+  local value="$1"
+
+  if [[ "$value" = /* ]]; then
+    printf '%s\n' "$value"
+  else
+    printf '%s/%s\n' "$deploy_dir" "${value#./}"
+  fi
+}
+
+config_dir_path() {
+  deploy_path_from_compose_value "$(compose_env_value AGENT_ARBITER_CONFIG_DIR ./conf)"
+}
+
+config_name_value() {
+  compose_env_value AGENT_ARBITER_CONFIG_NAME arbiter-server
+}
+
+app_env_path() {
+  deploy_path_from_compose_value "$(compose_env_value AGENT_ARBITER_APP_ENV_FILE ./conf/.env)"
+}
+
+config_main_file() {
+  printf '%s/%s.yaml\n' "$(config_dir_path)" "$(config_name_value)"
+}
+
+sync_env() {
+  local active_config_dir
+  local active_config_name
+
+  active_config_dir="$(config_dir_path)"
+  active_config_name="$(config_name_value)"
+  require_dir "$active_config_dir"
+  require_file "$(config_main_file)"
+  arbiter-server --config-dir "$active_config_dir" --config-name "$active_config_name" env bootstrap
+}
+
+run_editor() {
+  local path="$1"
+  local -a editor=()
+
+  if [[ -n "${AGENT_ARBITER_EDITOR:-}" ]]; then
+    read -r -a editor <<<"$AGENT_ARBITER_EDITOR"
+  elif [[ -n "${EDITOR:-}" ]]; then
+    read -r -a editor <<<"$EDITOR"
+  else
+    editor=(vi)
+  fi
+
+  "${editor[@]}" "$path"
+}
+
+compose() {
+  local active_config_dir
+
+  require_file "$compose_file"
+  active_config_dir="$(config_dir_path)"
+  require_dir "$active_config_dir"
+  require_file "$(config_main_file)"
+  require_file "$(app_env_path)"
+  require_file "$compose_env_file"
+  require_file "$requirements_file"
+  validate_requirements_file "$requirements_file"
+
+  cd "$deploy_dir"
+  if [[ -f "$compose_override_file" ]]; then
+    docker compose --env-file "$compose_env_file" -f "$compose_file" -f "$compose_override_file" "$@"
+  else
+    docker compose --env-file "$compose_env_file" -f "$compose_file" "$@"
+  fi
+}
+
+info() {
+  printf 'deploy dir: %s\n' "$deploy_dir"
+  printf 'compose file: %s\n' "$compose_file"
+  if [[ -f "$compose_override_file" ]]; then
+    printf 'compose override file: %s\n' "$compose_override_file"
+  fi
+  printf 'config dir: %s\n' "$(config_dir_path)"
+  printf 'config name: %s\n' "$(config_name_value)"
+  printf 'app env file: %s\n' "$(app_env_path)"
+  printf 'docker env file: %s\n' "$compose_env_file"
+  printf 'requirements file: %s\n' "$requirements_file"
+  docker compose version || true
+}
+
+doctor_status=0
+doctor_agent_uid=""
+doctor_agent_user=""
+doctor_agent_groups=""
+doctor_agent_group_names=""
+
+color_enabled() {
+  [[ "${AGENT_ARBITER_COLOR:-}" == always ]] && return 0
+  [[ "${AGENT_ARBITER_COLOR:-}" == never ]] && return 1
+  [[ -t 1 ]]
+}
+
+doctor_prefix() {
+  local color="$1"
+  local label="$2"
+
+  if color_enabled; then
+    printf '\033[%sm%s\033[0m' "$color" "$label"
+  else
+    printf '%s' "$label"
+  fi
+}
+
+doctor_line() {
+  local color="$1"
+  local label="$2"
+  local message="$3"
+
+  doctor_prefix "$color" "$label"
+  printf ': %s\n' "$message"
+}
+
+doctor_ok() {
+  doctor_line 32 ok "$1"
+}
+
+doctor_warn() {
+  doctor_line 33 warn "$1"
+}
+
+doctor_fail() {
+  doctor_line 31 fail "$1"
+  doctor_status=1
+}
+
+doctor_check_file() {
+  local path="$1"
+  local description="$2"
+
+  if [[ -f "$path" ]]; then
+    doctor_ok "$description exists: $path"
+  else
+    doctor_fail "$description is missing: $path"
+  fi
+}
+
+doctor_check_dir() {
+  local path="$1"
+  local description="$2"
+
+  if [[ -d "$path" ]]; then
+    doctor_ok "$description exists: $path"
+  else
+    doctor_fail "$description is missing: $path"
+  fi
+}
+
+doctor_check_env_file() {
+  local path="$1"
+  local description="$2"
+
+  if [[ ! -f "$path" ]]; then
+    return
+  fi
+
+  if awk '
+    /^[[:space:]]*($|#)/ { next }
+    /^[A-Za-z_][A-Za-z0-9_]*=/ { next }
+    {
+      printf "%s:%d: invalid env assignment: %s\n", FILENAME, FNR, $0
+      invalid = 1
+    }
+    END { exit invalid }
+  ' "$path"; then
+    doctor_ok "$description has valid KEY=VALUE lines"
+  else
+    doctor_fail "$description contains invalid env lines"
+  fi
+}
+
+doctor_check_requirements_file() {
+  local path="$1"
+
+  if [[ ! -f "$path" ]]; then
+    return
+  fi
+
+  if validate_requirements_file "$path"; then
+    doctor_ok "requirements file uses exact pins or absolute container paths"
+  else
+    doctor_fail "requirements file contains unpinned package requirements"
+  fi
+}
+
+doctor_group_contains() {
+  local gid="$1"
+  local group
+
+  for group in $doctor_agent_groups; do
+    [[ "$group" == "$gid" ]] && return 0
+  done
+  return 1
+}
+
+doctor_agent_perm_digit() {
+  local path="$1"
+  local owner_uid
+  local owner_gid
+  local mode
+  local perms
+
+  read -r owner_uid owner_gid mode < <(stat -c '%u %g %a' "$path")
+  perms="${mode: -3}"
+
+  if [[ "$doctor_agent_uid" == "$owner_uid" ]]; then
+    printf '%s\n' "${perms:0:1}"
+  elif doctor_group_contains "$owner_gid"; then
+    printf '%s\n' "${perms:1:1}"
+  else
+    printf '%s\n' "${perms:2:1}"
+  fi
+}
+
+doctor_agent_has_perm() {
+  local path="$1"
+  local bit="$2"
+  local digit
+
+  [[ -e "$path" ]] || return 1
+  digit="$(doctor_agent_perm_digit "$path")"
+  (( (10#$digit & bit) != 0 ))
+}
+
+doctor_check_agent_cannot_read() {
+  local path="$1"
+  local description="$2"
+
+  [[ -e "$path" ]] || return
+  if doctor_agent_has_perm "$path" 4; then
+    doctor_fail "$description is readable by agent identity: $path"
+  else
+    doctor_ok "$description is not readable by agent identity"
+  fi
+}
+
+doctor_check_agent_cannot_write_file() {
+  local path="$1"
+  local description="$2"
+
+  [[ -e "$path" ]] || return
+  if doctor_agent_has_perm "$path" 2; then
+    doctor_fail "$description is writable by agent identity: $path"
+  else
+    doctor_ok "$description is not writable by agent identity"
+  fi
+}
+
+doctor_check_agent_cannot_write_dir() {
+  local path="$1"
+  local description="$2"
+
+  [[ -d "$path" ]] || return
+  if doctor_agent_has_perm "$path" 2 && doctor_agent_has_perm "$path" 1; then
+    doctor_fail "$description is writable by agent identity: $path"
+  else
+    doctor_ok "$description is not writable by agent identity"
+  fi
+}
+
+doctor_dir_has_sticky_bit() {
+  local path="$1"
+  local mode
+  local special
+
+  mode="$(stat -c '%a' "$path")"
+  special=$((10#$mode / 1000 % 10))
+  (( (special & 1) != 0 ))
+}
+
+doctor_check_agent_cannot_replace_deploy_dir() {
+  local deploy_parent
+
+  deploy_parent="$(dirname "$deploy_dir")"
+  [[ -d "$deploy_parent" ]] || return
+
+  if ! doctor_agent_has_perm "$deploy_parent" 2 || ! doctor_agent_has_perm "$deploy_parent" 1; then
+    doctor_ok "deployment parent directory does not allow agent replacement"
+    return
+  fi
+
+  if doctor_dir_has_sticky_bit "$deploy_parent"; then
+    doctor_warn "deployment parent directory is writable but sticky: $deploy_parent"
+    return
+  fi
+
+  doctor_fail "deployment parent directory allows agent replacement: $deploy_parent"
+}
+
+doctor_check_docker_socket() {
+  local socket="/var/run/docker.sock"
+
+  if [[ ! -e "$socket" ]]; then
+    doctor_warn "Docker socket not found at $socket"
+    return
+  fi
+
+  if doctor_agent_has_perm "$socket" 2; then
+    doctor_fail "Docker socket is writable by agent identity: $socket"
+  else
+    doctor_ok "Docker socket is not writable by agent identity"
+  fi
+}
+
+doctor_check_docker_network_subnet() {
+  local configured_network
+  local configured_subnet
+  local network_line
+  local network_name
+  local network_subnet
+
+  configured_network="$(compose_env_value AGENT_ARBITER_DOCKER_NETWORK_NAME agent-arbiter)"
+  configured_subnet="$(compose_env_value AGENT_ARBITER_DOCKER_SUBNET 172.31.250.0/24)"
+  [[ -n "$configured_subnet" ]] || return
+
+  if ! docker network ls >/dev/null 2>&1; then
+    return
+  fi
+
+  while read -r network_line; do
+    [[ -n "$network_line" ]] || continue
+    network_name="${network_line%% *}"
+    network_subnet="${network_line#* }"
+    [[ "$network_subnet" != "$network_line" ]] || continue
+    [[ -n "$network_subnet" ]] || continue
+    if [[ "$network_subnet" == "$configured_subnet" && "$network_name" != "$configured_network" ]]; then
+      doctor_fail "Docker subnet $configured_subnet already belongs to network $network_name"
+      return
+    fi
+  done < <(docker network inspect $(docker network ls -q) --format '{{.Name}} {{range .IPAM.Config}}{{.Subnet}} {{end}}' 2>/dev/null)
+
+  doctor_ok "Docker subnet is not already used by another network"
+}
+
+doctor_resolve_agent() {
+  if [[ -n "$doctor_agent_user" ]]; then
+    if ! doctor_agent_uid="$(id -u "$doctor_agent_user" 2>/dev/null)"; then
+      doctor_fail "agent user does not exist: $doctor_agent_user"
+      return 1
+    fi
+    doctor_agent_groups="$(id -G "$doctor_agent_user")"
+    doctor_agent_group_names="$(id -nG "$doctor_agent_user")"
+    return 0
+  fi
+
+  if [[ -n "$doctor_agent_uid" ]]; then
+    doctor_agent_user="$(getent passwd "$doctor_agent_uid" | cut -d: -f1 || true)"
+    if [[ -z "$doctor_agent_user" ]]; then
+      doctor_fail "agent uid does not resolve to a local user: $doctor_agent_uid"
+      return 1
+    fi
+    doctor_agent_groups="$(id -G "$doctor_agent_user")"
+    doctor_agent_group_names="$(id -nG "$doctor_agent_user")"
+    return 0
+  fi
+
+  return 1
+}
+
+doctor_check_agent_access() {
+  local active_config_dir
+  local active_config_file
+  local active_app_env
+
+  if ! doctor_resolve_agent; then
+    doctor_warn "skipping agent permission checks; pass --agent-user USER or --agent-uid UID"
+    return
+  fi
+
+  doctor_ok "checking agent identity: ${doctor_agent_user:-uid $doctor_agent_uid} (uid $doctor_agent_uid)"
+
+  if [[ " $doctor_agent_group_names " == *" docker "* ]]; then
+    doctor_fail "agent identity is in the docker group"
+  else
+    doctor_ok "agent identity is not in the docker group"
+  fi
+
+  active_config_dir="$(config_dir_path)"
+  active_config_file="$(config_main_file)"
+  active_app_env="$(app_env_path)"
+  doctor_check_agent_cannot_replace_deploy_dir
+  doctor_check_agent_cannot_write_dir "$deploy_dir" "deployment directory"
+  doctor_check_agent_cannot_write_file "$compose_file" "compose file"
+  doctor_check_agent_cannot_write_dir "$active_config_dir" "config directory"
+  doctor_check_agent_cannot_write_file "$active_config_file" "main config file"
+  doctor_check_agent_cannot_write_file "$compose_env_file" "docker env file"
+  doctor_check_agent_cannot_write_file "$active_app_env" "app env file"
+  doctor_check_agent_cannot_write_file "$requirements_file" "requirements file"
+  doctor_check_agent_cannot_write_file "$deploy_dir/arbiter-docker" "helper script"
+  doctor_check_agent_cannot_read "$active_app_env" "app env file"
+  doctor_check_docker_socket
+  doctor_warn "permission checks do not inspect ACLs, sudo rules, or other direct service paths"
+}
+
+doctor() {
+  local active_config_dir
+  local active_config_file
+  local active_app_env
+
+  doctor_status=0
+  doctor_agent_uid=""
+  doctor_agent_user=""
+  doctor_agent_groups=""
+  doctor_agent_group_names=""
+
+  while (($#)); do
+    case "$1" in
+      --agent-user)
+        [[ $# -ge 2 ]] || {
+          printf 'error: --agent-user requires a value\n' >&2
+          exit 2
+        }
+        doctor_agent_user="$2"
+        shift 2
+        ;;
+      --agent-uid)
+        [[ $# -ge 2 ]] || {
+          printf 'error: --agent-uid requires a value\n' >&2
+          exit 2
+        }
+        doctor_agent_uid="$2"
+        shift 2
+        ;;
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      *)
+        printf 'error: unknown doctor option: %s\n\n' "$1" >&2
+        usage >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  if [[ -n "$doctor_agent_user" && -n "$doctor_agent_uid" ]]; then
+    printf 'error: use either --agent-user or --agent-uid, not both\n' >&2
+    exit 2
+  fi
+
+  active_config_dir="$(config_dir_path)"
+  active_config_file="$(config_main_file)"
+  active_app_env="$(app_env_path)"
+  doctor_check_dir "$deploy_dir" "deployment directory"
+  doctor_check_file "$compose_file" "compose file"
+  doctor_check_dir "$active_config_dir" "config directory"
+  doctor_check_file "$active_config_file" "main config file"
+  doctor_check_file "$active_app_env" "app env file"
+  doctor_check_file "$compose_env_file" "docker env file"
+  doctor_check_file "$requirements_file" "requirements file"
+  doctor_check_file "$deploy_dir/arbiter-docker" "helper script"
+  doctor_check_env_file "$active_app_env" "app env file"
+  doctor_check_env_file "$compose_env_file" "docker env file"
+  doctor_check_requirements_file "$requirements_file"
+
+  if docker compose version >/dev/null 2>&1; then
+    doctor_ok "$(docker compose version)"
+  else
+    doctor_fail "Docker Compose is not available"
+  fi
+  doctor_check_docker_network_subnet
+
+  doctor_check_agent_access
+  return "$doctor_status"
+}
+
+command="${1:-}"
+if (($#)); then
+  shift
+fi
+
+case "$command" in
+  sync-env)
+    sync_env
+    ;;
+  edit-config)
+    require_file "$(config_main_file)"
+    run_editor "$(config_main_file)"
+    ;;
+  edit-requirements)
+    edit_requirements
+    ;;
+  edit-env)
+    require_file "$(app_env_path)"
+    run_editor "$(app_env_path)"
+    ;;
+  edit-docker)
+    require_file "$compose_env_file"
+    run_editor "$compose_env_file"
+    ;;
+  up)
+    compose up -d
+    ;;
+  restart)
+    compose up -d --force-recreate
+    ;;
+  down)
+    compose down
+    ;;
+  ps)
+    compose ps
+    ;;
+  logs)
+    compose logs -f
+    ;;
+  info)
+    info
+    ;;
+  doctor)
+    doctor "$@"
+    ;;
+  "" | -h | --help | help)
+    usage
+    ;;
+  *)
+    printf 'error: unknown command: %s\n\n' "$command" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

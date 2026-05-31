@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -8,6 +9,7 @@ import re
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from importlib.resources import files
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -44,14 +46,42 @@ LOGGER = logging.getLogger(__name__)
 TransportMode = Literal["stdio", "sse", "streamable-http"]
 HydraConfig = AppConfig | DictConfig
 BootstrapObjectKind = Literal["account", "policy"]
-CLI_COMMANDS = {"serve", "config", "plugins", "bootstrap", "env"}
+CLI_COMMANDS = {"serve", "config", "plugins", "bootstrap", "env", "deploy"}
 BOOTSTRAP_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 ENV_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 ENV_FILE_CONFIG_KEY = "arbiter.env_file"
 ENV_REFERENCE_PATTERN = re.compile(r"\$\{oc\.env:(?P<name>[^,}\s]+)(?:,[^}]*)?\}")
+DEPLOY_PINNED_REQUIREMENT_PATTERN = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9_.-]*"
+    r"(?:\[[A-Za-z0-9_.-]+(?:,[A-Za-z0-9_.-]+)*\])?"
+    r"==[^<>=!~\s#]+$"
+)
 DEFAULT_ENV_FILE_NAME = ".env"
 DEFAULT_CONFIG_DIR = "~/.arbiter"
 DEFAULT_SERVER_CONFIG_NAME = "arbiter-server"
+DEFAULT_DOCKER_DEPLOY_DIR = "./arbiter-docker"
+DEPLOY_MANIFEST_FILE_NAME = ".agent-arbiter-deploy.json"
+DOCKER_LOCAL_SOURCE_CONTAINER_ROOT = "/source/agent-arbiter"
+DOCKER_LOCAL_SOURCE_REQUIREMENTS = (
+    f"{DOCKER_LOCAL_SOURCE_CONTAINER_ROOT}/core",
+    f"{DOCKER_LOCAL_SOURCE_CONTAINER_ROOT}/smtp",
+    f"{DOCKER_LOCAL_SOURCE_CONTAINER_ROOT}/imap",
+)
+DOCKER_COMPOSE_ENV_DEFAULTS = [
+    ("AGENT_ARBITER_IMAGE", "python:3.11-slim"),
+    ("AGENT_ARBITER_CONTAINER_NAME", "agent-arbiter"),
+    ("AGENT_ARBITER_RESTART", "unless-stopped"),
+    ("AGENT_ARBITER_APP_ENV_FILE", "./conf/.env"),
+    ("AGENT_ARBITER_CONFIG_DIR", "./conf"),
+    ("AGENT_ARBITER_CONFIG_NAME", "arbiter-server"),
+    ("AGENT_ARBITER_REQUIREMENTS_FILE", "./requirements.txt"),
+    ("AGENT_ARBITER_HOST_BIND", "127.0.0.1"),
+    ("AGENT_ARBITER_HOST_PORT", "8025"),
+    ("AGENT_ARBITER_CONTAINER_PORT", "8025"),
+    ("AGENT_ARBITER_DOCKER_NETWORK_NAME", "agent-arbiter"),
+    ("AGENT_ARBITER_DOCKER_BRIDGE_NAME", "agent-arbiter0"),
+    ("AGENT_ARBITER_DOCKER_SUBNET", "172.31.250.0/24"),
+]
 GROUP_SELECTION_PATTERN = re.compile(
     r"^\s*-\s*(?P<item>[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)?)\s*(?:#.*)?$"
 )
@@ -87,6 +117,19 @@ discovery:
 class EnvReference:
     name: str
     block: str
+
+
+@dataclass(frozen=True)
+class DockerDeployArgs:
+    action: str
+    directory: Path
+    requirements: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class DockerDeployRequirements:
+    requirements: tuple[str, ...]
+    local_source_root: Path | None = None
 
 
 def _to_object(value: Any) -> Any:
@@ -731,6 +774,432 @@ def _run_env_bootstrap(
     env_file.write_text(content, encoding="utf-8")
     print(f"wrote {env_file}")
     return 0
+
+
+def _deploy_template_text(name: str) -> str:
+    return (
+        files("agent_arbiter")
+        .joinpath("deploy")
+        .joinpath("docker")
+        .joinpath(name)
+        .read_text(encoding="utf-8")
+    )
+
+
+def _is_agent_arbiter_checkout(path: Path) -> bool:
+    return (
+        (path / "pyproject.toml").is_file()
+        and (path / "core" / "pyproject.toml").is_file()
+        and (path / "smtp" / "pyproject.toml").is_file()
+        and (path / "imap" / "pyproject.toml").is_file()
+    )
+
+
+def _find_agent_arbiter_checkout(start: Path) -> Path | None:
+    for path in (start.resolve(), *start.resolve().parents):
+        if _is_agent_arbiter_checkout(path):
+            return path
+    return None
+
+
+def _default_deploy_requirements() -> DockerDeployRequirements | None:
+    version = package_version()
+    if version != "unknown" and ".dev" not in version and "+" not in version:
+        return DockerDeployRequirements(requirements=(f"agent-arbiter=={version}",))
+    checkout = _find_agent_arbiter_checkout(Path.cwd())
+    if checkout is None:
+        return None
+    return DockerDeployRequirements(
+        requirements=DOCKER_LOCAL_SOURCE_REQUIREMENTS,
+        local_source_root=checkout,
+    )
+
+
+def _format_deploy_requirements(requirements: Sequence[str]) -> str:
+    return "\n".join(requirements) + "\n"
+
+
+def _format_local_source_compose_override(source_root: Path) -> str:
+    return (
+        "services:\n"
+        "  agent-arbiter:\n"
+        "    volumes:\n"
+        f"      - {source_root}:{DOCKER_LOCAL_SOURCE_CONTAINER_ROOT}:ro\n"
+    )
+
+
+def _deploy_requirement_error(requirement: str) -> str | None:
+    if not requirement:
+        return "docker.requirement must not be empty"
+    if requirement.startswith("/"):
+        return None
+    if DEPLOY_PINNED_REQUIREMENT_PATTERN.fullmatch(requirement):
+        return None
+    return (
+        "docker.requirement must be an exact package pin "
+        "(name==version) or an absolute container path"
+    )
+
+
+def _parse_docker_deploy_args(args: Sequence[str]) -> DockerDeployArgs | None:
+    action: str | None = None
+    directory = Path(DEFAULT_DOCKER_DEPLOY_DIR)
+    requirements: list[str] = []
+
+    for arg in _strip_arg_separator(args):
+        if arg in {"init", "update"}:
+            if action is not None:
+                print_cli_error(
+                    f"multiple deploy actions provided: {action}, {arg}",
+                    area="deploy",
+                )
+                return None
+            action = arg
+            continue
+        if "=" not in arg:
+            print_cli_error(
+                f"unknown docker deploy argument: {arg}",
+                area="deploy",
+                details=[
+                    "expected init, update, docker.dir=PATH, or "
+                    "docker.requirement=REQUIREMENT"
+                ],
+            )
+            return None
+        key, value = arg.split("=", 1)
+        if key == "docker.dir":
+            directory = Path(value)
+            continue
+        if key == "docker.requirement":
+            requirements.append(value)
+            continue
+        print_cli_error(f"unknown docker deploy override: {key}", area="deploy")
+        return None
+
+    if action is None:
+        print_cli_error(
+            "docker deploy requires an action: init or update", area="deploy"
+        )
+        return None
+    for requirement in requirements:
+        error = _deploy_requirement_error(requirement)
+        if error is not None:
+            print_cli_error(error, area="deploy", details=[f"value: {requirement}"])
+            return None
+    return DockerDeployArgs(
+        action=action,
+        directory=directory.expanduser(),
+        requirements=tuple(requirements),
+    )
+
+
+def _resolve_docker_deploy_requirements(
+    requirements: Sequence[str],
+) -> DockerDeployRequirements | None:
+    if requirements:
+        return DockerDeployRequirements(requirements=tuple(requirements))
+    default_requirements = _default_deploy_requirements()
+    if default_requirements is None:
+        print_cli_error(
+            "cannot infer default docker requirements",
+            area="deploy",
+            details=[
+                "pass docker.requirement=agent-arbiter==VERSION for a "
+                "published package",
+                "for a local checkout, run this command from the checkout "
+                "or pass absolute container source paths",
+            ],
+        )
+        return None
+    return default_requirements
+
+
+def _format_docker_compose_env_file(existing_values: Mapping[str, str]) -> str:
+    lines = [
+        "# Docker Compose settings for the Agent Arbiter deployment.",
+        "# These values control the container wrapper, not Agent Arbiter runtime config.",
+        "",
+    ]
+    default_names = {name for name, _default in DOCKER_COMPOSE_ENV_DEFAULTS}
+    for name, default in DOCKER_COMPOSE_ENV_DEFAULTS:
+        lines.append(f"{name}={existing_values.get(name, default)}")
+    extra_names = sorted(name for name in existing_values if name not in default_names)
+    if extra_names:
+        lines.extend(["", "# Extra local Compose values."])
+        for name in extra_names:
+            lines.append(f"{name}={existing_values[name]}")
+    return "\n".join(lines) + "\n"
+
+
+def _write_deploy_file(path: Path, content: str, *, executable: bool = False) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    if executable:
+        path.chmod(0o755)
+    print(f"wrote {path}")
+
+
+def _sha256_bytes(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
+
+
+def _sha256_file(path: Path) -> str:
+    return _sha256_bytes(path.read_bytes())
+
+
+def _deploy_managed_paths(deploy_dir: Path) -> dict[str, Path]:
+    return {
+        "compose": deploy_dir / "compose.yaml",
+        "compose_override": deploy_dir / "compose.override.yaml",
+        "docker_env": deploy_dir / "docker.env",
+        "requirements": deploy_dir / "requirements.txt",
+        "helper": deploy_dir / "arbiter-docker",
+    }
+
+
+def _deploy_manifest_path(deploy_dir: Path) -> Path:
+    return deploy_dir / DEPLOY_MANIFEST_FILE_NAME
+
+
+def _load_deploy_manifest(deploy_dir: Path) -> dict[str, str]:
+    manifest_path = _deploy_manifest_path(deploy_dir)
+    if not manifest_path.exists():
+        return {}
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        return {}
+    raw_files = data.get("files", {})
+    if not isinstance(raw_files, dict):
+        return {}
+    file_hashes: dict[str, str] = {}
+    for relative_path, raw_entry in raw_files.items():
+        if not isinstance(relative_path, str) or not isinstance(raw_entry, dict):
+            continue
+        sha256 = raw_entry.get("sha256")
+        if isinstance(sha256, str):
+            file_hashes[relative_path] = sha256
+    return file_hashes
+
+
+def _write_deploy_manifest(
+    deploy_dir: Path,
+    *,
+    file_hashes: Mapping[str, str],
+) -> None:
+    manifest_path = _deploy_manifest_path(deploy_dir)
+    manifest = {
+        "schema_version": 1,
+        "generator": "arbiter-server deploy docker",
+        "agent_arbiter_version": package_version(),
+        "files": {
+            relative_path: {
+                "kind": "template",
+                "sha256": file_hashes[relative_path],
+            }
+            for relative_path in sorted(file_hashes)
+        },
+    }
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    print(f"wrote {manifest_path}")
+
+
+def _write_manifest_owned_deploy_file(
+    *,
+    path: Path,
+    relative_path: str,
+    content: str,
+    executable: bool,
+    manifest_hashes: dict[str, str],
+) -> None:
+    _write_deploy_file(path, content, executable=executable)
+    manifest_hashes[relative_path] = _sha256_file(path)
+
+
+def _update_manifest_owned_deploy_file(
+    *,
+    path: Path,
+    relative_path: str,
+    content: str,
+    executable: bool,
+    manifest_hashes: dict[str, str],
+) -> Literal["updated", "up_to_date", "skipped"]:
+    if not path.exists():
+        _write_manifest_owned_deploy_file(
+            path=path,
+            relative_path=relative_path,
+            content=content,
+            executable=executable,
+            manifest_hashes=manifest_hashes,
+        )
+        return "updated"
+
+    current_hash = _sha256_file(path)
+    desired_hash = _sha256_bytes(content.encode("utf-8"))
+    if current_hash == desired_hash:
+        manifest_hashes[relative_path] = current_hash
+        return "up_to_date"
+
+    previous_hash = manifest_hashes.get(relative_path)
+    if previous_hash is None:
+        print(f"skipped untracked file: {path}")
+        return "skipped"
+    if current_hash != previous_hash:
+        print(f"skipped modified file: {path}")
+        return "skipped"
+
+    _write_manifest_owned_deploy_file(
+        path=path,
+        relative_path=relative_path,
+        content=content,
+        executable=executable,
+        manifest_hashes=manifest_hashes,
+    )
+    return "updated"
+
+
+def _run_deploy_docker(argv: Sequence[str]) -> int:
+    parsed = _parse_docker_deploy_args(argv)
+    if parsed is None:
+        return 2
+
+    deploy_dir = parsed.directory
+    paths = _deploy_managed_paths(deploy_dir)
+    compose_text = _deploy_template_text("compose.yaml")
+    helper_text = _deploy_template_text("arbiter-docker")
+
+    if parsed.action == "init":
+        requirement_resolution = _resolve_docker_deploy_requirements(
+            parsed.requirements
+        )
+        if requirement_resolution is None:
+            return 2
+        manifest_path = _deploy_manifest_path(deploy_dir)
+        init_paths = [
+            paths["compose"],
+            paths["docker_env"],
+            paths["requirements"],
+            paths["helper"],
+            manifest_path,
+        ]
+        if requirement_resolution.local_source_root is not None:
+            init_paths.append(paths["compose_override"])
+        existing = [path for path in init_paths if path.exists()]
+        if existing:
+            print_cli_error(
+                f"refusing to overwrite existing deployment file: {existing[0]}",
+                area="deploy",
+                details=["use update to refresh generated files"],
+            )
+            return 1
+        deploy_dir.mkdir(parents=True, exist_ok=True)
+        manifest_hashes: dict[str, str] = {}
+        _write_manifest_owned_deploy_file(
+            path=paths["compose"],
+            relative_path="compose.yaml",
+            content=compose_text,
+            executable=False,
+            manifest_hashes=manifest_hashes,
+        )
+        _write_deploy_file(
+            paths["docker_env"],
+            _format_docker_compose_env_file(existing_values={}),
+        )
+        _write_deploy_file(
+            paths["requirements"],
+            _format_deploy_requirements(requirement_resolution.requirements),
+        )
+        if requirement_resolution.local_source_root is not None:
+            _write_deploy_file(
+                paths["compose_override"],
+                _format_local_source_compose_override(
+                    requirement_resolution.local_source_root
+                ),
+            )
+        _write_manifest_owned_deploy_file(
+            path=paths["helper"],
+            relative_path="arbiter-docker",
+            content=helper_text,
+            executable=True,
+            manifest_hashes=manifest_hashes,
+        )
+        _write_deploy_manifest(deploy_dir, file_hashes=manifest_hashes)
+        (deploy_dir / "conf").mkdir(exist_ok=True)
+        print("")
+        print("Next steps:")
+        print(f"  bootstrap or copy an Agent Arbiter config into {deploy_dir / 'conf'}")
+        print(f"  {paths['helper']} sync-env")
+        print(f"  {paths['helper']} edit-env")
+        print(f"  {paths['helper']} up")
+        return 0
+
+    if parsed.action == "update":
+        deploy_dir.mkdir(parents=True, exist_ok=True)
+        manifest_hashes = _load_deploy_manifest(deploy_dir)
+        original_manifest_hashes = dict(manifest_hashes)
+        update_statuses = [
+            _update_manifest_owned_deploy_file(
+                path=paths["compose"],
+                relative_path="compose.yaml",
+                content=compose_text,
+                executable=False,
+                manifest_hashes=manifest_hashes,
+            ),
+            _update_manifest_owned_deploy_file(
+                path=paths["helper"],
+                relative_path="arbiter-docker",
+                content=helper_text,
+                executable=True,
+                manifest_hashes=manifest_hashes,
+            ),
+        ]
+        try:
+            existing_docker_env = _read_env_file_values(
+                paths["docker_env"],
+                missing_ok=True,
+            )
+        except ValueError as exc:
+            print_cli_error(str(exc), area="deploy")
+            return 1
+        docker_env_content = _format_docker_compose_env_file(existing_docker_env)
+        wrote_local_state = False
+        if not paths["requirements"].exists():
+            requirement_resolution = _resolve_docker_deploy_requirements(
+                parsed.requirements
+            )
+            if requirement_resolution is None:
+                return 2
+            _write_deploy_file(
+                paths["requirements"],
+                _format_deploy_requirements(requirement_resolution.requirements),
+            )
+            wrote_local_state = True
+            if (
+                requirement_resolution.local_source_root is not None
+                and not paths["compose_override"].exists()
+            ):
+                _write_deploy_file(
+                    paths["compose_override"],
+                    _format_local_source_compose_override(
+                        requirement_resolution.local_source_root
+                    ),
+                )
+                wrote_local_state = True
+        if (
+            not paths["docker_env"].exists()
+            or paths["docker_env"].read_text(encoding="utf-8") != docker_env_content
+        ):
+            _write_deploy_file(paths["docker_env"], docker_env_content)
+            wrote_local_state = True
+        if manifest_hashes != original_manifest_hashes:
+            _write_deploy_manifest(deploy_dir, file_hashes=manifest_hashes)
+        elif all(status == "up_to_date" for status in update_statuses) and not (
+            wrote_local_state
+        ):
+            print(f"Files already up to date: {deploy_dir}")
+        (deploy_dir / "conf").mkdir(exist_ok=True)
+        return 0
+
+    raise AssertionError(f"unknown docker deploy action: {parsed.action}")
 
 
 def _run_serve(
@@ -1493,6 +1962,21 @@ def _build_parser() -> argparse.ArgumentParser:
         help_text="Hydra-style config overrides applied before bootstrapping env",
     )
 
+    deploy = subcommands.add_parser("deploy", help="create deployment files")
+    deploy_subcommands = deploy.add_subparsers(dest="deploy_target", required=True)
+    deploy_docker = deploy_subcommands.add_parser(
+        "docker",
+        help="create or update a local Docker deployment directory",
+    )
+    deploy_docker.add_argument(
+        "args",
+        nargs=argparse.REMAINDER,
+        help=(
+            "init or update plus optional docker.dir=PATH and "
+            "docker.requirement=REQUIREMENT"
+        ),
+    )
+
     plugins = subcommands.add_parser("plugins", help="inspect service plugins")
     plugin_subcommands = plugins.add_subparsers(dest="plugins_command", required=True)
     plugins_list = plugin_subcommands.add_parser(
@@ -1559,6 +2043,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             config_name=namespace.config_name,
             overrides=namespace.overrides,
         )
+    if namespace.command == "deploy" and namespace.deploy_target == "docker":
+        return _run_deploy_docker(namespace.args)
     if namespace.command == "plugins" and namespace.plugins_command == "list":
         names = service_plugin_names()
         if namespace.json:

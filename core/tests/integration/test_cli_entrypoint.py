@@ -90,6 +90,14 @@ def _run_arbiter(
             "usage: arbiter-server env bootstrap ",
         ),
         (
+            ("--config-dir", ".", "deploy", "--help"),
+            "usage: arbiter-server deploy ",
+        ),
+        (
+            ("--config-dir", ".", "deploy", "docker", "--help"),
+            "usage: arbiter-server deploy docker ",
+        ),
+        (
             ("--config-dir", ".", "plugins", "--help"),
             "usage: arbiter-server plugins ",
         ),

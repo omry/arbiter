@@ -5,6 +5,8 @@ import nox  # type: ignore[import-not-found]
 
 nox.options.sessions = ["tests", "lint"]
 
+PYPROJECT = nox.project.load_toml("pyproject.toml")
+
 BLACK_TARGETS = [
     "core/src",
     "core/tests",
@@ -14,6 +16,7 @@ BLACK_TARGETS = [
     "imap/tests",
     "noxfile.py",
 ]
+SUPPORTED_PYTHONS = nox.project.python_versions(PYPROJECT)
 STRICT_MYPY_TARGETS = ["core/src", "smtp/src", "imap/src"]
 SUPPLEMENTAL_MYPY_TARGETS = [
     "core/tests",
@@ -41,6 +44,27 @@ def tests(session: nox.Session) -> None:
     install_project(session)
     session.run(
         "pytest", *(session.posargs or ["core/tests", "smtp/tests", "imap/tests"])
+    )
+
+
+@nox.session(  # type: ignore[untyped-decorator]
+    python=SUPPORTED_PYTHONS,
+    download_python="auto",
+)
+def compat(session: nox.Session) -> None:
+    install_project(session)
+    session.run(
+        "pytest", *(session.posargs or ["core/tests", "smtp/tests", "imap/tests"])
+    )
+
+
+@nox.session(name="deploy-test")  # type: ignore[untyped-decorator]
+def deploy_test(session: nox.Session) -> None:
+    install_project(session)
+    session.run(
+        "pytest",
+        "imap/tests/integration/test_deploy_docker_integration.py",
+        env={"AGENT_ARBITER_RUN_DOCKER_DEPLOY_TESTS": "1"},
     )
 
 

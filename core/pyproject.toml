@@ -7,7 +7,7 @@ name = "agent-arbiter-core"
 version = "0.1.1.dev1"
 description = "Core policy-controlled MCP gateway for agent-accessible services"
 readme = { text = "Core package for Agent Arbiter.", content-type = "text/markdown" }
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.15"
 authors = [
   { name = "Omry Yadan", email = "omry@yadan.net" },
 ]
@@ -21,6 +21,9 @@ classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
@@ -43,4 +46,4 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-"agent_arbiter" = ["py.typed"]
+"agent_arbiter" = ["py.typed", "deploy/docker/*"]

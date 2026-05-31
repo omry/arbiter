@@ -23,10 +23,13 @@ services:
       'install_target="$${AGENT_ARBITER_INSTALL_TARGET}" &&
       if [ "$$install_target" = /source/agent-arbiter ]; then
         rm -rf /tmp/agent-arbiter-source &&
+        rm -rf /tmp/agent-arbiter-wheels &&
         mkdir -p /tmp/agent-arbiter-source &&
+        mkdir -p /tmp/agent-arbiter-wheels &&
         cp -a /source/agent-arbiter/README.md /source/agent-arbiter/core /source/agent-arbiter/smtp /source/agent-arbiter/imap /tmp/agent-arbiter-source/ &&
         find /tmp/agent-arbiter-source -type d \( -name "*.egg-info" -o -name "__pycache__" \) -prune -exec rm -rf {} + &&
-        python -m pip install --no-cache-dir /tmp/agent-arbiter-source/core /tmp/agent-arbiter-source/smtp /tmp/agent-arbiter-source/imap;
+        python -m pip wheel --no-cache-dir --no-deps --wheel-dir /tmp/agent-arbiter-wheels /tmp/agent-arbiter-source/core /tmp/agent-arbiter-source/smtp /tmp/agent-arbiter-source/imap &&
+        python -m pip install --no-cache-dir /tmp/agent-arbiter-wheels/*.whl;
       else
         python -m pip install --no-cache-dir "$$install_target";
       fi &&
