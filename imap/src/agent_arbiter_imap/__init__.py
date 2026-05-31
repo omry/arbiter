@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Annotated, Callable, Protocol, cast
-
-from pydantic import Field
+from typing import Callable, Protocol, cast
 
 from hydra.core.config_store import ConfigStore
 
@@ -538,70 +536,6 @@ class IMAPRuntime:
                 continue
             visible_flags.append(resolve_system_flag_key(flag) or flag)
         return visible_flags
-
-
-IMAPAccountName = Annotated[
-    str,
-    Field(
-        description=(
-            "Configured account name returned by describe_cap. The selected account "
-            "must have IMAP enabled."
-        ),
-        examples=["primary"],
-        min_length=1,
-    ),
-]
-
-OptionalFolderName = Annotated[
-    str | None,
-    Field(
-        description=(
-            "Optional configured IMAP folder name. When omitted, the account's "
-            "configured default_folder is used."
-        ),
-        examples=["INBOX"],
-    ),
-]
-
-FolderName = Annotated[
-    str,
-    Field(
-        description="Configured IMAP folder name for the selected account.",
-        examples=["Archive"],
-        min_length=1,
-    ),
-]
-
-IMAPMessageId = Annotated[
-    str,
-    Field(
-        description=(
-            "IMAP UID returned as a message id by list_messages or search_messages. "
-            "UIDs are scoped to the selected account and folder."
-        ),
-        examples=["42"],
-        min_length=1,
-    ),
-]
-
-IMAPSearchQuery = Annotated[
-    str,
-    Field(
-        description="Text query used with IMAP TEXT search in the selected folder.",
-        examples=["invoice"],
-        min_length=1,
-    ),
-]
-
-IMAPMessageLimit = Annotated[
-    int,
-    Field(
-        description="Maximum number of messages to return.",
-        ge=1,
-        le=100,
-        examples=[20],
-    ),
-]
 
 
 class IMAPServicePlugin:

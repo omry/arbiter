@@ -7,7 +7,7 @@ name = "agent-arbiter"
 version = "0.1.1.dev1"
 description = "Policy-controlled access to configured services for agents"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.15"
 authors = [
   { name = "Omry Yadan", email = "omry@yadan.net" },
 ]
@@ -21,6 +21,9 @@ classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Communications :: Email",
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
@@ -32,7 +35,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-  "nox>=2024.10,<2026.0",
+  "nox[pbs]>=2024.10,<2026.0",
   "aiosmtpd>=1.4.6,<2.0",
   "black>=25.0,<26.0",
   "mypy>=1.11,<2.0",

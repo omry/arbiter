@@ -7,7 +7,7 @@ name = "agent-arbiter-smtp"
 version = "0.1.1.dev1"
 description = "SMTP service plugin for Agent Arbiter"
 readme = { text = "SMTP service plugin for Agent Arbiter.", content-type = "text/markdown" }
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.15"
 authors = [
   { name = "Omry Yadan", email = "omry@yadan.net" },
 ]
@@ -21,11 +21,13 @@ classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Communications :: Email",
 ]
 dependencies = [
   "agent-arbiter-core==0.1.1.dev1",
-  "pydantic>=2,<3",
 ]
 
 [project.urls]

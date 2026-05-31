@@ -5,9 +5,7 @@ from dataclasses import dataclass
 from email.message import EmailMessage
 from email.utils import formataddr, make_msgid
 from time import monotonic
-from typing import Annotated, Callable, Protocol, cast
-
-from pydantic import Field
+from typing import Callable, Protocol, cast
 
 from hydra.core.config_store import ConfigStore
 
@@ -317,60 +315,6 @@ class SMTPRuntime:
             if normalized_domain == normalized_pattern:
                 return True
         return False
-
-
-RecipientList = Annotated[
-    list[str],
-    Field(
-        description="JSON array of recipient email addresses.",
-        examples=[["to@example.com"]],
-    ),
-]
-
-OptionalRecipientList = Annotated[
-    list[str] | None,
-    Field(
-        description="Optional JSON array of recipient email addresses.",
-        examples=[["person@example.com"]],
-    ),
-]
-
-AccountName = Annotated[
-    str,
-    Field(
-        description=(
-            "Configured account name returned by describe_cap. The selected account "
-            "must have SMTP enabled."
-        ),
-        examples=["primary"],
-        min_length=1,
-    ),
-]
-
-SubjectLine = Annotated[
-    str,
-    Field(
-        description="Email subject line.",
-        examples=["Hello from MCP"],
-        min_length=1,
-    ),
-]
-
-TextBody = Annotated[
-    str | None,
-    Field(
-        description="Optional plain-text body. Provide this or html_body.",
-        examples=["Plain text message body."],
-    ),
-]
-
-HtmlBody = Annotated[
-    str | None,
-    Field(
-        description="Optional HTML body. Provide this or text_body.",
-        examples=["<p>Hello from MCP</p>"],
-    ),
-]
 
 
 def _smtp_account_bootstrap_template(
