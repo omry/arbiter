@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-arbiter-core"
-version = "0.1.1.dev1"
+version = "0.8.0"
 description = "Core policy-controlled MCP gateway for agent-accessible services"
 readme = { text = "Core package for Agent Arbiter.", content-type = "text/markdown" }
 requires-python = ">=3.10,<3.15"

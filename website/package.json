@@ -1,6 +1,6 @@
 {
   "name": "agent-arbiter-website",
-  "version": "0.1.1-dev",
+  "version": "0.8.0",
   "private": true,
   "scripts": {
     "start": "NO_UPDATE_NOTIFIER=1 docusaurus start --host 127.0.0.1 --port 4670",
