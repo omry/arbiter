@@ -139,23 +139,24 @@ validating a config. Once the server is running, use the client CLI against the
 MCP endpoint:
 
 ```bash
-arbiter mcp tools mcp_url=http://127.0.0.1:8025/mcp
-arbiter cap mcp_url=http://127.0.0.1:8025/mcp
-arbiter accounts list mcp_url=http://127.0.0.1:8025/mcp
+arbiter mcp tools arbiter.mcp_url=http://127.0.0.1:8025/mcp
+arbiter cap arbiter.mcp_url=http://127.0.0.1:8025/mcp
+arbiter accounts list arbiter.mcp_url=http://127.0.0.1:8025/mcp
 ```
 
 The client can also read the endpoint from a small config file:
 `~/.arbiter/arbiter-client.yaml`.
 
 ```yaml
-mcp_url: http://127.0.0.1:8025/mcp
+arbiter:
+  mcp_url: http://127.0.0.1:8025/mcp
 ```
 
 Override config values with Hydra-style `key=value` arguments after the
 command, or bootstrap the client config:
 
 ```bash
-arbiter bootstrap client mcp_url=http://127.0.0.1:8025/mcp
+arbiter bootstrap client arbiter.mcp_url=http://127.0.0.1:8025/mcp
 ```
 
 IMAP operations use folder-scoped UIDs returned by `imap:list_messages` and

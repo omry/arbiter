@@ -180,6 +180,6 @@ arbiter-server serve
 In another terminal, point the client at the MCP endpoint:
 
 ```bash
-arbiter cap mcp_url=http://127.0.0.1:8000/mcp
-arbiter cap desc smtp mcp_url=http://127.0.0.1:8000/mcp
+arbiter cap arbiter.mcp_url=http://127.0.0.1:8000/mcp
+arbiter cap desc smtp arbiter.mcp_url=http://127.0.0.1:8000/mcp
 ```

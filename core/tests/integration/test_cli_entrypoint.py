@@ -392,14 +392,15 @@ def test_arbiter_client_console_script_reports_clean_connection_failure(
 ) -> None:
     result = _run_arbiter(
         *args,
-        "mcp_url=http://127.0.0.1:9/mcp",
+        "arbiter.mcp_url=http://127.0.0.1:9/mcp",
     )
 
     assert result.returncode == 1
     assert result.stdout == ""
     assert result.stderr == (
         "Agent Arbiter connection error: could not connect to Agent Arbiter at "
-        "http://127.0.0.1:9/mcp. Is arbiter-server serve running?\n"
+        "http://127.0.0.1:9/mcp (client override arbiter.mcp_url). "
+        "Is arbiter-server serve running?\n"
     )
 
 
@@ -407,7 +408,10 @@ def test_arbiter_client_console_script_reads_client_config(
     tmp_path: Path,
 ) -> None:
     client_config = tmp_path / "arbiter-client.yaml"
-    client_config.write_text("mcp_url: http://127.0.0.1:9/mcp\n", encoding="utf-8")
+    client_config.write_text(
+        "arbiter:\n  mcp_url: http://127.0.0.1:9/mcp\n",
+        encoding="utf-8",
+    )
 
     result = _run_arbiter(
         "--config-dir",
@@ -420,7 +424,8 @@ def test_arbiter_client_console_script_reads_client_config(
     assert result.stdout == ""
     assert result.stderr == (
         "Agent Arbiter connection error: could not connect to Agent Arbiter at "
-        "http://127.0.0.1:9/mcp. Is arbiter-server serve running?\n"
+        f"http://127.0.0.1:9/mcp (client config {client_config}). "
+        "Is arbiter-server serve running?\n"
     )
 
 
@@ -432,12 +437,12 @@ def test_arbiter_client_console_script_bootstrap_client(
         str(tmp_path),
         "bootstrap",
         "client",
-        "mcp_url=http://127.0.0.1:8025/mcp",
+        "arbiter.mcp_url=http://127.0.0.1:8025/mcp",
     )
 
     assert result.returncode == 0
     assert result.stdout == f"wrote {tmp_path / 'arbiter-client.yaml'}\n"
     assert result.stderr == ""
     assert (tmp_path / "arbiter-client.yaml").read_text(encoding="utf-8") == (
-        "mcp_url: http://127.0.0.1:8025/mcp\n"
+        "arbiter:\n  mcp_url: http://127.0.0.1:8025/mcp\n"
     )

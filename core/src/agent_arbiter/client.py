@@ -33,6 +33,12 @@ class ClientConfig:
     mcp_url: str | None = None
 
 
+@dataclass(frozen=True)
+class ResolvedMCPURL:
+    url: str
+    source: str
+
+
 class ToolCallError(RuntimeError):
     pass
 
@@ -145,7 +151,7 @@ def _load_client_config(path: Path, *, explicit: bool) -> ClientConfig:
     if not isinstance(loaded, DictConfig):
         raise ValueError(f"client config must be a mapping: {path}")
 
-    allowed_keys = {"mcp_url"}
+    allowed_keys = {"arbiter"}
     loaded_keys = {str(key) for key in loaded.keys()}
     unknown_keys = sorted(loaded_keys - allowed_keys)
     if unknown_keys:
@@ -153,9 +159,23 @@ def _load_client_config(path: Path, *, explicit: bool) -> ClientConfig:
             f"unsupported client config key(s) in {path}: {', '.join(unknown_keys)}"
         )
 
-    mcp_url = OmegaConf.select(loaded, "mcp_url", default=None)
+    arbiter_config = OmegaConf.select(loaded, "arbiter", default=None)
+    if arbiter_config is None:
+        arbiter_keys: set[str] = set()
+    elif isinstance(arbiter_config, DictConfig):
+        arbiter_keys = {str(key) for key in arbiter_config.keys()}
+    else:
+        raise ValueError(f"client config arbiter must be a mapping: {path}")
+    unknown_arbiter_keys = sorted(arbiter_keys - {"mcp_url"})
+    if unknown_arbiter_keys:
+        raise ValueError(
+            "unsupported client config arbiter key(s) in "
+            f"{path}: {', '.join(unknown_arbiter_keys)}"
+        )
+
+    mcp_url = OmegaConf.select(loaded, "arbiter.mcp_url", default=None)
     if mcp_url is not None and not isinstance(mcp_url, str):
-        raise ValueError(f"client config mcp_url must be a string: {path}")
+        raise ValueError(f"client config arbiter.mcp_url must be a string: {path}")
     return ClientConfig(mcp_url=mcp_url)
 
 
@@ -170,7 +190,7 @@ def _override_client_config(overrides: Sequence[str]) -> ClientConfig:
     if not isinstance(loaded, DictConfig):
         raise ValueError("client overrides must compose to a mapping")
 
-    allowed_keys = {"mcp_url"}
+    allowed_keys = {"arbiter"}
     loaded_keys = {str(key) for key in loaded.keys()}
     unknown_keys = sorted(loaded_keys - allowed_keys)
     if unknown_keys:
@@ -178,27 +198,73 @@ def _override_client_config(overrides: Sequence[str]) -> ClientConfig:
             f"unsupported client override key(s): {', '.join(unknown_keys)}"
         )
 
-    mcp_url = OmegaConf.select(loaded, "mcp_url", default=None)
+    arbiter_config = OmegaConf.select(loaded, "arbiter", default=None)
+    if arbiter_config is None:
+        arbiter_keys: set[str] = set()
+    elif isinstance(arbiter_config, DictConfig):
+        arbiter_keys = {str(key) for key in arbiter_config.keys()}
+    else:
+        raise ValueError("client override arbiter must be a mapping")
+    unknown_arbiter_keys = sorted(arbiter_keys - {"mcp_url"})
+    if unknown_arbiter_keys:
+        raise ValueError(
+            "unsupported client override arbiter key(s): "
+            f"{', '.join(unknown_arbiter_keys)}"
+        )
+
+    mcp_url = OmegaConf.select(loaded, "arbiter.mcp_url", default=None)
     if mcp_url is not None and not isinstance(mcp_url, str):
-        raise ValueError("client override mcp_url must be a string")
+        raise ValueError("client override arbiter.mcp_url must be a string")
     return ClientConfig(mcp_url=mcp_url)
 
 
-def _resolve_mcp_url(namespace: argparse.Namespace) -> str:
+def _resolve_mcp_url(namespace: argparse.Namespace) -> ResolvedMCPURL:
     config_path = _client_config_path(namespace.config_dir, namespace.config_name)
     config = _load_client_config(config_path, explicit=False)
     override_config = _override_client_config(namespace.overrides)
-    return (
-        override_config.mcp_url
-        or os.environ.get(MCP_URL_ENV_VAR)
-        or config.mcp_url
-        or DEFAULT_MCP_URL
+    if override_config.mcp_url is not None:
+        return ResolvedMCPURL(
+            url=override_config.mcp_url,
+            source="client override arbiter.mcp_url",
+        )
+
+    env_mcp_url = os.environ.get(MCP_URL_ENV_VAR)
+    if env_mcp_url is not None:
+        return ResolvedMCPURL(
+            url=env_mcp_url,
+            source=f"environment variable {MCP_URL_ENV_VAR}",
+        )
+
+    if config.mcp_url is not None:
+        return ResolvedMCPURL(
+            url=config.mcp_url,
+            source=f"client config {config_path}",
+        )
+
+    return ResolvedMCPURL(
+        url=DEFAULT_MCP_URL,
+        source=f"built-in default; no client config found at {config_path}",
     )
+
+
+def _connection_error_message(namespace: argparse.Namespace) -> str:
+    return (
+        f"could not connect to Agent Arbiter at {namespace.mcp_url} "
+        f"({namespace.mcp_url_source}). Is arbiter-server serve running?"
+    )
+
+
+def _apply_resolved_mcp_url(
+    namespace: argparse.Namespace,
+    resolved_mcp_url: ResolvedMCPURL,
+) -> None:
+    namespace.mcp_url = resolved_mcp_url.url
+    namespace.mcp_url_source = resolved_mcp_url.source
 
 
 def _client_config_yaml(config: ClientConfig) -> str:
     return OmegaConf.to_yaml(
-        OmegaConf.create({"mcp_url": config.mcp_url or DEFAULT_MCP_URL})
+        OmegaConf.create({"arbiter": {"mcp_url": config.mcp_url or DEFAULT_MCP_URL}})
     )
 
 
@@ -301,7 +367,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "default. "
             "Override client config values with Hydra-style KEY=VALUE "
             "arguments after the command, for example: "
-            "arbiter cap mcp_url=http://127.0.0.1:8000/mcp"
+            "arbiter cap arbiter.mcp_url=http://127.0.0.1:8000/mcp"
         ),
     )
     parser.add_argument(
@@ -467,7 +533,7 @@ def _extract_client_overrides(args: Sequence[str]) -> tuple[list[str], list[str]
             remaining.append(arg)
             skip_next = True
             continue
-        if arg.startswith("mcp_url="):
+        if arg.startswith("arbiter.mcp_url="):
             overrides.append(arg)
             continue
         remaining.append(arg)
@@ -668,7 +734,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if namespace.command == "bootstrap" and namespace.bootstrap_command == "client":
         return _run_bootstrap_client(namespace)
     try:
-        namespace.mcp_url = _resolve_mcp_url(namespace)
+        _apply_resolved_mcp_url(namespace, _resolve_mcp_url(namespace))
     except (FileNotFoundError, ValueError) as exc:
         print_cli_error(str(exc), area="client config")
         return 1
@@ -682,10 +748,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     except BaseException as exc:
         if _contains_exception(exc, httpx.TransportError):
-            print_cli_error(
-                f"could not connect to Agent Arbiter at {namespace.mcp_url}. "
-                "Is arbiter-server serve running?",
-                area="connection",
-            )
+            print_cli_error(_connection_error_message(namespace), area="connection")
             return 1
         raise

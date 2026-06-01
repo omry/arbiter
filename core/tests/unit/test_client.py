@@ -102,7 +102,14 @@ def test_client_lists_tools_as_json(
     monkeypatch.setattr(client, "list_tools", fake_list_tools)
 
     assert (
-        client.main(["mcp", "tools", "--json", "mcp_url=http://localhost:9000/mcp"])
+        client.main(
+            [
+                "mcp",
+                "tools",
+                "--json",
+                "arbiter.mcp_url=http://localhost:9000/mcp",
+            ]
+        )
         == 0
     )
 
@@ -135,7 +142,10 @@ def test_client_reads_mcp_url_from_client_config(
     tmp_path: Path,
 ) -> None:
     config_file = tmp_path / "local-client.yaml"
-    config_file.write_text("mcp_url: http://localhost:9001/mcp\n", encoding="utf-8")
+    config_file.write_text(
+        "arbiter:\n  mcp_url: http://localhost:9001/mcp\n",
+        encoding="utf-8",
+    )
 
     async def fake_list_tools(url: str) -> list[Mapping[str, object]]:
         assert url == "http://localhost:9001/mcp"
@@ -160,6 +170,33 @@ def test_client_reads_mcp_url_from_client_config(
     assert capsys.readouterr().out == "list_caps\n"
 
 
+def test_client_rejects_top_level_mcp_url_in_client_config(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    config_file = tmp_path / "local-client.yaml"
+    config_file.write_text("mcp_url: http://localhost:9001/mcp\n", encoding="utf-8")
+
+    assert (
+        client.main(
+            [
+                "--config-dir",
+                str(tmp_path),
+                "--config-name",
+                "local-client",
+                "mcp",
+                "tools",
+            ]
+        )
+        == 1
+    )
+
+    assert capsys.readouterr().err == (
+        "Agent Arbiter client config error: unsupported client config key(s) in "
+        f"{config_file}: mcp_url\n"
+    )
+
+
 def test_client_uses_default_client_config_path(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
@@ -168,7 +205,7 @@ def test_client_uses_default_client_config_path(
     config_dir = tmp_path / ".arbiter"
     config_dir.mkdir()
     (config_dir / "arbiter-client.yaml").write_text(
-        "mcp_url: http://localhost:9002/mcp\n",
+        "arbiter:\n  mcp_url: http://localhost:9002/mcp\n",
         encoding="utf-8",
     )
 
@@ -189,7 +226,10 @@ def test_client_mcp_url_env_overrides_client_config(
     tmp_path: Path,
 ) -> None:
     config_file = tmp_path / "local-client.yaml"
-    config_file.write_text("mcp_url: http://localhost:9003/mcp\n", encoding="utf-8")
+    config_file.write_text(
+        "arbiter:\n  mcp_url: http://localhost:9003/mcp\n",
+        encoding="utf-8",
+    )
     monkeypatch.setenv("AGENT_ARBITER_MCP_URL", "http://localhost:9004/mcp")
 
     async def fake_list_tools(url: str) -> list[Mapping[str, object]]:
@@ -221,7 +261,10 @@ def test_client_override_overrides_env_and_client_config(
     tmp_path: Path,
 ) -> None:
     config_file = tmp_path / "local-client.yaml"
-    config_file.write_text("mcp_url: http://localhost:9005/mcp\n", encoding="utf-8")
+    config_file.write_text(
+        "arbiter:\n  mcp_url: http://localhost:9005/mcp\n",
+        encoding="utf-8",
+    )
     monkeypatch.setenv("AGENT_ARBITER_MCP_URL", "http://localhost:9006/mcp")
 
     async def fake_list_tools(url: str) -> list[Mapping[str, object]]:
@@ -239,7 +282,7 @@ def test_client_override_overrides_env_and_client_config(
                 "local-client",
                 "mcp",
                 "tools",
-                "mcp_url=http://localhost:9007/mcp",
+                "arbiter.mcp_url=http://localhost:9007/mcp",
             ]
         )
         == 0
@@ -265,7 +308,14 @@ def test_client_override_after_optional_positional_is_not_consumed(
     monkeypatch.setattr(client, "call_tool", fake_call_tool)
 
     assert (
-        client.main(["accounts", "desc", "smtp", "mcp_url=http://localhost:9010/mcp"])
+        client.main(
+            [
+                "accounts",
+                "desc",
+                "smtp",
+                "arbiter.mcp_url=http://localhost:9010/mcp",
+            ]
+        )
         == 0
     )
 
@@ -280,6 +330,17 @@ def test_client_rejects_unknown_client_override(
     assert capsys.readouterr().err == (
         "Agent Arbiter client config error: unsupported client override key(s): "
         "unknown\n"
+    )
+
+
+def test_client_rejects_top_level_mcp_url_override(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert client.main(["mcp", "tools", "mcp_url=http://localhost:9000/mcp"]) == 1
+
+    assert capsys.readouterr().err == (
+        "Agent Arbiter client config error: unsupported client override key(s): "
+        "mcp_url\n"
     )
 
 
@@ -305,7 +366,7 @@ def test_client_bootstrap_writes_client_config(
                 str(tmp_path),
                 "bootstrap",
                 "client",
-                "mcp_url=http://localhost:9008/mcp",
+                "arbiter.mcp_url=http://localhost:9008/mcp",
             ]
         )
         == 0
@@ -313,7 +374,7 @@ def test_client_bootstrap_writes_client_config(
 
     config_file = tmp_path / "arbiter-client.yaml"
     assert config_file.read_text(encoding="utf-8") == (
-        "mcp_url: http://localhost:9008/mcp\n"
+        "arbiter:\n  mcp_url: http://localhost:9008/mcp\n"
     )
     assert capsys.readouterr().out == f"wrote {config_file}\n"
 
@@ -323,7 +384,10 @@ def test_client_bootstrap_refuses_to_overwrite_existing_config(
     tmp_path: Path,
 ) -> None:
     config_file = tmp_path / "arbiter-client.yaml"
-    config_file.write_text("mcp_url: http://localhost:9009/mcp\n", encoding="utf-8")
+    config_file.write_text(
+        "arbiter:\n  mcp_url: http://localhost:9009/mcp\n",
+        encoding="utf-8",
+    )
 
     assert client.main(["--config-dir", str(tmp_path), "bootstrap", "client"]) == 1
     assert capsys.readouterr().err == (
@@ -776,6 +840,7 @@ def test_client_reports_clean_keyboard_interrupt(
 def test_client_reports_clean_connection_failure(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     class FakeExceptionGroup(Exception):
         def __init__(self, exceptions: tuple[BaseException, ...]) -> None:
@@ -793,13 +858,16 @@ def test_client_reports_clean_connection_failure(
 
     assert capsys.readouterr().err == (
         "Agent Arbiter connection error: could not connect to Agent Arbiter at "
-        "http://127.0.0.1:8000/mcp. Is arbiter-server serve running?\n"
+        "http://127.0.0.1:8000/mcp "
+        f"(built-in default; no client config found at {tmp_path / '.arbiter' / 'arbiter-client.yaml'}). "
+        "Is arbiter-server serve running?\n"
     )
 
 
 def test_client_reports_clean_read_failure(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     class FakeExceptionGroup(Exception):
         def __init__(self, exceptions: tuple[BaseException, ...]) -> None:
@@ -815,5 +883,43 @@ def test_client_reports_clean_read_failure(
 
     assert capsys.readouterr().err == (
         "Agent Arbiter connection error: could not connect to Agent Arbiter at "
-        "http://127.0.0.1:8000/mcp. Is arbiter-server serve running?\n"
+        "http://127.0.0.1:8000/mcp "
+        f"(built-in default; no client config found at {tmp_path / '.arbiter' / 'arbiter-client.yaml'}). "
+        "Is arbiter-server serve running?\n"
+    )
+
+
+def test_client_connection_failure_reports_url_from_client_config(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config_file = tmp_path / "local-client.yaml"
+    config_file.write_text(
+        "arbiter:\n  mcp_url: http://localhost:9011/mcp\n",
+        encoding="utf-8",
+    )
+
+    def raise_connection_error(*_args: object) -> int:
+        raise httpx.ConnectError("All connection attempts failed")
+
+    monkeypatch.setattr("agent_arbiter.client.anyio.run", raise_connection_error)
+
+    assert (
+        client.main(
+            [
+                "--config-dir",
+                str(tmp_path),
+                "--config-name",
+                "local-client",
+                "cap",
+            ]
+        )
+        == 1
+    )
+
+    assert capsys.readouterr().err == (
+        "Agent Arbiter connection error: could not connect to Agent Arbiter at "
+        f"http://localhost:9011/mcp (client config {config_file}). "
+        "Is arbiter-server serve running?\n"
     )

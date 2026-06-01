@@ -31,11 +31,11 @@ arbiter [--config-dir DIR] [--config-name NAME] <command>
   `arbiter-client`.
 - `--version`: print the installed version.
 
-The client reads `mcp_url` from its config. You can override it per command with
-a Hydra-style argument:
+The client reads `arbiter.mcp_url` from its config. You can override it per
+command with a Hydra-style argument:
 
 ```bash
-arbiter cap mcp_url=http://127.0.0.1:8000/mcp
+arbiter cap arbiter.mcp_url=http://127.0.0.1:8000/mcp
 ```
 
 Default client config:
@@ -47,7 +47,8 @@ Default client config:
 Example:
 
 ```yaml
-mcp_url: http://127.0.0.1:8000/mcp
+arbiter:
+  mcp_url: http://127.0.0.1:8000/mcp
 ```
 
 ## bootstrap
@@ -63,7 +64,7 @@ arbiter bootstrap client [--force] [override...]
 Example:
 
 ```bash
-arbiter bootstrap client mcp_url=http://127.0.0.1:8000/mcp
+arbiter bootstrap client arbiter.mcp_url=http://127.0.0.1:8000/mcp
 ```
 
 ## Common flow
