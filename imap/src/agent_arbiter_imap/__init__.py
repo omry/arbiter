@@ -23,8 +23,8 @@ from .config import (
 
 from .client import FetchedIMAPMessage
 
-__version__ = "0.8.0"
-CORE_API_VERSION = "0.8"
+__version__ = "0.9.0"
+CORE_API_VERSION = "0.9"
 
 
 class IMAPClientProtocol(Protocol):

@@ -26,8 +26,8 @@ from .config import (
 )
 from .idempotency import SMTPIdempotencyResult, SMTPIdempotencyStore
 
-__version__ = "0.8.0"
-CORE_API_VERSION = "0.8"
+__version__ = "0.9.0"
+CORE_API_VERSION = "0.9"
 
 
 @dataclass(frozen=True)

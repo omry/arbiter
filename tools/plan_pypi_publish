@@ -26,11 +26,18 @@ class Package:
 
 
 PACKAGES = (
-    Package(kind="meta", name="agent-arbiter", path=Path(".")),
     Package(kind="core", name="agent-arbiter-core", path=Path("core")),
-    Package(kind="plugin", name="agent-arbiter-smtp", path=Path("smtp")),
     Package(kind="plugin", name="agent-arbiter-imap", path=Path("imap")),
+    Package(kind="plugin", name="agent-arbiter-smtp", path=Path("smtp")),
+    Package(kind="meta", name="agent-arbiter", path=Path(".")),
 )
+PACKAGE_BY_KEY = {
+    "core": "agent-arbiter-core",
+    "imap": "agent-arbiter-imap",
+    "smtp": "agent-arbiter-smtp",
+    "meta:all": "agent-arbiter",
+}
+PACKAGE_KEYS = tuple(PACKAGE_BY_KEY)
 
 
 @dataclass(frozen=True, order=True)
@@ -167,11 +174,54 @@ def _copy_distributions(
     return copied
 
 
-def build_plan(root: Path) -> list[PlanItem]:
+def _parse_package_keys(value: str) -> frozenset[str] | None:
+    value = value.strip()
+    if value == "all":
+        return None
+
+    keys = frozenset(key.strip() for key in value.split(",") if key.strip())
+    if not keys:
+        raise ValueError("--packages must be 'all' or a comma-separated key list")
+    if "all" in keys:
+        raise ValueError("--packages cannot combine 'all' with package keys")
+
+    unknown = sorted(keys - set(PACKAGE_KEYS))
+    if unknown:
+        expected = ", ".join(("all", *PACKAGE_KEYS))
+        raise ValueError(
+            f"unknown package key in --packages: {', '.join(unknown)} "
+            f"(expected one or more of: {expected})"
+        )
+    return keys
+
+
+def build_plan(
+    root: Path, *, package_keys: frozenset[str] | None = None
+) -> list[PlanItem]:
     versions = _validate_versions(root)
+    selected_package_names = (
+        {PACKAGE_BY_KEY[key] for key in package_keys}
+        if package_keys is not None
+        else None
+    )
     plan: list[PlanItem] = []
     for package in PACKAGES:
         local_version = versions[package.name]
+        if (
+            selected_package_names is not None
+            and package.name not in selected_package_names
+        ):
+            plan.append(
+                PlanItem(
+                    package=package,
+                    local_version=local_version,
+                    pypi_version=None,
+                    publish=False,
+                    reason="not selected by --packages",
+                )
+            )
+            continue
+
         pypi_version = _pypi_version(package.name)
         if pypi_version is None:
             publish = True
@@ -220,6 +270,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dist-dir", default="dist")
     parser.add_argument("--output-dir", default="dist-publish")
     parser.add_argument(
+        "--packages",
+        default="all",
+        metavar="KEYS",
+        help=(
+            "limit publishing to 'all' or comma-separated package keys "
+            f"({', '.join(PACKAGE_KEYS)})"
+        ),
+    )
+    parser.add_argument(
         "--prepare-output-dir",
         action="store_true",
         help="copy selected distributions into the output directory",
@@ -228,7 +287,8 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         root = Path(namespace.root).resolve()
-        plan = build_plan(root)
+        package_keys = _parse_package_keys(namespace.packages)
+        plan = build_plan(root, package_keys=package_keys)
         publish_items = [item for item in plan if item.publish]
 
         if namespace.prepare_output_dir:
@@ -247,7 +307,8 @@ def main(argv: list[str] | None = None) -> int:
         for item in plan:
             action = "publish" if item.publish else "skip"
             print(
-                f"{action}: {item.package.name} {item.local_version.text} ({item.reason})"
+                f"{action}: {item.package.name} {item.local_version.text} "
+                f"({item.reason})"
             )
 
         print(f"publish_count={len(publish_items)}")

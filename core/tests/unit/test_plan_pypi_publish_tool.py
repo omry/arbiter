@@ -1,0 +1,117 @@
+from __future__ import annotations
+
+import importlib.machinery
+import importlib.util
+import sys
+from collections.abc import Callable
+from pathlib import Path
+from types import ModuleType
+from typing import Any, cast
+
+import pytest
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+SCRIPT = REPO_ROOT / "tools" / "plan_pypi_publish"
+
+
+def _load_tool() -> ModuleType:
+    loader = importlib.machinery.SourceFileLoader("plan_pypi_publish", str(SCRIPT))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    if spec is None:
+        raise RuntimeError("could not load plan_pypi_publish module spec")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[loader.name] = module
+    loader.exec_module(module)
+    return module
+
+
+def _write_project(root: Path, relative_path: str, name: str, version: str) -> None:
+    pyproject = root / relative_path / "pyproject.toml"
+    pyproject.parent.mkdir(parents=True, exist_ok=True)
+    pyproject.write_text(
+        f"""[project]
+name = "{name}"
+version = "{version}"
+""",
+        encoding="utf-8",
+    )
+
+
+def _write_fixture(root: Path, *, imap_version: str = "0.9.0") -> None:
+    _write_project(root, ".", "agent-arbiter", "0.9.0")
+    _write_project(root, "core", "agent-arbiter-core", "0.9.0")
+    _write_project(root, "imap", "agent-arbiter-imap", imap_version)
+    _write_project(root, "smtp", "agent-arbiter-smtp", "0.9.0")
+
+
+def _parse_package_keys(tool: ModuleType) -> Callable[[str], frozenset[str] | None]:
+    return cast(
+        Callable[[str], frozenset[str] | None],
+        getattr(tool, "_parse_package_keys"),
+    )
+
+
+def _build_plan(tool: ModuleType) -> Callable[..., list[Any]]:
+    return cast(Callable[..., list[Any]], getattr(tool, "build_plan"))
+
+
+def test_parse_package_keys_accepts_all_and_comma_separated_keys() -> None:
+    parse_package_keys = _parse_package_keys(_load_tool())
+
+    assert parse_package_keys("all") is None
+    assert parse_package_keys(" core,imap,meta:all ") == frozenset(
+        {"core", "imap", "meta:all"}
+    )
+
+
+def test_parse_package_keys_rejects_unknown_and_mixed_all_keys() -> None:
+    parse_package_keys = _parse_package_keys(_load_tool())
+
+    with pytest.raises(ValueError, match="unknown package key"):
+        parse_package_keys("core,mail")
+
+    with pytest.raises(ValueError, match="cannot combine 'all'"):
+        parse_package_keys("all,core")
+
+
+def test_build_plan_only_queries_selected_packages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tool = _load_tool()
+    _write_fixture(tmp_path)
+    queried_packages: list[str] = []
+
+    def fake_pypi_version(package_name: str) -> None:
+        queried_packages.append(package_name)
+        return None
+
+    monkeypatch.setattr(tool, "_pypi_version", fake_pypi_version)
+
+    plan = _build_plan(tool)(tmp_path, package_keys=frozenset({"core", "meta:all"}))
+
+    assert queried_packages == ["agent-arbiter-core", "agent-arbiter"]
+    assert [item.package.name for item in plan if item.publish] == [
+        "agent-arbiter-core",
+        "agent-arbiter",
+    ]
+    assert [
+        item.package.name
+        for item in plan
+        if item.reason == "not selected by --packages"
+    ] == ["agent-arbiter-imap", "agent-arbiter-smtp"]
+
+
+def test_build_plan_validates_unselected_plugin_version_lines(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tool = _load_tool()
+    _write_fixture(tmp_path, imap_version="0.10.0")
+
+    monkeypatch.setattr(tool, "_pypi_version", lambda package_name: None)
+
+    with pytest.raises(
+        ValueError,
+        match="agent-arbiter-imap version line 0.10 does not match core 0.9",
+    ):
+        _build_plan(tool)(tmp_path, package_keys=frozenset({"core"}))

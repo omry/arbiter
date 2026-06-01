@@ -67,12 +67,32 @@ and the default `agent-arbiter` meta package. It rejects local package versions
 that are older than PyPI.
 
 Plugin packages must stay on the same `MAJOR.MINOR` line as
-`agent-arbiter-core`. For example, `agent-arbiter-smtp==0.8.1` can publish
-against `agent-arbiter-core==0.8.0`, but `agent-arbiter-smtp==0.9.0` requires a
-core package on the `0.9` line.
+`agent-arbiter-core`. A plugin patch release can publish against an existing
+core package on the same line, but a plugin on a new minor line requires a core
+package on that new line.
 
 GitHub publishing uses the shared `pypi` environment. PyPI must still have a
 matching trusted publisher for each project that will be uploaded.
+
+For the initial PyPI bootstrap, PyPI currently allows only one pending trusted
+publisher per GitHub repo/workflow/environment. Use manual workflow dispatch
+with one selected package at a time, creating the matching pending publisher
+before each run:
+
+1. `core` (`agent-arbiter-core`)
+2. `imap` (`agent-arbiter-imap`)
+3. `smtp` (`agent-arbiter-smtp`)
+4. `meta:all` (`agent-arbiter`)
+
+The same subset selection is available locally:
+
+```bash
+tools/plan_pypi_publish --packages core --prepare-output-dir
+tools/plan_pypi_publish --packages core,imap --prepare-output-dir
+```
+
+After the projects exist and have ordinary trusted publishers, release events
+can use the default all-package selection.
 
 Additional meta packages, such as a future `agent-arbiter-mail`, can follow the
 same version-selection flow when they are added.

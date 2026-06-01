@@ -30,14 +30,14 @@ smtp = "agent_arbiter_smtp:plugin"
 ## Version contract
 
 Plugins use compatibility-line versions. A plugin for Agent Arbiter core
-`0.8.x` should use a plugin version on the `0.8` line, such as `0.8.0` or
-`0.8.1`, and declare the same core API line at runtime:
+`0.9.x` should use a plugin version on the `0.9` line, such as `0.9.0` or
+`0.9.1`, and declare the same core API line at runtime:
 
 ```python
 class ExampleServicePlugin:
     name = "example"
-    version = "0.8.0"
-    core_api_version = "0.8"
+    version = "0.9.0"
+    core_api_version = "0.9"
 ```
 
 At plugin discovery and config registration time, Agent Arbiter rejects plugins
@@ -48,7 +48,7 @@ Package dependencies should express the same compatibility line:
 
 ```toml
 dependencies = [
-  "agent-arbiter-core>=0.8.0,<0.9.0",
+  "agent-arbiter-core>=0.9.0,<0.10.0",
 ]
 ```
 

@@ -1,7 +1,7 @@
 # RFC: Agent Arbiter Overview
 
 - Document ID: `agent-arbiter-overview`
-- Version: `0.8.0`
+- Version: `0.9.0`
 - Status: `Draft`
 - Authors: `Codex`, `Omry Yadan`
 - Last Updated: `2026-05-24`

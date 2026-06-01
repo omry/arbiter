@@ -92,7 +92,7 @@ def test_build_app_activates_dynamic_entry_point_service() -> None:
 
     class FakeExternalPlugin:
         name = "whatsapp"
-        version = "0.8.0"
+        version = "0.9.0"
         core_api_version = CORE_API_VERSION
 
         def __init__(self) -> None:
@@ -179,7 +179,7 @@ def test_discover_service_plugins_loads_entry_point_factories(
     class FakePlugin:
         def __init__(self, name: str) -> None:
             self.name = name
-            self.version = "0.8.0"
+            self.version = "0.9.0"
             self.core_api_version = CORE_API_VERSION
 
         def register_configs(self, config_store: object) -> None:
@@ -250,7 +250,7 @@ def test_discover_service_plugins_rejects_wrong_core_api_version(
         RuntimeError,
         match=(
             "service plugin stale targets Agent Arbiter core API 0.7, "
-            "but loaded core API is 0.8"
+            "but loaded core API is 0.9"
         ),
     ):
         discover_service_plugins()
@@ -314,7 +314,7 @@ def test_build_app_rejects_plugin_version_outside_core_line() -> None:
         RuntimeError,
         match=(
             "service plugin whatsapp version 0.7.9 is not on loaded "
-            "core API line 0.8"
+            "core API line 0.9"
         ),
     ):
         build_app(cfg, service_plugins=[FakeExternalPlugin()])
@@ -814,7 +814,7 @@ def test_cli_deploy_docker_init_uses_local_checkout_default_requirements(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("agent_arbiter.main.package_version", lambda: "0.8.0.dev1")
+    monkeypatch.setattr("agent_arbiter.main.package_version", lambda: "0.9.0.dev1")
     checkout = tmp_path / "checkout"
     checkout.mkdir()
     (checkout / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
@@ -846,7 +846,7 @@ def test_cli_deploy_docker_init_rejects_unlocated_local_dev_default_requirement(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("agent_arbiter.main.package_version", lambda: "0.8.0.dev1")
+    monkeypatch.setattr("agent_arbiter.main.package_version", lambda: "0.9.0.dev1")
     outside_checkout = tmp_path / "outside"
     outside_checkout.mkdir()
     monkeypatch.chdir(outside_checkout)
@@ -1520,7 +1520,7 @@ def test_cli_deploy_docker_update_creates_local_checkout_source_override(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("agent_arbiter.main.package_version", lambda: "0.8.0.dev1")
+    monkeypatch.setattr("agent_arbiter.main.package_version", lambda: "0.9.0.dev1")
     checkout = tmp_path / "checkout"
     checkout.mkdir()
     (checkout / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
@@ -1667,10 +1667,10 @@ def test_cli_lists_plugins_as_json(
     assert main(["--config-dir", "/tmp", "plugins", "list", "--json"]) == 0
 
     assert capsys.readouterr().out == (
-        '{"core": {"version": "0.8.0", "api_version": "0.8"}, '
-        '"plugins": [{"name": "imap", "version": "0.8.0", '
-        '"core_api_version": "0.8"}, {"name": "smtp", "version": "0.8.0", '
-        '"core_api_version": "0.8"}]}\n'
+        '{"core": {"version": "0.9.0", "api_version": "0.9"}, '
+        '"plugins": [{"name": "imap", "version": "0.9.0", '
+        '"core_api_version": "0.9"}, {"name": "smtp", "version": "0.9.0", '
+        '"core_api_version": "0.9"}]}\n'
     )
 
 
@@ -1686,10 +1686,10 @@ def test_cli_version_prints_core_and_plugin_versions(
     assert main(["--config-dir", "/tmp", "version"]) == 0
 
     assert capsys.readouterr().out == (
-        "core 0.8.0 (api 0.8)\n"
+        "core 0.9.0 (api 0.9)\n"
         "plugins:\n"
-        "  imap 0.8.0 (core api 0.8)\n"
-        "  smtp 0.8.0 (core api 0.8)\n"
+        "  imap 0.9.0 (core api 0.9)\n"
+        "  smtp 0.9.0 (core api 0.9)\n"
     )
 
 
@@ -1705,10 +1705,10 @@ def test_cli_version_can_print_json(
     assert main(["--config-dir", "/tmp", "version", "--json"]) == 0
 
     assert capsys.readouterr().out == (
-        '{"core": {"version": "0.8.0", "api_version": "0.8"}, '
-        '"plugins": [{"name": "imap", "version": "0.8.0", '
-        '"core_api_version": "0.8"}, {"name": "smtp", "version": "0.8.0", '
-        '"core_api_version": "0.8"}]}\n'
+        '{"core": {"version": "0.9.0", "api_version": "0.9"}, '
+        '"plugins": [{"name": "imap", "version": "0.9.0", '
+        '"core_api_version": "0.9"}, {"name": "smtp", "version": "0.9.0", '
+        '"core_api_version": "0.9"}]}\n'
     )
 
 
@@ -2763,10 +2763,10 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     assert sorted(tools) == sorted(CORE_TOOL_NAMES)
 
     assert tools["version_info"]() == {
-        "core": {"version": "0.8.0", "api_version": "0.8"},
+        "core": {"version": "0.9.0", "api_version": "0.9"},
         "plugins": [
-            {"name": "imap", "version": "0.8.0", "core_api_version": "0.8"},
-            {"name": "smtp", "version": "0.8.0", "core_api_version": "0.8"},
+            {"name": "imap", "version": "0.9.0", "core_api_version": "0.9"},
+            {"name": "smtp", "version": "0.9.0", "core_api_version": "0.9"},
         ],
     }
     assert tools["list_caps"]() == {"capabilities": ["imap", "smtp"]}

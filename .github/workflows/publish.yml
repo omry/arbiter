@@ -15,6 +15,11 @@ on:
         required: true
         default: false
         type: boolean
+      publish_packages:
+        description: "Publish keys: all or comma-separated keys like core,imap,meta:all"
+        required: true
+        default: all
+        type: string
 
 permissions:
   contents: read
@@ -84,18 +89,24 @@ jobs:
       - name: Build core distribution
         run: python -m build --sdist --wheel --outdir dist core
 
-      - name: Build SMTP plugin distribution
-        run: python -m build --sdist --wheel --outdir dist smtp
-
       - name: Build IMAP plugin distribution
         run: python -m build --sdist --wheel --outdir dist imap
+
+      - name: Build SMTP plugin distribution
+        run: python -m build --sdist --wheel --outdir dist smtp
 
       - name: Build meta distribution
         run: python -m build --sdist --wheel --outdir dist .
 
       - name: Plan selective PyPI publish
         id: pypi-plan
-        run: tools/plan_pypi_publish --prepare-output-dir
+        shell: bash
+        env:
+          PUBLISH_PACKAGES: ${{ inputs.publish_packages || 'all' }}
+        run: |
+          tools/plan_pypi_publish \
+            --prepare-output-dir \
+            --packages "$PUBLISH_PACKAGES"
 
       - name: Smoke install built release
         run: |
