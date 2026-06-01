@@ -22,6 +22,36 @@ const config = {
     },
   },
   themes: ['@docusaurus/theme-mermaid'],
+  plugins: [
+    function quietWebpackOutput() {
+      return {
+        name: 'quiet-webpack-output',
+        configureWebpack(config) {
+          config.plugins
+            ?.filter((plugin) =>
+              plugin?.constructor?.name?.includes('WebpackBar'),
+            )
+            .forEach((plugin) => {
+              if (plugin.webpackbar) {
+                plugin.webpackbar.reporters = [];
+                plugin.webpackbar.options.reporters = [];
+              }
+            });
+
+          return {
+            devServer: {
+              client: {
+                progress: false,
+              },
+              devMiddleware: {
+                stats: 'none',
+              },
+            },
+          };
+        },
+      };
+    },
+  ],
 
   i18n: {
     defaultLocale: 'en',
