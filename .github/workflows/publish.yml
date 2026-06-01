@@ -31,6 +31,7 @@ jobs:
     outputs:
       release_line: ${{ steps.release.outputs.release_line }}
       release_version: ${{ steps.release.outputs.release_version }}
+      has_publish: ${{ steps.pypi-plan.outputs.has_publish }}
 
     steps:
       - name: Check out repository
@@ -92,6 +93,10 @@ jobs:
       - name: Build meta distribution
         run: python -m build --sdist --wheel --outdir dist .
 
+      - name: Plan selective PyPI publish
+        id: pypi-plan
+        run: tools/plan_pypi_publish --prepare-output-dir
+
       - name: Smoke install built release
         run: |
           python -m venv .release-smoke
@@ -108,25 +113,34 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+      - name: Upload publishable distributions
+        if: steps.pypi-plan.outputs.has_publish == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-distributions-to-publish
+          path: dist-publish/*
+          if-no-files-found: error
+
   publish:
     name: Publish to PyPI
     needs: build
     runs-on: ubuntu-latest
     if: >-
-      github.event_name == 'release' ||
-      (github.event_name == 'workflow_dispatch' &&
-       github.ref == 'refs/heads/main' &&
-       inputs.publish_to_pypi)
+      needs.build.outputs.has_publish == 'true' &&
+      (github.event_name == 'release' ||
+       (github.event_name == 'workflow_dispatch' &&
+        github.ref == 'refs/heads/main' &&
+        inputs.publish_to_pypi))
     environment: pypi
     permissions:
       contents: read
       id-token: write
 
     steps:
-      - name: Download distributions
+      - name: Download publishable distributions
         uses: actions/download-artifact@v4
         with:
-          name: python-distributions
+          name: python-distributions-to-publish
           path: dist
 
       - name: Publish distributions

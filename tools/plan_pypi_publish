@@ -1,0 +1,265 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import sys
+import urllib.error
+import urllib.request
+from dataclasses import dataclass
+from pathlib import Path
+from tomllib import loads as load_toml
+
+
+@dataclass(frozen=True)
+class Package:
+    kind: str
+    name: str
+    path: Path
+
+    @property
+    def normalized_name(self) -> str:
+        return self.name.replace("-", "_")
+
+
+PACKAGES = (
+    Package(kind="meta", name="agent-arbiter", path=Path(".")),
+    Package(kind="core", name="agent-arbiter-core", path=Path("core")),
+    Package(kind="plugin", name="agent-arbiter-smtp", path=Path("smtp")),
+    Package(kind="plugin", name="agent-arbiter-imap", path=Path("imap")),
+)
+
+
+@dataclass(frozen=True, order=True)
+class Version:
+    major: int
+    minor: int
+    patch: int
+
+    @classmethod
+    def parse(cls, value: str) -> "Version":
+        match = re.fullmatch(
+            r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)",
+            value,
+        )
+        if match is None:
+            raise ValueError(
+                f"only final MAJOR.MINOR.PATCH versions are supported: {value}"
+            )
+        return cls(
+            major=int(match.group(1)),
+            minor=int(match.group(2)),
+            patch=int(match.group(3)),
+        )
+
+    @property
+    def line(self) -> tuple[int, int]:
+        return (self.major, self.minor)
+
+    @property
+    def text(self) -> str:
+        return f"{self.major}.{self.minor}.{self.patch}"
+
+
+@dataclass(frozen=True)
+class PlanItem:
+    package: Package
+    local_version: Version
+    pypi_version: Version | None
+    publish: bool
+    reason: str
+
+
+def _read_project(root: Path, package: Package) -> dict[str, object]:
+    pyproject = root / package.path / "pyproject.toml"
+    if not pyproject.exists():
+        raise FileNotFoundError(f"missing package pyproject: {pyproject}")
+    data = load_toml(pyproject.read_text(encoding="utf-8"))
+    project = data.get("project")
+    if not isinstance(project, dict):
+        raise ValueError(f"{pyproject} is missing [project]")
+    name = project.get("name")
+    if name != package.name:
+        raise ValueError(
+            f"{pyproject} project name is {name!r}, expected {package.name!r}"
+        )
+    return project
+
+
+def _project_version(root: Path, package: Package) -> Version:
+    version = _read_project(root, package).get("version")
+    if not isinstance(version, str):
+        raise ValueError(
+            f"{package.path / 'pyproject.toml'} is missing project.version"
+        )
+    return Version.parse(version)
+
+
+def _pypi_version(package_name: str) -> Version | None:
+    url = f"https://pypi.org/pypi/{package_name}/json"
+    try:
+        with urllib.request.urlopen(url, timeout=15) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return None
+        raise
+
+    info = payload.get("info")
+    if not isinstance(info, dict):
+        raise ValueError(f"unexpected PyPI response for {package_name}: missing info")
+    version = info.get("version")
+    if not isinstance(version, str):
+        raise ValueError(
+            f"unexpected PyPI response for {package_name}: missing version"
+        )
+    return Version.parse(version)
+
+
+def _validate_versions(root: Path) -> dict[str, Version]:
+    versions = {package.name: _project_version(root, package) for package in PACKAGES}
+    core_version = versions["agent-arbiter-core"]
+
+    main_version = versions["agent-arbiter"]
+    if main_version.line != core_version.line:
+        raise ValueError(
+            "agent-arbiter version line "
+            f"{main_version.major}.{main_version.minor} does not match core "
+            f"{core_version.major}.{core_version.minor}"
+        )
+
+    for package in PACKAGES:
+        if package.kind != "plugin":
+            continue
+        plugin_version = versions[package.name]
+        if plugin_version.line != core_version.line:
+            raise ValueError(
+                f"{package.name} version line "
+                f"{plugin_version.major}.{plugin_version.minor} does not match core "
+                f"{core_version.major}.{core_version.minor}"
+            )
+
+    return versions
+
+
+def _distribution_patterns(package: Package, version: Version) -> tuple[str, str]:
+    base = f"{package.normalized_name}-{version.text}"
+    return (f"{base}.tar.gz", f"{base}-py3-none-any.whl")
+
+
+def _copy_distributions(
+    *,
+    dist_dir: Path,
+    output_dir: Path,
+    item: PlanItem,
+) -> list[Path]:
+    copied: list[Path] = []
+    for filename in _distribution_patterns(item.package, item.local_version):
+        source = dist_dir / filename
+        if not source.exists():
+            raise FileNotFoundError(f"expected built distribution is missing: {source}")
+        target = output_dir / filename
+        shutil.copy2(source, target)
+        copied.append(target)
+    return copied
+
+
+def build_plan(root: Path) -> list[PlanItem]:
+    versions = _validate_versions(root)
+    plan: list[PlanItem] = []
+    for package in PACKAGES:
+        local_version = versions[package.name]
+        pypi_version = _pypi_version(package.name)
+        if pypi_version is None:
+            publish = True
+            reason = "project is not on PyPI"
+        elif local_version > pypi_version:
+            publish = True
+            reason = (
+                f"local {local_version.text} is newer than PyPI {pypi_version.text}"
+            )
+        elif local_version == pypi_version:
+            publish = False
+            reason = f"local {local_version.text} is already on PyPI"
+        else:
+            raise ValueError(
+                f"{package.name} local version {local_version.text} is older than "
+                f"PyPI {pypi_version.text}"
+            )
+        plan.append(
+            PlanItem(
+                package=package,
+                local_version=local_version,
+                pypi_version=pypi_version,
+                publish=publish,
+                reason=reason,
+            )
+        )
+    return plan
+
+
+def _write_github_output(path: str | None, *, publish_count: int) -> None:
+    if not path:
+        return
+    with Path(path).open("a", encoding="utf-8") as output:
+        output.write(f"publish_count={publish_count}\n")
+        output.write(f"has_publish={'true' if publish_count else 'false'}\n")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Plan a selective PyPI publish by comparing local package versions "
+            "to the versions currently visible on PyPI."
+        )
+    )
+    parser.add_argument("--root", default=".", help=argparse.SUPPRESS)
+    parser.add_argument("--dist-dir", default="dist")
+    parser.add_argument("--output-dir", default="dist-publish")
+    parser.add_argument(
+        "--prepare-output-dir",
+        action="store_true",
+        help="copy selected distributions into the output directory",
+    )
+    namespace = parser.parse_args(argv)
+
+    try:
+        root = Path(namespace.root).resolve()
+        plan = build_plan(root)
+        publish_items = [item for item in plan if item.publish]
+
+        if namespace.prepare_output_dir:
+            output_dir = root / namespace.output_dir
+            if output_dir.exists():
+                shutil.rmtree(output_dir)
+            output_dir.mkdir(parents=True)
+            dist_dir = root / namespace.dist_dir
+            for item in publish_items:
+                _copy_distributions(
+                    dist_dir=dist_dir,
+                    output_dir=output_dir,
+                    item=item,
+                )
+
+        for item in plan:
+            action = "publish" if item.publish else "skip"
+            print(
+                f"{action}: {item.package.name} {item.local_version.text} ({item.reason})"
+            )
+
+        print(f"publish_count={len(publish_items)}")
+        _write_github_output(
+            os.environ.get("GITHUB_OUTPUT"),
+            publish_count=len(publish_items),
+        )
+        return 0
+    except (FileNotFoundError, ValueError, urllib.error.URLError) as exc:
+        print(f"plan_pypi_publish: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

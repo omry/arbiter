@@ -51,3 +51,28 @@ with `arbiter-server deploy docker`, starts the generated
 endpoint.
 
 Run the full suite before release or before committing broad interface changes.
+
+## PyPI publish selection
+
+The publish workflow builds all bundled distributions, then runs:
+
+```bash
+tools/plan_pypi_publish --prepare-output-dir
+```
+
+The planner compares local package versions with PyPI and copies only packages
+whose local version is newer, or whose PyPI project does not exist yet, into
+`dist-publish/` for upload. It covers the core package, bundled plugin packages,
+and the default `agent-arbiter` meta package. It rejects local package versions
+that are older than PyPI.
+
+Plugin packages must stay on the same `MAJOR.MINOR` line as
+`agent-arbiter-core`. For example, `agent-arbiter-smtp==0.8.1` can publish
+against `agent-arbiter-core==0.8.0`, but `agent-arbiter-smtp==0.9.0` requires a
+core package on the `0.9` line.
+
+GitHub publishing uses the shared `pypi` environment. PyPI must still have a
+matching trusted publisher for each project that will be uploaded.
+
+Additional meta packages, such as a future `agent-arbiter-mail`, can follow the
+same version-selection flow when they are added.
