@@ -795,3 +795,25 @@ def test_client_reports_clean_connection_failure(
         "Agent Arbiter connection error: could not connect to Agent Arbiter at "
         "http://127.0.0.1:8000/mcp. Is arbiter-server serve running?\n"
     )
+
+
+def test_client_reports_clean_read_failure(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeExceptionGroup(Exception):
+        def __init__(self, exceptions: tuple[BaseException, ...]) -> None:
+            super().__init__("unhandled errors in a TaskGroup")
+            self.exceptions = exceptions
+
+    def raise_read_error(*_args: object) -> int:
+        raise FakeExceptionGroup((httpx.ReadError("connection closed"),))
+
+    monkeypatch.setattr("agent_arbiter.client.anyio.run", raise_read_error)
+
+    assert client.main(["cap"]) == 1
+
+    assert capsys.readouterr().err == (
+        "Agent Arbiter connection error: could not connect to Agent Arbiter at "
+        "http://127.0.0.1:8000/mcp. Is arbiter-server serve running?\n"
+    )

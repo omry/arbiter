@@ -681,7 +681,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print_cli_error(str(exc), area="tool")
         return 1
     except BaseException as exc:
-        if _contains_exception(exc, httpx.ConnectError):
+        if _contains_exception(exc, httpx.TransportError):
             print_cli_error(
                 f"could not connect to Agent Arbiter at {namespace.mcp_url}. "
                 "Is arbiter-server serve running?",
