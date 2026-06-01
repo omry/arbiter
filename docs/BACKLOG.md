@@ -42,15 +42,6 @@ This file is the day-to-day queue for design and implementation gaps.
       metadata and deployment requirements docs agree; release notes and status notes
       are current; and a build/install smoke path is verified.
 
-- [ ] `P1` Make SMTP idempotency fail closed or remove the claim.
-      SMTP policy config exposes reserved `idempotency.expiration_days`, and docs
-      say unsupported idempotency settings fail closed, but runtime currently
-      neither implements idempotency nor rejects unsupported settings.
-      Acceptance checks: startup validation rejects unsupported/non-default
-      idempotency config until replay semantics are implemented, or the schema
-      and docs are narrowed so they no longer overclaim; tests cover the chosen
-      behavior; and README, website, and legacy docs agree.
-
 ## Post-v1
 
 - [ ] `P2` Clean up the legacy `docs/` directory now that the website exists.

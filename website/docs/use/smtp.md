@@ -41,8 +41,10 @@ The server enforces:
 - configured recipient policy
 - `max_recipients_per_message`
 - per-account per-process message rate limit
+- keyed idempotency replay/conflict handling
 - no caller override for SMTP host, TLS, credentials, sender identity, or
   `Reply-To`
 
-SMTP idempotency config is reserved for future runtime work. The server fails
-closed if unsupported idempotency settings are configured.
+Provide `idempotency_key` when retrying a send. The SMTP plugin stores
+successful keyed results in the policy's persistent cache and replays the same
+result for the same key and payload until the idempotency record expires.

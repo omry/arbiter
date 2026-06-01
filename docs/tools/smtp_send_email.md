@@ -101,7 +101,8 @@ Expected behavior:
 4. Resolve the deployment-owned sender identity for that account.
 5. Build an RFC 5322 message with plain text and optional HTML parts.
 6. Submit the message through the configured SMTP path.
-7. Return a success result with the generated Message-ID and recipient count.
+7. Return a success result with the generated Message-ID, recipient count, and
+   whether the result was replayed from idempotency storage.
 
 Header and envelope rules:
 
@@ -110,10 +111,11 @@ Header and envelope rules:
 - the caller may not provide a `Reply-To` override in v1
 - the caller must select a configured account explicitly
 
-Idempotency is reserved in config as
-`arbiter.policy.smtp.<policy>.idempotency.expiration_days`.
-The current server rejects non-default values for that field at startup until
-replay/conflict behavior is implemented.
+Callers can provide `idempotency_key` for retry-safe sends. The SMTP plugin
+stores successful keyed results in the policy's diskcache-backed
+`idempotency.cache_dir` for `idempotency.expiration_days`. Reusing the same key
+with the same effective payload returns the stored result with
+`idempotency_replayed: true`; reusing it with a different payload fails.
 
 ## Policy checks
 
@@ -123,7 +125,7 @@ replay/conflict behavior is implemented.
   per-process rolling 60-second limit
 - configured `max_recipients_per_message` is enforced
 - configured exact-recipient and domain-pattern allow/block rules are enforced
-- startup rejects non-default SMTP idempotency config
+- keyed retry dedupe is enforced through persistent SMTP idempotency storage
 - the caller may not override SMTP transport settings, `From`, or `Reply-To`
 
 ## Audit behavior
@@ -166,4 +168,4 @@ The v1 logging target is:
 - configured `max_messages_per_minute` is enforced
 - configured `max_recipients_per_message` is enforced
 - exact-recipient and domain-pattern recipient policy is enforced
-- startup rejects unsupported idempotency SMTP config
+- idempotency key replay and conflict behavior

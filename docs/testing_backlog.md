@@ -95,12 +95,6 @@ This file tracks the highest-value gaps between:
   - Status: `blocked`
   - Note: docs define the error model, but the implementation still surfaces raw exceptions
 
-- Idempotency replay and conflict behavior
-  - Why: retry safety
-  - Level: unit + integration
-  - Status: `blocked`
-  - Note: documented contract exists, implementation does not yet
-
 - Rate limiting enforcement
   - Why: policy correctness
   - Level: unit + integration

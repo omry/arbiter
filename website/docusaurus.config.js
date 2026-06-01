@@ -8,8 +8,8 @@ const config = {
   tagline: 'Policy-controlled service access for agents',
   favicon: 'img/logo-mark.svg',
 
-  url: 'https://omry.github.io',
-  baseUrl: '/agent-arbiter/',
+  url: 'https://arbiter.yadan.net',
+  baseUrl: '/',
 
   organizationName: 'omry',
   projectName: 'agent-arbiter',

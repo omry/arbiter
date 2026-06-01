@@ -91,7 +91,10 @@ Returned for unexpected server-side failures not covered by a more specific code
 
 - Retryability should be surfaced explicitly through the `retryable` field.
 - Idempotency should be used to prevent accidental duplicate sends caused by retries.
-- If the same `idempotency_key` is reused with the same effective payload before expiration, the server should replay the earlier normalized result and set `idempotency_replayed: true`.
-- Replay applies to prior success and prior failure results alike.
+- If the same `idempotency_key` is reused with the same effective payload before expiration, the server should replay the earlier successful result and set `idempotency_replayed: true`.
+- The current SMTP implementation stores successful keyed submissions. Failures
+  that occur before possible SMTP acceptance clear the reservation so callers
+  can retry with the same key; ambiguous or partial-acceptance failures leave
+  the key pending until expiration to avoid accidental duplicate sends.
 - A caller that wants to force a fresh submission attempt after a stored result must use a new `idempotency_key`.
 - Once the configured idempotency record expires, the same `idempotency_key` is treated as new work.

@@ -36,10 +36,8 @@ with `policy: <name>`. For example, multiple SMTP accounts can share
 Config bootstrap commands are documented in
 [config_bootstrap.md](config_bootstrap.md).
 
-Two surrounding areas are still only partially implemented:
+One surrounding area is still only partially implemented:
 
-- SMTP idempotency config is reserved for future runtime work. The current
-  server fails closed at startup if those unsupported fields are configured.
 - Durable audit storage and audit policy configuration are parked for post-v1.
   V1 examples avoid audit knobs because the runtime does not honor them yet.
 
@@ -152,8 +150,8 @@ before returning account and operation lists.
   `arbiter.policy.imap`.
 - A service is active when it has at least one configured account.
 - A configured account must reference an existing policy for that service.
-- Unsupported SMTP idempotency config currently fails closed during startup
-  validation instead of being silently ignored.
+- SMTP idempotency config controls the persistent retry-dedupe cache used when
+  callers provide an `idempotency_key`.
 
 ### SMTP service policy
 
@@ -165,8 +163,10 @@ send mail?"
 - `limits.max_messages_per_minute`: enforced as a per-account, per-process
   rolling 60-second submission cap
 - `limits.max_recipients_per_message`: enforced per submission
-- `idempotency.expiration_days`: reserved for future idempotency retention;
-  startup rejects configs that customize it today
+- `idempotency.expiration_days`: how long successful keyed send results remain
+  replayable
+- `idempotency.cache_dir`: diskcache-backed storage directory for keyed SMTP
+  send results
 - `recipient_policy`: outbound recipient guardrails
 
 ### IMAP service policy

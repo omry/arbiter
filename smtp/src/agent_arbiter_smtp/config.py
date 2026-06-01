@@ -22,6 +22,7 @@ class SMTPLimitsConfig:
 @dataclass
 class SMTPIdempotencyConfig:
     expiration_days: int = 7
+    cache_dir: str = ".agent-arbiter/smtp-idempotency"
 
 
 @dataclass

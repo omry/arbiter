@@ -17,8 +17,6 @@ Current implementation status:
 
 Known open gaps:
 
-- SMTP idempotency config is reserved for future work; the server fails closed
-  at startup if unsupported idempotency options are configured
 - durable audit storage is parked for post-v1, while startup/runtime logging is
   the v1 observability focus
 - normalized error-code responses are still a design contract, while the

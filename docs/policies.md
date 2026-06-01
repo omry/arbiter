@@ -133,6 +133,7 @@ The config schema includes these SMTP safety controls:
 - `arbiter.policy.smtp.<policy>.recipient_policy.allowed_domain_patterns`
 - `arbiter.policy.smtp.<policy>.recipient_policy.blocked_domain_patterns`
 - `arbiter.policy.smtp.<policy>.idempotency.expiration_days`
+- `arbiter.policy.smtp.<policy>.idempotency.cache_dir`
 
 Current runtime status:
 
@@ -140,8 +141,7 @@ Current runtime status:
 - `max_recipients_per_message` is enforced
 - `max_messages_per_minute` is enforced as a per-account, per-process rolling
   60-second limit
-- startup rejects non-default `idempotency.expiration_days` because
-  replay/conflict handling is not implemented yet
+- keyed SMTP sends use persistent idempotency replay/conflict handling
 
 Caller confirmation policy is configured through:
 

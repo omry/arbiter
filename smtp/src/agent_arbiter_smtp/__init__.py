@@ -4,6 +4,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from email.message import EmailMessage
 from email.utils import formataddr, make_msgid
+import hashlib
+import json
+import smtplib
 from time import monotonic
 from typing import Callable, Protocol, cast
 
@@ -21,6 +24,7 @@ from .config import (
     SMTPServicePolicyConfig,
     register_configs as register_smtp_configs,
 )
+from .idempotency import SMTPIdempotencyResult, SMTPIdempotencyStore
 
 __version__ = "0.8.0"
 CORE_API_VERSION = "0.8"
@@ -31,6 +35,7 @@ class SendEmailResult:
     tool: str
     message_id: str
     recipient_count: int
+    idempotency_replayed: bool = False
 
 
 class SMTPClientProtocol(Protocol):
@@ -44,6 +49,7 @@ class SMTPClientProtocol(Protocol):
 
 SMTPClientFactory = Callable[[SMTPConfig], SMTPClientProtocol]
 TimeProvider = Callable[[], float]
+SMTPIdempotencyStoreFactory = Callable[[str], SMTPIdempotencyStore]
 
 
 SEND_EMAIL_DESCRIPTION = (
@@ -86,6 +92,10 @@ SEND_EMAIL_INPUT_SCHEMA: dict[str, object] = {
             "items": {"type": "string"},
             "description": "BCC recipient email addresses.",
         },
+        "idempotency_key": {
+            "type": "string",
+            "description": "Optional caller-supplied key for retry-safe dedupe.",
+        },
     },
     "required": ["account", "to", "subject"],
     "additionalProperties": False,
@@ -101,6 +111,7 @@ class SMTPRuntime:
         policies: Mapping[str, object],
         smtp_client_factory: SMTPClientFactory,
         time_provider: TimeProvider = monotonic,
+        idempotency_store_factory: SMTPIdempotencyStoreFactory = SMTPIdempotencyStore,
     ) -> None:
         self._accounts = cast(Mapping[str, SMTPConfig], accounts)
         self._policies = cast(
@@ -109,8 +120,10 @@ class SMTPRuntime:
         )
         self._smtp_client_factory = smtp_client_factory
         self._time_provider = time_provider
+        self._idempotency_store_factory = idempotency_store_factory
+        self._idempotency_stores: dict[str, SMTPIdempotencyStore] = {}
         self._attempt_timestamps: dict[str, list[float]] = {}
-        self._validate_policy_references()
+        self._validate_config()
 
     def account_summaries(self) -> dict[str, object]:
         return {
@@ -135,6 +148,7 @@ class SMTPRuntime:
         html_body: str | None = None,
         cc: list[str] | None = None,
         bcc: list[str] | None = None,
+        idempotency_key: str | None = None,
     ) -> SendEmailResult:
         smtp_config, smtp_policy = self._resolve_context(account)
         recipients_to = self._normalize_recipients("to", to)
@@ -166,19 +180,67 @@ class SMTPRuntime:
 
         envelope_recipients = recipients_to + recipients_cc + recipients_bcc
         self._enforce_policy(account, smtp_policy, envelope_recipients)
-        self._consume_rate_limit(account, smtp_policy)
-        smtp_client = self._smtp_client_factory(smtp_config)
-        smtp_client.send(
-            message,
-            sender=smtp_config.from_email,
-            recipients=envelope_recipients,
-        )
 
-        return SendEmailResult(
+        normalized_idempotency_key = self._normalize_idempotency_key(idempotency_key)
+        payload_hash: str | None = None
+        cache_key: str | None = None
+        if normalized_idempotency_key is not None:
+            payload_hash = self._idempotency_payload_hash(
+                account=account,
+                policy=smtp_config.policy,
+                sender=smtp_config.from_email,
+                sender_name=smtp_config.from_name,
+                to=recipients_to,
+                cc=recipients_cc,
+                bcc=recipients_bcc,
+                subject=normalized_subject,
+                text_body=text_body,
+                html_body=html_body,
+            )
+            cache_key = self._idempotency_cache_key(
+                account=account,
+                idempotency_key=normalized_idempotency_key,
+            )
+            replayed_result = self._reserve_or_replay_idempotency(
+                smtp_policy,
+                cache_key=cache_key,
+                payload_hash=payload_hash,
+            )
+            if replayed_result is not None:
+                return replayed_result
+
+        try:
+            self._consume_rate_limit(account, smtp_policy)
+            smtp_client = self._smtp_client_factory(smtp_config)
+            smtp_client.send(
+                message,
+                sender=smtp_config.from_email,
+                recipients=envelope_recipients,
+            )
+        except Exception as exc:
+            if cache_key is not None and self._should_clear_idempotency_reservation(
+                exc,
+                envelope_recipients=envelope_recipients,
+            ):
+                self._idempotency_store(smtp_policy).delete(cache_key)
+            raise
+
+        result = SendEmailResult(
             tool="send_email",
             message_id=str(message["Message-ID"]),
             recipient_count=len(envelope_recipients),
         )
+        if cache_key is not None and payload_hash is not None:
+            self._idempotency_store(smtp_policy).store_success(
+                cache_key,
+                payload_hash=payload_hash,
+                result=SMTPIdempotencyResult(
+                    message_id=result.message_id,
+                    recipient_count=result.recipient_count,
+                ),
+                expire_seconds=self._idempotency_expire_seconds(smtp_policy),
+            )
+        return result
 
     def _resolve_context(
         self,
@@ -198,12 +260,22 @@ class SMTPRuntime:
 
         return smtp_config, smtp_policy
 
-    def _validate_policy_references(self) -> None:
+    def _validate_config(self) -> None:
         for account_name, smtp_config in sorted(self._accounts.items()):
             if smtp_config.policy not in self._policies:
                 raise ValueError(
                     "SMTP account references an unknown policy: "
                     f"{account_name} -> {smtp_config.policy}"
+                )
+        for policy_name, smtp_policy in sorted(self._policies.items()):
+            if smtp_policy.idempotency.expiration_days <= 0:
+                raise ValueError(
+                    "SMTP idempotency expiration_days must be positive: "
+                    f"{policy_name}"
+                )
+            if not smtp_policy.idempotency.cache_dir.strip():
+                raise ValueError(
+                    f"SMTP idempotency cache_dir must be non-empty: {policy_name}"
                 )
 
     def _normalize_recipients(
@@ -319,6 +391,123 @@ class SMTPRuntime:
                 return True
         return False
 
+    def _normalize_idempotency_key(self, idempotency_key: str | None) -> str | None:
+        if idempotency_key is None:
+            return None
+        normalized = idempotency_key.strip()
+        if not normalized:
+            raise ValueError("send_email idempotency_key must be non-empty")
+        return normalized
+
+    def _idempotency_payload_hash(
+        self,
+        *,
+        account: str,
+        policy: str,
+        sender: str,
+        sender_name: str,
+        to: list[str],
+        cc: list[str],
+        bcc: list[str],
+        subject: str,
+        text_body: str | None,
+        html_body: str | None,
+    ) -> str:
+        payload = {
+            "account": account,
+            "policy": policy,
+            "sender": sender,
+            "sender_name": sender_name,
+            "to": to,
+            "cc": cc,
+            "bcc": bcc,
+            "subject": subject,
+            "text_body": text_body,
+            "html_body": html_body,
+        }
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
+        return hashlib.sha256(encoded).hexdigest()
+
+    def _idempotency_cache_key(self, *, account: str, idempotency_key: str) -> str:
+        return f"smtp:{account}:{idempotency_key}"
+
+    def _reserve_or_replay_idempotency(
+        self,
+        smtp_policy: SMTPServicePolicyConfig,
+        *,
+        cache_key: str,
+        payload_hash: str,
+    ) -> SendEmailResult | None:
+        store = self._idempotency_store(smtp_policy)
+        expire_seconds = self._idempotency_expire_seconds(smtp_policy)
+        if store.add_pending(
+            cache_key,
+            payload_hash=payload_hash,
+            expire_seconds=expire_seconds,
+        ):
+            return None
+
+        record = store.get(cache_key)
+        if record is None:
+            if store.add_pending(
+                cache_key,
+                payload_hash=payload_hash,
+                expire_seconds=expire_seconds,
+            ):
+                return None
+            record = store.get(cache_key)
+        if record is None:
+            raise ValueError("send_email idempotency cache reservation failed")
+        if record.payload_hash != payload_hash:
+            raise ValueError(
+                "send_email idempotency_key was reused with a different payload"
+            )
+        if record.result is None:
+            raise ValueError("send_email idempotency_key is already in progress")
+        return SendEmailResult(
+            tool="send_email",
+            message_id=record.result.message_id,
+            recipient_count=record.result.recipient_count,
+            idempotency_replayed=True,
+        )
+
+    def _idempotency_store(
+        self,
+        smtp_policy: SMTPServicePolicyConfig,
+    ) -> SMTPIdempotencyStore:
+        cache_dir = smtp_policy.idempotency.cache_dir
+        store = self._idempotency_stores.get(cache_dir)
+        if store is None:
+            store = self._idempotency_store_factory(cache_dir)
+            self._idempotency_stores[cache_dir] = store
+        return store
+
+    def _idempotency_expire_seconds(
+        self,
+        smtp_policy: SMTPServicePolicyConfig,
+    ) -> int:
+        return smtp_policy.idempotency.expiration_days * 24 * 60 * 60
+
+    def _should_clear_idempotency_reservation(
+        self,
+        exc: Exception,
+        *,
+        envelope_recipients: list[str],
+    ) -> bool:
+        if isinstance(exc, smtplib.SMTPRecipientsRefused):
+            refused_recipients = {
+                recipient.strip().lower() for recipient in exc.recipients
+            }
+            attempted_recipients = {
+                recipient.strip().lower() for recipient in envelope_recipients
+            }
+            return attempted_recipients <= refused_recipients
+        if isinstance(exc, smtplib.SMTPServerDisconnected):
+            return False
+        return True
+
 
 def _smtp_account_bootstrap_template(
     *,
@@ -378,6 +567,7 @@ limits:
 # Dedupe window for repeated send attempts.
 idempotency:
   expiration_days: 7
+  cache_dir: .agent-arbiter/smtp-idempotency
 
 # Empty lists do not restrict recipients. Add entries to enforce allow/block rules.
 recipient_policy:
@@ -472,11 +662,13 @@ class SMTPServicePlugin:
             html_body=cast(str | None, arguments.get("html_body")),
             cc=cast(list[str] | None, arguments.get("cc")),
             bcc=cast(list[str] | None, arguments.get("bcc")),
+            idempotency_key=cast(str | None, arguments.get("idempotency_key")),
         )
         return {
             "ok": True,
             "message_id": result.message_id,
             "recipient_count": result.recipient_count,
+            "idempotency_replayed": result.idempotency_replayed,
         }
 
 

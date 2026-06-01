@@ -137,6 +137,18 @@ def _smtp_runtime(
     smtp_client_factory: RecordingSMTPClientFactory | None = None,
     time_provider: FakeClock | None = None,
 ) -> SMTPRuntime:
+    if time_provider is None:
+        return SMTPRuntime(
+            accounts=accounts
+            or {
+                "primary": SMTPConfig(
+                    description="Primary SMTP account",
+                    policy="bot",
+                )
+            },
+            policies=policies or {"bot": SMTPServicePolicyConfig()},
+            smtp_client_factory=smtp_client_factory or RecordingSMTPClientFactory(),
+        )
     return SMTPRuntime(
         accounts=accounts
         or {
@@ -147,7 +159,7 @@ def _smtp_runtime(
         },
         policies=policies or {"bot": SMTPServicePolicyConfig()},
         smtp_client_factory=smtp_client_factory or RecordingSMTPClientFactory(),
-        **({"time_provider": time_provider} if time_provider is not None else {}),
+        time_provider=time_provider,
     )
 
 

@@ -2434,6 +2434,7 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
             html_body: str | None = None,
             cc: list[str] | None = None,
             bcc: list[str] | None = None,
+            idempotency_key: str | None = None,
         ) -> SendEmailResult:
             send_email_calls.append(
                 {
@@ -2444,6 +2445,7 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
                     "html_body": html_body,
                     "cc": cc,
                     "bcc": bcc,
+                    "idempotency_key": idempotency_key,
                 }
             )
             return SendEmailResult(
@@ -2589,6 +2591,7 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
             html_body: str | None = None,
             cc: list[str] | None = None,
             bcc: list[str] | None = None,
+            idempotency_key: str | None = None,
         ) -> SimpleNamespace:
             send_email_calls.append(
                 {
@@ -2599,6 +2602,7 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
                     "html_body": html_body,
                     "cc": cc,
                     "bcc": bcc,
+                    "idempotency_key": idempotency_key,
                 }
             )
             return SimpleNamespace(
@@ -2878,6 +2882,7 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
         tools["describe_op"](id="smtp:send_email"),
     )
     assert smtp_operation["input_schema"]["required"] == ["account", "to", "subject"]
+    assert "idempotency_key" in smtp_operation["input_schema"]["properties"]
 
     send_result = tools["run_op"](
         id="smtp:send_email",
@@ -2895,6 +2900,7 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
         "ok": True,
         "message_id": "<message-id@example.com>",
         "recipient_count": 3,
+        "idempotency_replayed": False,
     }
     assert send_email_calls == [
         {
@@ -2905,8 +2911,37 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
             "html_body": None,
             "cc": ["cc@example.com"],
             "bcc": ["bcc@example.com"],
+            "idempotency_key": None,
         }
     ]
+
+    send_idempotent_result = tools["run_op"](
+        id="smtp:send_email",
+        arguments={
+            "account": "primary",
+            "to": ["to@example.com"],
+            "subject": "Hello",
+            "text_body": "Plain body",
+            "idempotency_key": "send-1",
+        },
+    )
+
+    assert send_idempotent_result == {
+        "ok": True,
+        "message_id": "<message-id@example.com>",
+        "recipient_count": 1,
+        "idempotency_replayed": False,
+    }
+    assert send_email_calls[-1] == {
+        "account": "primary",
+        "to": ["to@example.com"],
+        "subject": "Hello",
+        "text_body": "Plain body",
+        "html_body": None,
+        "cc": None,
+        "bcc": None,
+        "idempotency_key": "send-1",
+    }
 
     assert tools["run_op"](
         id="imap:list_messages",
