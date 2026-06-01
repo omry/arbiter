@@ -71,6 +71,68 @@ def _write_fixture(root: Path) -> None:
         path.write_text(content, encoding="utf-8")
 
 
+def _write_dev_fixture(root: Path) -> None:
+    files = {
+        "pyproject.toml": """[project]
+name = "agent-arbiter"
+version = "0.9.0.dev1"
+dependencies = [
+  "agent-arbiter-core==0.9.0.dev1",
+  "agent-arbiter-smtp==0.9.0.dev1",
+  "agent-arbiter-imap==0.9.0.dev1",
+]
+""",
+        "core/pyproject.toml": """[project]
+name = "agent-arbiter-core"
+version = "0.9.0.dev1"
+""",
+        "smtp/pyproject.toml": """[project]
+name = "agent-arbiter-smtp"
+version = "0.9.0.dev1"
+dependencies = [
+  "agent-arbiter-core>=0.9.0.dev1,<0.10.0",
+]
+""",
+        "imap/pyproject.toml": """[project]
+name = "agent-arbiter-imap"
+version = "0.9.0.dev1"
+dependencies = [
+  "agent-arbiter-core>=0.9.0.dev1,<0.10.0",
+]
+""",
+        "core/src/agent_arbiter/version.py": '__version__ = "0.9.0.dev1"\n',
+        "smtp/src/agent_arbiter_smtp/__init__.py": (
+            '__version__ = "0.9.0.dev1"\nCORE_API_VERSION = "0.9"\n'
+        ),
+        "imap/src/agent_arbiter_imap/__init__.py": (
+            '__version__ = "0.9.0.dev1"\nCORE_API_VERSION = "0.9"\n'
+        ),
+        "docs/overview.md": "- Version: `0.9.0.dev1`\n",
+        "website/docs/operate/deployment/packages.md": (
+            "agent-arbiter==0.9.0.dev1\n"
+            "agent-arbiter-core==0.9.0.dev1\n"
+            "agent-arbiter-smtp==0.9.0.dev1\n"
+            "/wheels/agent_arbiter_core-0.9.0.dev1-py3-none-any.whl\n"
+            "/wheels/agent_arbiter_smtp-0.9.0.dev1-py3-none-any.whl\n"
+            "dev version such as `0.9.0.dev1`\n"
+        ),
+        "website/docs/operate/server-reference.md": (
+            "agent-arbiter-core==0.9.0.dev1\n"
+        ),
+        "website/docs/extend/plugins.md": (
+            "`0.9.x` should use a plugin version on the `0.9` line, "
+            "such as `0.9.0.dev1`, `0.9.0`, or `0.9.1`.\n"
+            '    version = "0.9.0.dev1"\n'
+            '    core_api_version = "0.9"\n'
+            '  "agent-arbiter-core>=0.9.0.dev1,<0.10.0",\n'
+        ),
+    }
+    for relative_path, content in files.items():
+        path = root / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+
 def _run_tool(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(SCRIPT), "--root", str(root), *args],
@@ -124,6 +186,52 @@ def test_upgrade_release_version_updates_packages_runtime_and_docs(
     assert '"agent-arbiter-core>=0.9.0,<0.10.0"' in plugin_docs
 
 
+def test_upgrade_release_version_promotes_dev_version_to_final_same_line(
+    tmp_path: Path,
+) -> None:
+    _write_dev_fixture(tmp_path)
+
+    result = _run_tool(tmp_path, "0.9")
+
+    assert result.returncode == 0, result.stderr
+    assert 'version = "0.9.0"' in (tmp_path / "pyproject.toml").read_text(
+        encoding="utf-8"
+    )
+    assert '"agent-arbiter-imap==0.9.0"' in (tmp_path / "pyproject.toml").read_text(
+        encoding="utf-8"
+    )
+    assert '"agent-arbiter-core>=0.9.0,<0.10.0"' in (
+        tmp_path / "smtp/pyproject.toml"
+    ).read_text(encoding="utf-8")
+    deployment_docs = (
+        tmp_path / "website/docs/operate/deployment/packages.md"
+    ).read_text(encoding="utf-8")
+    plugin_docs = (tmp_path / "website/docs/extend/plugins.md").read_text(
+        encoding="utf-8"
+    )
+    assert "agent-arbiter==0.9.0\n" in deployment_docs
+    assert "agent-arbiter==0.9.0.dev1" not in deployment_docs
+    assert "dev version such as `0.9.0.dev1`" in deployment_docs
+    assert "such as `0.9.0` or\n`0.9.1`" in plugin_docs
+    assert "such as `0.9.0`,\n`0.9.0`" not in plugin_docs
+
+
+def test_upgrade_release_version_updates_dev_docs_to_next_line_without_stale_suffix(
+    tmp_path: Path,
+) -> None:
+    _write_dev_fixture(tmp_path)
+
+    result = _run_tool(tmp_path, "--dry-run", "1.0")
+
+    assert result.returncode == 0, result.stderr
+    assert "+agent-arbiter==1.0.0" in result.stdout
+    assert '+  "agent-arbiter-core>=1.0.0,<1.1.0"' in result.stdout
+    assert "+/wheels/agent_arbiter_core-1.0.0-py3-none-any.whl" in result.stdout
+    assert "1.0.0.dev1,<" not in result.stdout
+    assert "such as `1.0.0` or\n+`1.0.1`" in result.stdout
+    assert "such as `1.0.0`,\n+`1.0.0`" not in result.stdout
+
+
 def test_upgrade_release_version_rejects_same_or_older_release_line(
     tmp_path: Path,
 ) -> None:
@@ -146,6 +254,17 @@ def test_upgrade_release_version_check_accepts_matching_release_line(
 
     assert result.returncode == 0, result.stderr
     assert "release line check passed: 0.8 (0.8.0)" in result.stdout
+
+
+def test_upgrade_release_version_check_accepts_matching_dev_release_line(
+    tmp_path: Path,
+) -> None:
+    _write_dev_fixture(tmp_path)
+
+    result = _run_tool(tmp_path, "--check", "0.9")
+
+    assert result.returncode == 0, result.stderr
+    assert "release line check passed: 0.9 (0.9.0.dev1)" in result.stdout
 
 
 def test_upgrade_release_version_check_rejects_mismatched_release_line(

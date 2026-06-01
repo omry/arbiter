@@ -23,7 +23,7 @@ from .config import (
 
 from .client import FetchedIMAPMessage
 
-__version__ = "0.9.0"
+__version__ = "0.9.0.dev1"
 CORE_API_VERSION = "0.9"
 
 

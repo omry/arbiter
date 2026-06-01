@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from functools import total_ordering
 import json
 import os
 import re
@@ -40,27 +41,46 @@ PACKAGE_BY_KEY = {
 PACKAGE_KEYS = tuple(PACKAGE_BY_KEY)
 
 
-@dataclass(frozen=True, order=True)
+@total_ordering
+@dataclass(frozen=True)
 class Version:
     major: int
     minor: int
     patch: int
+    dev: int | None = None
 
     @classmethod
     def parse(cls, value: str) -> "Version":
         match = re.fullmatch(
-            r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)",
+            r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+            r"(?:[.-]dev(0|[1-9][0-9]*))?",
             value,
         )
         if match is None:
             raise ValueError(
-                f"only final MAJOR.MINOR.PATCH versions are supported: {value}"
+                "only MAJOR.MINOR.PATCH and MAJOR.MINOR.PATCH.devN versions "
+                f"are supported: {value}"
             )
         return cls(
             major=int(match.group(1)),
             minor=int(match.group(2)),
             patch=int(match.group(3)),
+            dev=int(match.group(4)) if match.group(4) is not None else None,
         )
+
+    def _sort_key(self) -> tuple[int, int, int, int, int]:
+        return (
+            self.major,
+            self.minor,
+            self.patch,
+            1 if self.dev is None else 0,
+            self.dev or 0,
+        )
+
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, Version):
+            return NotImplemented
+        return self._sort_key() < other._sort_key()
 
     @property
     def line(self) -> tuple[int, int]:
@@ -68,7 +88,10 @@ class Version:
 
     @property
     def text(self) -> str:
-        return f"{self.major}.{self.minor}.{self.patch}"
+        version = f"{self.major}.{self.minor}.{self.patch}"
+        if self.dev is not None:
+            version = f"{version}.dev{self.dev}"
+        return version
 
 
 @dataclass(frozen=True)

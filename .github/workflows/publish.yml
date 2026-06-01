@@ -49,6 +49,11 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           RELEASE_LINE_INPUT: ${{ inputs.release_line }}
         run: |
+          project_version="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' pyproject.toml | head -n 1)"
+          if [[ -z "$project_version" ]]; then
+            echo "Could not read project version from pyproject.toml" >&2
+            exit 1
+          fi
           if [[ "${{ github.event_name }}" == "release" ]]; then
             tag="$RELEASE_TAG"
             if [[ ! "$tag" =~ ^v([0-9]+)\.([0-9]+)\.0$ ]]; then
@@ -57,13 +62,21 @@ jobs:
             fi
             release_line="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
             release_version="${release_line}.0"
+            if [[ "$project_version" != "$release_version" ]]; then
+              echo "Project version $project_version does not match release tag $tag" >&2
+              exit 1
+            fi
           else
             release_line="$RELEASE_LINE_INPUT"
             if [[ ! "$release_line" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
               echo "Release line must use MAJOR.MINOR, got: $release_line" >&2
               exit 1
             fi
-            release_version="${release_line}.0"
+            release_version="$project_version"
+            if [[ "$release_version" != "$release_line".* ]]; then
+              echo "Project version $release_version is not on release line $release_line" >&2
+              exit 1
+            fi
           fi
           echo "release_line=$release_line" >> "$GITHUB_OUTPUT"
           echo "release_version=$release_version" >> "$GITHUB_OUTPUT"

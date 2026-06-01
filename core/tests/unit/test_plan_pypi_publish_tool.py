@@ -38,11 +38,11 @@ version = "{version}"
     )
 
 
-def _write_fixture(root: Path, *, imap_version: str = "0.9.0") -> None:
-    _write_project(root, ".", "agent-arbiter", "0.9.0")
-    _write_project(root, "core", "agent-arbiter-core", "0.9.0")
+def _write_fixture(root: Path, *, imap_version: str = "0.9.0.dev1") -> None:
+    _write_project(root, ".", "agent-arbiter", "0.9.0.dev1")
+    _write_project(root, "core", "agent-arbiter-core", "0.9.0.dev1")
     _write_project(root, "imap", "agent-arbiter-imap", imap_version)
-    _write_project(root, "smtp", "agent-arbiter-smtp", "0.9.0")
+    _write_project(root, "smtp", "agent-arbiter-smtp", "0.9.0.dev1")
 
 
 def _parse_package_keys(tool: ModuleType) -> Callable[[str], frozenset[str] | None]:
@@ -63,6 +63,15 @@ def test_parse_package_keys_accepts_all_and_comma_separated_keys() -> None:
     assert parse_package_keys(" core,imap,meta:all ") == frozenset(
         {"core", "imap", "meta:all"}
     )
+
+
+def test_version_accepts_final_and_dev_versions() -> None:
+    tool = _load_tool()
+    version_type = getattr(tool, "Version")
+
+    assert version_type.parse("0.9.0").text == "0.9.0"
+    assert version_type.parse("0.9.0-dev1").text == "0.9.0.dev1"
+    assert version_type.parse("0.9.0.dev1") < version_type.parse("0.9.0")
 
 
 def test_parse_package_keys_rejects_unknown_and_mixed_all_keys() -> None:

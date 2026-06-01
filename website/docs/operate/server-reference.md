@@ -124,7 +124,7 @@ arbiter-server deploy docker update [docker.dir=PATH] [docker.requirement=REQ ..
 - `docker.dir=PATH`: deployment directory to create or update.
 - `docker.requirement=REQ`: package requirement to seed into
   `requirements.txt` when it is created. Package requirements must be exact
-  pins such as `agent-arbiter-core==0.9.0`; absolute container paths are allowed
+  pins such as `agent-arbiter-core==0.9.0.dev1`; absolute container paths are allowed
   for local source testing when a local Compose override mounts the source tree.
   May be repeated for explicit core and plugin pins.
 

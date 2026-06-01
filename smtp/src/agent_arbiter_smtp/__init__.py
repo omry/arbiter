@@ -26,7 +26,7 @@ from .config import (
 )
 from .idempotency import SMTPIdempotencyResult, SMTPIdempotencyStore
 
-__version__ = "0.9.0"
+__version__ = "0.9.0.dev1"
 CORE_API_VERSION = "0.9"
 
 

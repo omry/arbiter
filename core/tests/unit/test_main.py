@@ -1667,9 +1667,9 @@ def test_cli_lists_plugins_as_json(
     assert main(["--config-dir", "/tmp", "plugins", "list", "--json"]) == 0
 
     assert capsys.readouterr().out == (
-        '{"core": {"version": "0.9.0", "api_version": "0.9"}, '
-        '"plugins": [{"name": "imap", "version": "0.9.0", '
-        '"core_api_version": "0.9"}, {"name": "smtp", "version": "0.9.0", '
+        '{"core": {"version": "0.9.0.dev1", "api_version": "0.9"}, '
+        '"plugins": [{"name": "imap", "version": "0.9.0.dev1", '
+        '"core_api_version": "0.9"}, {"name": "smtp", "version": "0.9.0.dev1", '
         '"core_api_version": "0.9"}]}\n'
     )
 
@@ -1686,10 +1686,10 @@ def test_cli_version_prints_core_and_plugin_versions(
     assert main(["--config-dir", "/tmp", "version"]) == 0
 
     assert capsys.readouterr().out == (
-        "core 0.9.0 (api 0.9)\n"
+        "core 0.9.0.dev1 (api 0.9)\n"
         "plugins:\n"
-        "  imap 0.9.0 (core api 0.9)\n"
-        "  smtp 0.9.0 (core api 0.9)\n"
+        "  imap 0.9.0.dev1 (core api 0.9)\n"
+        "  smtp 0.9.0.dev1 (core api 0.9)\n"
     )
 
 
@@ -1705,9 +1705,9 @@ def test_cli_version_can_print_json(
     assert main(["--config-dir", "/tmp", "version", "--json"]) == 0
 
     assert capsys.readouterr().out == (
-        '{"core": {"version": "0.9.0", "api_version": "0.9"}, '
-        '"plugins": [{"name": "imap", "version": "0.9.0", '
-        '"core_api_version": "0.9"}, {"name": "smtp", "version": "0.9.0", '
+        '{"core": {"version": "0.9.0.dev1", "api_version": "0.9"}, '
+        '"plugins": [{"name": "imap", "version": "0.9.0.dev1", '
+        '"core_api_version": "0.9"}, {"name": "smtp", "version": "0.9.0.dev1", '
         '"core_api_version": "0.9"}]}\n'
     )
 
@@ -2763,10 +2763,10 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     assert sorted(tools) == sorted(CORE_TOOL_NAMES)
 
     assert tools["version_info"]() == {
-        "core": {"version": "0.9.0", "api_version": "0.9"},
+        "core": {"version": "0.9.0.dev1", "api_version": "0.9"},
         "plugins": [
-            {"name": "imap", "version": "0.9.0", "core_api_version": "0.9"},
-            {"name": "smtp", "version": "0.9.0", "core_api_version": "0.9"},
+            {"name": "imap", "version": "0.9.0.dev1", "core_api_version": "0.9"},
+            {"name": "smtp", "version": "0.9.0.dev1", "core_api_version": "0.9"},
         ],
     }
     assert tools["list_caps"]() == {"capabilities": ["imap", "smtp"]}

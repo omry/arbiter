@@ -5,7 +5,7 @@ title: Packages And Wheels
 `requirements.txt` is a small pip requirements file installed inside the
 container at startup.
 
-Package entries must be exact pins such as `agent-arbiter==0.9.0`; unpinned
+Package entries must be exact pins such as `agent-arbiter==0.9.0.dev1`; unpinned
 names and version ranges are rejected by `docker.requirement=...`,
 `arbiter-docker doctor`, and service start/restart commands.
 
@@ -23,7 +23,7 @@ arbiter-server --version
 The default file looks like:
 
 ```text title="./arbiter-docker/requirements.txt"
-agent-arbiter==0.9.0
+agent-arbiter==0.9.0.dev1
 ```
 
 That meta package installs the core package and the default plugin packages for
@@ -36,8 +36,8 @@ If you want explicit plugin control, seed the file with repeated
 
 ```bash
 arbiter-server deploy docker \
-  docker.requirement=agent-arbiter-core==0.9.0 \
-  docker.requirement=agent-arbiter-smtp==0.9.0 \
+  docker.requirement=agent-arbiter-core==0.9.0.dev1 \
+  docker.requirement=agent-arbiter-smtp==0.9.0.dev1 \
   init
 ```
 
@@ -64,8 +64,8 @@ The requirements file can keep pinned package names that resolve from the
 wheelhouse, or it can name wheels directly:
 
 ```text title="./arbiter-docker/requirements.txt"
-/wheels/agent_arbiter_core-0.9.0-py3-none-any.whl
-/wheels/agent_arbiter_smtp-0.9.0-py3-none-any.whl
+/wheels/agent_arbiter_core-0.9.0.dev1-py3-none-any.whl
+/wheels/agent_arbiter_smtp-0.9.0.dev1-py3-none-any.whl
 ```
 
 ## Local checkout testing

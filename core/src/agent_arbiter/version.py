@@ -4,7 +4,7 @@ from importlib.metadata import PackageNotFoundError, version
 import re
 
 
-__version__ = "0.9.0"
+__version__ = "0.9.0.dev1"
 _VERSION_LINE_PATTERN = re.compile(r"^(?P<major>\d+)\.(?P<minor>\d+)(?:\.|$)")
 
 
