@@ -42,6 +42,18 @@ This file is the day-to-day queue for design and implementation gaps.
       metadata and deployment requirements docs agree; release notes and status notes
       are current; and a build/install smoke path is verified.
 
+- [ ] `P1` Run an Agent Arbiter security analysis before initial release.
+      Do one focused threat-model and implementation review pass over the
+      current architecture before publishing packages. Cover the MCP boundary,
+      local and Docker deployment modes, config and env-file handling, plugin
+      discovery/loading, package supply chain assumptions, secret handling,
+      SMTP/IMAP operation policies, logging, and known audit gaps.
+      Acceptance checks: produce a short written security analysis with trust
+      boundaries, assets, attacker assumptions, and prioritized findings; turn
+      concrete fixes into backlog items or immediate patches; document any
+      explicit accepted risks for the initial release; and confirm operator
+      docs do not overstate the current security model.
+
 ## Post-v1
 
 - [ ] `P2` Clean up the legacy `docs/` directory now that the website exists.

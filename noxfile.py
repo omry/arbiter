@@ -15,7 +15,9 @@ BLACK_TARGETS = [
     "imap/src",
     "imap/tests",
     "noxfile.py",
+    "tools/extract_release_notes",
     "tools/plan_pypi_publish",
+    "tools/upgrade_release_line",
 ]
 SUPPORTED_PYTHONS = nox.project.python_versions(PYPROJECT)
 STRICT_MYPY_TARGETS = ["core/src", "smtp/src", "imap/src"]

@@ -4,11 +4,11 @@ from collections.abc import Callable, ItemsView, KeysView, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, NoReturn, Protocol, TypeVar
 
-from .version import compatibility_line, core_api_version, core_version
+from .version import arbiter_core_version, compatibility_line, core_api_version
 
 
 RuntimeT = TypeVar("RuntimeT")
-CORE_VERSION = core_version()
+CORE_VERSION = arbiter_core_version()
 CORE_API_VERSION = core_api_version()
 
 

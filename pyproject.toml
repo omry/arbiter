@@ -42,6 +42,7 @@ dev = [
   "black>=25.0,<26.0",
   "mypy>=1.11,<2.0",
   "pytest>=7.4,<9.0",
+  "towncrier>=24.8,<25.0",
   "trustme>=1.2,<2.0",
 ]
 
@@ -65,3 +66,9 @@ mypy_path = "core/src:smtp/src:imap/src"
 
 [tool.black]
 target-version = ["py310"]
+
+[tool.towncrier]
+name = "Agent Arbiter"
+filename = "NEWS.md"
+directory = "newsfragments"
+issue_format = "#{issue}"

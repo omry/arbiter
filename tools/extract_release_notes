@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+from dataclasses import dataclass
+import re
+import sys
+from collections.abc import Sequence
+from pathlib import Path
+
+
+@dataclass(frozen=True)
+class ReleaseNotesTarget:
+    project_name: str
+    filename: Path
+
+
+RELEASE_NOTES_TARGETS = {
+    "core": ReleaseNotesTarget("Agent Arbiter Core", Path("core/NEWS.md")),
+    "imap": ReleaseNotesTarget("Agent Arbiter IMAP", Path("imap/NEWS.md")),
+    "smtp": ReleaseNotesTarget("Agent Arbiter SMTP", Path("smtp/NEWS.md")),
+    "meta:all": ReleaseNotesTarget("Agent Arbiter", Path("NEWS.md")),
+}
+
+
+def extract_release_notes(
+    text: str, version: str, *, project_name: str = "Agent Arbiter"
+) -> str:
+    heading_pattern = re.compile(
+        rf"^#\s+{re.escape(project_name)}\s+" rf"{re.escape(version)}\s+\([^)]+\)\s*$",
+        re.MULTILINE,
+    )
+    heading = heading_pattern.search(text)
+    if heading is None:
+        raise ValueError(
+            f"NEWS.md does not contain release notes for {project_name} {version}"
+        )
+
+    next_heading = re.search(r"^#\s+", text[heading.end() :], re.MULTILINE)
+    end = heading.end() + next_heading.start() if next_heading else len(text)
+    return text[heading.start() : end].strip() + "\n"
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Extract a committed NEWS.md section for a release."
+    )
+    parser.add_argument("version", help="release version, for example 0.9.0")
+    parser.add_argument(
+        "--package-key",
+        choices=tuple(RELEASE_NOTES_TARGETS),
+        help="known publish package key whose NEWS.md should be read",
+    )
+    parser.add_argument(
+        "--file",
+        type=Path,
+        default=None,
+        help="release notes file to read",
+    )
+    parser.add_argument(
+        "--project-name",
+        default=None,
+        help="project heading name used by towncrier",
+    )
+    args = parser.parse_args(argv)
+
+    target = (
+        RELEASE_NOTES_TARGETS[args.package_key]
+        if args.package_key is not None
+        else RELEASE_NOTES_TARGETS["meta:all"]
+    )
+    filename = args.file if args.file is not None else target.filename
+    project_name = (
+        args.project_name if args.project_name is not None else target.project_name
+    )
+
+    try:
+        text = filename.read_text(encoding="utf-8")
+        notes = extract_release_notes(text, args.version, project_name=project_name)
+    except OSError as exc:
+        print(f"extract_release_notes: {exc}", file=sys.stderr)
+        return 1
+    except ValueError as exc:
+        print(f"extract_release_notes: {filename}: {exc}", file=sys.stderr)
+        return 1
+
+    print(notes, end="")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

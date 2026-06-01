@@ -48,6 +48,22 @@ from agent_arbiter.services import (
 )
 
 
+def _patch_meta_all_version(monkeypatch: pytest.MonkeyPatch, version: str) -> None:
+    def fake_distribution_version(
+        distribution_name: str,
+        *,
+        package_file: str | Path | None = None,
+    ) -> str:
+        assert distribution_name == "agent-arbiter"
+        assert package_file is None
+        return version
+
+    monkeypatch.setattr(
+        "agent_arbiter.main.distribution_version",
+        fake_distribution_version,
+    )
+
+
 def test_build_app_accepts_hydra_config() -> None:
     cfg = OmegaConf.structured(_app_config_with_smtp_imap())
 
@@ -642,7 +658,8 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("agent_arbiter.main.package_version", lambda: "1.2.3")
+    _patch_meta_all_version(monkeypatch, "1.2.3")
+    monkeypatch.setattr("agent_arbiter.main.arbiter_core_version", lambda: "9.8.7")
     deploy_dir = tmp_path / "docker"
 
     assert (
@@ -689,6 +706,7 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
         (deploy_dir / ".agent-arbiter-deploy.json").read_text(encoding="utf-8")
     )
     assert manifest["generator"] == "arbiter-server deploy docker"
+    assert manifest["agent_arbiter_core_version"] == "9.8.7"
     assert sorted(manifest["files"]) == [
         "arbiter-docker",
         "compose.yaml",
@@ -782,6 +800,61 @@ def test_cli_deploy_docker_init_accepts_multiple_requirements(
     capsys.readouterr()
 
 
+def test_cli_deploy_docker_init_expands_meta_package_with_package_override(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=agent-arbiter==0.9.0",
+                "docker.requirement=agent-arbiter-smtp==0.9.1",
+                "init",
+            ]
+        )
+        == 0
+    )
+
+    assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
+        "agent-arbiter-core==0.9.0\n"
+        "agent-arbiter-smtp==0.9.1\n"
+        "agent-arbiter-imap==0.9.0\n"
+    )
+    capsys.readouterr()
+
+
+def test_cli_deploy_docker_init_rejects_conflicting_duplicate_package_pins(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=agent-arbiter-smtp==0.9.1",
+                "docker.requirement=agent-arbiter-smtp==0.9.2",
+                "init",
+            ]
+        )
+        == 2
+    )
+
+    assert capsys.readouterr().err == (
+        "Agent Arbiter deploy error: conflicting docker.requirement pins for "
+        "agent-arbiter-smtp: 0.9.1, 0.9.2\n"
+    )
+    assert not deploy_dir.exists()
+
+
 def test_cli_deploy_docker_init_rejects_unpinned_requirement(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -814,7 +887,7 @@ def test_cli_deploy_docker_init_uses_local_checkout_default_requirements(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("agent_arbiter.main.package_version", lambda: "0.9.0.dev1")
+    _patch_meta_all_version(monkeypatch, "unknown")
     checkout = tmp_path / "checkout"
     checkout.mkdir()
     (checkout / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
@@ -846,7 +919,7 @@ def test_cli_deploy_docker_init_rejects_unlocated_local_dev_default_requirement(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("agent_arbiter.main.package_version", lambda: "0.9.0.dev1")
+    _patch_meta_all_version(monkeypatch, "unknown")
     outside_checkout = tmp_path / "outside"
     outside_checkout.mkdir()
     monkeypatch.chdir(outside_checkout)
@@ -856,8 +929,10 @@ def test_cli_deploy_docker_init_rejects_unlocated_local_dev_default_requirement(
 
     assert capsys.readouterr().err == (
         "Agent Arbiter deploy error: cannot infer default docker requirements\n"
-        "  pass docker.requirement=agent-arbiter==VERSION for a published "
-        "package\n"
+        "  pass docker.requirement=agent-arbiter==VERSION for the all-in-one "
+        "meta package\n"
+        "  or pass one or more docker.requirement=PACKAGE==VERSION entries "
+        "for another meta package or explicit packages\n"
         "  for a local checkout, run this command from the checkout or pass "
         "absolute container source paths\n"
     )
@@ -988,6 +1063,67 @@ def test_cli_deploy_docker_generated_helper_doctor_rejects_unpinned_requirements
         in result.stdout
     )
     assert "\033[" not in result.stdout
+
+
+def test_cli_deploy_docker_generated_helper_doctor_rejects_raw_meta_override(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=agent-arbiter==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    config_dir = deploy_dir / "conf"
+    (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / ".env").write_text("", encoding="utf-8")
+    (deploy_dir / "requirements.txt").write_text(
+        "agent-arbiter==0.9.0\n" "agent-arbiter-smtp==0.9.1\n",
+        encoding="utf-8",
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env sh\n"
+        'if [ "$1" = compose ] && [ "$2" = version ]; then\n'
+        "  printf 'Docker Compose version v2.fake\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "doctor"],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert (
+        "agent-arbiter meta package cannot be combined directly with "
+        "agent-arbiter-core, agent-arbiter-smtp, or agent-arbiter-imap pins"
+    ) in result.stdout
+    assert (
+        "fail: requirements file contains unpinned package requirements"
+        in result.stdout
+    )
 
 
 def test_cli_deploy_docker_generated_helper_doctor_can_color_status_prefixes(
@@ -1520,7 +1656,7 @@ def test_cli_deploy_docker_update_creates_local_checkout_source_override(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("agent_arbiter.main.package_version", lambda: "0.9.0.dev1")
+    _patch_meta_all_version(monkeypatch, "unknown")
     checkout = tmp_path / "checkout"
     checkout.mkdir()
     (checkout / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
@@ -1663,11 +1799,16 @@ def test_cli_lists_plugins_as_json(
         "agent_arbiter.main.discover_service_plugins",
         lambda: _test_service_plugins(),
     )
+    monkeypatch.setattr(
+        "agent_arbiter.main.source_info",
+        lambda: SimpleNamespace(commit="abc123", dirty=True),
+    )
 
     assert main(["--config-dir", "/tmp", "plugins", "list", "--json"]) == 0
 
     assert capsys.readouterr().out == (
         '{"core": {"version": "0.9.0.dev1", "api_version": "0.9"}, '
+        '"source": {"commit": "abc123", "dirty": true}, '
         '"plugins": [{"name": "imap", "version": "0.9.0.dev1", '
         '"core_api_version": "0.9"}, {"name": "smtp", "version": "0.9.0.dev1", '
         '"core_api_version": "0.9"}]}\n'
@@ -1682,11 +1823,16 @@ def test_cli_version_prints_core_and_plugin_versions(
         "agent_arbiter.main.discover_service_plugins",
         lambda: _test_service_plugins(),
     )
+    monkeypatch.setattr(
+        "agent_arbiter.main.source_info",
+        lambda: SimpleNamespace(commit="abc123", dirty=True),
+    )
 
     assert main(["--config-dir", "/tmp", "version"]) == 0
 
     assert capsys.readouterr().out == (
         "core 0.9.0.dev1 (api 0.9)\n"
+        "source abc123 dirty\n"
         "plugins:\n"
         "  imap 0.9.0.dev1 (core api 0.9)\n"
         "  smtp 0.9.0.dev1 (core api 0.9)\n"
@@ -1701,11 +1847,16 @@ def test_cli_version_can_print_json(
         "agent_arbiter.main.discover_service_plugins",
         lambda: _test_service_plugins(),
     )
+    monkeypatch.setattr(
+        "agent_arbiter.main.source_info",
+        lambda: SimpleNamespace(commit="abc123", dirty=False),
+    )
 
     assert main(["--config-dir", "/tmp", "version", "--json"]) == 0
 
     assert capsys.readouterr().out == (
         '{"core": {"version": "0.9.0.dev1", "api_version": "0.9"}, '
+        '"source": {"commit": "abc123", "dirty": false}, '
         '"plugins": [{"name": "imap", "version": "0.9.0.dev1", '
         '"core_api_version": "0.9"}, {"name": "smtp", "version": "0.9.0.dev1", '
         '"core_api_version": "0.9"}]}\n'
@@ -2393,7 +2544,7 @@ def test_log_startup_summary_includes_safe_runtime_context(
     cfg = _app_config_with_smtp()
     cast(SMTPConfig, cfg.arbiter.account["smtp"]["primary"]).password = "super-secret"
 
-    monkeypatch.setattr("agent_arbiter.main.package_version", lambda: "1.2.3")
+    monkeypatch.setattr("agent_arbiter.main.arbiter_core_version", lambda: "1.2.3")
     caplog.set_level(logging.INFO, logger="agent_arbiter.main")
 
     log_startup_summary(cfg)
@@ -2748,6 +2899,10 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
         "agent_arbiter.main.build_app",
         lambda cfg, service_plugins=None, runtime_dependencies=None: FakeApp(),
     )
+    monkeypatch.setattr(
+        "agent_arbiter.main.source_info",
+        lambda: SimpleNamespace(commit=None, dirty=None),
+    )
 
     cfg = OmegaConf.structured(fake_cfg)
 
@@ -2764,6 +2919,7 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert tools["version_info"]() == {
         "core": {"version": "0.9.0.dev1", "api_version": "0.9"},
+        "source": {"commit": None, "dirty": None},
         "plugins": [
             {"name": "imap", "version": "0.9.0.dev1", "core_api_version": "0.9"},
             {"name": "smtp", "version": "0.9.0.dev1", "core_api_version": "0.9"},

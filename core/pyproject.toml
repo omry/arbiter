@@ -49,3 +49,11 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "agent_arbiter" = ["py.typed", "deploy/docker/*"]
+
+[tool.towncrier]
+name = "Agent Arbiter Core"
+package = "agent_arbiter"
+package_dir = "src"
+filename = "NEWS.md"
+directory = "newsfragments"
+issue_format = "#{issue}"

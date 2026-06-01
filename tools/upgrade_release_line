@@ -15,9 +15,6 @@ PACKAGE_FILES = (
     Path("core/pyproject.toml"),
     Path("smtp/pyproject.toml"),
     Path("imap/pyproject.toml"),
-    Path("core/src/agent_arbiter/version.py"),
-    Path("smtp/src/agent_arbiter_smtp/__init__.py"),
-    Path("imap/src/agent_arbiter_imap/__init__.py"),
 )
 DOC_FILES = (
     Path("docs/overview.md"),
@@ -28,7 +25,7 @@ DOC_FILES = (
 DOC_EXPECTATIONS = {
     Path("docs/overview.md"): ("- Version: `{version}`",),
     Path("website/docs/operate/deployment/packages.md"): (
-        "agent-arbiter=={version}",
+        "agent-arbiter=={final_version}",
         "agent-arbiter-core=={version}",
         "agent-arbiter-smtp=={version}",
         "/wheels/agent_arbiter_core-{version}-py3-none-any.whl",
@@ -43,7 +40,6 @@ DOC_EXPECTATIONS = {
         "`{line}` line",
         "`{version}`",
         "`{line}.1`",
-        'version = "{version}"',
         'core_api_version = "{line}"',
         '"agent-arbiter-core>={version},<{next_version}"',
     ),
@@ -53,6 +49,11 @@ META_PACKAGE_DEPENDENCIES = (
     "agent-arbiter-smtp",
     "agent-arbiter-imap",
 )
+PACKAGE_FILE_BY_DISTRIBUTION = {
+    "agent-arbiter-core": Path("core/pyproject.toml"),
+    "agent-arbiter-smtp": Path("smtp/pyproject.toml"),
+    "agent-arbiter-imap": Path("imap/pyproject.toml"),
+}
 PLUGIN_PACKAGE_FILES = (
     Path("smtp/pyproject.toml"),
     Path("imap/pyproject.toml"),
@@ -177,33 +178,50 @@ def _version_line(version: str) -> ReleaseLine:
     return PackageVersion.parse(version).line
 
 
+def _extract_core_dependency_range(text: str, path: Path) -> tuple[str, str]:
+    match = re.search(
+        r'"agent-arbiter-core>=([0-9]+\.[0-9]+\.[0-9]+'
+        r'(?:[.-]dev[0-9]+)?),<([0-9]+\.[0-9]+\.[0-9]+)"',
+        text,
+    )
+    if match is None:
+        raise ValueError(f"{path} is missing an agent-arbiter-core dependency range")
+    return match.group(1), match.group(2)
+
+
 def _validate_current_state(root: Path) -> ReleaseLine:
     root_pyproject = _read(root, Path("pyproject.toml"))
     current_version = _extract_version(root_pyproject, Path("pyproject.toml"))
     current_line = _version_line(current_version)
     expected_next = current_line.next_version
 
+    versions: dict[Path, str] = {}
     for path in PACKAGE_FILES:
         text = _read(root, path)
-        if path.name == "pyproject.toml":
-            found = _extract_version(text, path)
-            if found != current_version:
-                raise ValueError(
-                    f"{path} version {found} does not match root {current_version}"
-                )
-        elif f'__version__ = "{current_version}"' not in text:
-            raise ValueError(f"{path} does not declare __version__ {current_version}")
+        found = _extract_version(text, path)
+        found_line = _version_line(found)
+        if found_line != current_line:
+            raise ValueError(
+                f"{path} version line {found_line.text} does not match "
+                f"root line {current_line.text}"
+            )
+        versions[path] = found
 
     for package_name in META_PACKAGE_DEPENDENCIES:
-        dependency = f'"{package_name}=={current_version}"'
+        package_version = versions[PACKAGE_FILE_BY_DISTRIBUTION[package_name]]
+        dependency = f'"{package_name}=={package_version}"'
         if dependency not in root_pyproject:
             raise ValueError(f"root pyproject is missing dependency {dependency}")
 
     for path in PLUGIN_PACKAGE_FILES:
         text = _read(root, path)
-        dependency = f'"agent-arbiter-core>={current_version},<{expected_next}"'
-        if dependency not in text:
-            raise ValueError(f"{path} is missing dependency {dependency}")
+        lower_bound, upper_bound = _extract_core_dependency_range(text, path)
+        lower_bound_line = _version_line(lower_bound)
+        if lower_bound_line != current_line or upper_bound != expected_next:
+            raise ValueError(
+                f"{path} agent-arbiter-core dependency must stay on line "
+                f"{current_line.text} with upper bound <{expected_next}"
+            )
 
     for path in PLUGIN_RUNTIME_FILES:
         text = _read(root, path)
@@ -220,6 +238,7 @@ def _validate_docs(root: Path, target: ReleaseLine, version: str) -> None:
             expected = expected_template.format(
                 line=target.text,
                 version=version,
+                final_version=target.version,
                 next_version=target.next_version,
                 dev_version=f"{target.version}.dev1",
             )
@@ -276,20 +295,12 @@ def _update_runtime_file(
     path: Path,
     target: ReleaseLine,
 ) -> str:
-    updated = _replace_one(
+    return _replace_one(
         text,
-        r'^__version__ = "[0-9]+\.[0-9]+\.[0-9]+(?:[.-]dev[0-9]+)?"$',
-        f'__version__ = "{target.version}"',
+        r'^CORE_API_VERSION = "[0-9]+\.[0-9]+"$',
+        f'CORE_API_VERSION = "{target.text}"',
         path,
     )
-    if path in PLUGIN_RUNTIME_FILES:
-        updated = _replace_one(
-            updated,
-            r'^CORE_API_VERSION = "[0-9]+\.[0-9]+"$',
-            f'CORE_API_VERSION = "{target.text}"',
-            path,
-        )
-    return updated
 
 
 def _update_doc(
@@ -344,10 +355,13 @@ def build_changes(root: Path, target: ReleaseLine) -> list[Change]:
     changes: list[Change] = []
     for path in PACKAGE_FILES:
         before = _read(root, path)
-        if path.name == "pyproject.toml":
-            after = _update_pyproject(before, path, target)
-        else:
-            after = _update_runtime_file(before, path, target)
+        after = _update_pyproject(before, path, target)
+        if after != before:
+            changes.append(Change(path=path, before=before, after=after))
+
+    for path in PLUGIN_RUNTIME_FILES:
+        before = _read(root, path)
+        after = _update_runtime_file(before, path, target)
         if after != before:
             changes.append(Change(path=path, before=before, after=after))
 
@@ -379,7 +393,7 @@ def _write_changes(root: Path, changes: list[Change]) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Upgrade Agent Arbiter core and bundled plugin packages to a new "
+            "Upgrade Agent Arbiter packages and docs to a new "
             "MAJOR.MINOR release line."
         )
     )
@@ -410,7 +424,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         changes = build_changes(root, target)
     except (FileNotFoundError, ValueError) as exc:
-        print(f"upgrade_release_version: {exc}", file=sys.stderr)
+        print(f"upgrade_release_line: {exc}", file=sys.stderr)
         return 1
 
     if namespace.dry_run:

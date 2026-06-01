@@ -90,14 +90,16 @@ arbiter-server env check [override...]
 
 ## version
 
-Print core and plugin runtime versions.
+Print core and plugin runtime versions. When the command is running from a
+source checkout, it also reports the current source commit and whether the
+checkout has uncommitted changes.
 
 ```bash
 arbiter-server version [--json]
 ```
 
-- `version`: print the loaded Agent Arbiter core version, core API line, and
-  installed service plugin versions.
+- `version`: print the loaded Agent Arbiter core version, core API line, source
+  checkout state when available, and installed service plugin versions.
 - `version --json`: print the same information as JSON.
 
 ## deploy
@@ -152,5 +154,6 @@ arbiter-server plugins list [--json]
 ```
 
 - `plugins list`: print installed plugin names.
-- `plugins list --json`: print core runtime version info and plugin names,
-  versions, and core API compatibility lines as JSON.
+- `plugins list --json`: print core runtime version info, source checkout state
+  when available, and plugin names, versions, and core API compatibility lines
+  as JSON.

@@ -18,6 +18,7 @@ from agent_arbiter.services import (
     ServicePluginContext,
     ServiceRuntimeContext,
 )
+from agent_arbiter.version import distribution_version
 
 from .config import (
     SMTPConfig,
@@ -26,7 +27,6 @@ from .config import (
 )
 from .idempotency import SMTPIdempotencyResult, SMTPIdempotencyStore
 
-__version__ = "0.9.0.dev1"
 CORE_API_VERSION = "0.9"
 
 
@@ -580,7 +580,7 @@ recipient_policy:
 
 class SMTPServicePlugin:
     name = "smtp"
-    version = __version__
+    version = distribution_version("agent-arbiter-smtp", package_file=__file__)
     core_api_version = CORE_API_VERSION
 
     def register_configs(self, config_store: ConfigStore) -> None:

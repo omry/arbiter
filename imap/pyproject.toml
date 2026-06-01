@@ -47,3 +47,11 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "agent_arbiter_imap" = ["py.typed"]
+
+[tool.towncrier]
+name = "Agent Arbiter IMAP"
+package = "agent_arbiter_imap"
+package_dir = "src"
+filename = "NEWS.md"
+directory = "newsfragments"
+issue_format = "#{issue}"

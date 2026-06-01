@@ -11,7 +11,7 @@ A plugin provides:
 
 - structured config schemas
 - account and policy bootstrap examples
-- runtime version metadata
+- runtime package metadata
 - runtime construction
 - capability descriptor
 - operation descriptors and schemas
@@ -30,13 +30,18 @@ smtp = "agent_arbiter_smtp:plugin"
 ## Version contract
 
 Plugins use compatibility-line versions. A plugin for Agent Arbiter core
-`0.9.x` should use a plugin version on the `0.9` line, such as `0.9.0.dev1`,
-`0.9.0`, or `0.9.1`, and declare the same core API line at runtime:
+`0.9.x` should use a package version on the `0.9` line, such as
+`0.9.0.dev1`, `0.9.0`, or `0.9.1`, and declare the same core API line at
+runtime. The plugin runtime should derive `version` from installed package
+metadata rather than duplicating the version literal:
 
 ```python
+from agent_arbiter.version import distribution_version
+
+
 class ExampleServicePlugin:
     name = "example"
-    version = "0.9.0.dev1"
+    version = distribution_version("agent-arbiter-example", package_file=__file__)
     core_api_version = "0.9"
 ```
 

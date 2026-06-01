@@ -56,6 +56,10 @@ def _build_plan(tool: ModuleType) -> Callable[..., list[Any]]:
     return cast(Callable[..., list[Any]], getattr(tool, "build_plan"))
 
 
+def _write_github_output(tool: ModuleType) -> Callable[..., None]:
+    return cast(Callable[..., None], getattr(tool, "_write_github_output"))
+
+
 def test_parse_package_keys_accepts_all_and_comma_separated_keys() -> None:
     parse_package_keys = _parse_package_keys(_load_tool())
 
@@ -124,3 +128,52 @@ def test_build_plan_validates_unselected_plugin_version_lines(
         match="agent-arbiter-imap version line 0.10 does not match core 0.9",
     ):
         _build_plan(tool)(tmp_path, package_keys=frozenset({"core"}))
+
+
+def test_build_plan_requires_selected_packages_to_match_release_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tool = _load_tool()
+    version_type = getattr(tool, "Version")
+    _write_fixture(tmp_path, imap_version="0.9.1")
+    monkeypatch.setattr(tool, "_pypi_version", lambda package_name: None)
+
+    plan = _build_plan(tool)(
+        tmp_path,
+        package_keys=frozenset({"imap"}),
+        release_version=version_type.parse("0.9.1"),
+    )
+
+    assert [item.package.name for item in plan if item.publish] == [
+        "agent-arbiter-imap"
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match="agent-arbiter-imap version 0.9.1 does not match "
+        "--release-version 0.9.2",
+    ):
+        _build_plan(tool)(
+            tmp_path,
+            package_keys=frozenset({"imap"}),
+            release_version=version_type.parse("0.9.2"),
+        )
+
+
+def test_write_github_output_includes_publish_keys(tmp_path: Path) -> None:
+    tool = _load_tool()
+    output_path = tmp_path / "github-output"
+
+    _write_github_output(tool)(
+        str(output_path),
+        publish_count=2,
+        publish_keys=["core", "smtp"],
+        publish_specs=["agent-arbiter-core==0.9.0", "agent-arbiter-smtp==0.9.1"],
+    )
+
+    assert output_path.read_text(encoding="utf-8") == (
+        "publish_count=2\n"
+        "has_publish=true\n"
+        "publish_keys=core,smtp\n"
+        "publish_specs=agent-arbiter-core==0.9.0,agent-arbiter-smtp==0.9.1\n"
+    )

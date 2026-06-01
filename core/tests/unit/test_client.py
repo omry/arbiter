@@ -776,15 +776,15 @@ def test_client_warns_when_remote_version_differs(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(client, "package_version", lambda: "1.2.3")
+    monkeypatch.setattr(client, "arbiter_core_version", lambda: "1.2.3")
 
     client._warn_if_remote_version_mismatch(
         SimpleNamespace(serverInfo=SimpleNamespace(version="1.2.4"))
     )
 
     assert capsys.readouterr().err == (
-        "Agent Arbiter version warning: local CLI version 1.2.3 does not match "
-        "remote server version 1.2.4.\n"
+        "Agent Arbiter core version warning: local CLI core version 1.2.3 "
+        "does not match remote server core version 1.2.4.\n"
     )
 
 
@@ -794,7 +794,7 @@ def test_client_does_not_warn_when_remote_version_matches_or_is_unavailable(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(client, "package_version", lambda: "1.2.3")
+    monkeypatch.setattr(client, "arbiter_core_version", lambda: "1.2.3")
 
     client._warn_if_remote_version_mismatch(
         SimpleNamespace(serverInfo=SimpleNamespace(version=remote_version))
@@ -807,7 +807,7 @@ def test_client_does_not_warn_when_local_version_is_unknown(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(client, "package_version", lambda: "unknown")
+    monkeypatch.setattr(client, "arbiter_core_version", lambda: "unknown")
 
     client._warn_if_remote_version_mismatch(
         SimpleNamespace(serverInfo=SimpleNamespace(version="1.2.4"))

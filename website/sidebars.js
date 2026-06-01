@@ -68,7 +68,11 @@ const sidebars = {
       type: 'category',
       label: 'Maintain',
       collapsed: true,
-      items: ['maintain/architecture', 'maintain/testing-release'],
+      items: [
+        'maintain/architecture',
+        'maintain/testing-release',
+        'maintain/release-process',
+      ],
     },
   ],
 };

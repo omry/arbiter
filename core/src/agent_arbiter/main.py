@@ -40,7 +40,8 @@ from .services import (
     service_plugin_runtime_info,
     validate_service_plugins,
 )
-from .version import package_version
+from .version import arbiter_core_version, source_info
+from .version import distribution_version
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -60,11 +61,24 @@ DEPLOY_PINNED_REQUIREMENT_PATTERN = re.compile(
     r"(?:\[[A-Za-z0-9_.-]+(?:,[A-Za-z0-9_.-]+)*\])?"
     r"==[^<>=!~\s#]+$"
 )
+DEPLOY_PINNED_REQUIREMENT_PARTS_PATTERN = re.compile(
+    r"^(?P<name>[A-Za-z0-9][A-Za-z0-9_.-]*)"
+    r"(?:\[[A-Za-z0-9_.-]+(?:,[A-Za-z0-9_.-]+)*\])?"
+    r"==(?P<version>[^<>=!~\s#]+)$"
+)
 DEFAULT_ENV_FILE_NAME = ".env"
 DEFAULT_CONFIG_DIR = "~/.arbiter"
 DEFAULT_SERVER_CONFIG_NAME = "arbiter-server"
 DEFAULT_DOCKER_DEPLOY_DIR = "./arbiter-docker"
 DEPLOY_MANIFEST_FILE_NAME = ".agent-arbiter-deploy.json"
+AGENT_ARBITER_ALL_META_PACKAGE = "agent-arbiter"
+DOCKER_META_PACKAGE_GROUPS = {
+    AGENT_ARBITER_ALL_META_PACKAGE: (
+        "agent-arbiter-core",
+        "agent-arbiter-smtp",
+        "agent-arbiter-imap",
+    )
+}
 DOCKER_LOCAL_SOURCE_CONTAINER_ROOT = "/source/agent-arbiter"
 DOCKER_LOCAL_SOURCE_REQUIREMENTS = (
     f"{DOCKER_LOCAL_SOURCE_CONTAINER_ROOT}/core",
@@ -258,7 +272,7 @@ def log_startup_summary(cfg: AppConfig) -> None:
     LOGGER.info(
         "Agent Arbiter starting version=%s transport=%s bind=%s:%s%s "
         "services=%s service_accounts=%s",
-        package_version(),
+        arbiter_core_version(),
         cfg.arbiter.server.transport,
         cfg.arbiter.server.host,
         cfg.arbiter.server.port,
@@ -333,10 +347,15 @@ def service_plugin_infos(
 def runtime_version_info(
     service_plugins: Sequence[ServicePlugin] | None = None,
 ) -> dict[str, object]:
+    source = source_info()
     return {
         "core": {
             "version": CORE_VERSION,
             "api_version": CORE_API_VERSION,
+        },
+        "source": {
+            "commit": source.commit,
+            "dirty": source.dirty,
         },
         "plugins": service_plugin_infos(service_plugins),
     }
@@ -354,6 +373,10 @@ def _print_runtime_version_info(
 
     core = cast(dict[str, str], version_info["core"])
     print(f"core {core['version']} (api {core['api_version']})")
+    source = cast(dict[str, object], version_info["source"])
+    if source["commit"] is not None:
+        dirty = " dirty" if source["dirty"] else ""
+        print(f"source {source['commit']}{dirty}")
     print("plugins:")
     plugins = cast(list[dict[str, str]], version_info["plugins"])
     if not plugins:
@@ -460,7 +483,7 @@ def build_server(
     server.settings.streamable_http_path = app_config.arbiter.server.path
     mcp_server = getattr(server, "_mcp_server", None)
     if mcp_server is not None:
-        mcp_server.version = package_version()
+        mcp_server.version = arbiter_core_version()
 
     catalog = OperationCatalog(
         active_service_plugins,
@@ -876,9 +899,15 @@ def _find_agent_arbiter_checkout(start: Path) -> Path | None:
 
 
 def _default_deploy_requirements() -> DockerDeployRequirements | None:
-    version = package_version()
-    if version != "unknown" and ".dev" not in version and "+" not in version:
-        return DockerDeployRequirements(requirements=(f"agent-arbiter=={version}",))
+    meta_all_version = distribution_version(AGENT_ARBITER_ALL_META_PACKAGE)
+    if (
+        meta_all_version != "unknown"
+        and ".dev" not in meta_all_version
+        and "+" not in meta_all_version
+    ):
+        return DockerDeployRequirements(
+            requirements=(f"{AGENT_ARBITER_ALL_META_PACKAGE}=={meta_all_version}",)
+        )
     checkout = _find_agent_arbiter_checkout(Path.cwd())
     if checkout is None:
         return None
@@ -912,6 +941,69 @@ def _deploy_requirement_error(requirement: str) -> str | None:
         "docker.requirement must be an exact package pin "
         "(name==version) or an absolute container path"
     )
+
+
+def _pinned_requirement_parts(requirement: str) -> tuple[str, str] | None:
+    match = DEPLOY_PINNED_REQUIREMENT_PARTS_PATTERN.fullmatch(requirement)
+    if match is None:
+        return None
+    return match.group("name"), match.group("version")
+
+
+def _deploy_requirements_semantic_error(requirements: Sequence[str]) -> str | None:
+    pins: dict[str, str] = {}
+    for requirement in requirements:
+        parts = _pinned_requirement_parts(requirement)
+        if parts is None:
+            continue
+        name, version = parts
+        existing_version = pins.get(name)
+        if existing_version is not None and existing_version != version:
+            return (
+                f"conflicting docker.requirement pins for {name}: "
+                f"{existing_version}, {version}"
+            )
+        pins[name] = version
+    return None
+
+
+def _expand_meta_deploy_requirements(requirements: Sequence[str]) -> tuple[str, ...]:
+    pins = {
+        name: version
+        for requirement in requirements
+        if (parts := _pinned_requirement_parts(requirement)) is not None
+        for name, version in (parts,)
+    }
+    expanded_meta_packages = {
+        meta_package
+        for meta_package, package_names in DOCKER_META_PACKAGE_GROUPS.items()
+        if meta_package in pins and any(name in pins for name in package_names)
+    }
+    expanded_package_names = {
+        package_name
+        for meta_package in expanded_meta_packages
+        for package_name in DOCKER_META_PACKAGE_GROUPS[meta_package]
+    }
+    if not expanded_meta_packages:
+        return tuple(requirements)
+
+    expanded_requirements: list[str] = []
+    for requirement in requirements:
+        parts = _pinned_requirement_parts(requirement)
+        if parts is None:
+            expanded_requirements.append(requirement)
+            continue
+        name, version = parts
+        if name in expanded_meta_packages:
+            for package_name in DOCKER_META_PACKAGE_GROUPS[name]:
+                expanded_requirements.append(
+                    f"{package_name}=={pins.get(package_name, version)}"
+                )
+            continue
+        if name in expanded_package_names:
+            continue
+        expanded_requirements.append(requirement)
+    return tuple(expanded_requirements)
 
 
 def _parse_docker_deploy_args(args: Sequence[str]) -> DockerDeployArgs | None:
@@ -959,6 +1051,10 @@ def _parse_docker_deploy_args(args: Sequence[str]) -> DockerDeployArgs | None:
         if error is not None:
             print_cli_error(error, area="deploy", details=[f"value: {requirement}"])
             return None
+    semantic_error = _deploy_requirements_semantic_error(requirements)
+    if semantic_error is not None:
+        print_cli_error(semantic_error, area="deploy")
+        return None
     return DockerDeployArgs(
         action=action,
         directory=directory.expanduser(),
@@ -970,15 +1066,19 @@ def _resolve_docker_deploy_requirements(
     requirements: Sequence[str],
 ) -> DockerDeployRequirements | None:
     if requirements:
-        return DockerDeployRequirements(requirements=tuple(requirements))
+        return DockerDeployRequirements(
+            requirements=_expand_meta_deploy_requirements(requirements)
+        )
     default_requirements = _default_deploy_requirements()
     if default_requirements is None:
         print_cli_error(
             "cannot infer default docker requirements",
             area="deploy",
             details=[
-                "pass docker.requirement=agent-arbiter==VERSION for a "
-                "published package",
+                "pass docker.requirement=agent-arbiter==VERSION for the "
+                "all-in-one meta package",
+                "or pass one or more docker.requirement=PACKAGE==VERSION "
+                "entries for another meta package or explicit packages",
                 "for a local checkout, run this command from the checkout "
                 "or pass absolute container source paths",
             ],
@@ -1063,7 +1163,7 @@ def _write_deploy_manifest(
     manifest = {
         "schema_version": 1,
         "generator": "arbiter-server deploy docker",
-        "agent_arbiter_version": package_version(),
+        "agent_arbiter_core_version": arbiter_core_version(),
         "files": {
             relative_path: {
                 "kind": "template",

@@ -18,7 +18,7 @@ from omegaconf import DictConfig, OmegaConf
 from omegaconf.errors import OmegaConfBaseException
 
 from .cli_errors import print_cli_error
-from .version import package_version
+from .version import arbiter_core_version
 
 
 DEFAULT_MCP_URL = "http://127.0.0.1:8000/mcp"
@@ -299,7 +299,7 @@ def _run_bootstrap_client(namespace: argparse.Namespace) -> int:
 def _warn_if_remote_version_mismatch(initialize_result: object) -> None:
     server_info = getattr(initialize_result, "serverInfo", None)
     remote_version = getattr(server_info, "version", None)
-    local_version = package_version()
+    local_version = arbiter_core_version()
     if (
         not isinstance(remote_version, str)
         or remote_version == "unknown"
@@ -308,9 +308,9 @@ def _warn_if_remote_version_mismatch(initialize_result: object) -> None:
     ):
         return
     print(
-        "Agent Arbiter version warning: "
-        f"local CLI version {local_version} does not match "
-        f"remote server version {remote_version}.",
+        "Agent Arbiter core version warning: "
+        f"local CLI core version {local_version} does not match "
+        f"remote server core version {remote_version}.",
         file=sys.stderr,
     )
 
@@ -383,7 +383,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--version",
         action="version",
-        version=f"%(prog)s {package_version()}",
+        version=f"%(prog)s {arbiter_core_version()}",
     )
     subcommands = parser.add_subparsers(
         dest="command",

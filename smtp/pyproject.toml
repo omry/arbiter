@@ -48,3 +48,11 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "agent_arbiter_smtp" = ["py.typed"]
+
+[tool.towncrier]
+name = "Agent Arbiter SMTP"
+package = "agent_arbiter_smtp"
+package_dir = "src"
+filename = "NEWS.md"
+directory = "newsfragments"
+issue_format = "#{issue}"

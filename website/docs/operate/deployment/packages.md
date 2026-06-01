@@ -5,16 +5,15 @@ title: Packages And Wheels
 `requirements.txt` is a small pip requirements file installed inside the
 container at startup.
 
-Package entries must be exact pins such as `agent-arbiter==0.9.0.dev1`; unpinned
+Package entries must be exact pins such as `agent-arbiter==0.9.0`; unpinned
 names and version ranges are rejected by `docker.requirement=...`,
 `arbiter-docker doctor`, and service start/restart commands.
 
 ## Default package target
 
-By default, `arbiter-server deploy docker init` writes a pinned Agent Arbiter
-meta package matching the `arbiter-server` command that generated the
-deployment when that command comes from a publishable package version. Check the
-command version with:
+By default, `arbiter-server deploy docker init` writes a pinned `meta:all`
+package, `agent-arbiter`, when that all-in-one meta package is installed at a
+publishable package version. Check the core runtime version with:
 
 ```bash
 arbiter-server --version
@@ -23,16 +22,22 @@ arbiter-server --version
 The default file looks like:
 
 ```text title="./arbiter-docker/requirements.txt"
-agent-arbiter==0.9.0.dev1
+agent-arbiter==0.9.0
 ```
 
 That meta package installs the core package and the default plugin packages for
 the same release.
 
-## Explicit plugin pins
+## Explicit package pins
 
-If you want explicit plugin control, seed the file with repeated
-`docker.requirement=...` values:
+If you want a narrower meta package or explicit package control, seed the file
+with repeated `docker.requirement=...` values:
+
+```bash
+arbiter-server deploy docker \
+  docker.requirement=agent-arbiter-mail==0.9.0 \
+  init
+```
 
 ```bash
 arbiter-server deploy docker \
@@ -45,6 +50,31 @@ The requirements file is operator-owned deployment state. Agent Arbiter accepts
 initial pinned values from CLI input, but it does not auto-update core or
 plugin versions. Review version changes, edit the file deliberately, then
 restart or reinstall the service.
+
+## Meta package with overrides
+
+The all-in-one meta package is an exact curated bundle. If you want that bundle
+plus a newer version of one package, pass the meta package and the specific
+package override together:
+
+```bash
+arbiter-server deploy docker \
+  docker.requirement=agent-arbiter==0.9.0 \
+  docker.requirement=agent-arbiter-smtp==0.9.1 \
+  init
+```
+
+Agent Arbiter expands that into real package pins in `requirements.txt` so pip
+does not see conflicting meta-package dependencies:
+
+```text title="./arbiter-docker/requirements.txt"
+agent-arbiter-core==0.9.0
+agent-arbiter-smtp==0.9.1
+agent-arbiter-imap==0.9.0
+```
+
+The zero-code meta package itself is not installed in this expanded form; it is
+used only as the bundle selection shorthand.
 
 ## Networkless installs
 
