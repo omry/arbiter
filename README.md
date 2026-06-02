@@ -67,7 +67,6 @@ The design is documented in the `docs/` structure used by the MCP server templat
 - [docs/config_bootstrap.md](docs/config_bootstrap.md)
 - [docs/policies.md](docs/policies.md)
 - [docs/errors.md](docs/errors.md)
-- [docs/todo.md](docs/todo.md)
 - [docs/testing_backlog.md](docs/testing_backlog.md)
 - [docs/tools/account_summaries.md](docs/tools/account_summaries.md)
 - [docs/tools/smtp_send_email.md](docs/tools/smtp_send_email.md)

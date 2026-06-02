@@ -12,7 +12,6 @@ docs=(
   "$script_dir/config.md"
   "$script_dir/policies.md"
   "$script_dir/errors.md"
-  "$script_dir/todo.md"
   "$script_dir/tools/account_summaries.md"
   "$script_dir/tools/smtp_send_email.md"
   "$script_dir/tools/imap.md"

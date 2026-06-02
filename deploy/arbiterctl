@@ -352,7 +352,7 @@ install_layout() {
 
   if [[ -z "$install_target" ]]; then
     printf 'error: install target required\n' >&2
-    printf 'hint: run: %s install --install-target arbiter-suite==0.8.0\n' "$0" >&2
+    printf 'hint: run: %s install --install-target arbiter-suite==VERSION\n' "$0" >&2
     printf 'hint: or:  %s install --install-target /home/omry/dev/arbiter\n' "$0" >&2
     exit 2
   fi

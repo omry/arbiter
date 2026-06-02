@@ -57,7 +57,7 @@ instead of replacing local policy or secrets.
 From this repository:
 
 ```bash
-./deploy/arbiterctl install --install-target arbiter-suite==0.8.0
+./deploy/arbiterctl install --install-target arbiter-suite==VERSION
 ```
 
 For a local source checkout on the host, use an absolute host path:
@@ -158,7 +158,7 @@ sudo install -o root -g root -m 0444 /path/to/arbiter/deploy/config.yaml /opt/ar
 Create the install target file:
 
 ```bash
-printf '%s\n' 'arbiter-suite==0.8.0' | sudo tee /opt/arbiter/install-target >/dev/null
+printf '%s\n' 'arbiter-suite==VERSION' | sudo tee /opt/arbiter/install-target >/dev/null
 sudo chown root:root /opt/arbiter/install-target
 sudo chmod 0444 /opt/arbiter/install-target
 ```
@@ -201,7 +201,7 @@ This keeps the service on VM loopback at `http://127.0.0.1:8025/mcp` with the ge
 arbiterctl up
 ```
 
-Manual equivalent for package targets such as `arbiter-suite==0.8.0`:
+Manual equivalent for package targets such as `arbiter-suite==VERSION`:
 
 ```bash
 cd /opt/arbiter
@@ -216,7 +216,7 @@ The install target is a pip install target. For a published package, install
 with:
 
 ```bash
-./deploy/arbiterctl install --install-target arbiter-suite==0.8.0
+./deploy/arbiterctl install --install-target arbiter-suite==VERSION
 ```
 
 For a local source checkout on the host, install with:

@@ -13,9 +13,12 @@ website/.docusaurus/
 website/build/
 website/node_modules/
 
+# Local checkout-specific agent instructions.
+LOCAL-AGENTS.md
+
 # Local Docker deployment files. These may contain secrets or host-specific
 # commands and should not be committed.
-deploy/agent-arbiter.env
+deploy/arbiter.env
 deploy/gateway-config.yaml
 deploy/compose.local.yaml
 deploy/run-local.sh
@@ -23,7 +26,7 @@ deploy/run-local.sh
 # Local AWD runtime state and other scratch artifacts.
 temp/
 
-# Local Agent Arbiter config scratchspace. Generated configs may contain
+# Local Arbiter config scratchspace. Generated configs may contain
 # credentials or host-specific settings and should not be committed.
 config.local/
 arbiter-docker
