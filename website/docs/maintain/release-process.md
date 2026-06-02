@@ -96,6 +96,8 @@ before each run:
 Use manual workflow dispatch for dev package releases such as `0.9.0.dev1`:
 
 - `release_line`: the `MAJOR.MINOR` line, such as `0.9`
+- `release_version`: optional exact version override for fine-grained package
+  releases; omit it when publishing the repository version
 - `publish_packages`: one key or a comma-separated key list
 - `publish_to_pypi`: enable only when the matching PyPI trusted publisher is
   ready

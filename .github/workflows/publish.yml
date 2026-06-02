@@ -1,4 +1,6 @@
 name: Publish
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch' && format('Publish {0} on line {1} {2}', inputs.publish_packages || 'all', inputs.release_line, inputs.publish_to_pypi && 'to PyPI' || 'dry run') || format('Publish all from release {0}', github.event.release.tag_name) }}
 
 on:
   release:
@@ -157,6 +159,21 @@ jobs:
               > /dev/null
           done
 
+      - name: Summarize publish plan
+        if: steps.pypi-plan.outputs.has_publish == 'true'
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.release_version }}
+          PUBLISH_KEYS: ${{ steps.pypi-plan.outputs.publish_keys }}
+          PUBLISH_SPECS: ${{ steps.pypi-plan.outputs.publish_specs }}
+        run: |
+          {
+            echo "### Publish plan"
+            echo
+            echo "- Release version: $RELEASE_VERSION"
+            echo "- Package keys: $PUBLISH_KEYS"
+            echo "- Package specs: $PUBLISH_SPECS"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Smoke install built release
         if: steps.pypi-plan.outputs.has_publish == 'true'
         shell: bash
@@ -185,7 +202,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    name: Publish to PyPI
+    name: Publish ${{ needs.build.outputs.publish_specs }} to PyPI
     needs: build
     runs-on: ubuntu-latest
     if: >-
