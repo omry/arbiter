@@ -36,10 +36,10 @@ DOC_EXPECTATIONS = {
     Path("website/docs/extend/plugins.md"): (
         "`{line}.x`",
         "`{line}` line",
-        "`{version}`",
+        "`{final_version}`",
         "`{line}.1`",
         'core_api_version = "{line}"',
-        '"arbiter-core>={version},<{next_version}"',
+        '"arbiter-core>={final_version},<{next_version}"',
     ),
 }
 META_PACKAGE_DEPENDENCIES = (
@@ -311,6 +311,10 @@ def _update_doc(
     current_version: str,
 ) -> str:
     updated = text
+    updated = updated.replace(
+        f">={current.version},<{current.next_version}",
+        f">={target.version},<{target.next_version}",
+    )
     updated = updated.replace(
         f">={current_version},<{current.next_version}",
         f">={target.version},<{target.next_version}",

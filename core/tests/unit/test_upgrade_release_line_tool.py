@@ -109,10 +109,11 @@ dependencies = [
         "website/docs/operate/server-reference.md": ("arbiter-core==0.9.0.dev1\n"),
         "website/docs/extend/plugins.md": (
             "`0.9.x` should use a plugin version on the `0.9` line, "
-            "such as `0.9.0.dev1`, `0.9.0`, or `0.9.1`.\n"
-            '    version = "0.9.0.dev1"\n'
+            "such as `0.9.0` or `0.9.1`.\n"
+            "dev version such as `0.9.0.dev1`\n"
+            '    version = "0.9.0"\n'
             '    core_api_version = "0.9"\n'
-            '  "arbiter-core>=0.9.0.dev1,<0.10.0",\n'
+            '  "arbiter-core>=0.9.0,<0.10.0",\n'
         ),
     }
     for relative_path, content in files.items():
@@ -242,7 +243,7 @@ def test_upgrade_release_line_promotes_dev_version_to_final_same_line(
     assert "arbiter-suite==0.9.0\n" in deployment_docs
     assert "arbiter-suite==0.9.0.dev1" not in deployment_docs
     assert "dev version such as `0.9.0.dev1`" in deployment_docs
-    assert "such as `0.9.0` or\n`0.9.1`" in plugin_docs
+    assert "such as `0.9.0` or `0.9.1`" in plugin_docs
     assert "such as `0.9.0`,\n`0.9.0`" not in plugin_docs
 
 
@@ -258,7 +259,7 @@ def test_upgrade_release_line_updates_dev_docs_to_next_line_without_stale_suffix
     assert '+  "arbiter-core>=1.0.0,<1.1.0"' in result.stdout
     assert "+/wheels/arbiter_core-1.0.0-py3-none-any.whl" in result.stdout
     assert "1.0.0.dev1,<" not in result.stdout
-    assert "such as `1.0.0` or\n+`1.0.1`" in result.stdout
+    assert "such as `1.0.0` or `1.0.1`" in result.stdout
     assert "such as `1.0.0`,\n+`1.0.0`" not in result.stdout
 
 

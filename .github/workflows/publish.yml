@@ -125,14 +125,20 @@ jobs:
            (github.event_name == 'workflow_dispatch' && inputs.publish_to_pypi))
         shell: bash
         env:
+          RELEASE_EVENT_TAG: ${{ github.event.release.tag_name }}
           PUBLISH_KEYS: ${{ steps.pypi-plan.outputs.publish_keys }}
           PUBLISH_SPECS: ${{ steps.pypi-plan.outputs.publish_specs }}
         run: |
           IFS=',' read -ra package_keys <<< "$PUBLISH_KEYS"
           IFS=',' read -ra publish_specs <<< "$PUBLISH_SPECS"
+          release_event_version="${RELEASE_EVENT_TAG#v}"
           for index in "${!package_keys[@]}"; do
             package_key="${package_keys[$index]}"
             package_version="${publish_specs[$index]##*==}"
+            if [[ "${{ github.event_name }}" == "release" && "$package_version" != "$release_event_version" ]]; then
+              echo "Release event tag $RELEASE_EVENT_TAG cannot publish $package_key version $package_version" >&2
+              exit 1
+            fi
             if [[ "$package_version" == *".dev"* ]]; then
               continue
             fi
