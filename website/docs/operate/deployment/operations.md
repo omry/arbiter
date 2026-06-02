@@ -23,7 +23,7 @@ global console app.
 # Edit Docker wrapper settings.
 ./arbiter-docker/arbiter-docker edit-docker
 
-# Edit pinned Arbiter core/plugin package requirements.
+# Edit Arbiter core/plugin package requirements or wheel paths.
 ./arbiter-docker/arbiter-docker edit-requirements
 ```
 
@@ -36,7 +36,8 @@ global console app.
   `conf/.env`, or Docker socket access.
 - `edit-env`: edit Arbiter runtime values and credentials.
 - `edit-docker`: edit Docker wrapper settings.
-- `edit-requirements`: edit the pinned packages installed inside the container.
+- `edit-requirements`: edit the packages or wheel paths installed inside the
+  container.
 
 ## Run locally
 
@@ -56,6 +57,15 @@ For a prepared local directory:
 - `restart`: recreate the container, which also reinstalls the configured
   requirements.
 - `down`: stop and remove the Compose service.
+
+After changing the installed Arbiter package or plugin set from the current
+Python environment, refresh the deployment requirements and recreate the
+container:
+
+```bash
+./arbiter-docker/arbiter-docker pin-installed
+./arbiter-docker/arbiter-docker restart
+```
 
 After Linux install, prefer systemd:
 
@@ -88,14 +98,15 @@ unchanged and files the operator has taken over:
   it with `arbiter-server env bootstrap` or `arbiter-docker sync-env`.
 - Requirements: `update` never rewrites an existing `requirements.txt`. If it
   is missing, `update` creates one from `docker.requirement=...` values or the
-  default package/source requirements. If that default is a local checkout
-  source install, it also creates `compose.override.yaml` when the override is
-  missing.
+  default installed package/plugin requirements. Editable local packages are
+  built into `wheels/` and referenced as `/wheels/*.whl`.
 
 To change the deployed Arbiter version or plugin set, edit the
-requirements file, then promote the prepared directory again:
+requirements file or refresh it from the current Python environment, then
+promote the prepared directory again:
 
 ```bash
+./arbiter-docker/arbiter-docker pin-installed
 ./arbiter-docker/arbiter-docker edit-requirements
 ./arbiter-docker/arbiter-docker doctor --preinstall
 sudo ./arbiter-docker/arbiter-docker install --to /opt/arbiter --user arbiter

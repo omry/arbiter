@@ -20,10 +20,12 @@ managed files and writes:
   image, restart policy, config directory/name, and network values.
 - `conf/`: default config directory. `init` creates the directory but not the
   config or env file.
-- `requirements.txt`: Python packages or source paths installed inside the
-  container.
-- `compose.override.yaml`: only when `init` infers a local checkout source
-  install; mounts the checkout read-only at `/source/arbiter`.
+- `requirements.txt`: exact package pins or generated wheel paths installed
+  inside the container.
+- `wheels/`: generated wheelhouse when the current Python environment contains
+  editable local Arbiter packages.
+- `compose.override.yaml`: optional local Compose overrides, such as an
+  explicit source checkout mount for testing.
 - `arbiter-docker`: the local helper script for this deployment.
 - `.arbiter-deploy.json`: hidden manifest that records hashes for
   generated template files.
@@ -70,9 +72,17 @@ Before promoting the directory to a host install:
 `doctor --preinstall` checks that the prepared directory is self-contained and
 ready to promote. It skips Docker daemon checks and fails when source checkout
 requirements or `/source/arbiter` mounts are present, because local source
-mounts are not production install state. For Linux install, switch
-`requirements.txt` to pinned packages or `/wheels/*.whl` entries and remove the
-local source mount.
+mounts are not production install state. `install` can refresh an old
+source-based deployment from the current Python environment; editable local
+packages become wheels in the deployment wheelhouse. You can run the same step
+directly with:
+
+```bash
+./arbiter-docker/arbiter-docker pin-installed
+```
+
+For Linux install, use pinned packages or generated `/wheels/*.whl` entries and
+remove any local source mount.
 
 For package pins, wheelhouses, and source checkout testing, see
 [Packages and wheels](./packages.md).

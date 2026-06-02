@@ -6,12 +6,17 @@ import json
 import logging
 import os
 import re
+import shutil
+import subprocess
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from importlib.metadata import PackageNotFoundError, distribution, entry_points
 from importlib.resources import files
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any, Literal, cast
+from urllib.parse import unquote, urlparse
 
 from hydra import compose, initialize_config_dir
 from omegaconf import DictConfig, OmegaConf
@@ -34,14 +39,16 @@ from .services import (
     CORE_VERSION,
     OperationCatalog,
     RuntimeRegistry,
+    SERVICE_PLUGIN_ENTRY_POINT_GROUP,
     ServicePlugin,
     ServicePluginContext,
+    ServicePluginFactory,
     ServiceRuntimeContext,
     service_plugin_runtime_info,
+    validate_service_plugin_compatibility,
     validate_service_plugins,
 )
 from .version import arbiter_core_version, source_info
-from .version import distribution_version
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -71,20 +78,17 @@ DEFAULT_CONFIG_DIR = "~/.arbiter"
 DEFAULT_SERVER_CONFIG_NAME = "arbiter-server"
 DEFAULT_DOCKER_DEPLOY_DIR = "./arbiter-docker"
 DEPLOY_MANIFEST_FILE_NAME = ".arbiter-deploy.json"
+ARBITER_CORE_PACKAGE = "arbiter-core"
 ARBITER_ALL_META_PACKAGE = "arbiter-suite"
 DOCKER_META_PACKAGE_GROUPS = {
     ARBITER_ALL_META_PACKAGE: (
-        "arbiter-core",
+        ARBITER_CORE_PACKAGE,
         "arbiter-smtp",
         "arbiter-imap",
     )
 }
 DOCKER_LOCAL_SOURCE_CONTAINER_ROOT = "/source/arbiter"
-DOCKER_LOCAL_SOURCE_REQUIREMENTS = (
-    f"{DOCKER_LOCAL_SOURCE_CONTAINER_ROOT}/core",
-    f"{DOCKER_LOCAL_SOURCE_CONTAINER_ROOT}/smtp",
-    f"{DOCKER_LOCAL_SOURCE_CONTAINER_ROOT}/imap",
-)
+DOCKER_WHEELS_CONTAINER_ROOT = "/wheels"
 DOCKER_COMPOSE_ENV_DEFAULTS = [
     ("ARBITER_IMAGE", "python:3.11-slim"),
     ("ARBITER_CONTAINER_NAME", "arbiter"),
@@ -93,6 +97,7 @@ DOCKER_COMPOSE_ENV_DEFAULTS = [
     ("ARBITER_CONFIG_DIR", "./conf"),
     ("ARBITER_CONFIG_NAME", "arbiter-server"),
     ("ARBITER_REQUIREMENTS_FILE", "./requirements.txt"),
+    ("ARBITER_WHEELS_DIR", "./wheels"),
     ("ARBITER_HOST_BIND", "127.0.0.1"),
     ("ARBITER_HOST_PORT", "8025"),
     ("ARBITER_CONTAINER_PORT", "8025"),
@@ -147,7 +152,6 @@ class DockerDeployArgs:
 @dataclass(frozen=True)
 class DockerDeployRequirements:
     requirements: tuple[str, ...]
-    local_source_root: Path | None = None
 
 
 def _to_object(value: Any) -> Any:
@@ -880,52 +884,218 @@ def _deploy_template_text(name: str) -> str:
     )
 
 
-def _is_arbiter_checkout(path: Path) -> bool:
-    return (
-        (path / "pyproject.toml").is_file()
-        and (path / "core" / "pyproject.toml").is_file()
-        and (path / "smtp" / "pyproject.toml").is_file()
-        and (path / "imap" / "pyproject.toml").is_file()
-    )
-
-
-def _find_arbiter_checkout(start: Path) -> Path | None:
-    for path in (start.resolve(), *start.resolve().parents):
-        if _is_arbiter_checkout(path):
-            return path
+def _entry_point_distribution_name(entry_point: Any) -> str | None:
+    distribution = getattr(entry_point, "dist", None)
+    metadata = getattr(distribution, "metadata", None)
+    if metadata is not None:
+        name = metadata.get("Name")
+        if isinstance(name, str) and name:
+            return name
+    name = getattr(distribution, "name", None)
+    if isinstance(name, str) and name:
+        return name
     return None
 
 
-def _default_deploy_requirements() -> DockerDeployRequirements | None:
-    meta_all_version = distribution_version(ARBITER_ALL_META_PACKAGE)
-    if (
-        meta_all_version != "unknown"
-        and ".dev" not in meta_all_version
-        and "+" not in meta_all_version
-    ):
-        return DockerDeployRequirements(
-            requirements=(f"{ARBITER_ALL_META_PACKAGE}=={meta_all_version}",)
-        )
-    checkout = _find_arbiter_checkout(Path.cwd())
-    if checkout is None:
+def _normalized_distribution_name(name: str) -> str:
+    return name.lower().replace("_", "-")
+
+
+def _distribution_direct_url_source_root(installed_distribution: Any) -> Path | None:
+    for distribution_file in installed_distribution.files or ():
+        if not str(distribution_file).endswith(".dist-info/direct_url.json"):
+            continue
+        direct_url_path = Path(installed_distribution.locate_file(distribution_file))
+        try:
+            direct_url = json.loads(direct_url_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        dir_info = direct_url.get("dir_info")
+        if not isinstance(dir_info, dict):
+            return None
+        if not dir_info.get("editable"):
+            return None
+        url = direct_url.get("url")
+        if not isinstance(url, str):
+            return None
+        parsed_url = urlparse(url)
+        if parsed_url.scheme != "file":
+            return None
+        source_root = Path(unquote(parsed_url.path))
+        if source_root.is_dir() and (source_root / "pyproject.toml").is_file():
+            return source_root
+    return None
+
+
+def _build_local_source_wheel(source_root: Path, wheel_dir: Path) -> Path | None:
+    if not _ensure_writable_wheel_dir(wheel_dir):
         return None
-    return DockerDeployRequirements(
-        requirements=DOCKER_LOCAL_SOURCE_REQUIREMENTS,
-        local_source_root=checkout,
+    with TemporaryDirectory(prefix="arbiter-wheel-") as temporary_wheel_dir_raw:
+        temporary_wheel_dir = Path(temporary_wheel_dir_raw)
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "wheel",
+                "--no-deps",
+                "--wheel-dir",
+                str(temporary_wheel_dir),
+                str(source_root),
+            ],
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            details = [f"source: {source_root}"]
+            if result.stderr:
+                details.extend(result.stderr.strip().splitlines()[-5:])
+            print_cli_error(
+                "cannot build local docker wheel", area="deploy", details=details
+            )
+            return None
+        built_wheels = sorted(temporary_wheel_dir.glob("*.whl"))
+        if len(built_wheels) != 1:
+            print_cli_error(
+                "cannot identify built local docker wheel",
+                area="deploy",
+                details=[
+                    f"source: {source_root}",
+                    f"wheel count: {len(built_wheels)}",
+                ],
+            )
+            return None
+        wheel = built_wheels[0]
+        destination = wheel_dir / wheel.name
+        try:
+            if destination.exists():
+                destination.unlink()
+            shutil.copy2(wheel, destination)
+        except OSError as exc:
+            print_cli_error(
+                "cannot write local docker wheel",
+                area="deploy",
+                details=[
+                    f"source: {source_root}",
+                    f"wheel: {destination}",
+                    f"error: {exc}",
+                ],
+            )
+            return None
+        return destination
+
+
+def _ensure_writable_wheel_dir(wheel_dir: Path) -> bool:
+    try:
+        wheel_dir.mkdir(parents=True, exist_ok=True)
+        write_check = wheel_dir / ".arbiter-write-check"
+        write_check.write_text("", encoding="utf-8")
+        write_check.unlink()
+    except OSError as exc:
+        print_cli_error(
+            "deployment wheelhouse is not writable",
+            area="deploy",
+            details=[
+                f"wheel dir: {wheel_dir}",
+                f"error: {exc}",
+                "remove or chown the wheelhouse directory, then retry",
+            ],
+        )
+        return False
+    return True
+
+
+def _docker_requirement_for_installed_distribution(
+    *,
+    distribution_name: str,
+    version: str,
+    installed_distribution: Any | None,
+    wheel_dir: Path | None,
+) -> str | None:
+    if installed_distribution is not None and wheel_dir is not None:
+        source_root = _distribution_direct_url_source_root(installed_distribution)
+        if source_root is not None:
+            wheel = _build_local_source_wheel(source_root, wheel_dir)
+            if wheel is None:
+                return None
+            return f"{DOCKER_WHEELS_CONTAINER_ROOT}/{wheel.name}"
+    if version == "unknown":
+        return None
+    return f"{distribution_name}=={version}"
+
+
+def _installed_python_deploy_requirements(
+    *, wheel_dir: Path | None = None
+) -> DockerDeployRequirements | None:
+    core_version = arbiter_core_version()
+    try:
+        core_distribution = distribution(ARBITER_CORE_PACKAGE)
+    except PackageNotFoundError:
+        core_distribution = None
+    core_requirement = _docker_requirement_for_installed_distribution(
+        distribution_name=ARBITER_CORE_PACKAGE,
+        version=core_version,
+        installed_distribution=core_distribution,
+        wheel_dir=wheel_dir,
     )
+    if core_requirement is None:
+        return None
+
+    plugin_pins: dict[str, tuple[str, str]] = {}
+    for entry_point in entry_points().select(group=SERVICE_PLUGIN_ENTRY_POINT_GROUP):
+        try:
+            plugin_factory = cast(ServicePluginFactory, entry_point.load())
+        except ModuleNotFoundError as exc:
+            LOGGER.warning(
+                "Skipping unavailable service plugin entry point %s=%s: %s",
+                entry_point.name,
+                entry_point.value,
+                exc,
+            )
+            continue
+        service_plugin = plugin_factory()
+        validate_service_plugin_compatibility(service_plugin)
+        plugin_info = service_plugin_runtime_info(service_plugin)
+        if plugin_info.version == "unknown":
+            return None
+        distribution_name = _entry_point_distribution_name(entry_point)
+        if distribution_name is None:
+            return None
+        requirement = _docker_requirement_for_installed_distribution(
+            distribution_name=distribution_name,
+            version=plugin_info.version,
+            installed_distribution=getattr(entry_point, "dist", None),
+            wheel_dir=wheel_dir,
+        )
+        if requirement is None:
+            return None
+        plugin_pins[_normalized_distribution_name(distribution_name)] = (
+            distribution_name,
+            requirement,
+        )
+
+    return DockerDeployRequirements(
+        requirements=(
+            core_requirement,
+            *(
+                requirement
+                for _normalized_name, (_name, requirement) in sorted(
+                    plugin_pins.items()
+                )
+            ),
+        )
+    )
+
+
+def _default_deploy_requirements(
+    *, wheel_dir: Path | None
+) -> DockerDeployRequirements | None:
+    return _installed_python_deploy_requirements(wheel_dir=wheel_dir)
 
 
 def _format_deploy_requirements(requirements: Sequence[str]) -> str:
     return "\n".join(requirements) + "\n"
-
-
-def _format_local_source_compose_override(source_root: Path) -> str:
-    return (
-        "services:\n"
-        "  arbiter:\n"
-        "    volumes:\n"
-        f"      - {source_root}:{DOCKER_LOCAL_SOURCE_CONTAINER_ROOT}:ro\n"
-    )
 
 
 def _deploy_requirement_error(requirement: str) -> str | None:
@@ -1010,7 +1180,7 @@ def _parse_docker_deploy_args(args: Sequence[str]) -> DockerDeployArgs | None:
     requirements: list[str] = []
 
     for arg in _strip_arg_separator(args):
-        if arg in {"init", "update"}:
+        if arg in {"init", "update", "pin-installed"}:
             if action is not None:
                 print_cli_error(
                     f"multiple deploy actions provided: {action}, {arg}",
@@ -1024,7 +1194,7 @@ def _parse_docker_deploy_args(args: Sequence[str]) -> DockerDeployArgs | None:
                 f"unknown docker deploy argument: {arg}",
                 area="deploy",
                 details=[
-                    "expected init, update, docker.dir=PATH, or "
+                    "expected init, update, pin-installed, docker.dir=PATH, or "
                     "docker.requirement=REQUIREMENT"
                 ],
             )
@@ -1041,7 +1211,8 @@ def _parse_docker_deploy_args(args: Sequence[str]) -> DockerDeployArgs | None:
 
     if action is None:
         print_cli_error(
-            "docker deploy requires an action: init or update", area="deploy"
+            "docker deploy requires an action: init, update, or pin-installed",
+            area="deploy",
         )
         return None
     for requirement in requirements:
@@ -1062,27 +1233,87 @@ def _parse_docker_deploy_args(args: Sequence[str]) -> DockerDeployArgs | None:
 
 def _resolve_docker_deploy_requirements(
     requirements: Sequence[str],
+    *,
+    wheel_dir: Path | None,
 ) -> DockerDeployRequirements | None:
     if requirements:
         return DockerDeployRequirements(
             requirements=_expand_meta_deploy_requirements(requirements)
         )
-    default_requirements = _default_deploy_requirements()
+    default_requirements = _default_deploy_requirements(wheel_dir=wheel_dir)
     if default_requirements is None:
         print_cli_error(
             "cannot infer default docker requirements",
             area="deploy",
             details=[
-                "pass docker.requirement=arbiter-suite==VERSION for the "
+                "install Arbiter packages in the current Python environment so "
+                "the generator can pin them",
+                "or pass docker.requirement=arbiter-suite==VERSION for the "
                 "all-in-one meta package",
                 "or pass one or more docker.requirement=PACKAGE==VERSION "
                 "entries for another meta package or explicit packages",
-                "for a local checkout, run this command from the checkout "
-                "or pass absolute container source paths",
+                "for local checkout testing, pass absolute container source paths",
             ],
         )
         return None
     return default_requirements
+
+
+def _compose_override_is_generated_local_source_mount(text: str) -> bool:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return (
+        len(lines) == 4
+        and lines[0] == "services:"
+        and lines[1] == "arbiter:"
+        and lines[2] == "volumes:"
+        and lines[3].startswith("- ")
+        and f":{DOCKER_LOCAL_SOURCE_CONTAINER_ROOT}:ro" in lines[3]
+    )
+
+
+def _run_deploy_docker_pin_installed(
+    deploy_dir: Path, paths: Mapping[str, Path]
+) -> int:
+    requirements = _installed_python_deploy_requirements(
+        wheel_dir=deploy_dir / "wheels"
+    )
+    if requirements is None:
+        print_cli_error(
+            "cannot infer installed docker requirements",
+            area="deploy",
+            details=[
+                "run from a Python environment with arbiter-core and desired "
+                "service plugins installed",
+                "or edit requirements.txt to exact package pins manually",
+            ],
+        )
+        return 1
+
+    deploy_dir.mkdir(parents=True, exist_ok=True)
+    _write_deploy_file(
+        paths["requirements"],
+        _format_deploy_requirements(requirements.requirements),
+    )
+
+    compose_override = paths["compose_override"]
+    if compose_override.exists():
+        override_text = compose_override.read_text(encoding="utf-8")
+        if _compose_override_is_generated_local_source_mount(override_text):
+            compose_override.unlink()
+            print(f"removed local source override: {compose_override}")
+        elif DOCKER_LOCAL_SOURCE_CONTAINER_ROOT in override_text:
+            print_cli_error(
+                "cannot safely remove local source mount from edited compose override",
+                area="deploy",
+                details=[
+                    f"file: {compose_override}",
+                    f"remove the {DOCKER_LOCAL_SOURCE_CONTAINER_ROOT} volume "
+                    "manually, then retry install",
+                ],
+            )
+            return 1
+
+    return 0
 
 
 def _format_docker_compose_env_file(existing_values: Mapping[str, str]) -> str:
@@ -1238,12 +1469,16 @@ def _run_deploy_docker(argv: Sequence[str]) -> int:
     compose_text = _deploy_template_text("compose.yaml")
     helper_text = _deploy_template_text("arbiter-docker")
 
-    if parsed.action == "init":
-        requirement_resolution = _resolve_docker_deploy_requirements(
-            parsed.requirements
-        )
-        if requirement_resolution is None:
+    if parsed.action == "pin-installed":
+        if parsed.requirements:
+            print_cli_error(
+                "pin-installed does not accept docker.requirement overrides",
+                area="deploy",
+            )
             return 2
+        return _run_deploy_docker_pin_installed(deploy_dir, paths)
+
+    if parsed.action == "init":
         manifest_path = _deploy_manifest_path(deploy_dir)
         init_paths = [
             paths["compose"],
@@ -1252,8 +1487,6 @@ def _run_deploy_docker(argv: Sequence[str]) -> int:
             paths["helper"],
             manifest_path,
         ]
-        if requirement_resolution.local_source_root is not None:
-            init_paths.append(paths["compose_override"])
         existing = [path for path in init_paths if path.exists()]
         if existing:
             print_cli_error(
@@ -1262,7 +1495,14 @@ def _run_deploy_docker(argv: Sequence[str]) -> int:
                 details=["use update to refresh generated files"],
             )
             return 1
-        deploy_dir.mkdir(parents=True, exist_ok=True)
+        requirement_resolution = _resolve_docker_deploy_requirements(
+            parsed.requirements,
+            wheel_dir=deploy_dir / "wheels",
+        )
+        if requirement_resolution is None:
+            return 2
+        if not _ensure_writable_wheel_dir(deploy_dir / "wheels"):
+            return 1
         manifest_hashes: dict[str, str] = {}
         _write_manifest_owned_deploy_file(
             path=paths["compose"],
@@ -1279,13 +1519,6 @@ def _run_deploy_docker(argv: Sequence[str]) -> int:
             paths["requirements"],
             _format_deploy_requirements(requirement_resolution.requirements),
         )
-        if requirement_resolution.local_source_root is not None:
-            _write_deploy_file(
-                paths["compose_override"],
-                _format_local_source_compose_override(
-                    requirement_resolution.local_source_root
-                ),
-            )
         _write_manifest_owned_deploy_file(
             path=paths["helper"],
             relative_path="arbiter-docker",
@@ -1305,6 +1538,8 @@ def _run_deploy_docker(argv: Sequence[str]) -> int:
 
     if parsed.action == "update":
         deploy_dir.mkdir(parents=True, exist_ok=True)
+        if not _ensure_writable_wheel_dir(deploy_dir / "wheels"):
+            return 1
         manifest_hashes = _load_deploy_manifest(deploy_dir)
         original_manifest_hashes = dict(manifest_hashes)
         update_statuses = [
@@ -1335,7 +1570,8 @@ def _run_deploy_docker(argv: Sequence[str]) -> int:
         wrote_local_state = False
         if not paths["requirements"].exists():
             requirement_resolution = _resolve_docker_deploy_requirements(
-                parsed.requirements
+                parsed.requirements,
+                wheel_dir=deploy_dir / "wheels",
             )
             if requirement_resolution is None:
                 return 2
@@ -1344,17 +1580,6 @@ def _run_deploy_docker(argv: Sequence[str]) -> int:
                 _format_deploy_requirements(requirement_resolution.requirements),
             )
             wrote_local_state = True
-            if (
-                requirement_resolution.local_source_root is not None
-                and not paths["compose_override"].exists()
-            ):
-                _write_deploy_file(
-                    paths["compose_override"],
-                    _format_local_source_compose_override(
-                        requirement_resolution.local_source_root
-                    ),
-                )
-                wrote_local_state = True
         if (
             not paths["docker_env"].exists()
             or paths["docker_env"].read_text(encoding="utf-8") != docker_env_content

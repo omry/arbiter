@@ -5,28 +5,44 @@ title: Packages And Wheels
 `requirements.txt` is a small pip requirements file installed inside the
 container at startup.
 
-Package entries must be exact pins such as `arbiter-suite==0.9.0`; unpinned
+Package entries must be exact pins such as `arbiter-core==0.9.0`; unpinned
 names and version ranges are rejected by `docker.requirement=...`,
 `arbiter-docker doctor`, and service start/restart commands.
 
 ## Default package target
 
-By default, `arbiter-server deploy docker init` writes a pinned `meta:all`
-package, `arbiter-suite`, when that all-in-one meta package is installed at a
-publishable package version. Check the core runtime version with:
+By default, `arbiter-server deploy docker init` follows the Arbiter core
+package and service plugins installed in the current Python environment. Check
+the loaded versions with:
 
 ```bash
-arbiter-server --version
+arbiter-server version
 ```
 
-The default file looks like:
+For packages installed from a package index, the default file uses exact pins:
 
 ```text title="./arbiter-docker/requirements.txt"
-arbiter-suite==0.9.0
+arbiter-core==0.9.0
+arbiter-imap==0.9.0
+arbiter-smtp==0.9.0
 ```
 
-That meta package installs the core package and the default plugin packages for
-the same release.
+The generated pins follow the package versions already loaded by
+`arbiter-server`. This keeps Docker installs aligned with the Python
+environment you used to prepare the deployment.
+
+For editable local packages, such as an Arbiter checkout installed with
+`pip install -e`, Arbiter builds wheels into `./arbiter-docker/wheels` and
+uses those wheels directly:
+
+```text title="./arbiter-docker/requirements.txt"
+/wheels/arbiter_core-0.9.0.dev2-py3-none-any.whl
+/wheels/arbiter_imap-0.9.0.dev2-py3-none-any.whl
+/wheels/arbiter_smtp-0.9.0.dev2-py3-none-any.whl
+```
+
+The generated Compose file mounts `./wheels` at `/wheels`, so the deployment
+remains self-contained when promoted to a Linux host.
 
 ## Explicit package pins
 
@@ -44,6 +60,16 @@ The requirements file is operator-owned deployment state. Arbiter accepts
 initial pinned values from CLI input, but it does not auto-update core or
 plugin versions. Review version changes, edit the file deliberately, then
 restart or reinstall the service.
+
+To refresh an existing deployment from the current Python environment:
+
+```bash
+./arbiter-docker/arbiter-docker pin-installed
+```
+
+`pin-installed` rebuilds wheels for editable local packages. `install` also
+runs that refresh automatically when it detects an old local source checkout
+setup.
 
 The PyPI package `arbiter` is unrelated to Arbiter. Use `arbiter-suite`
 for the default bundle, or exact pins for Arbiter packages such as
@@ -76,20 +102,18 @@ used only as the bundle selection shorthand.
 
 ## Networkless installs
 
-For networkless installs, mount a wheelhouse at `/wheels` with a local Compose
-override. When `/wheels` contains `.whl` files, the generated container command
-uses `pip install --no-index --find-links /wheels ...`, so every required wheel
-must already be present:
+For networkless installs, put wheels in `./arbiter-docker/wheels`, or set
+`ARBITER_WHEELS_DIR` in `docker.env` to another wheelhouse path. The generated
+Compose file mounts that directory at `/wheels`.
 
-```yaml title="./arbiter-docker/compose.override.yaml"
-services:
-  arbiter:
-    volumes:
-      - /opt/arbiter/wheels:/wheels:ro
+```text title="./arbiter-docker/docker.env"
+ARBITER_WHEELS_DIR=./wheels
 ```
 
-The requirements file can keep pinned package names that resolve from the
-wheelhouse, or it can name wheels directly:
+When `/wheels` contains `.whl` files, the generated container command uses
+`pip install --no-index --find-links /wheels ...`, so every required wheel must
+already be present. The requirements file can keep pinned package names that
+resolve from the wheelhouse, or it can name wheels directly:
 
 ```text title="./arbiter-docker/requirements.txt"
 /wheels/arbiter_core-0.9.0.dev2-py3-none-any.whl
@@ -98,12 +122,8 @@ wheelhouse, or it can name wheels directly:
 
 ## Local checkout testing
 
-When run from a local checkout with a dev version such as `0.9.0.dev1`, `init`
-writes `/source/arbiter/...` requirements and a local
-`compose.override.yaml` that mounts the checkout read-only.
-
-For local checkout testing, the only non-pinned entries allowed are absolute
-container paths:
+Local checkout installs are explicit testing state. The only non-pinned
+entries allowed are absolute container paths:
 
 ```text title="./arbiter-docker/requirements.txt"
 /source/arbiter/core

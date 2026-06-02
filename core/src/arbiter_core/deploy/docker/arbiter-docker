@@ -2,6 +2,7 @@
 set -euo pipefail
 
 deploy_dir="${ARBITER_DOCKER_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)}"
+systemd_unit_dir="${ARBITER_SYSTEMD_DIR:-/etc/systemd/system}"
 compose_file="$deploy_dir/compose.yaml"
 compose_env_file="$deploy_dir/docker.env"
 requirements_file="$deploy_dir/requirements.txt"
@@ -12,6 +13,8 @@ usage() {
 Usage: arbiter-docker COMMAND
 
 Commands:
+  pin-installed
+                Pin requirements to the current Python Arbiter packages/plugins
   sync-env      Run arbiter-server env bootstrap for the configured config
   edit-config   Edit the main config file with $ARBITER_EDITOR, $EDITOR, or vi
   edit-requirements
@@ -110,6 +113,30 @@ validate_requirements_file() {
   ' "$path"
 }
 
+arbiter_server_path() {
+  local search_dir
+  local command_path
+
+  if [[ -n "${ARBITER_SERVER:-}" ]]; then
+    printf '%s\n' "$ARBITER_SERVER"
+    return 0
+  fi
+  command_path="$(command -v arbiter-server || true)"
+  if [[ -n "$command_path" ]]; then
+    printf '%s\n' "$command_path"
+    return 0
+  fi
+  search_dir="$deploy_dir"
+  while [[ "$search_dir" != "/" ]]; do
+    if [[ -x "$search_dir/.venv/bin/arbiter-server" ]]; then
+      printf '%s\n' "$search_dir/.venv/bin/arbiter-server"
+      return 0
+    fi
+    search_dir="$(dirname "$search_dir")"
+  done
+  return 1
+}
+
 edit_requirements() {
   local edited_requirements
 
@@ -131,6 +158,87 @@ edit_requirements() {
   cp "$edited_requirements" "$requirements_file"
   rm -f "$edited_requirements"
   printf 'updated requirements file: %s\n' "$requirements_file"
+}
+
+pin_installed() {
+  local arbiter_server
+
+  if ! arbiter_server="$(arbiter_server_path)"; then
+    printf 'error: arbiter-server is not on PATH; activate the Arbiter Python environment and retry\n' >&2
+    return 1
+  fi
+  "$arbiter_server" deploy docker "docker.dir=$deploy_dir" pin-installed
+}
+
+pin_installed_as_sudo_user() {
+  local sudo_user
+  local arbiter_server
+
+  sudo_user="${SUDO_USER:-}"
+  if [[ -z "$sudo_user" || "$sudo_user" == "root" ]]; then
+    printf 'error: install needs to refresh local deployment wheels, but this helper is running as root\n' >&2
+    printf '       run %s pin-installed as the deployment owner, then rerun sudo %s install\n' "$deploy_dir/arbiter-docker" "$deploy_dir/arbiter-docker" >&2
+    return 1
+  fi
+  if ! arbiter_server="$(arbiter_server_path)"; then
+    printf 'error: arbiter-server is not on PATH; activate the Arbiter Python environment and retry\n' >&2
+    return 1
+  fi
+  printf 'preparing install requirements from current Python environment as %s\n' "$sudo_user"
+  sudo -u "$sudo_user" env ARBITER_DOCKER_DIR="$deploy_dir" "$arbiter_server" deploy docker "docker.dir=$deploy_dir" pin-installed
+}
+
+has_missing_wheel_requirement() {
+  local active_wheels_dir
+  local wheel_requirement
+  local wheel_path
+
+  [[ -f "$requirements_file" ]] || return 1
+  active_wheels_dir="$(wheels_dir_path)"
+  while IFS= read -r wheel_requirement; do
+    [[ -n "$wheel_requirement" ]] || continue
+    wheel_path="$active_wheels_dir/${wheel_requirement#/wheels/}"
+    [[ -f "$wheel_path" ]] || return 0
+  done < <(
+    awk '
+      {
+        line = $0
+        sub(/^[[:space:]]+/, "", line)
+        sub(/[[:space:]]+#.*$/, "", line)
+        sub(/[[:space:]]+$/, "", line)
+        if (line ~ /^\/wheels\/.*\.whl$/) {
+          print line
+        }
+      }
+    ' "$requirements_file"
+  )
+  return 1
+}
+
+running_as_root() {
+  [[ "$(id -u)" -eq 0 ]]
+}
+
+install_prepare_requirements() {
+  local needs_pin=0
+
+  if [[ -f "$requirements_file" ]] && grep -Eq '^[[:space:]]*/source/arbiter(/|$)' "$requirements_file"; then
+    needs_pin=1
+  fi
+  if [[ -f "$compose_override_file" ]] && grep -q '/source/arbiter' "$compose_override_file"; then
+    needs_pin=1
+  fi
+  if has_missing_wheel_requirement; then
+    needs_pin=1
+  fi
+  [[ "$needs_pin" -eq 1 ]] || return 0
+
+  if running_as_root; then
+    pin_installed_as_sudo_user
+  else
+    printf 'preparing install requirements from current Python environment\n'
+    pin_installed
+  fi
 }
 
 env_file_value() {
@@ -172,6 +280,10 @@ deploy_path_from_compose_value() {
 
 config_dir_path() {
   deploy_path_from_compose_value "$(compose_env_value ARBITER_CONFIG_DIR ./conf)"
+}
+
+wheels_dir_path() {
+  deploy_path_from_compose_value "$(compose_env_value ARBITER_WHEELS_DIR ./wheels)"
 }
 
 config_name_value() {
@@ -326,6 +438,7 @@ info() {
   printf 'app env file: %s\n' "$(app_env_path)"
   printf 'docker env file: %s\n' "$compose_env_file"
   printf 'requirements file: %s\n' "$requirements_file"
+  printf 'wheels dir: %s\n' "$(wheels_dir_path)"
   docker compose version || true
 }
 
@@ -578,21 +691,49 @@ doctor_check_docker_socket() {
 doctor_check_preinstall_ready() {
   local active_config_dir
   local active_app_env
+  local active_wheels_dir
+  local wheel_requirement
+  local wheel_path
 
   active_config_dir="$(config_dir_path)"
   active_app_env="$(app_env_path)"
+  active_wheels_dir="$(wheels_dir_path)"
 
   doctor_check_path_under_deploy_dir "$active_config_dir" "config directory"
   doctor_check_path_under_deploy_dir "$active_app_env" "app env file"
 
   if [[ -f "$requirements_file" ]] && grep -Eq '^[[:space:]]*/source/arbiter(/|$)' "$requirements_file"; then
-    doctor_fail "preinstall cannot promote local source requirements: $requirements_file"
-    printf '      use pinned packages (name==version) or /wheels/*.whl entries before install\n'
+    doctor_fail "install requires package or wheel requirements, but this file uses the local checkout: $requirements_file"
+    printf '      edit requirements.txt to use exact package pins such as arbiter-core==VERSION, arbiter-smtp==VERSION, and arbiter-imap==VERSION\n'
+    printf '      alternatively, use absolute container wheel paths such as /wheels/arbiter_core-VERSION-py3-none-any.whl\n'
   fi
 
+  while IFS= read -r wheel_requirement; do
+    [[ -n "$wheel_requirement" ]] || continue
+    wheel_path="$active_wheels_dir/${wheel_requirement#/wheels/}"
+    if [[ -f "$wheel_path" ]]; then
+      doctor_ok "wheel requirement exists: $wheel_path"
+    else
+      doctor_fail "wheel requirement is missing from deployment wheelhouse: $wheel_path"
+      printf '      run %s pin-installed to rebuild generated wheels from the current Python environment\n' "$deploy_dir/arbiter-docker"
+    fi
+  done < <(
+    awk '
+      {
+        line = $0
+        sub(/^[[:space:]]+/, "", line)
+        sub(/[[:space:]]+#.*$/, "", line)
+        sub(/[[:space:]]+$/, "", line)
+        if (line ~ /^\/wheels\/.*\.whl$/) {
+          print line
+        }
+      }
+    ' "$requirements_file"
+  )
+
   if [[ -f "$compose_override_file" ]] && grep -q '/source/arbiter' "$compose_override_file"; then
-    doctor_fail "preinstall cannot promote a local source mount: $compose_override_file"
-    printf '      remove the /source/arbiter mount after switching requirements\n'
+    doctor_fail "install cannot keep the local checkout mounted into the container: $compose_override_file"
+    printf '      after switching requirements away from /source/arbiter, remove compose.override.yaml or delete the /source/arbiter volume from it\n'
   fi
 
   if [[ "$doctor_status" -eq 0 ]]; then
@@ -878,8 +1019,9 @@ install_write_systemd_unit() {
   local unit_file
   local docker_bin
   local compose_files
+  local docker_unit_lines
 
-  unit_file="/etc/systemd/system/${install_service}.service"
+  unit_file="$systemd_unit_dir/${install_service}.service"
 
   if [[ "$install_dry_run" -eq 1 ]]; then
     printf 'would write systemd unit: %s\n' "$unit_file"
@@ -899,12 +1041,19 @@ install_write_systemd_unit() {
   if [[ -f "$compose_override_file" || -f "$install_target_dir/compose.override.yaml" ]]; then
     compose_files="$compose_files -f $install_target_dir/compose.override.yaml"
   fi
+  mkdir -p "$systemd_unit_dir"
+  docker_unit_lines=""
+  if systemctl cat docker.service >/dev/null 2>&1; then
+    docker_unit_lines="Requires=docker.service
+After=docker.service"
+  else
+    doctor_warn "docker.service not found; generated unit will rely on Docker socket availability"
+  fi
 
   cat >"$unit_file" <<EOF
 [Unit]
 Description=Arbiter Docker service
-Requires=docker.service
-After=docker.service
+$docker_unit_lines
 
 [Service]
 Type=simple
@@ -1009,6 +1158,7 @@ install_deployment() {
     exit 2
   fi
 
+  install_prepare_requirements
   doctor --preinstall
 
   if [[ "$install_dry_run" -ne 1 ]]; then
@@ -1035,6 +1185,9 @@ if (($#)); then
 fi
 
 case "$command" in
+  pin-installed)
+    pin_installed
+    ;;
   sync-env)
     sync_env
     ;;

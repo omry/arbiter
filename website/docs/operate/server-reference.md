@@ -113,17 +113,20 @@ arbiter-server deploy docker update [docker.dir=PATH] [docker.requirement=REQ ..
 
 - `deploy docker init`: write a local Docker deployment directory. Defaults to
   `./arbiter-docker`, refuses to overwrite existing managed files, and does not
-  create config, start Docker, or run the server. When run from a local dev
-  checkout, it seeds source-path requirements and a read-only source mount
-  override.
+  create config, start Docker, or run the server. By default, it follows the
+  Arbiter core package and installed service plugin packages from the current
+  Python environment. Editable local packages are built into deployment wheels;
+  non-local packages are written as exact pins.
 - `deploy docker update`: refresh manifest-owned templates
   (`compose.yaml` and `arbiter-docker`) only when they are missing or still
   match the recorded manifest hash. Existing templates without manifest
   ownership or with local edits are skipped. It regenerates `docker.env`
   while preserving known and extra local values, and never rewrites an existing
-  `requirements.txt`. If it
-  creates missing local-checkout source requirements, it also creates the
-  read-only source mount override when missing.
+  `requirements.txt`.
+- `deploy docker pin-installed`: rewrite `requirements.txt` from the current
+  Python environment, rebuilding wheels for editable local packages. If the
+  deployment has the generated local source checkout override, it removes that
+  override.
 - `docker.dir=PATH`: deployment directory to create or update.
 - `docker.requirement=REQ`: package requirement to seed into
   `requirements.txt` when it is created. Package requirements must be exact
@@ -133,8 +136,9 @@ arbiter-server deploy docker update [docker.dir=PATH] [docker.requirement=REQ ..
 
 The generated deployment directory includes `docker.env` for Compose/container
 settings, a default `conf/` config directory, and its own `arbiter-docker`
-helper for local operations such as `up`, `logs`, `restart`, `sync-env`, `info`,
-`doctor`, and `install`. Use `arbiter-docker doctor --preinstall` to check a
+helper for local operations such as `up`, `logs`, `restart`, `sync-env`,
+`pin-installed`, `info`, `doctor`, and `install`. Use
+`arbiter-docker doctor --preinstall` to check a
 prepared directory before promoting it to a Linux host with
 `sudo ./arbiter-docker install --to /opt/arbiter --user arbiter`. The install
 step copies the prepared directory, creates the dedicated user/group if

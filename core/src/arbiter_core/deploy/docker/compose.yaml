@@ -15,6 +15,7 @@ services:
     volumes:
       - ${ARBITER_CONFIG_DIR:-./conf}:/config:ro
       - ${ARBITER_REQUIREMENTS_FILE:-./requirements.txt}:/requirements.txt:ro
+      - ${ARBITER_WHEELS_DIR:-./wheels}:/wheels:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
