@@ -17,13 +17,11 @@ PACKAGE_FILES = (
     Path("imap/pyproject.toml"),
 )
 DOC_FILES = (
-    Path("docs/overview.md"),
     Path("website/docs/operate/deployment/packages.md"),
     Path("website/docs/operate/server-reference.md"),
     Path("website/docs/extend/plugins.md"),
 )
 DOC_EXPECTATIONS = {
-    Path("docs/overview.md"): ("- Version: `{version}`",),
     Path("website/docs/operate/deployment/packages.md"): (
         "arbiter-suite=={final_version}",
         "arbiter-core=={version}",

@@ -58,19 +58,14 @@ The Docusaurus website lives in [website/](website/):
 - `cd website && npm run start`
 - `cd website && npm run build`
 
-The design is documented in the `docs/` structure used by the MCP server template:
+The user-facing documentation lives in [website/docs/](website/docs/). The
+root [docs/](docs/) directory is reserved for internal planning and future
+design notes:
 
-- [docs/overview.md](docs/overview.md)
-- [docs/architecture.md](docs/architecture.md)
 - [docs/BACKLOG.md](docs/BACKLOG.md)
-- [docs/config.md](docs/config.md)
-- [docs/config_bootstrap.md](docs/config_bootstrap.md)
-- [docs/policies.md](docs/policies.md)
-- [docs/errors.md](docs/errors.md)
 - [docs/testing_backlog.md](docs/testing_backlog.md)
-- [docs/tools/account_summaries.md](docs/tools/account_summaries.md)
-- [docs/tools/smtp_send_email.md](docs/tools/smtp_send_email.md)
-- [docs/tools/imap.md](docs/tools/imap.md)
+- [docs/release-readiness.md](docs/release-readiness.md)
+- [docs/future/](docs/future/)
 
 ## Local Streamable HTTP Run
 
@@ -97,8 +92,8 @@ arbiter-server bootstrap plugin smtp account primary
 container runtime, or secret manager provides. For local runs, the root config
 can name one optional dotenv-style file to load before composition.
 
-See [docs/config_bootstrap.md](docs/config_bootstrap.md) for the generated file
-layout and composition flow.
+See [website/docs/operate/configuration-model.md](website/docs/operate/configuration-model.md)
+for the generated file layout and composition flow.
 
 For local development, a shell-owned env file can be useful:
 
