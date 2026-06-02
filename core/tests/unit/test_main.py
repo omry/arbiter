@@ -39,6 +39,7 @@ from arbiter_smtp import SendEmailResult, SMTPRuntime, SMTPServicePlugin
 from arbiter_smtp.config import SMTPConfig, SMTPServicePolicyConfig
 from arbiter_core.services import (
     CORE_API_VERSION,
+    CORE_VERSION,
     SERVICE_PLUGIN_ENTRY_POINT_GROUP,
     CapabilityDescriptor,
     OperationDescriptor,
@@ -62,6 +63,26 @@ def _patch_meta_all_version(monkeypatch: pytest.MonkeyPatch, version: str) -> No
         "arbiter_core.main.distribution_version",
         fake_distribution_version,
     )
+
+
+def _expected_version_info(
+    *,
+    commit: str | None,
+    dirty: bool | None,
+) -> dict[str, object]:
+    plugins = sorted(_test_service_plugins(), key=lambda plugin: plugin.name)
+    return {
+        "core": {"version": CORE_VERSION, "api_version": CORE_API_VERSION},
+        "source": {"commit": commit, "dirty": dirty},
+        "plugins": [
+            {
+                "name": plugin.name,
+                "version": plugin.version,
+                "core_api_version": plugin.core_api_version,
+            }
+            for plugin in plugins
+        ],
+    }
 
 
 def test_build_app_accepts_hydra_config() -> None:
@@ -1803,12 +1824,9 @@ def test_cli_lists_plugins_as_json(
 
     assert main(["--config-dir", "/tmp", "plugins", "list", "--json"]) == 0
 
-    assert capsys.readouterr().out == (
-        '{"core": {"version": "0.9.0.dev1", "api_version": "0.9"}, '
-        '"source": {"commit": "abc123", "dirty": true}, '
-        '"plugins": [{"name": "imap", "version": "0.9.0.dev1", '
-        '"core_api_version": "0.9"}, {"name": "smtp", "version": "0.9.0.dev1", '
-        '"core_api_version": "0.9"}]}\n'
+    assert json.loads(capsys.readouterr().out) == _expected_version_info(
+        commit="abc123",
+        dirty=True,
     )
 
 
@@ -1827,12 +1845,17 @@ def test_cli_version_prints_core_and_plugin_versions(
 
     assert main(["--config-dir", "/tmp", "version"]) == 0
 
+    version_info = _expected_version_info(commit="abc123", dirty=True)
+    core = cast(dict[str, str], version_info["core"])
+    plugins = cast(list[dict[str, str]], version_info["plugins"])
     assert capsys.readouterr().out == (
-        "core 0.9.0.dev1 (api 0.9)\n"
+        f"core {core['version']} (api {core['api_version']})\n"
         "source abc123 dirty\n"
         "plugins:\n"
-        "  imap 0.9.0.dev1 (core api 0.9)\n"
-        "  smtp 0.9.0.dev1 (core api 0.9)\n"
+        f"  {plugins[0]['name']} {plugins[0]['version']} "
+        f"(core api {plugins[0]['core_api_version']})\n"
+        f"  {plugins[1]['name']} {plugins[1]['version']} "
+        f"(core api {plugins[1]['core_api_version']})\n"
     )
 
 
@@ -1851,12 +1874,9 @@ def test_cli_version_can_print_json(
 
     assert main(["--config-dir", "/tmp", "version", "--json"]) == 0
 
-    assert capsys.readouterr().out == (
-        '{"core": {"version": "0.9.0.dev1", "api_version": "0.9"}, '
-        '"source": {"commit": "abc123", "dirty": false}, '
-        '"plugins": [{"name": "imap", "version": "0.9.0.dev1", '
-        '"core_api_version": "0.9"}, {"name": "smtp", "version": "0.9.0.dev1", '
-        '"core_api_version": "0.9"}]}\n'
+    assert json.loads(capsys.readouterr().out) == _expected_version_info(
+        commit="abc123",
+        dirty=False,
     )
 
 
@@ -2914,14 +2934,10 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     assert server._mcp_server.version != ""
     assert sorted(tools) == sorted(CORE_TOOL_NAMES)
 
-    assert tools["version_info"]() == {
-        "core": {"version": "0.9.0.dev1", "api_version": "0.9"},
-        "source": {"commit": None, "dirty": None},
-        "plugins": [
-            {"name": "imap", "version": "0.9.0.dev1", "core_api_version": "0.9"},
-            {"name": "smtp", "version": "0.9.0.dev1", "core_api_version": "0.9"},
-        ],
-    }
+    assert tools["version_info"]() == _expected_version_info(
+        commit=None,
+        dirty=None,
+    )
     assert tools["list_caps"]() == {"capabilities": ["imap", "smtp"]}
 
     capabilities = cast(dict[str, Any], tools["describe_caps"]())

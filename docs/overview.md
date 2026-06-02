@@ -1,7 +1,7 @@
 # RFC: Arbiter Overview
 
 - Document ID: `arbiter-overview`
-- Version: `0.9.0.dev1`
+- Version: `0.9.0.dev2`
 - Status: `Draft`
 - Authors: `Codex`, `Omry Yadan`
 - Last Updated: `2026-05-24`

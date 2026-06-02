@@ -30,9 +30,9 @@ classifiers = [
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-  "arbiter-core==0.9.0.dev1",
-  "arbiter-smtp==0.9.0.dev1",
-  "arbiter-imap==0.9.0.dev1",
+  "arbiter-core==0.9.0.dev2",
+  "arbiter-smtp==0.9.0.dev2",
+  "arbiter-imap==0.9.0.dev2",
 ]
 
 [project.optional-dependencies]

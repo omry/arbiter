@@ -231,7 +231,6 @@ def build_plan(
     root: Path,
     *,
     package_keys: frozenset[str] | None = None,
-    release_version: Version | None = None,
 ) -> list[PlanItem]:
     versions = _validate_versions(root)
     selected_package_names = (
@@ -256,12 +255,6 @@ def build_plan(
                 )
             )
             continue
-
-        if release_version is not None and local_version != release_version:
-            raise ValueError(
-                f"{package.name} version {local_version.text} does not match "
-                f"--release-version {release_version.text}"
-            )
 
         pypi_version = _pypi_version(package.name)
         if pypi_version is None:
@@ -330,13 +323,6 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
-        "--release-version",
-        help=(
-            "require every selected package to have this exact local version; "
-            "use for fine-grained final releases"
-        ),
-    )
-    parser.add_argument(
         "--prepare-output-dir",
         action="store_true",
         help="copy selected distributions into the output directory",
@@ -346,16 +332,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         root = Path(namespace.root).resolve()
         package_keys = _parse_package_keys(namespace.packages)
-        release_version = (
-            Version.parse(namespace.release_version)
-            if namespace.release_version is not None
-            else None
-        )
-        plan = build_plan(
-            root,
-            package_keys=package_keys,
-            release_version=release_version,
-        )
+        plan = build_plan(root, package_keys=package_keys)
         publish_items = [item for item in plan if item.publish]
         publish_keys = [
             PACKAGE_KEY_BY_NAME[item.package.name] for item in publish_items

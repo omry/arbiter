@@ -12,10 +12,6 @@ on:
         description: "Release line to validate and build, for example 0.9"
         required: true
         type: string
-      release_version:
-        description: "Optional exact selected-package version for fine-grained releases, for example 0.9.1"
-        required: false
-        type: string
       publish_to_pypi:
         description: "Publish built distributions to PyPI"
         required: true
@@ -41,7 +37,6 @@ jobs:
 
     outputs:
       release_line: ${{ steps.release.outputs.release_line }}
-      release_version: ${{ steps.release.outputs.release_version }}
       has_publish: ${{ steps.pypi-plan.outputs.has_publish }}
       publish_keys: ${{ steps.pypi-plan.outputs.publish_keys }}
       publish_specs: ${{ steps.pypi-plan.outputs.publish_specs }}
@@ -51,13 +46,12 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Resolve release version
+      - name: Resolve release line
         id: release
         shell: bash
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           RELEASE_LINE_INPUT: ${{ inputs.release_line }}
-          RELEASE_VERSION_INPUT: ${{ inputs.release_version }}
         run: |
           project_version="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' pyproject.toml | head -n 1)"
           if [[ -z "$project_version" ]]; then
@@ -71,8 +65,8 @@ jobs:
               exit 1
             fi
             release_line="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
-            release_version="${release_line}.0"
-            if [[ "$project_version" != "$release_version" ]]; then
+            expected_project_version="${release_line}.0"
+            if [[ "$project_version" != "$expected_project_version" ]]; then
               echo "Project version $project_version does not match release tag $tag" >&2
               exit 1
             fi
@@ -82,18 +76,8 @@ jobs:
               echo "Release line must use MAJOR.MINOR, got: $release_line" >&2
               exit 1
             fi
-            release_version="${RELEASE_VERSION_INPUT:-$project_version}"
-            if [[ ! "$release_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(\.dev(0|[1-9][0-9]*))?$ ]]; then
-              echo "Release version must use MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH.devN, got: $release_version" >&2
-              exit 1
-            fi
-            if [[ "$release_version" != "$release_line".* ]]; then
-              echo "Project version $release_version is not on release line $release_line" >&2
-              exit 1
-            fi
           fi
           echo "release_line=$release_line" >> "$GITHUB_OUTPUT"
-          echo "release_version=$release_version" >> "$GITHUB_OUTPUT"
 
       - name: Set up bootstrap Python
         uses: actions/setup-python@v5
@@ -105,9 +89,6 @@ jobs:
         run: python -m pip install "nox[pbs]>=2024.10,<2026.0" build
 
       - name: Verify release line
-        if: >-
-          github.event_name == 'release' ||
-          inputs.release_version == ''
         run: tools/upgrade_release_line "${{ steps.release.outputs.release_line }}" --check
 
       - name: Run lint
@@ -133,29 +114,30 @@ jobs:
         shell: bash
         env:
           PUBLISH_PACKAGES: ${{ inputs.publish_packages || 'all' }}
-          RELEASE_VERSION: ${{ inputs.release_version }}
         run: |
           args=(--prepare-output-dir --packages "$PUBLISH_PACKAGES")
-          if [[ -n "$RELEASE_VERSION" ]]; then
-            args+=(--release-version "$RELEASE_VERSION")
-          fi
           tools/plan_pypi_publish "${args[@]}"
 
       - name: Validate release notes
         if: >-
           steps.pypi-plan.outputs.has_publish == 'true' &&
-          !contains(steps.release.outputs.release_version, '.dev') &&
           (github.event_name == 'release' ||
            (github.event_name == 'workflow_dispatch' && inputs.publish_to_pypi))
         shell: bash
         env:
           PUBLISH_KEYS: ${{ steps.pypi-plan.outputs.publish_keys }}
-          RELEASE_VERSION: ${{ steps.release.outputs.release_version }}
+          PUBLISH_SPECS: ${{ steps.pypi-plan.outputs.publish_specs }}
         run: |
           IFS=',' read -ra package_keys <<< "$PUBLISH_KEYS"
-          for package_key in "${package_keys[@]}"; do
+          IFS=',' read -ra publish_specs <<< "$PUBLISH_SPECS"
+          for index in "${!package_keys[@]}"; do
+            package_key="${package_keys[$index]}"
+            package_version="${publish_specs[$index]##*==}"
+            if [[ "$package_version" == *".dev"* ]]; then
+              continue
+            fi
             tools/extract_release_notes \
-              "$RELEASE_VERSION" \
+              "$package_version" \
               --package-key "$package_key" \
               > /dev/null
           done
@@ -163,7 +145,6 @@ jobs:
       - name: Summarize publish plan
         if: steps.pypi-plan.outputs.has_publish == 'true'
         env:
-          RELEASE_VERSION: ${{ steps.release.outputs.release_version }}
           PUBLISH_KEYS: ${{ steps.pypi-plan.outputs.publish_keys }}
           PUBLISH_SPECS: ${{ steps.pypi-plan.outputs.publish_specs }}
           PUBLISH_TITLE: ${{ steps.pypi-plan.outputs.publish_title }}
@@ -171,7 +152,7 @@ jobs:
           {
             echo "### Publish plan"
             echo
-            echo "- Release version: $RELEASE_VERSION"
+            echo "- Release line: ${{ steps.release.outputs.release_line }}"
             echo "- Package keys: $PUBLISH_KEYS"
             echo "- Package specs: $PUBLISH_SPECS"
             echo "- Publish title: publishing $PUBLISH_TITLE to PyPI"
@@ -240,7 +221,6 @@ jobs:
       always() &&
       needs.build.outputs.has_publish == 'true' &&
       needs.publish.result == 'success' &&
-      !contains(needs.build.outputs.release_version, '.dev') &&
       (github.event_name == 'release' ||
        (github.event_name == 'workflow_dispatch' &&
         github.ref == 'refs/heads/main' &&
@@ -257,23 +237,39 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_EVENT_TAG: ${{ github.event.release.tag_name }}
           PUBLISH_KEYS: ${{ needs.build.outputs.publish_keys }}
-          RELEASE_VERSION: ${{ needs.build.outputs.release_version }}
+          PUBLISH_SPECS: ${{ needs.build.outputs.publish_specs }}
         run: |
-          release_tag="${RELEASE_EVENT_TAG:-v$RELEASE_VERSION}"
           IFS=',' read -ra package_keys <<< "$PUBLISH_KEYS"
-          : > release-notes.md
-          for package_key in "${package_keys[@]}"; do
+          IFS=',' read -ra publish_specs <<< "$PUBLISH_SPECS"
+          declare -A notes_files=()
+          release_tags=()
+          for index in "${!package_keys[@]}"; do
+            package_key="${package_keys[$index]}"
+            package_version="${publish_specs[$index]##*==}"
+            if [[ "$package_version" == *".dev"* ]]; then
+              continue
+            fi
+            release_tag="${RELEASE_EVENT_TAG:-v$package_version}"
+            if [[ -z "${notes_files[$release_tag]:-}" ]]; then
+              notes_file="release-notes-${#release_tags[@]}.md"
+              notes_files[$release_tag]="$notes_file"
+              release_tags+=("$release_tag")
+              : > "$notes_file"
+            fi
             tools/extract_release_notes \
-              "$RELEASE_VERSION" \
+              "$package_version" \
               --package-key "$package_key" \
-              >> release-notes.md
-            printf '\n' >> release-notes.md
+              >> "${notes_files[$release_tag]}"
+            printf '\n' >> "${notes_files[$release_tag]}"
           done
-          if gh release view "$release_tag" >/dev/null 2>&1; then
-            gh release edit "$release_tag" --notes-file release-notes.md
-          else
-            gh release create "$release_tag" \
-              --target "$GITHUB_SHA" \
-              --title "$release_tag" \
-              --notes-file release-notes.md
-          fi
+          for release_tag in "${release_tags[@]}"; do
+            notes_file="${notes_files[$release_tag]}"
+            if gh release view "$release_tag" >/dev/null 2>&1; then
+              gh release edit "$release_tag" --notes-file "$notes_file"
+            else
+              gh release create "$release_tag" \
+                --target "$GITHUB_SHA" \
+                --title "$release_tag" \
+                --notes-file "$notes_file"
+            fi
+          done

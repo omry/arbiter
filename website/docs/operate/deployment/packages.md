@@ -35,8 +35,8 @@ If you want explicit package control, seed the file with repeated
 
 ```bash
 arbiter-server deploy docker \
-  docker.requirement=arbiter-core==0.9.0.dev1 \
-  docker.requirement=arbiter-smtp==0.9.0.dev1 \
+  docker.requirement=arbiter-core==0.9.0.dev2 \
+  docker.requirement=arbiter-smtp==0.9.0.dev2 \
   init
 ```
 
@@ -92,8 +92,8 @@ The requirements file can keep pinned package names that resolve from the
 wheelhouse, or it can name wheels directly:
 
 ```text title="./arbiter-docker/requirements.txt"
-/wheels/arbiter_core-0.9.0.dev1-py3-none-any.whl
-/wheels/arbiter_smtp-0.9.0.dev1-py3-none-any.whl
+/wheels/arbiter_core-0.9.0.dev2-py3-none-any.whl
+/wheels/arbiter_smtp-0.9.0.dev2-py3-none-any.whl
 ```
 
 ## Local checkout testing

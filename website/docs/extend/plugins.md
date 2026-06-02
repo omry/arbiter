@@ -31,7 +31,7 @@ smtp = "arbiter_smtp:plugin"
 
 Plugins use compatibility-line versions. A plugin for Arbiter core
 `0.9.x` should use a package version on the `0.9` line, such as
-`0.9.0.dev1`, `0.9.0`, or `0.9.1`, and declare the same core API line at
+`0.9.0.dev2`, `0.9.0`, or `0.9.1`, and declare the same core API line at
 runtime. The plugin runtime should derive `version` from installed package
 metadata rather than duplicating the version literal:
 
@@ -53,7 +53,7 @@ Package dependencies should express the same compatibility line:
 
 ```toml
 dependencies = [
-  "arbiter-core>=0.9.0.dev1,<0.10.0",
+  "arbiter-core>=0.9.0.dev2,<0.10.0",
 ]
 ```
 

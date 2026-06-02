@@ -69,12 +69,12 @@ Limit the publish set with package keys:
 ```bash
 tools/plan_pypi_publish --packages core --prepare-output-dir
 tools/plan_pypi_publish --packages core,imap --prepare-output-dir
-tools/plan_pypi_publish --packages smtp --release-version 0.9.1 --prepare-output-dir
+tools/plan_pypi_publish --packages smtp --prepare-output-dir
 ```
 
-`--release-version` requires every selected package to have that exact local
-version. Use it for fine-grained final releases where one plugin or meta package
-moves independently.
+The planner reads each selected package's local version independently. Use
+`tools/upgrade_release_line 0.9 --check` to validate that packages remain on
+the intended compatibility line.
 
 ## Initial PyPI bootstrap
 
@@ -96,8 +96,6 @@ before each run:
 Use manual workflow dispatch for dev package releases such as `0.9.0.dev1`:
 
 - `release_line`: the `MAJOR.MINOR` line, such as `0.9`
-- `release_version`: optional exact version override for fine-grained package
-  releases; omit it when publishing the repository version
 - `publish_packages`: one key or a comma-separated key list
 - `publish_to_pypi`: enable only when the matching PyPI trusted publisher is
   ready
@@ -115,14 +113,12 @@ distributions to PyPI, and then edits the GitHub release with those notes.
 For fine-grained final releases, use manual workflow dispatch:
 
 - `release_line`: the `MAJOR.MINOR` line, such as `0.9`
-- `release_version`: the exact selected-package version, such as `0.9.1`
 - `publish_packages`: the package keys to publish, such as `smtp`
 - `publish_to_pypi`: `true`
 
-The workflow requires every selected package to have `release_version`, validates
-release notes only for packages that will publish, publishes the selected
-distributions to PyPI, and then creates or updates the GitHub release tag
-`v{release_version}` with those notes.
+The workflow validates release notes only for final packages that will publish,
+publishes the selected distributions to PyPI, and then creates or updates GitHub
+release tags from each published package version, such as `v0.9.1`.
 
 Additional meta packages, such as a future `meta:mail`, should follow the same
 non-expanding package-key model.

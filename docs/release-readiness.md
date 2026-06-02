@@ -30,8 +30,7 @@ tools/upgrade_release_line 0.9 --check
 tools/plan_pypi_publish --packages all
 ```
 
-Use `--release-version` when validating a fine-grained plugin or meta-package
-release.
+Use `--packages` when validating a fine-grained plugin or meta-package release.
 
 ### 2. Local release rehearsal
 
@@ -62,7 +61,7 @@ entry points:
 /tmp/arbiter-release/venv/bin/python -m pip install --upgrade pip
 /tmp/arbiter-release/venv/bin/python -m pip install \
   --find-links /tmp/arbiter-release/dist \
-  /tmp/arbiter-release/dist/arbiter_suite-0.9.0.dev1-py3-none-any.whl
+  /tmp/arbiter-release/dist/arbiter_suite-0.9.0.dev2-py3-none-any.whl
 /tmp/arbiter-release/venv/bin/arbiter-server version --json
 ```
 

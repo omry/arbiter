@@ -134,31 +134,19 @@ def test_build_plan_validates_unselected_plugin_version_lines(
         _build_plan(tool)(tmp_path, package_keys=frozenset({"core"}))
 
 
-def test_build_plan_requires_selected_packages_to_match_release_version(
+def test_build_plan_allows_selected_packages_with_different_patch_versions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     tool = _load_tool()
-    version_type = getattr(tool, "Version")
     _write_fixture(tmp_path, imap_version="0.9.1")
     monkeypatch.setattr(tool, "_pypi_version", lambda package_name: None)
 
     plan = _build_plan(tool)(
         tmp_path,
         package_keys=frozenset({"imap"}),
-        release_version=version_type.parse("0.9.1"),
     )
 
     assert [item.package.name for item in plan if item.publish] == ["arbiter-imap"]
-
-    with pytest.raises(
-        ValueError,
-        match="arbiter-imap version 0.9.1 does not match " "--release-version 0.9.2",
-    ):
-        _build_plan(tool)(
-            tmp_path,
-            package_keys=frozenset({"imap"}),
-            release_version=version_type.parse("0.9.2"),
-        )
 
 
 def test_write_github_output_includes_publish_keys(tmp_path: Path) -> None:
