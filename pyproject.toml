@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "arbiter-suite"
-version = "0.9.0.dev1"
+version = "0.9.0.dev2"
 description = "Policy-controlled access to configured services for agents"
 readme = "README.md"
 requires-python = ">=3.10,<3.15"

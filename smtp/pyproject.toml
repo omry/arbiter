@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "arbiter-smtp"
-version = "0.9.0.dev1"
+version = "0.9.0.dev2"
 description = "SMTP service plugin for Arbiter"
 readme = { text = "SMTP service plugin for Arbiter.", content-type = "text/markdown" }
 requires-python = ">=3.10,<3.15"
