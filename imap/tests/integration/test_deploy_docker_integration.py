@@ -56,6 +56,8 @@ def _deployment_message_bytes() -> bytes:
 def imap_server(free_tcp_port: int) -> Iterator[Any]:
     runner = _load_imap_integration_module()._LocalIMAPServerRunner(
         free_tcp_port,
+        host="0.0.0.0",
+        close_host="127.0.0.1",
         search_uids=(DEPLOYMENT_TEST_UID,),
         messages={DEPLOYMENT_TEST_UID: _deployment_message_bytes()},
     )
@@ -241,7 +243,7 @@ def _wait_for_imap_operation(
                 "imap:list_messages",
                 "--args",
                 '{"account":"primary","folder":"INBOX","limit":1}',
-                f"mcp_url={mcp_url}",
+                f"arbiter.mcp_url={mcp_url}",
             ],
             cwd=repo_root,
             timeout=20,
@@ -278,7 +280,7 @@ def _run_delete_message(
                 '{"account":"primary","folder":"INBOX",'
                 f'"message_id":"{DEPLOYMENT_TEST_UID}"}}'
             ),
-            f"mcp_url={mcp_url}",
+            f"arbiter.mcp_url={mcp_url}",
         ],
         cwd=repo_root,
         timeout=20,
@@ -370,9 +372,9 @@ def _build_deploy_wheelhouse(repo_root: Path, wheelhouse: Path) -> dict[str, Pat
 
     wheel_names = {path.name: path for path in wheelhouse.glob("*.whl")}
     expected_prefixes = {
-        "core": "agent_arbiter_core-",
-        "smtp": "agent_arbiter_smtp-",
-        "imap": "agent_arbiter_imap-",
+        "core": "arbiter_core-",
+        "smtp": "arbiter_smtp-",
+        "imap": "arbiter_imap-",
         "hydra": "hydra_core-",
         "mcp": "mcp-",
         # These are transitive runtime dependencies through mcp, not direct

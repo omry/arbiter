@@ -56,6 +56,8 @@ class _LocalIMAPServerRunner:
         self,
         port: int,
         *,
+        host: str = "127.0.0.1",
+        close_host: str | None = None,
         login_ok: bool = True,
         search_ok: bool = True,
         support_move: bool = True,
@@ -63,7 +65,8 @@ class _LocalIMAPServerRunner:
         search_uids: tuple[str, ...] = ("40", "41", "42"),
         messages: dict[str, bytes] | None = None,
     ) -> None:
-        self.host = "127.0.0.1"
+        self.host = host
+        self.close_host = close_host or host
         self.port = port
         self.commands: list[str] = []
         self.login_ok = login_ok
@@ -90,7 +93,7 @@ class _LocalIMAPServerRunner:
     def close(self) -> None:
         self._stop.set()
         try:
-            with socket.create_connection((self.host, self.port), timeout=1):
+            with socket.create_connection((self.close_host, self.port), timeout=1):
                 pass
         except OSError:
             pass

@@ -44,8 +44,8 @@ dependencies = [
         "arbiter-suite==0.8.0\n"
         "arbiter-core==0.8.0\n"
         "arbiter-smtp==0.8.0\n"
-        "/wheels/agent_arbiter_core-0.8.0-py3-none-any.whl\n"
-        "/wheels/agent_arbiter_smtp-0.8.0-py3-none-any.whl\n"
+        "/wheels/arbiter_core-0.8.0-py3-none-any.whl\n"
+        "/wheels/arbiter_smtp-0.8.0-py3-none-any.whl\n"
         "0.8.0.dev1\n"
     ),
     "website/docs/operate/server-reference.md": ("arbiter-core==0.8.0\n"),
@@ -102,8 +102,8 @@ dependencies = [
             "arbiter-suite==0.9.0\n"
             "arbiter-core==0.9.0.dev1\n"
             "arbiter-smtp==0.9.0.dev1\n"
-            "/wheels/agent_arbiter_core-0.9.0.dev1-py3-none-any.whl\n"
-            "/wheels/agent_arbiter_smtp-0.9.0.dev1-py3-none-any.whl\n"
+            "/wheels/arbiter_core-0.9.0.dev1-py3-none-any.whl\n"
+            "/wheels/arbiter_smtp-0.9.0.dev1-py3-none-any.whl\n"
             "dev version such as `0.9.0.dev1`\n"
         ),
         "website/docs/operate/server-reference.md": ("arbiter-core==0.9.0.dev1\n"),
@@ -256,7 +256,7 @@ def test_upgrade_release_line_updates_dev_docs_to_next_line_without_stale_suffix
     assert result.returncode == 0, result.stderr
     assert "+arbiter-suite==1.0.0" in result.stdout
     assert '+  "arbiter-core>=1.0.0,<1.1.0"' in result.stdout
-    assert "+/wheels/agent_arbiter_core-1.0.0-py3-none-any.whl" in result.stdout
+    assert "+/wheels/arbiter_core-1.0.0-py3-none-any.whl" in result.stdout
     assert "1.0.0.dev1,<" not in result.stdout
     assert "such as `1.0.0` or\n+`1.0.1`" in result.stdout
     assert "such as `1.0.0`,\n+`1.0.0`" not in result.stdout

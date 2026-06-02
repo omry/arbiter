@@ -36,6 +36,7 @@ def install_project(session: nox.Session) -> None:
         "black>=25.0,<26.0",
         "mypy>=1.11,<2.0",
         "pytest>=7.4,<9.0",
+        "tomli>=2.0,<3.0",
         "trustme>=1.2,<2.0",
     )
     session.install("-e", "core")
