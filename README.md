@@ -1,5 +1,13 @@
 # Arbiter
 
+|  | Description |
+| --- | --- |
+| Project | [![PyPI version](https://badge.fury.io/py/arbiter-suite.svg)](https://badge.fury.io/py/arbiter-suite)[![Downloads](https://pepy.tech/badge/arbiter-core/month)](https://pepy.tech/project/arbiter-core)![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue) |
+| Packages | [![arbiter-core](https://img.shields.io/pypi/v/arbiter-core.svg?label=arbiter-core)](https://pypi.org/project/arbiter-core/)[![arbiter-smtp](https://img.shields.io/pypi/v/arbiter-smtp.svg?label=arbiter-smtp)](https://pypi.org/project/arbiter-smtp/)[![arbiter-imap](https://img.shields.io/pypi/v/arbiter-imap.svg?label=arbiter-imap)](https://pypi.org/project/arbiter-imap/) |
+| Code quality | [![CI](https://github.com/omry/arbiter/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/omry/arbiter/actions/workflows/ci.yml) |
+| Docs and support | [![Documentation](https://img.shields.io/badge/docs-arbiter.yadan.net-blue)](https://arbiter.yadan.net/) |
+| License | [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) |
+
 Arbiter is a capability firewall between AI agents and services. Today it exposes policy-controlled access through MCP and a client CLI; additional interfaces may be added later. The current service surface covers sending mail over SMTP and reading IMAP folders through explicit account policies.
 
 ## Project Status
