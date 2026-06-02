@@ -27,16 +27,16 @@ class Package:
 
 
 PACKAGES = (
-    Package(kind="core", name="agent-arbiter-core", path=Path("core")),
-    Package(kind="plugin", name="agent-arbiter-imap", path=Path("imap")),
-    Package(kind="plugin", name="agent-arbiter-smtp", path=Path("smtp")),
-    Package(kind="meta", name="agent-arbiter", path=Path(".")),
+    Package(kind="core", name="arbiter-core", path=Path("core")),
+    Package(kind="plugin", name="arbiter-imap", path=Path("imap")),
+    Package(kind="plugin", name="arbiter-smtp", path=Path("smtp")),
+    Package(kind="meta", name="arbiter-suite", path=Path(".")),
 )
 PACKAGE_BY_KEY = {
-    "core": "agent-arbiter-core",
-    "imap": "agent-arbiter-imap",
-    "smtp": "agent-arbiter-smtp",
-    "meta:all": "agent-arbiter",
+    "core": "arbiter-core",
+    "imap": "arbiter-imap",
+    "smtp": "arbiter-smtp",
+    "meta:all": "arbiter-suite",
 }
 PACKAGE_KEY_BY_NAME = {name: key for key, name in PACKAGE_BY_KEY.items()}
 PACKAGE_KEYS = tuple(PACKAGE_BY_KEY)
@@ -152,12 +152,12 @@ def _pypi_version(package_name: str) -> Version | None:
 
 def _validate_versions(root: Path) -> dict[str, Version]:
     versions = {package.name: _project_version(root, package) for package in PACKAGES}
-    core_version = versions["agent-arbiter-core"]
+    core_version = versions["arbiter-core"]
 
-    main_version = versions["agent-arbiter"]
+    main_version = versions["arbiter-suite"]
     if main_version.line != core_version.line:
         raise ValueError(
-            "agent-arbiter version line "
+            "arbiter-suite version line "
             f"{main_version.major}.{main_version.minor} does not match core "
             f"{core_version.major}.{core_version.minor}"
         )

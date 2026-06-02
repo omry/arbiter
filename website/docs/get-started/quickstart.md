@@ -13,8 +13,16 @@ the server, client, and plugin packages isolated from your system Python.
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
-.venv/bin/python -m pip install agent-arbiter
+.venv/bin/python -m pip install arbiter-suite
 ```
+
+:::note
+
+The PyPI package `arbiter` is unrelated to Agent Arbiter. Install
+`arbiter-suite` for the default Agent Arbiter bundle, or install packages such
+as `arbiter-core`, `arbiter-smtp`, and `arbiter-imap` explicitly.
+
+:::
 
 Use the virtualenv commands directly, or activate it before running examples.
 

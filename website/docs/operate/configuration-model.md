@@ -196,11 +196,11 @@ runs. For example, a composed config with SMTP and IMAP bot accounts might
 produce entries like:
 
 ```dotenv title="~/.arbiter/.env"
-# agent-arbiter-imap
+# arbiter-imap
 IMAP_BOT_ACCOUNT_USERNAME=
 IMAP_BOT_ACCOUNT_PASSWORD=
 
-# agent-arbiter-smtp
+# arbiter-smtp
 SMTP_BOT_ACCOUNT_USERNAME=
 SMTP_BOT_ACCOUNT_PASSWORD=
 

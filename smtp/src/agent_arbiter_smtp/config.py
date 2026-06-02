@@ -91,23 +91,23 @@ def register_configs(config_store: ConfigStore) -> None:
         group="arbiter/account/smtp",
         name="schema",
         node=SMTPConfig,
-        provider="agent-arbiter-smtp",
+        provider="arbiter-smtp",
     )
     config_store.store(
         group="arbiter/account/smtp",
         name="example",
         node=SMTP_ACCOUNT_EXAMPLE,
-        provider="agent-arbiter-smtp",
+        provider="arbiter-smtp",
     )
     config_store.store(
         group="arbiter/policy/smtp",
         name="schema",
         node=SMTPServicePolicyConfig,
-        provider="agent-arbiter-smtp",
+        provider="arbiter-smtp",
     )
     config_store.store(
         group="arbiter/policy/smtp",
         name="example",
         node=SMTP_POLICY_EXAMPLE,
-        provider="agent-arbiter-smtp",
+        provider="arbiter-smtp",
     )

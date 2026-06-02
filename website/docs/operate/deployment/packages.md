@@ -5,14 +5,14 @@ title: Packages And Wheels
 `requirements.txt` is a small pip requirements file installed inside the
 container at startup.
 
-Package entries must be exact pins such as `agent-arbiter==0.9.0`; unpinned
+Package entries must be exact pins such as `arbiter-suite==0.9.0`; unpinned
 names and version ranges are rejected by `docker.requirement=...`,
 `arbiter-docker doctor`, and service start/restart commands.
 
 ## Default package target
 
 By default, `arbiter-server deploy docker init` writes a pinned `meta:all`
-package, `agent-arbiter`, when that all-in-one meta package is installed at a
+package, `arbiter-suite`, when that all-in-one meta package is installed at a
 publishable package version. Check the core runtime version with:
 
 ```bash
@@ -22,7 +22,7 @@ arbiter-server --version
 The default file looks like:
 
 ```text title="./arbiter-docker/requirements.txt"
-agent-arbiter==0.9.0
+arbiter-suite==0.9.0
 ```
 
 That meta package installs the core package and the default plugin packages for
@@ -30,19 +30,13 @@ the same release.
 
 ## Explicit package pins
 
-If you want a narrower meta package or explicit package control, seed the file
-with repeated `docker.requirement=...` values:
+If you want explicit package control, seed the file with repeated
+`docker.requirement=...` values:
 
 ```bash
 arbiter-server deploy docker \
-  docker.requirement=agent-arbiter-mail==0.9.0 \
-  init
-```
-
-```bash
-arbiter-server deploy docker \
-  docker.requirement=agent-arbiter-core==0.9.0.dev1 \
-  docker.requirement=agent-arbiter-smtp==0.9.0.dev1 \
+  docker.requirement=arbiter-core==0.9.0.dev1 \
+  docker.requirement=arbiter-smtp==0.9.0.dev1 \
   init
 ```
 
@@ -50,6 +44,10 @@ The requirements file is operator-owned deployment state. Agent Arbiter accepts
 initial pinned values from CLI input, but it does not auto-update core or
 plugin versions. Review version changes, edit the file deliberately, then
 restart or reinstall the service.
+
+The PyPI package `arbiter` is unrelated to Agent Arbiter. Use `arbiter-suite`
+for the default bundle, or exact pins for Agent Arbiter packages such as
+`arbiter-core`, `arbiter-smtp`, and `arbiter-imap`.
 
 ## Meta package with overrides
 
@@ -59,8 +57,8 @@ package override together:
 
 ```bash
 arbiter-server deploy docker \
-  docker.requirement=agent-arbiter==0.9.0 \
-  docker.requirement=agent-arbiter-smtp==0.9.1 \
+  docker.requirement=arbiter-suite==0.9.0 \
+  docker.requirement=arbiter-smtp==0.9.1 \
   init
 ```
 
@@ -68,9 +66,9 @@ Agent Arbiter expands that into real package pins in `requirements.txt` so pip
 does not see conflicting meta-package dependencies:
 
 ```text title="./arbiter-docker/requirements.txt"
-agent-arbiter-core==0.9.0
-agent-arbiter-smtp==0.9.1
-agent-arbiter-imap==0.9.0
+arbiter-core==0.9.0
+arbiter-smtp==0.9.1
+arbiter-imap==0.9.0
 ```
 
 The zero-code meta package itself is not installed in this expanded form; it is

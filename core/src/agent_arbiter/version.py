@@ -74,7 +74,7 @@ def distribution_version(
 
 
 def arbiter_core_version() -> str:
-    return distribution_version("agent-arbiter-core", package_file=__file__)
+    return distribution_version("arbiter-core", package_file=__file__)
 
 
 def core_api_version() -> str:

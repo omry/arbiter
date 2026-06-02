@@ -25,34 +25,32 @@ DOC_FILES = (
 DOC_EXPECTATIONS = {
     Path("docs/overview.md"): ("- Version: `{version}`",),
     Path("website/docs/operate/deployment/packages.md"): (
-        "agent-arbiter=={final_version}",
-        "agent-arbiter-core=={version}",
-        "agent-arbiter-smtp=={version}",
+        "arbiter-suite=={final_version}",
+        "arbiter-core=={version}",
+        "arbiter-smtp=={version}",
         "/wheels/agent_arbiter_core-{version}-py3-none-any.whl",
         "/wheels/agent_arbiter_smtp-{version}-py3-none-any.whl",
         "{dev_version}",
     ),
-    Path("website/docs/operate/server-reference.md"): (
-        "agent-arbiter-core=={version}",
-    ),
+    Path("website/docs/operate/server-reference.md"): ("arbiter-core=={version}",),
     Path("website/docs/extend/plugins.md"): (
         "`{line}.x`",
         "`{line}` line",
         "`{version}`",
         "`{line}.1`",
         'core_api_version = "{line}"',
-        '"agent-arbiter-core>={version},<{next_version}"',
+        '"arbiter-core>={version},<{next_version}"',
     ),
 }
 META_PACKAGE_DEPENDENCIES = (
-    "agent-arbiter-core",
-    "agent-arbiter-smtp",
-    "agent-arbiter-imap",
+    "arbiter-core",
+    "arbiter-smtp",
+    "arbiter-imap",
 )
 PACKAGE_FILE_BY_DISTRIBUTION = {
-    "agent-arbiter-core": Path("core/pyproject.toml"),
-    "agent-arbiter-smtp": Path("smtp/pyproject.toml"),
-    "agent-arbiter-imap": Path("imap/pyproject.toml"),
+    "arbiter-core": Path("core/pyproject.toml"),
+    "arbiter-smtp": Path("smtp/pyproject.toml"),
+    "arbiter-imap": Path("imap/pyproject.toml"),
 }
 PLUGIN_PACKAGE_FILES = (
     Path("smtp/pyproject.toml"),
@@ -180,12 +178,12 @@ def _version_line(version: str) -> ReleaseLine:
 
 def _extract_core_dependency_range(text: str, path: Path) -> tuple[str, str]:
     match = re.search(
-        r'"agent-arbiter-core>=([0-9]+\.[0-9]+\.[0-9]+'
+        r'"arbiter-core>=([0-9]+\.[0-9]+\.[0-9]+'
         r'(?:[.-]dev[0-9]+)?),<([0-9]+\.[0-9]+\.[0-9]+)"',
         text,
     )
     if match is None:
-        raise ValueError(f"{path} is missing an agent-arbiter-core dependency range")
+        raise ValueError(f"{path} is missing an arbiter-core dependency range")
     return match.group(1), match.group(2)
 
 
@@ -219,7 +217,7 @@ def _validate_current_state(root: Path) -> ReleaseLine:
         lower_bound_line = _version_line(lower_bound)
         if lower_bound_line != current_line or upper_bound != expected_next:
             raise ValueError(
-                f"{path} agent-arbiter-core dependency must stay on line "
+                f"{path} arbiter-core dependency must stay on line "
                 f"{current_line.text} with upper bound <{expected_next}"
             )
 
@@ -282,9 +280,9 @@ def _update_pyproject(
             )
     if path in PLUGIN_PACKAGE_FILES:
         updated = re.sub(
-            r'"agent-arbiter-core>=[0-9]+\.[0-9]+\.[0-9]+'
+            r'"arbiter-core>=[0-9]+\.[0-9]+\.[0-9]+'
             r'(?:[.-]dev[0-9]+)?,<[0-9]+\.[0-9]+\.[0-9]+"',
-            f'"agent-arbiter-core>={target.version},<{target.next_version}"',
+            f'"arbiter-core>={target.version},<{target.next_version}"',
             updated,
         )
     return updated

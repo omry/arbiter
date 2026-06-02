@@ -1,5 +1,5 @@
 ---
-title: Testing And Release Readiness
+title: Testing
 ---
 
 Use the repo-local virtualenv when running checks:
@@ -19,14 +19,6 @@ download missing interpreters when needed:
 
 Use `--download-python never` when you want to require only interpreters that
 are already installed locally.
-
-## Current release-readiness focus
-
-- package metadata and deployment requirements agree
-- CLI help and config bootstrap flows work from installed console scripts
-- docs describe the current command and config shape
-- deployment examples use current console entry points
-- security limitations are explicit
 
 ## Useful focused checks
 
@@ -53,4 +45,4 @@ endpoint.
 Run the full suite before release or before committing broad interface changes.
 
 See [Release Process](./release-process.md) for package-scoped release notes,
-PyPI publish planning, trusted publisher bootstrap, and final release steps.
+PyPI publish planning, trusted publisher bootstrap, and publish mechanics.

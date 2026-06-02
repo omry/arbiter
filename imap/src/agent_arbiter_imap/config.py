@@ -107,11 +107,11 @@ def register_configs(config_store: ConfigStore) -> None:
         group="arbiter/account/imap",
         name="schema",
         node=IMAPConfig,
-        provider="agent-arbiter-imap",
+        provider="arbiter-imap",
     )
     config_store.store(
         group="arbiter/policy/imap",
         name="schema",
         node=IMAPAccessPolicyConfig,
-        provider="agent-arbiter-imap",
+        provider="arbiter-imap",
     )

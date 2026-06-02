@@ -54,7 +54,7 @@ def _patch_meta_all_version(monkeypatch: pytest.MonkeyPatch, version: str) -> No
         *,
         package_file: str | Path | None = None,
     ) -> str:
-        assert distribution_name == "agent-arbiter"
+        assert distribution_name == "arbiter-suite"
         assert package_file is None
         return version
 
@@ -535,7 +535,7 @@ def test_cli_env_check_reports_missing_env(
 
     assert capsys.readouterr().err == (
         "Agent Arbiter env error: missing required environment variables:\n"
-        "  SMTP_PRIMARY_ACCOUNT_PASSWORD (agent-arbiter-smtp)\n"
+        "  SMTP_PRIMARY_ACCOUNT_PASSWORD (arbiter-smtp)\n"
     )
 
 
@@ -578,11 +578,11 @@ def test_cli_env_bootstrap_rebuilds_configured_env_file(
     assert main(["--config-dir", str(tmp_path), "env", "bootstrap"]) == 0
 
     assert env_file.read_text(encoding="utf-8") == (
-        "# agent-arbiter-imap\n"
+        "# arbiter-imap\n"
         "IMAP_PRIMARY_ACCOUNT_USERNAME=imap-user\n"
         "IMAP_PRIMARY_ACCOUNT_PASSWORD=\n"
         "\n"
-        "# agent-arbiter-smtp\n"
+        "# arbiter-smtp\n"
         "SMTP_PRIMARY_ACCOUNT_PASSWORD=keep-me\n"
         "SMTP_PRIMARY_ACCOUNT_USERNAME=\n"
         "\n"
@@ -609,7 +609,7 @@ def test_cli_env_bootstrap_reports_noop_when_env_file_is_current(
     )
     env_file = tmp_path / "local.env"
     env_file.write_text(
-        "# agent-arbiter-smtp\n" "SMTP_PRIMARY_ACCOUNT_PASSWORD=\n",
+        "# arbiter-smtp\n" "SMTP_PRIMARY_ACCOUNT_PASSWORD=\n",
         encoding="utf-8",
     )
 
@@ -646,7 +646,7 @@ def test_cli_env_bootstrap_configures_default_env_file(
         "        password: ${oc.env:SMTP_PRIMARY_ACCOUNT_PASSWORD}\n"
     )
     assert (tmp_path / ".env").read_text(encoding="utf-8") == (
-        "# agent-arbiter-smtp\n"
+        "# arbiter-smtp\n"
         "SMTP_PRIMARY_ACCOUNT_USERNAME=\n"
         "SMTP_PRIMARY_ACCOUNT_PASSWORD=\n"
     )
@@ -696,7 +696,7 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
     assert "AGENT_ARBITER_DOCKER_SUBNET=172.31.250.0/24\n" in docker_env
     assert "AGENT_ARBITER_LOCAL_SOURCE_DIR" not in docker_env
     assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
-        "agent-arbiter==1.2.3\n"
+        "arbiter-suite==1.2.3\n"
     )
     assert not (deploy_dir / "compose.override.yaml").exists()
     helper = deploy_dir / "arbiter-docker"
@@ -731,7 +731,7 @@ def test_cli_deploy_docker_init_preserves_existing_config(
                 "deploy",
                 "docker",
                 f"docker.dir={deploy_dir}",
-                "docker.requirement=agent-arbiter==1.2.3",
+                "docker.requirement=arbiter-suite==1.2.3",
                 "init",
             ]
         )
@@ -760,7 +760,7 @@ def test_cli_deploy_docker_init_refuses_existing_file(
                 "docker",
                 "init",
                 f"docker.dir={deploy_dir}",
-                "docker.requirement=agent-arbiter==1.2.3",
+                "docker.requirement=arbiter-suite==1.2.3",
             ]
         )
         == 1
@@ -786,8 +786,8 @@ def test_cli_deploy_docker_init_accepts_multiple_requirements(
                 "deploy",
                 "docker",
                 f"docker.dir={deploy_dir}",
-                "docker.requirement=agent-arbiter-core==1.2.3",
-                "docker.requirement=agent-arbiter-smtp==1.2.3",
+                "docker.requirement=arbiter-core==1.2.3",
+                "docker.requirement=arbiter-smtp==1.2.3",
                 "init",
             ]
         )
@@ -795,7 +795,7 @@ def test_cli_deploy_docker_init_accepts_multiple_requirements(
     )
 
     assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
-        "agent-arbiter-core==1.2.3\n" "agent-arbiter-smtp==1.2.3\n"
+        "arbiter-core==1.2.3\n" "arbiter-smtp==1.2.3\n"
     )
     capsys.readouterr()
 
@@ -812,8 +812,8 @@ def test_cli_deploy_docker_init_expands_meta_package_with_package_override(
                 "deploy",
                 "docker",
                 f"docker.dir={deploy_dir}",
-                "docker.requirement=agent-arbiter==0.9.0",
-                "docker.requirement=agent-arbiter-smtp==0.9.1",
+                "docker.requirement=arbiter-suite==0.9.0",
+                "docker.requirement=arbiter-smtp==0.9.1",
                 "init",
             ]
         )
@@ -821,9 +821,7 @@ def test_cli_deploy_docker_init_expands_meta_package_with_package_override(
     )
 
     assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
-        "agent-arbiter-core==0.9.0\n"
-        "agent-arbiter-smtp==0.9.1\n"
-        "agent-arbiter-imap==0.9.0\n"
+        "arbiter-core==0.9.0\n" "arbiter-smtp==0.9.1\n" "arbiter-imap==0.9.0\n"
     )
     capsys.readouterr()
 
@@ -840,8 +838,8 @@ def test_cli_deploy_docker_init_rejects_conflicting_duplicate_package_pins(
                 "deploy",
                 "docker",
                 f"docker.dir={deploy_dir}",
-                "docker.requirement=agent-arbiter-smtp==0.9.1",
-                "docker.requirement=agent-arbiter-smtp==0.9.2",
+                "docker.requirement=arbiter-smtp==0.9.1",
+                "docker.requirement=arbiter-smtp==0.9.2",
                 "init",
             ]
         )
@@ -850,7 +848,7 @@ def test_cli_deploy_docker_init_rejects_conflicting_duplicate_package_pins(
 
     assert capsys.readouterr().err == (
         "Agent Arbiter deploy error: conflicting docker.requirement pins for "
-        "agent-arbiter-smtp: 0.9.1, 0.9.2\n"
+        "arbiter-smtp: 0.9.1, 0.9.2\n"
     )
     assert not deploy_dir.exists()
 
@@ -867,7 +865,7 @@ def test_cli_deploy_docker_init_rejects_unpinned_requirement(
                 "deploy",
                 "docker",
                 f"docker.dir={deploy_dir}",
-                "docker.requirement=agent-arbiter",
+                "docker.requirement=arbiter-suite",
                 "init",
             ]
         )
@@ -877,7 +875,7 @@ def test_cli_deploy_docker_init_rejects_unpinned_requirement(
     assert capsys.readouterr().err == (
         "Agent Arbiter deploy error: docker.requirement must be an exact "
         "package pin (name==version) or an absolute container path\n"
-        "  value: agent-arbiter\n"
+        "  value: arbiter-suite\n"
     )
     assert not deploy_dir.exists()
 
@@ -929,7 +927,7 @@ def test_cli_deploy_docker_init_rejects_unlocated_local_dev_default_requirement(
 
     assert capsys.readouterr().err == (
         "Agent Arbiter deploy error: cannot infer default docker requirements\n"
-        "  pass docker.requirement=agent-arbiter==VERSION for the all-in-one "
+        "  pass docker.requirement=arbiter-suite==VERSION for the all-in-one "
         "meta package\n"
         "  or pass one or more docker.requirement=PACKAGE==VERSION entries "
         "for another meta package or explicit packages\n"
@@ -1003,7 +1001,7 @@ def test_cli_deploy_docker_generated_helper_doctor_rejects_unpinned_requirements
                 "deploy",
                 "docker",
                 f"docker.dir={deploy_dir}",
-                "docker.requirement=agent-arbiter==1.2.3",
+                "docker.requirement=arbiter-suite==1.2.3",
                 "init",
             ]
         )
@@ -1043,7 +1041,7 @@ def test_cli_deploy_docker_generated_helper_doctor_rejects_unpinned_requirements
         in valid_result.stdout
     )
 
-    (deploy_dir / "requirements.txt").write_text("agent-arbiter\n", encoding="utf-8")
+    (deploy_dir / "requirements.txt").write_text("arbiter-suite\n", encoding="utf-8")
     result = subprocess.run(
         [deploy_dir / "arbiter-docker", "doctor"],
         check=False,
@@ -1076,7 +1074,7 @@ def test_cli_deploy_docker_generated_helper_doctor_rejects_raw_meta_override(
                 "deploy",
                 "docker",
                 f"docker.dir={deploy_dir}",
-                "docker.requirement=agent-arbiter==1.2.3",
+                "docker.requirement=arbiter-suite==1.2.3",
                 "init",
             ]
         )
@@ -1087,7 +1085,7 @@ def test_cli_deploy_docker_generated_helper_doctor_rejects_raw_meta_override(
     (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
     (config_dir / ".env").write_text("", encoding="utf-8")
     (deploy_dir / "requirements.txt").write_text(
-        "agent-arbiter==0.9.0\n" "agent-arbiter-smtp==0.9.1\n",
+        "arbiter-suite==0.9.0\n" "arbiter-smtp==0.9.1\n",
         encoding="utf-8",
     )
     fake_bin = tmp_path / "bin"
@@ -1117,8 +1115,8 @@ def test_cli_deploy_docker_generated_helper_doctor_rejects_raw_meta_override(
 
     assert result.returncode == 1
     assert (
-        "agent-arbiter meta package cannot be combined directly with "
-        "agent-arbiter-core, agent-arbiter-smtp, or agent-arbiter-imap pins"
+        "arbiter-suite meta package cannot be combined directly with "
+        "arbiter-core, arbiter-smtp, or arbiter-imap pins"
     ) in result.stdout
     assert (
         "fail: requirements file contains unpinned package requirements"
@@ -1137,7 +1135,7 @@ def test_cli_deploy_docker_generated_helper_doctor_can_color_status_prefixes(
                 "deploy",
                 "docker",
                 f"docker.dir={deploy_dir}",
-                "docker.requirement=agent-arbiter==1.2.3",
+                "docker.requirement=arbiter-suite==1.2.3",
                 "init",
             ]
         )
@@ -1147,7 +1145,7 @@ def test_cli_deploy_docker_generated_helper_doctor_can_color_status_prefixes(
     config_dir = deploy_dir / "conf"
     (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
     (config_dir / ".env").write_text("", encoding="utf-8")
-    (deploy_dir / "requirements.txt").write_text("agent-arbiter\n", encoding="utf-8")
+    (deploy_dir / "requirements.txt").write_text("arbiter-suite\n", encoding="utf-8")
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     fake_docker = fake_bin / "docker"
@@ -1192,7 +1190,7 @@ def test_cli_deploy_docker_generated_helper_doctor_can_disable_color(
                 "deploy",
                 "docker",
                 f"docker.dir={deploy_dir}",
-                "docker.requirement=agent-arbiter==1.2.3",
+                "docker.requirement=arbiter-suite==1.2.3",
                 "init",
             ]
         )
@@ -1243,7 +1241,7 @@ def test_cli_deploy_docker_generated_helper_preinstall_skips_docker_checks(
                 "deploy",
                 "docker",
                 f"docker.dir={deploy_dir}",
-                "docker.requirement=agent-arbiter==1.2.3",
+                "docker.requirement=arbiter-suite==1.2.3",
                 "init",
             ]
         )
@@ -1283,7 +1281,7 @@ def test_cli_deploy_docker_generated_helper_preinstall_rejects_source_override(
                 "deploy",
                 "docker",
                 f"docker.dir={deploy_dir}",
-                "docker.requirement=agent-arbiter==1.2.3",
+                "docker.requirement=arbiter-suite==1.2.3",
                 "init",
             ]
         )
@@ -1342,7 +1340,7 @@ def test_cli_deploy_docker_generated_helper_install_dry_run_plans_promotion(
                 "deploy",
                 "docker",
                 f"docker.dir={deploy_dir}",
-                "docker.requirement=agent-arbiter==1.2.3",
+                "docker.requirement=arbiter-suite==1.2.3",
                 "init",
             ]
         )
@@ -1393,7 +1391,7 @@ def test_cli_deploy_docker_generated_helper_doctor_colors_tty_by_default(
                 "deploy",
                 "docker",
                 f"docker.dir={deploy_dir}",
-                "docker.requirement=agent-arbiter==1.2.3",
+                "docker.requirement=arbiter-suite==1.2.3",
                 "init",
             ]
         )
@@ -1444,7 +1442,7 @@ def test_cli_deploy_docker_generated_helper_doctor_rejects_docker_subnet_overlap
                 "deploy",
                 "docker",
                 f"docker.dir={deploy_dir}",
-                "docker.requirement=agent-arbiter==1.2.3",
+                "docker.requirement=arbiter-suite==1.2.3",
                 "init",
             ]
         )
@@ -1505,7 +1503,7 @@ def test_cli_deploy_docker_generated_helper_preserves_requirements_after_bad_edi
                 "deploy",
                 "docker",
                 f"docker.dir={deploy_dir}",
-                "docker.requirement=agent-arbiter==1.2.3",
+                "docker.requirement=arbiter-suite==1.2.3",
                 "init",
             ]
         )
@@ -1516,7 +1514,7 @@ def test_cli_deploy_docker_generated_helper_preserves_requirements_after_bad_edi
     original_requirements = requirements_file.read_text(encoding="utf-8")
     editor = tmp_path / "bad-editor"
     editor.write_text(
-        "#!/usr/bin/env sh\n" "printf 'agent-arbiter\\n' > \"$1\"\n",
+        "#!/usr/bin/env sh\n" "printf 'arbiter-suite\\n' > \"$1\"\n",
         encoding="utf-8",
     )
     editor.chmod(0o755)
@@ -1552,7 +1550,7 @@ def test_cli_deploy_docker_generated_helper_sync_env_uses_env_bootstrap(
                 "deploy",
                 "docker",
                 f"docker.dir={deploy_dir}",
-                "docker.requirement=agent-arbiter==1.2.3",
+                "docker.requirement=arbiter-suite==1.2.3",
                 "init",
             ]
         )
@@ -1617,12 +1615,12 @@ def test_cli_deploy_docker_update_preserves_local_config_and_env_values(
         encoding="utf-8",
     )
     requirements_file = deploy_dir / "requirements.txt"
-    requirements_file.write_text("agent-arbiter==old\n", encoding="utf-8")
+    requirements_file.write_text("arbiter-suite==old\n", encoding="utf-8")
 
     assert main(["deploy", "docker", f"docker.dir={deploy_dir}", "update"]) == 0
 
     assert config_file.read_text(encoding="utf-8").startswith("arbiter:\n")
-    assert requirements_file.read_text(encoding="utf-8") == "agent-arbiter==old\n"
+    assert requirements_file.read_text(encoding="utf-8") == "arbiter-suite==old\n"
     assert env_file.read_text(encoding="utf-8") == "EXISTING_TOKEN=keep\n"
     assert docker_env_file.read_text(encoding="utf-8") == (
         "# Docker Compose settings for the Agent Arbiter deployment.\n"
@@ -1694,7 +1692,7 @@ def test_cli_deploy_docker_update_reports_compact_noop_status(
                 "deploy",
                 "docker",
                 f"docker.dir={deploy_dir}",
-                "docker.requirement=agent-arbiter==1.2.3",
+                "docker.requirement=arbiter-suite==1.2.3",
                 "init",
             ]
         )
@@ -1718,7 +1716,7 @@ def test_cli_deploy_docker_update_repairs_stale_template_manifest(
                 "deploy",
                 "docker",
                 f"docker.dir={deploy_dir}",
-                "docker.requirement=agent-arbiter==1.2.3",
+                "docker.requirement=arbiter-suite==1.2.3",
                 "init",
             ]
         )
@@ -1759,7 +1757,7 @@ def test_cli_deploy_docker_update_skips_modified_manifest_owned_files(
                 "deploy",
                 "docker",
                 f"docker.dir={deploy_dir}",
-                "docker.requirement=agent-arbiter==1.2.3",
+                "docker.requirement=arbiter-suite==1.2.3",
                 "init",
             ]
         )

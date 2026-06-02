@@ -580,7 +580,7 @@ recipient_policy:
 
 class SMTPServicePlugin:
     name = "smtp"
-    version = distribution_version("agent-arbiter-smtp", package_file=__file__)
+    version = distribution_version("arbiter-smtp", package_file=__file__)
     core_api_version = CORE_API_VERSION
 
     def register_configs(self, config_store: ConfigStore) -> None:

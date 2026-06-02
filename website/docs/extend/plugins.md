@@ -41,7 +41,7 @@ from agent_arbiter.version import distribution_version
 
 class ExampleServicePlugin:
     name = "example"
-    version = distribution_version("agent-arbiter-example", package_file=__file__)
+    version = distribution_version("arbiter-example", package_file=__file__)
     core_api_version = "0.9"
 ```
 
@@ -53,7 +53,7 @@ Package dependencies should express the same compatibility line:
 
 ```toml
 dependencies = [
-  "agent-arbiter-core>=0.9.0.dev1,<0.10.0",
+  "arbiter-core>=0.9.0.dev1,<0.10.0",
 ]
 ```
 

@@ -18,7 +18,7 @@ def test_distribution_version_falls_back_to_source_pyproject(
     pyproject.parent.mkdir(parents=True, exist_ok=True)
     pyproject.write_text(
         """[project]
-name = "agent-arbiter-example"
+name = "arbiter-example"
 version = "1.2.3"
 """,
         encoding="utf-8",
@@ -32,7 +32,7 @@ version = "1.2.3"
 
     assert (
         version_module.distribution_version(
-            "agent-arbiter-example",
+            "arbiter-example",
             package_file=package_file,
         )
         == "1.2.3"
@@ -49,7 +49,7 @@ def test_distribution_version_prefers_source_pyproject(
     pyproject.parent.mkdir(parents=True, exist_ok=True)
     pyproject.write_text(
         """[project]
-name = "agent-arbiter-core"
+name = "arbiter-core"
 version = "1.2.3"
 """,
         encoding="utf-8",
@@ -60,7 +60,7 @@ version = "1.2.3"
 
     assert (
         version_module.distribution_version(
-            "agent-arbiter-core",
+            "arbiter-core",
             package_file=package_file,
         )
         == "1.2.3"
@@ -85,7 +85,7 @@ def test_distribution_version_does_not_escape_venv_for_source_pyproject(
     checkout_pyproject.parent.mkdir(parents=True)
     checkout_pyproject.write_text(
         """[project]
-name = "agent-arbiter-core"
+name = "arbiter-core"
 version = "9.9.9"
 """,
         encoding="utf-8",
@@ -96,7 +96,7 @@ version = "9.9.9"
 
     assert (
         version_module.distribution_version(
-            "agent-arbiter-core",
+            "arbiter-core",
             package_file=package_file,
         )
         == "1.2.3"
@@ -111,7 +111,7 @@ def test_arbiter_core_version_reads_core_distribution(
         *,
         package_file: str | Path | None = None,
     ) -> str:
-        assert distribution_name == "agent-arbiter-core"
+        assert distribution_name == "arbiter-core"
         return "1.2.3"
 
     monkeypatch.setattr(

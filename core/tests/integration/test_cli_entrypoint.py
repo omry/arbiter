@@ -188,7 +188,7 @@ def test_agent_arbiter_console_script_env_bootstrap_and_check(
         "        password: ${oc.env:SMTP_PRIMARY_ACCOUNT_PASSWORD}\n"
     )
     assert (tmp_path / ".env").read_text(encoding="utf-8") == (
-        "# agent-arbiter-smtp\n"
+        "# arbiter-smtp\n"
         "SMTP_PRIMARY_ACCOUNT_USERNAME=\n"
         "SMTP_PRIMARY_ACCOUNT_PASSWORD=\n"
     )

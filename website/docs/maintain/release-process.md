@@ -4,14 +4,16 @@ title: Release Process
 
 Agent Arbiter publishes several Python distributions from one repository:
 
-- `core`: `agent-arbiter-core`, the real core runtime package
-- `imap`: `agent-arbiter-imap`, the IMAP plugin
-- `smtp`: `agent-arbiter-smtp`, the SMTP plugin
-- `meta:all`: `agent-arbiter`, a zero-code dependency bundle for all real
+- `core`: `arbiter-core`, the real core runtime package
+- `imap`: `arbiter-imap`, the IMAP plugin
+- `smtp`: `arbiter-smtp`, the SMTP plugin
+- `meta:all`: `arbiter-suite`, a zero-code dependency bundle for all real
   packages
 
 Meta package keys do not expand to their dependencies. Selecting `meta:all`
-publishes only the `agent-arbiter` package.
+publishes only the `arbiter-suite` package.
+
+This page describes publishing mechanics only.
 
 ## News fragments
 
@@ -84,10 +86,10 @@ publisher per GitHub repo/workflow/environment. Use manual workflow dispatch
 with one selected package at a time, creating the matching pending publisher
 before each run:
 
-1. `core` (`agent-arbiter-core`)
-2. `imap` (`agent-arbiter-imap`)
-3. `smtp` (`agent-arbiter-smtp`)
-4. `meta:all` (`agent-arbiter`)
+1. `core` (`arbiter-core`)
+2. `imap` (`arbiter-imap`)
+3. `smtp` (`arbiter-smtp`)
+4. `meta:all` (`arbiter-suite`)
 
 ## Dev releases
 

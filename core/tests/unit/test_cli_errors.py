@@ -13,10 +13,10 @@ def test_format_cli_error_indents_multiline_details() -> None:
         format_cli_error(
             "missing required environment variables:",
             area="env",
-            details=["SMTP_USERNAME (agent-arbiter-smtp)"],
+            details=["SMTP_USERNAME (arbiter-smtp)"],
         )
         == "Agent Arbiter env error: missing required environment variables:\n"
-        "  SMTP_USERNAME (agent-arbiter-smtp)"
+        "  SMTP_USERNAME (arbiter-smtp)"
     )
 
 

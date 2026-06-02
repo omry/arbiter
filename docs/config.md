@@ -245,11 +245,11 @@ adds `arbiter.env_file: .env` to the root config and writes that file.
 Generated env files are grouped into sorted blocks:
 
 ```bash
-# agent-arbiter-imap
+# arbiter-imap
 IMAP_PRIMARY_ACCOUNT_USERNAME=
 IMAP_PRIMARY_ACCOUNT_PASSWORD=
 
-# agent-arbiter-smtp
+# arbiter-smtp
 SMTP_PRIMARY_ACCOUNT_USERNAME=
 SMTP_PRIMARY_ACCOUNT_PASSWORD=
 

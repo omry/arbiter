@@ -89,10 +89,10 @@ validate_requirements_file() {
           invalid = 1
         }
         pins[name] = version
-        if (name == "agent-arbiter") {
+        if (name == "arbiter-suite") {
           meta_all = 1
         }
-        if (name == "agent-arbiter-core" || name == "agent-arbiter-smtp" || name == "agent-arbiter-imap") {
+        if (name == "arbiter-core" || name == "arbiter-smtp" || name == "arbiter-imap") {
           all_component = 1
         }
         next
@@ -102,7 +102,7 @@ validate_requirements_file() {
     }
     END {
       if (meta_all && all_component) {
-        printf "%s: agent-arbiter meta package cannot be combined directly with agent-arbiter-core, agent-arbiter-smtp, or agent-arbiter-imap pins; generate expanded real package pins with arbiter-server deploy docker docker.requirement=...\n", FILENAME
+        printf "%s: arbiter-suite meta package cannot be combined directly with arbiter-core, arbiter-smtp, or arbiter-imap pins; generate expanded real package pins with arbiter-server deploy docker docker.requirement=...\n", FILENAME
         invalid = 1
       }
       exit invalid

@@ -39,10 +39,10 @@ version = "{version}"
 
 
 def _write_fixture(root: Path, *, imap_version: str = "0.9.0.dev1") -> None:
-    _write_project(root, ".", "agent-arbiter", "0.9.0.dev1")
-    _write_project(root, "core", "agent-arbiter-core", "0.9.0.dev1")
-    _write_project(root, "imap", "agent-arbiter-imap", imap_version)
-    _write_project(root, "smtp", "agent-arbiter-smtp", "0.9.0.dev1")
+    _write_project(root, ".", "arbiter-suite", "0.9.0.dev1")
+    _write_project(root, "core", "arbiter-core", "0.9.0.dev1")
+    _write_project(root, "imap", "arbiter-imap", imap_version)
+    _write_project(root, "smtp", "arbiter-smtp", "0.9.0.dev1")
 
 
 def _parse_package_keys(tool: ModuleType) -> Callable[[str], frozenset[str] | None]:
@@ -103,16 +103,16 @@ def test_build_plan_only_queries_selected_packages(
 
     plan = _build_plan(tool)(tmp_path, package_keys=frozenset({"core", "meta:all"}))
 
-    assert queried_packages == ["agent-arbiter-core", "agent-arbiter"]
+    assert queried_packages == ["arbiter-core", "arbiter-suite"]
     assert [item.package.name for item in plan if item.publish] == [
-        "agent-arbiter-core",
-        "agent-arbiter",
+        "arbiter-core",
+        "arbiter-suite",
     ]
     assert [
         item.package.name
         for item in plan
         if item.reason == "not selected by --packages"
-    ] == ["agent-arbiter-imap", "agent-arbiter-smtp"]
+    ] == ["arbiter-imap", "arbiter-smtp"]
 
 
 def test_build_plan_validates_unselected_plugin_version_lines(
@@ -125,7 +125,7 @@ def test_build_plan_validates_unselected_plugin_version_lines(
 
     with pytest.raises(
         ValueError,
-        match="agent-arbiter-imap version line 0.10 does not match core 0.9",
+        match="arbiter-imap version line 0.10 does not match core 0.9",
     ):
         _build_plan(tool)(tmp_path, package_keys=frozenset({"core"}))
 
@@ -144,14 +144,11 @@ def test_build_plan_requires_selected_packages_to_match_release_version(
         release_version=version_type.parse("0.9.1"),
     )
 
-    assert [item.package.name for item in plan if item.publish] == [
-        "agent-arbiter-imap"
-    ]
+    assert [item.package.name for item in plan if item.publish] == ["arbiter-imap"]
 
     with pytest.raises(
         ValueError,
-        match="agent-arbiter-imap version 0.9.1 does not match "
-        "--release-version 0.9.2",
+        match="arbiter-imap version 0.9.1 does not match " "--release-version 0.9.2",
     ):
         _build_plan(tool)(
             tmp_path,
@@ -168,12 +165,12 @@ def test_write_github_output_includes_publish_keys(tmp_path: Path) -> None:
         str(output_path),
         publish_count=2,
         publish_keys=["core", "smtp"],
-        publish_specs=["agent-arbiter-core==0.9.0", "agent-arbiter-smtp==0.9.1"],
+        publish_specs=["arbiter-core==0.9.0", "arbiter-smtp==0.9.1"],
     )
 
     assert output_path.read_text(encoding="utf-8") == (
         "publish_count=2\n"
         "has_publish=true\n"
         "publish_keys=core,smtp\n"
-        "publish_specs=agent-arbiter-core==0.9.0,agent-arbiter-smtp==0.9.1\n"
+        "publish_specs=arbiter-core==0.9.0,arbiter-smtp==0.9.1\n"
     )

@@ -1,2 +1,3 @@
-Prepare the initial PyPI release packaging for the default all-in-one
-Agent Arbiter meta package.
+Initial release of `arbiter-suite`, the default Agent Arbiter meta package that
+installs the core runtime and bundled service plugins. See
+[What Is Agent Arbiter?](https://arbiter.yadan.net/docs/).

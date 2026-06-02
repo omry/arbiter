@@ -71,12 +71,12 @@ DEFAULT_CONFIG_DIR = "~/.arbiter"
 DEFAULT_SERVER_CONFIG_NAME = "arbiter-server"
 DEFAULT_DOCKER_DEPLOY_DIR = "./arbiter-docker"
 DEPLOY_MANIFEST_FILE_NAME = ".agent-arbiter-deploy.json"
-AGENT_ARBITER_ALL_META_PACKAGE = "agent-arbiter"
+AGENT_ARBITER_ALL_META_PACKAGE = "arbiter-suite"
 DOCKER_META_PACKAGE_GROUPS = {
     AGENT_ARBITER_ALL_META_PACKAGE: (
-        "agent-arbiter-core",
-        "agent-arbiter-smtp",
-        "agent-arbiter-imap",
+        "arbiter-core",
+        "arbiter-smtp",
+        "arbiter-imap",
     )
 }
 DOCKER_LOCAL_SOURCE_CONTAINER_ROOT = "/source/agent-arbiter"
@@ -697,7 +697,7 @@ def _env_block_for_path(path: Sequence[str]) -> str:
             "policy",
         }
     ):
-        return f"agent-arbiter-{path[2]}"
+        return f"arbiter-{path[2]}"
     return MISC_ENV_BLOCK
 
 
@@ -1075,7 +1075,7 @@ def _resolve_docker_deploy_requirements(
             "cannot infer default docker requirements",
             area="deploy",
             details=[
-                "pass docker.requirement=agent-arbiter==VERSION for the "
+                "pass docker.requirement=arbiter-suite==VERSION for the "
                 "all-in-one meta package",
                 "or pass one or more docker.requirement=PACKAGE==VERSION "
                 "entries for another meta package or explicit packages",

@@ -543,7 +543,7 @@ class IMAPRuntime:
 
 class IMAPServicePlugin:
     name = "imap"
-    version = distribution_version("agent-arbiter-imap", package_file=__file__)
+    version = distribution_version("arbiter-imap", package_file=__file__)
     core_api_version = CORE_API_VERSION
 
     def register_configs(self, config_store: ConfigStore) -> None:

@@ -12,7 +12,7 @@ const config = {
   baseUrl: '/',
 
   organizationName: 'omry',
-  projectName: 'agent-arbiter',
+  projectName: 'arbiter',
 
   onBrokenLinks: 'throw',
   markdown: {
@@ -67,7 +67,7 @@ const config = {
           sidebarPath: require.resolve('./sidebars.js'),
           routeBasePath: 'docs',
           editUrl:
-            'https://github.com/omry/agent-arbiter/tree/main/website/',
+            'https://github.com/omry/arbiter/tree/main/website/',
         },
         blog: false,
         theme: {
@@ -105,7 +105,7 @@ const config = {
             position: 'left',
           },
           {
-            href: 'https://github.com/omry/agent-arbiter',
+            href: 'https://github.com/omry/arbiter',
             label: 'GitHub',
             position: 'right',
           },
@@ -136,7 +136,7 @@ const config = {
             items: [
               {
                 label: 'GitHub',
-                href: 'https://github.com/omry/agent-arbiter',
+                href: 'https://github.com/omry/arbiter',
               },
             ],
           },

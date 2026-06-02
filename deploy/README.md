@@ -57,7 +57,7 @@ instead of replacing local policy or secrets.
 From this repository:
 
 ```bash
-./deploy/agent-arbiterctl install --install-target agent-arbiter==0.8.0
+./deploy/agent-arbiterctl install --install-target arbiter-suite==0.8.0
 ```
 
 For a local source checkout on the host, use an absolute host path:
@@ -158,7 +158,7 @@ sudo install -o root -g root -m 0444 /path/to/agent-arbiter/deploy/config.yaml /
 Create the install target file:
 
 ```bash
-printf '%s\n' 'agent-arbiter==0.8.0' | sudo tee /opt/agent-arbiter/install-target >/dev/null
+printf '%s\n' 'arbiter-suite==0.8.0' | sudo tee /opt/agent-arbiter/install-target >/dev/null
 sudo chown root:root /opt/agent-arbiter/install-target
 sudo chmod 0444 /opt/agent-arbiter/install-target
 ```
@@ -201,7 +201,7 @@ This keeps the service on VM loopback at `http://127.0.0.1:8025/mcp` with the ge
 agent-arbiterctl up
 ```
 
-Manual equivalent for package targets such as `agent-arbiter==0.8.0`:
+Manual equivalent for package targets such as `arbiter-suite==0.8.0`:
 
 ```bash
 cd /opt/agent-arbiter
@@ -216,7 +216,7 @@ The install target is a pip install target. For a published package, install
 with:
 
 ```bash
-./deploy/agent-arbiterctl install --install-target agent-arbiter==0.8.0
+./deploy/agent-arbiterctl install --install-target arbiter-suite==0.8.0
 ```
 
 For a local source checkout on the host, install with:

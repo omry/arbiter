@@ -1,7 +1,7 @@
 # News Fragments
 
 Use towncrier fragments here for user-visible changes to the default
-`agent-arbiter` all-in-one meta package. Package-specific release notes live in
+`arbiter-suite` all-in-one meta package. Package-specific release notes live in
 that package's own `newsfragments/` directory.
 
 Fragment filenames use:

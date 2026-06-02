@@ -121,7 +121,7 @@ arbiter-server env check
 ```
 
 `env bootstrap` keeps existing assignments, adds missing config references, and
-groups entries under sorted `# agent-arbiter-*` blocks plus `# miscellaneous`.
+groups entries under sorted `# arbiter-*` blocks plus `# miscellaneous`.
 If `arbiter.env_file` is not set yet, it adds `arbiter.env_file: .env` to the
 root config first.
 

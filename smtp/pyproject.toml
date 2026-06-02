@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agent-arbiter-smtp"
+name = "arbiter-smtp"
 version = "0.9.0.dev1"
 description = "SMTP service plugin for Agent Arbiter"
 readme = { text = "SMTP service plugin for Agent Arbiter.", content-type = "text/markdown" }
@@ -29,13 +29,13 @@ classifiers = [
   "Topic :: Communications :: Email",
 ]
 dependencies = [
-  "agent-arbiter-core>=0.9.0.dev1,<0.10.0",
+  "arbiter-core>=0.9.0.dev1,<0.10.0",
   "diskcache>=5.6,<6.0",
 ]
 
 [project.urls]
-Homepage = "https://github.com/omry/agent-arbiter"
-Repository = "https://github.com/omry/agent-arbiter"
+Homepage = "https://github.com/omry/arbiter"
+Repository = "https://github.com/omry/arbiter"
 
 [project.entry-points."agent_arbiter.services"]
 smtp = "agent_arbiter_smtp:plugin"

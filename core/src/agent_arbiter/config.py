@@ -143,28 +143,28 @@ def _register_core_configs(config_store: ConfigStore) -> None:
         name="schema",
         node=FastMCPConfig,
         package="arbiter.server",
-        provider="agent-arbiter-core",
+        provider="arbiter-core",
     )
     config_store.store(
         group="arbiter/server",
         name="streamable-http",
         node=FastMCPConfig(),
         package="arbiter.server",
-        provider="agent-arbiter-core",
+        provider="arbiter-core",
     )
     config_store.store(
         group="arbiter/server",
         name="stdio",
         node=FastMCPConfig(transport="stdio"),
         package="arbiter.server",
-        provider="agent-arbiter-core",
+        provider="arbiter-core",
     )
     config_store.store(
         group="arbiter/server",
         name="sse",
         node=FastMCPConfig(transport="sse"),
         package="arbiter.server",
-        provider="agent-arbiter-core",
+        provider="arbiter-core",
     )
 
 
