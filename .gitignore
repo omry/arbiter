@@ -7,8 +7,7 @@ __pycache__/
 build/
 dist/
 outputs/
-src/agent_arbiter/conf/real_config.yaml
-docs/agent_arbiter_design_docs.md
+docs/arbiter_design_docs.md
 website/.docusaurus/
 website/build/
 website/node_modules/
@@ -29,4 +28,4 @@ temp/
 # Local Arbiter config scratchspace. Generated configs may contain
 # credentials or host-specific settings and should not be committed.
 config.local/
-arbiter-docker
+/arbiter-docker/

@@ -7,8 +7,8 @@ import smtplib
 
 import pytest
 
-from agent_arbiter_smtp import SMTPRuntime
-from agent_arbiter_smtp.config import (
+from arbiter_smtp import SMTPRuntime
+from arbiter_smtp.config import (
     SMTPConfig,
     SMTPIdempotencyConfig,
     SMTPLimitsConfig,

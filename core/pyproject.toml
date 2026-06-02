@@ -38,8 +38,8 @@ Homepage = "https://github.com/omry/arbiter"
 Repository = "https://github.com/omry/arbiter"
 
 [project.scripts]
-arbiter = "agent_arbiter.client:main"
-arbiter-server = "agent_arbiter.main:main"
+arbiter = "arbiter_core.client:main"
+arbiter-server = "arbiter_core.main:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -48,11 +48,11 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-"agent_arbiter" = ["py.typed", "deploy/docker/*"]
+"arbiter_core" = ["py.typed", "deploy/docker/*"]
 
 [tool.towncrier]
 name = "Arbiter Core"
-package = "agent_arbiter"
+package = "arbiter_core"
 package_dir = "src"
 filename = "NEWS.md"
 directory = "newsfragments"

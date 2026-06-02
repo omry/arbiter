@@ -37,8 +37,8 @@ dependencies = [
 Homepage = "https://github.com/omry/arbiter"
 Repository = "https://github.com/omry/arbiter"
 
-[project.entry-points."agent_arbiter.services"]
-smtp = "agent_arbiter_smtp:plugin"
+[project.entry-points."arbiter.services"]
+smtp = "arbiter_smtp:plugin"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -47,11 +47,11 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-"agent_arbiter_smtp" = ["py.typed"]
+"arbiter_smtp" = ["py.typed"]
 
 [tool.towncrier]
 name = "Arbiter SMTP"
-package = "agent_arbiter_smtp"
+package = "arbiter_smtp"
 package_dir = "src"
 filename = "NEWS.md"
 directory = "newsfragments"

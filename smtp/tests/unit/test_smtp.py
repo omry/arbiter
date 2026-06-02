@@ -6,8 +6,8 @@ import smtplib
 from typing import Any
 
 import pytest
-from agent_arbiter_smtp.config import MailTlsMode, SMTPConfig
-from agent_arbiter_smtp.client import SMTPSubmissionClient
+from arbiter_smtp.config import MailTlsMode, SMTPConfig
+from arbiter_smtp.client import SMTPSubmissionClient
 
 
 class FakeServer:
@@ -94,7 +94,7 @@ def test_send_uses_unverified_context_for_starttls(monkeypatch) -> None:
         assert timeout == 30.0
         return fake_server
 
-    monkeypatch.setattr("agent_arbiter_smtp.client.smtplib.SMTP", fake_smtp)
+    monkeypatch.setattr("arbiter_smtp.client.smtplib.SMTP", fake_smtp)
 
     client = SMTPSubmissionClient(
         _smtp_config(
@@ -138,8 +138,8 @@ def test_send_uses_smtp_ssl_when_use_ssl_is_enabled(monkeypatch) -> None:
         assert context.verify_mode == ssl.CERT_NONE
         return fake_server
 
-    monkeypatch.setattr("agent_arbiter_smtp.client.smtplib.SMTP", fail_plain_smtp)
-    monkeypatch.setattr("agent_arbiter_smtp.client.smtplib.SMTP_SSL", fake_smtp_ssl)
+    monkeypatch.setattr("arbiter_smtp.client.smtplib.SMTP", fail_plain_smtp)
+    monkeypatch.setattr("arbiter_smtp.client.smtplib.SMTP_SSL", fake_smtp_ssl)
 
     client = SMTPSubmissionClient(
         _smtp_config(
@@ -169,7 +169,7 @@ def test_send_skips_login_when_username_is_not_configured(monkeypatch) -> None:
     def fake_smtp(host: str, port: int, timeout: float) -> FakeServer:
         return fake_server
 
-    monkeypatch.setattr("agent_arbiter_smtp.client.smtplib.SMTP", fake_smtp)
+    monkeypatch.setattr("arbiter_smtp.client.smtplib.SMTP", fake_smtp)
 
     client = SMTPSubmissionClient(_smtp_config())
     message = EmailMessage()
@@ -184,7 +184,7 @@ def test_send_propagates_connection_errors(monkeypatch) -> None:
     def fake_smtp(host: str, port: int, timeout: float) -> None:
         raise OSError("connection refused")
 
-    monkeypatch.setattr("agent_arbiter_smtp.client.smtplib.SMTP", fake_smtp)
+    monkeypatch.setattr("arbiter_smtp.client.smtplib.SMTP", fake_smtp)
 
     client = SMTPSubmissionClient(_smtp_config())
     message = EmailMessage()
@@ -209,7 +209,7 @@ def test_send_propagates_authentication_errors(monkeypatch) -> None:
     def fake_smtp(host: str, port: int, timeout: float) -> FakeServer:
         return fake_server
 
-    monkeypatch.setattr("agent_arbiter_smtp.client.smtplib.SMTP", fake_smtp)
+    monkeypatch.setattr("arbiter_smtp.client.smtplib.SMTP", fake_smtp)
 
     client = SMTPSubmissionClient(
         _smtp_config(authenticate=True, username="user", password="secret")
@@ -230,7 +230,7 @@ def test_send_raises_when_some_recipients_are_refused(monkeypatch) -> None:
     def fake_smtp(host: str, port: int, timeout: float) -> FakeServer:
         return fake_server
 
-    monkeypatch.setattr("agent_arbiter_smtp.client.smtplib.SMTP", fake_smtp)
+    monkeypatch.setattr("arbiter_smtp.client.smtplib.SMTP", fake_smtp)
 
     client = SMTPSubmissionClient(_smtp_config())
     message = EmailMessage()

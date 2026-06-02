@@ -14,9 +14,9 @@ from typing import Any, cast
 import pytest
 from omegaconf import OmegaConf
 
-from agent_arbiter.config import AppConfig, ArbiterConfig, DiscoveryConfig
-from agent_arbiter.app import CORE_TOOL_NAMES
-from agent_arbiter.main import (
+from arbiter_core.config import AppConfig, ArbiterConfig, DiscoveryConfig
+from arbiter_core.app import CORE_TOOL_NAMES
+from arbiter_core.main import (
     _run_server,
     build_app,
     build_server,
@@ -28,16 +28,16 @@ from agent_arbiter.main import (
     main,
     service_plugin_names,
 )
-from agent_arbiter.plugins import discover_service_plugins
-from agent_arbiter_imap import IMAPRuntime, IMAPServicePlugin
-from agent_arbiter_imap.config import (
+from arbiter_core.plugins import discover_service_plugins
+from arbiter_imap import IMAPRuntime, IMAPServicePlugin
+from arbiter_imap.config import (
     IMAPAccessPolicyConfig,
     IMAPConfig,
     IMAPFolderConfig,
 )
-from agent_arbiter_smtp import SendEmailResult, SMTPRuntime, SMTPServicePlugin
-from agent_arbiter_smtp.config import SMTPConfig, SMTPServicePolicyConfig
-from agent_arbiter.services import (
+from arbiter_smtp import SendEmailResult, SMTPRuntime, SMTPServicePlugin
+from arbiter_smtp.config import SMTPConfig, SMTPServicePolicyConfig
+from arbiter_core.services import (
     CORE_API_VERSION,
     SERVICE_PLUGIN_ENTRY_POINT_GROUP,
     CapabilityDescriptor,
@@ -59,7 +59,7 @@ def _patch_meta_all_version(monkeypatch: pytest.MonkeyPatch, version: str) -> No
         return version
 
     monkeypatch.setattr(
-        "agent_arbiter.main.distribution_version",
+        "arbiter_core.main.distribution_version",
         fake_distribution_version,
     )
 
@@ -225,7 +225,7 @@ def test_discover_service_plugins_loads_entry_point_factories(
             return self
 
     monkeypatch.setattr(
-        "agent_arbiter.plugins.entry_points",
+        "arbiter_core.plugins.entry_points",
         lambda: FakeEntryPoints(
             [
                 FakeEntryPoint(smtp_plugin),
@@ -258,7 +258,7 @@ def test_discover_service_plugins_rejects_wrong_core_api_version(
             return self
 
     monkeypatch.setattr(
-        "agent_arbiter.plugins.entry_points",
+        "arbiter_core.plugins.entry_points",
         lambda: FakeEntryPoints([FakeEntryPoint()]),
     )
 
@@ -370,7 +370,7 @@ def test_cli_lists_plugins(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "agent_arbiter.main.discover_service_plugins",
+        "arbiter_core.main.discover_service_plugins",
         lambda: _test_service_plugins(),
     )
 
@@ -379,7 +379,7 @@ def test_cli_lists_plugins(
     assert capsys.readouterr().out == "imap\nsmtp\n"
 
 
-def test_server_cli_help_uses_agent_arbiter_program_name(
+def test_server_cli_help_uses_arbiter_core_program_name(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     assert main(["--help"]) == 0
@@ -395,14 +395,14 @@ def test_server_cli_reports_clean_keyboard_interrupt(
         raise KeyboardInterrupt
 
     monkeypatch.setattr(
-        "agent_arbiter.main.compose_config",
+        "arbiter_core.main.compose_config",
         lambda **_kwargs: OmegaConf.structured(_app_config_with_smtp()),
     )
     monkeypatch.setattr(
-        "agent_arbiter.main.build_server",
+        "arbiter_core.main.build_server",
         lambda _cfg: object(),
     )
-    monkeypatch.setattr("agent_arbiter.main._run_server", raise_keyboard_interrupt)
+    monkeypatch.setattr("arbiter_core.main._run_server", raise_keyboard_interrupt)
 
     assert main(["--config-dir", "/tmp", "serve"]) == 130
 
@@ -423,7 +423,7 @@ def test_compose_config_registers_configs_before_composing(
     def fake_register_configs() -> None:
         calls.append("register_configs")
 
-    monkeypatch.setattr("agent_arbiter.main.register_configs", fake_register_configs)
+    monkeypatch.setattr("arbiter_core.main.register_configs", fake_register_configs)
 
     cfg = compose_config(config_dir=tmp_path, config_name="config")
 
@@ -659,7 +659,7 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_meta_all_version(monkeypatch, "1.2.3")
-    monkeypatch.setattr("agent_arbiter.main.arbiter_core_version", lambda: "9.8.7")
+    monkeypatch.setattr("arbiter_core.main.arbiter_core_version", lambda: "9.8.7")
     deploy_dir = tmp_path / "docker"
 
     assert (
@@ -706,7 +706,7 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
         (deploy_dir / ".arbiter-deploy.json").read_text(encoding="utf-8")
     )
     assert manifest["generator"] == "arbiter-server deploy docker"
-    assert manifest["agent_arbiter_core_version"] == "9.8.7"
+    assert manifest["arbiter_core_version"] == "9.8.7"
     assert sorted(manifest["files"]) == [
         "arbiter-docker",
         "compose.yaml",
@@ -972,7 +972,7 @@ def test_cli_deploy_docker_init_accepts_wheelhouse_requirement(
                 "deploy",
                 "docker",
                 f"docker.dir={deploy_dir}",
-                "docker.requirement=/wheels/agent_arbiter-1.2.3-py3-none-any.whl",
+                "docker.requirement=/wheels/arbiter_core-1.2.3-py3-none-any.whl",
                 "init",
             ]
         )
@@ -980,7 +980,7 @@ def test_cli_deploy_docker_init_accepts_wheelhouse_requirement(
     )
 
     assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
-        "/wheels/agent_arbiter-1.2.3-py3-none-any.whl\n"
+        "/wheels/arbiter_core-1.2.3-py3-none-any.whl\n"
     )
     compose_text = (deploy_dir / "compose.yaml").read_text(encoding="utf-8")
     assert "--no-index --find-links /wheels -r /requirements.txt" in compose_text
@@ -1464,7 +1464,7 @@ def test_cli_deploy_docker_generated_helper_doctor_rejects_docker_subnet_overlap
         "  exit 0\n"
         "fi\n"
         'if [ "$1" = network ] && [ "$2" = inspect ]; then\n'
-        "  printf 'mail-sentry 172.31.250.0/24 \\n'\n"
+        "  printf 'existing-network 172.31.250.0/24 \\n'\n"
         "  exit 0\n"
         "fi\n"
         "exit 1\n",
@@ -1486,7 +1486,7 @@ def test_cli_deploy_docker_generated_helper_doctor_rejects_docker_subnet_overlap
     assert result.returncode == 1
     assert (
         "fail: Docker subnet 172.31.250.0/24 already belongs to network "
-        "mail-sentry\n"
+        "existing-network\n"
     ) in result.stdout
 
 
@@ -1610,9 +1610,8 @@ def test_cli_deploy_docker_update_preserves_local_config_and_env_values(
     docker_env_file = deploy_dir / "docker.env"
     docker_env_file.write_text(
         "ARBITER_HOST_PORT=9000\n"
-        "AGENT_ARBITER_HOST_BIND=0.0.0.0\n"
-        "AGENT_ARBITER_HOST_PORT=7777\n"
-        "AGENT_ARBITER_DOCKER_SUBNET=172.31.251.0/24\n"
+        "ARBITER_HOST_BIND=0.0.0.0\n"
+        "ARBITER_DOCKER_SUBNET=172.31.251.0/24\n"
         "LOCAL_ONLY=value\n",
         encoding="utf-8",
     )
@@ -1746,40 +1745,6 @@ def test_cli_deploy_docker_update_repairs_stale_template_manifest(
     assert repaired_manifest["files"]["arbiter-docker"]["sha256"] == helper_hash
 
 
-def test_cli_deploy_docker_update_migrates_legacy_manifest_name(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    deploy_dir = tmp_path / "docker"
-    assert (
-        main(
-            [
-                "deploy",
-                "docker",
-                f"docker.dir={deploy_dir}",
-                "docker.requirement=arbiter-suite==1.2.3",
-                "init",
-            ]
-        )
-        == 0
-    )
-    capsys.readouterr()
-    manifest_path = deploy_dir / ".arbiter-deploy.json"
-    legacy_manifest_path = deploy_dir / ".agent-arbiter-deploy.json"
-    legacy_manifest_path.write_text(
-        manifest_path.read_text(encoding="utf-8"), encoding="utf-8"
-    )
-    manifest_path.unlink()
-
-    assert main(["deploy", "docker", f"docker.dir={deploy_dir}", "update"]) == 0
-
-    assert manifest_path.exists()
-    assert not legacy_manifest_path.exists()
-    assert (
-        "skipped managed file without manifest ownership" not in capsys.readouterr().out
-    )
-
-
 def test_cli_deploy_docker_update_skips_modified_manifest_owned_files(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -1828,11 +1793,11 @@ def test_cli_lists_plugins_as_json(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "agent_arbiter.main.discover_service_plugins",
+        "arbiter_core.main.discover_service_plugins",
         lambda: _test_service_plugins(),
     )
     monkeypatch.setattr(
-        "agent_arbiter.main.source_info",
+        "arbiter_core.main.source_info",
         lambda: SimpleNamespace(commit="abc123", dirty=True),
     )
 
@@ -1852,11 +1817,11 @@ def test_cli_version_prints_core_and_plugin_versions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "agent_arbiter.main.discover_service_plugins",
+        "arbiter_core.main.discover_service_plugins",
         lambda: _test_service_plugins(),
     )
     monkeypatch.setattr(
-        "agent_arbiter.main.source_info",
+        "arbiter_core.main.source_info",
         lambda: SimpleNamespace(commit="abc123", dirty=True),
     )
 
@@ -1876,11 +1841,11 @@ def test_cli_version_can_print_json(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "agent_arbiter.main.discover_service_plugins",
+        "arbiter_core.main.discover_service_plugins",
         lambda: _test_service_plugins(),
     )
     monkeypatch.setattr(
-        "agent_arbiter.main.source_info",
+        "arbiter_core.main.source_info",
         lambda: SimpleNamespace(commit="abc123", dirty=False),
     )
 
@@ -1904,7 +1869,7 @@ def test_cli_serve_subcommand_passes_config_and_overrides(
         serve_calls.append(kwargs)
         return 0
 
-    monkeypatch.setattr("agent_arbiter.main._run_serve", fake_serve)
+    monkeypatch.setattr("arbiter_core.main._run_serve", fake_serve)
 
     assert (
         main(
@@ -1951,7 +1916,7 @@ def test_cli_config_check_subcommand_passes_config_and_overrides(
         check_calls.append(kwargs)
         return 0
 
-    monkeypatch.setattr("agent_arbiter.main._run_config_check", fake_check)
+    monkeypatch.setattr("arbiter_core.main._run_config_check", fake_check)
 
     assert (
         main(["--config-dir", "/tmp", "config", "check", "arbiter.server.port=8025"])
@@ -1976,7 +1941,7 @@ def test_cli_config_show_subcommand_passes_config_and_overrides(
         show_calls.append(kwargs)
         return 0
 
-    monkeypatch.setattr("agent_arbiter.main._run_config_show", fake_show)
+    monkeypatch.setattr("arbiter_core.main._run_config_show", fake_show)
 
     assert (
         main(
@@ -2077,7 +2042,7 @@ def test_cli_bootstrap_arbiter_writes_main_config(
         served["server"] = server
         served["transport"] = transport
 
-    monkeypatch.setattr("agent_arbiter.main._run_server", fake_run_server)
+    monkeypatch.setattr("arbiter_core.main._run_server", fake_run_server)
     assert main(["--config-dir", str(config_dir), "serve"]) == 1
     assert capsys.readouterr().err == (
         "Arbiter config error: config must define at least one service "
@@ -2576,8 +2541,8 @@ def test_log_startup_summary_includes_safe_runtime_context(
     cfg = _app_config_with_smtp()
     cast(SMTPConfig, cfg.arbiter.account["smtp"]["primary"]).password = "super-secret"
 
-    monkeypatch.setattr("agent_arbiter.main.arbiter_core_version", lambda: "1.2.3")
-    caplog.set_level(logging.INFO, logger="agent_arbiter.main")
+    monkeypatch.setattr("arbiter_core.main.arbiter_core_version", lambda: "1.2.3")
+    caplog.set_level(logging.INFO, logger="arbiter_core.main")
 
     log_startup_summary(cfg)
 
@@ -2928,11 +2893,11 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "mcp.server", server_module)
     monkeypatch.setitem(sys.modules, "mcp.server.fastmcp", fastmcp_module)
     monkeypatch.setattr(
-        "agent_arbiter.main.build_app",
+        "arbiter_core.main.build_app",
         lambda cfg, service_plugins=None, runtime_dependencies=None: FakeApp(),
     )
     monkeypatch.setattr(
-        "agent_arbiter.main.source_info",
+        "arbiter_core.main.source_info",
         lambda: SimpleNamespace(commit=None, dirty=None),
     )
 

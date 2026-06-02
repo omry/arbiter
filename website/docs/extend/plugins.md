@@ -23,8 +23,8 @@ A plugin provides:
 Plugins are discovered through Python package entry points:
 
 ```toml
-[project.entry-points."agent_arbiter.services"]
-smtp = "agent_arbiter_smtp:plugin"
+[project.entry-points."arbiter.services"]
+smtp = "arbiter_smtp:plugin"
 ```
 
 ## Version contract
@@ -36,7 +36,7 @@ runtime. The plugin runtime should derive `version` from installed package
 metadata rather than duplicating the version literal:
 
 ```python
-from agent_arbiter.version import distribution_version
+from arbiter_core.version import distribution_version
 
 
 class ExampleServicePlugin:

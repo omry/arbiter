@@ -2,24 +2,24 @@ from email.message import EmailMessage
 
 import pytest
 
-from agent_arbiter.app import CORE_TOOL_NAMES, ArbiterApp
-from agent_arbiter_imap.config import (
+from arbiter_core.app import CORE_TOOL_NAMES, ArbiterApp
+from arbiter_imap.config import (
     IMAPAccessPolicyConfig,
     IMAPConfig,
     IMAPFlagMode,
     IMAPFolderConfig,
     IMAPSystemFlagsPolicyConfig,
 )
-from agent_arbiter_smtp.config import (
+from arbiter_smtp.config import (
     SMTPConfig,
     SMTPLimitsConfig,
     SMTPRecipientPolicyConfig,
     SMTPServicePolicyConfig,
 )
-from agent_arbiter.services import RuntimeRegistry
-from agent_arbiter_imap import IMAPRuntime
-from agent_arbiter_imap.client import FetchedIMAPMessage
-from agent_arbiter_smtp import SMTPRuntime
+from arbiter_core.services import RuntimeRegistry
+from arbiter_imap import IMAPRuntime
+from arbiter_imap.client import FetchedIMAPMessage
+from arbiter_smtp import SMTPRuntime
 
 
 class FakeSMTPClient:

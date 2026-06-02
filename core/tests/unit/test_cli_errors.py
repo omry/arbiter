@@ -1,4 +1,4 @@
-from agent_arbiter.cli_errors import format_cli_error
+from arbiter_core.cli_errors import format_cli_error
 
 
 def test_format_cli_error_with_area() -> None:

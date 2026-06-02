@@ -57,8 +57,8 @@ PLUGIN_PACKAGE_FILES = (
     Path("imap/pyproject.toml"),
 )
 PLUGIN_RUNTIME_FILES = (
-    Path("smtp/src/agent_arbiter_smtp/__init__.py"),
-    Path("imap/src/agent_arbiter_imap/__init__.py"),
+    Path("smtp/src/arbiter_smtp/__init__.py"),
+    Path("imap/src/arbiter_imap/__init__.py"),
 )
 GREEN = "\033[32m"
 RED = "\033[31m"

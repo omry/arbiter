@@ -12,13 +12,13 @@ from typing import Callable, Protocol, cast
 
 from hydra.core.config_store import ConfigStore
 
-from agent_arbiter.services import (
+from arbiter_core.services import (
     CapabilityDescriptor,
     OperationDescriptor,
     ServicePluginContext,
     ServiceRuntimeContext,
 )
-from agent_arbiter.version import distribution_version
+from arbiter_core.version import distribution_version
 
 from .config import (
     SMTPConfig,

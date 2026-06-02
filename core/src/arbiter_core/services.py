@@ -430,4 +430,4 @@ def _raise_argument_type_error(
 
 
 ServicePluginFactory = Callable[[], ServicePlugin]
-SERVICE_PLUGIN_ENTRY_POINT_GROUP = "agent_arbiter.services"
+SERVICE_PLUGIN_ENTRY_POINT_GROUP = "arbiter.services"

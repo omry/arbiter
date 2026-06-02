@@ -9,8 +9,8 @@ import threading
 
 import pytest
 
-from agent_arbiter_imap.client import IMAPClient, IMAPOperationError
-from agent_arbiter_imap.config import IMAPConfig, MailTlsMode
+from arbiter_imap.client import IMAPClient, IMAPOperationError
+from arbiter_imap.config import IMAPConfig, MailTlsMode
 
 
 def _message_bytes(uid: str) -> bytes:

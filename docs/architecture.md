@@ -77,7 +77,7 @@ arbiter/
   core/
     pyproject.toml
     src/
-      agent_arbiter/
+      arbiter_core/
         app.py       # account discovery facade
         config.py    # dataclass config schema and validation
         main.py      # FastMCP server bootstrap and core tool registration
@@ -86,14 +86,14 @@ arbiter/
   smtp/
     pyproject.toml
     src/
-      agent_arbiter_smtp/
+      arbiter_smtp/
         __init__.py  # SMTP service plugin and runtime
         client.py    # SMTP transport adapter
     tests/
   imap/
     pyproject.toml
     src/
-      agent_arbiter_imap/
+      arbiter_imap/
         __init__.py  # IMAP service plugin and runtime
         client.py    # IMAP transport adapter
     tests/

@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 import pytest
 
-from agent_arbiter import client
+from arbiter_core import client
 
 
 @pytest.fixture(autouse=True)
@@ -828,7 +828,7 @@ def test_client_reports_clean_keyboard_interrupt(
     def raise_keyboard_interrupt(*_args: object) -> int:
         raise KeyboardInterrupt
 
-    monkeypatch.setattr("agent_arbiter.client.anyio.run", raise_keyboard_interrupt)
+    monkeypatch.setattr("arbiter_core.client.anyio.run", raise_keyboard_interrupt)
 
     assert client.main(["mcp", "tools"]) == 130
 
@@ -850,7 +850,7 @@ def test_client_reports_clean_connection_failure(
             (httpx.ConnectError("All connection attempts failed"),)
         )
 
-    monkeypatch.setattr("agent_arbiter.client.anyio.run", raise_connection_error)
+    monkeypatch.setattr("arbiter_core.client.anyio.run", raise_connection_error)
 
     assert client.main(["mcp", "tools"]) == 1
 
@@ -875,7 +875,7 @@ def test_client_reports_clean_read_failure(
     def raise_read_error(*_args: object) -> int:
         raise FakeExceptionGroup((httpx.ReadError("connection closed"),))
 
-    monkeypatch.setattr("agent_arbiter.client.anyio.run", raise_read_error)
+    monkeypatch.setattr("arbiter_core.client.anyio.run", raise_read_error)
 
     assert client.main(["cap"]) == 1
 
@@ -901,7 +901,7 @@ def test_client_connection_failure_reports_url_from_client_config(
     def raise_connection_error(*_args: object) -> int:
         raise httpx.ConnectError("All connection attempts failed")
 
-    monkeypatch.setattr("agent_arbiter.client.anyio.run", raise_connection_error)
+    monkeypatch.setattr("arbiter_core.client.anyio.run", raise_connection_error)
 
     assert (
         client.main(

@@ -7,7 +7,7 @@ from hydra import compose, initialize_config_dir
 from hydra.errors import ConfigCompositionException
 from omegaconf import DictConfig, OmegaConf
 
-from agent_arbiter.config import (
+from arbiter_core.config import (
     AppConfig,
     ArbiterConfig,
     configured_service_names,
@@ -15,7 +15,7 @@ from agent_arbiter.config import (
     service_accounts_for,
     service_policies_for,
 )
-from agent_arbiter_imap.config import (
+from arbiter_imap.config import (
     IMAPAccessPolicyConfig,
     IMAPConfirmationAction,
     IMAPConfig,
@@ -23,7 +23,7 @@ from agent_arbiter_imap.config import (
     IMAPFolderConfig,
     register_configs as register_imap_configs,
 )
-from agent_arbiter_smtp.config import (
+from arbiter_smtp.config import (
     MailTlsMode as SMTPMailTlsMode,
     SMTPConfig,
     SMTPServicePolicyConfig,
@@ -47,7 +47,7 @@ def _compose_config(overrides: list[str] | None = None) -> DictConfig:
         (config_dir / "config.yaml").write_text(
             """
 defaults:
-  - agent_arbiter_app_config_schema
+  - arbiter_app_config_schema
   - /arbiter/server: streamable-http
   - _self_
 

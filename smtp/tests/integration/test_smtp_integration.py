@@ -12,11 +12,11 @@ from aiosmtpd.smtp import MISSING
 import pytest
 import trustme
 
-from agent_arbiter.app import ArbiterApp
-from agent_arbiter.services import RuntimeRegistry
-from agent_arbiter_smtp import SMTPRuntime
-from agent_arbiter_smtp.client import SMTPSubmissionClient
-from agent_arbiter_smtp.config import MailTlsMode, SMTPConfig, SMTPServicePolicyConfig
+from arbiter_core.app import ArbiterApp
+from arbiter_core.services import RuntimeRegistry
+from arbiter_smtp import SMTPRuntime
+from arbiter_smtp.client import SMTPSubmissionClient
+from arbiter_smtp.config import MailTlsMode, SMTPConfig, SMTPServicePolicyConfig
 
 
 class CapturingHandler:

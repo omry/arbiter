@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_arbiter import version as version_module
+from arbiter_core import version as version_module
 
 
 def test_distribution_version_falls_back_to_source_pyproject(
@@ -44,7 +44,7 @@ def test_distribution_version_prefers_source_pyproject(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pyproject = tmp_path / "core" / "pyproject.toml"
-    package_file = tmp_path / "core" / "src" / "agent_arbiter" / "version.py"
+    package_file = tmp_path / "core" / "src" / "arbiter_core" / "version.py"
     package_file.parent.mkdir(parents=True)
     pyproject.parent.mkdir(parents=True, exist_ok=True)
     pyproject.write_text(
@@ -78,7 +78,7 @@ def test_distribution_version_does_not_escape_venv_for_source_pyproject(
         / "lib"
         / "python3.13"
         / "site-packages"
-        / "agent_arbiter"
+        / "arbiter_core"
         / "version.py"
     )
     package_file.parent.mkdir(parents=True)

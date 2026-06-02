@@ -37,8 +37,8 @@ dependencies = [
   "arbiter-core>=0.8.0,<0.9.0",
 ]
 """,
-    "smtp/src/agent_arbiter_smtp/__init__.py": 'CORE_API_VERSION = "0.8"\n',
-    "imap/src/agent_arbiter_imap/__init__.py": 'CORE_API_VERSION = "0.8"\n',
+    "smtp/src/arbiter_smtp/__init__.py": 'CORE_API_VERSION = "0.8"\n',
+    "imap/src/arbiter_imap/__init__.py": 'CORE_API_VERSION = "0.8"\n',
     "docs/overview.md": "- Version: `0.8.0`\n",
     "website/docs/operate/deployment/packages.md": (
         "arbiter-suite==0.8.0\n"
@@ -95,8 +95,8 @@ dependencies = [
   "arbiter-core>=0.9.0.dev1,<0.10.0",
 ]
 """,
-        "smtp/src/agent_arbiter_smtp/__init__.py": 'CORE_API_VERSION = "0.9"\n',
-        "imap/src/agent_arbiter_imap/__init__.py": 'CORE_API_VERSION = "0.9"\n',
+        "smtp/src/arbiter_smtp/__init__.py": 'CORE_API_VERSION = "0.9"\n',
+        "imap/src/arbiter_imap/__init__.py": 'CORE_API_VERSION = "0.9"\n',
         "docs/overview.md": "- Version: `0.9.0.dev1`\n",
         "website/docs/operate/deployment/packages.md": (
             "arbiter-suite==0.9.0\n"
@@ -189,7 +189,7 @@ def test_upgrade_release_line_updates_packages_runtime_and_docs(
         tmp_path / "smtp/pyproject.toml"
     ).read_text(encoding="utf-8")
     assert 'CORE_API_VERSION = "0.9"' in (
-        tmp_path / "imap/src/agent_arbiter_imap/__init__.py"
+        tmp_path / "imap/src/arbiter_imap/__init__.py"
     ).read_text(encoding="utf-8")
     plugin_docs = (tmp_path / "website/docs/extend/plugins.md").read_text(
         encoding="utf-8"

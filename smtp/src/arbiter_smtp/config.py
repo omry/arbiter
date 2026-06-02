@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
-from agent_arbiter.config import Policy
+from arbiter_core.config import Policy
 from hydra.core.config_store import ConfigStore
 
 

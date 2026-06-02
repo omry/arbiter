@@ -6,8 +6,8 @@ from typing import Any
 
 import pytest
 
-from agent_arbiter_imap.client import IMAPClient, IMAPOperationError
-from agent_arbiter_imap.config import IMAPConfig, MailTlsMode
+from arbiter_imap.client import IMAPClient, IMAPOperationError
+from arbiter_imap.config import IMAPConfig, MailTlsMode
 
 
 MESSAGE_BYTES = (
@@ -80,7 +80,7 @@ def test_list_messages_uses_ssl_login_and_parses_recent_messages(
         assert ssl_context.check_hostname is False
         return fake_server
 
-    monkeypatch.setattr("agent_arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+    monkeypatch.setattr("arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
 
     client = IMAPClient(
         IMAPConfig(
@@ -117,7 +117,7 @@ def test_starttls_uses_configured_context(monkeypatch: pytest.MonkeyPatch) -> No
         assert timeout == 30.0
         return fake_server
 
-    monkeypatch.setattr("agent_arbiter_imap.client.imaplib.IMAP4", fake_imap4)
+    monkeypatch.setattr("arbiter_imap.client.imaplib.IMAP4", fake_imap4)
 
     client = IMAPClient(
         IMAPConfig(
@@ -150,7 +150,7 @@ def test_move_falls_back_to_copy_delete_and_uid_expunge(
     ) -> FakeIMAPServer:
         return fake_server
 
-    monkeypatch.setattr("agent_arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+    monkeypatch.setattr("arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
 
     client = IMAPClient(IMAPConfig())
 
@@ -181,7 +181,7 @@ def test_move_falls_back_when_server_returns_unsupported_status(
     ) -> FakeIMAPServer:
         return fake_server
 
-    monkeypatch.setattr("agent_arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+    monkeypatch.setattr("arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
 
     client = IMAPClient(IMAPConfig())
 
@@ -214,7 +214,7 @@ def test_move_non_fallback_status_raises_without_copying(
     ) -> FakeIMAPServer:
         return fake_server
 
-    monkeypatch.setattr("agent_arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+    monkeypatch.setattr("arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
 
     client = IMAPClient(IMAPConfig())
 
@@ -243,7 +243,7 @@ def test_move_bad_status_without_unsupported_marker_raises_without_copying(
     ) -> FakeIMAPServer:
         return fake_server
 
-    monkeypatch.setattr("agent_arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+    monkeypatch.setattr("arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
 
     client = IMAPClient(IMAPConfig())
 
@@ -269,7 +269,7 @@ def test_delete_message_uses_uid_expunge(monkeypatch: pytest.MonkeyPatch) -> Non
     ) -> FakeIMAPServer:
         return fake_server
 
-    monkeypatch.setattr("agent_arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+    monkeypatch.setattr("arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
 
     client = IMAPClient(IMAPConfig())
 
@@ -300,7 +300,7 @@ def test_fetch_without_rfc822_data_raises(monkeypatch: pytest.MonkeyPatch) -> No
     ) -> FakeIMAPServer:
         return fake_server
 
-    monkeypatch.setattr("agent_arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+    monkeypatch.setattr("arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
 
     client = IMAPClient(IMAPConfig())
 

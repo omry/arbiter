@@ -1,5 +1,5 @@
 defaults:
-  - agent_arbiter_app_config_schema
+  - arbiter_app_config_schema
   - /arbiter/server: streamable-http
   - /arbiter/account/smtp/schema@arbiter.account.smtp.primary
   - /arbiter/account/smtp/schema@arbiter.account.smtp.personal

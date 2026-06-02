@@ -30,7 +30,7 @@ DEPLOYMENT_TEST_SNIPPET = "Deployment smoke body with plugin-visible content."
 def _load_imap_integration_module() -> Any:
     module_path = Path(__file__).with_name("test_imap_integration.py")
     spec = importlib.util.spec_from_file_location(
-        "_agent_arbiter_test_imap_integration",
+        "_arbiter_test_imap_integration",
         module_path,
     )
     if spec is None or spec.loader is None:
@@ -182,7 +182,7 @@ def _docker_compose_logs(deploy_dir: Path) -> subprocess.CompletedProcess[str]:
 def _write_imap_only_config(path: Path, imap_server: Any) -> None:
     path.write_text(
         "defaults:\n"
-        "  - agent_arbiter_app_config_schema\n"
+        "  - arbiter_app_config_schema\n"
         "  - /arbiter/server: streamable-http\n"
         "  - /arbiter/account/imap/schema@arbiter.account.imap.primary\n"
         "  - /arbiter/policy/imap/schema@arbiter.policy.imap.bot\n"
