@@ -232,6 +232,89 @@ compose() {
   fi
 }
 
+manifest_compose_hash() {
+  local manifest_file="$deploy_dir/.arbiter-deploy.json"
+
+  [[ -f "$manifest_file" ]] || return 1
+  awk '
+    /"compose.yaml"/ { in_compose = 1 }
+    in_compose && /"sha256"/ {
+      line = $0
+      sub(/^.*"sha256"[[:space:]]*:[[:space:]]*"/, "", line)
+      sub(/".*$/, "", line)
+      print line
+      found = 1
+      exit
+    }
+    END { exit found ? 0 : 1 }
+  ' "$manifest_file"
+}
+
+compose_file_matches_manifest() {
+  local expected_hash
+  local current_hash
+
+  require_file "$compose_file"
+  expected_hash="$(manifest_compose_hash)" || return 1
+  [[ -n "$expected_hash" ]] || return 1
+  if ! command -v sha256sum >/dev/null; then
+    return 1
+  fi
+  current_hash="$(sha256sum "$compose_file" | awk "{print \$1}")"
+  [[ "$current_hash" == "$expected_hash" ]]
+}
+
+compose_manifest_mismatch_reason() {
+  local manifest_file="$deploy_dir/.arbiter-deploy.json"
+  local expected_hash
+  local current_hash
+
+  if [[ ! -f "$manifest_file" ]]; then
+    printf 'deployment manifest is missing'
+    return
+  fi
+  expected_hash="$(manifest_compose_hash || true)"
+  if [[ -z "$expected_hash" ]]; then
+    printf 'compose.yaml is not recorded in the deployment manifest'
+    return
+  fi
+  if ! command -v sha256sum >/dev/null; then
+    printf 'sha256sum is not available'
+    return
+  fi
+  current_hash="$(sha256sum "$compose_file" | awk "{print \$1}")"
+  if [[ "$current_hash" != "$expected_hash" ]]; then
+    printf 'compose.yaml has local edits'
+    return
+  fi
+  printf 'compose.yaml manifest ownership could not be verified'
+}
+
+args_include() {
+  local expected="$1"
+  shift
+  local arg
+
+  for arg in "$@"; do
+    [[ "$arg" == "$expected" ]] && return 0
+  done
+  return 1
+}
+
+compose_down() {
+  local -a args=("$@")
+  local reason
+
+  if compose_file_matches_manifest && ! args_include --remove-orphans "${args[@]}"; then
+    args=(--remove-orphans "${args[@]}")
+  elif ! args_include --remove-orphans "${args[@]}"; then
+    reason="$(compose_manifest_mismatch_reason)"
+    printf 'not removing orphan containers automatically: %s\n' "$reason" >&2
+    printf 'pass --remove-orphans to down if you want to remove stale services\n' >&2
+  fi
+  compose down "${args[@]}"
+}
+
 info() {
   printf 'deploy dir: %s\n' "$deploy_dir"
   printf 'compose file: %s\n' "$compose_file"
@@ -977,7 +1060,7 @@ case "$command" in
     compose up -d --force-recreate
     ;;
   down)
-    compose down
+    compose_down "$@"
     ;;
   ps)
     compose ps

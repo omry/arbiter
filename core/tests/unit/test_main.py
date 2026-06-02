@@ -704,8 +704,8 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
     ) in compose_text
     assert "ARBITER_SERVER_HOST: 0.0.0.0" in compose_text
     assert (
-        '"arbiter.server.host=$ARBITER_SERVER_HOST" '
-        '"arbiter.server.port=$ARBITER_CONTAINER_PORT"'
+        '"arbiter.server.host=$$ARBITER_SERVER_HOST" '
+        '"arbiter.server.port=$$ARBITER_CONTAINER_PORT"'
     ) in compose_text
     assert not (deploy_dir / "config.yaml").exists()
     assert (deploy_dir / "conf").is_dir()
@@ -1797,6 +1797,76 @@ def test_cli_deploy_docker_update_skips_modified_manifest_owned_files(
     assert f"skipped managed file with local edits: {compose_file}\n" in output
     assert f"wrote {manifest_path}\n" not in output
     assert "Files already up to date:" not in output
+
+
+def test_cli_deploy_docker_helper_down_removes_orphans_only_for_managed_compose(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    (deploy_dir / "conf" / "arbiter-server.yaml").write_text(
+        "arbiter: {}\n",
+        encoding="utf-8",
+    )
+    (deploy_dir / "conf" / ".env").write_text("", encoding="utf-8")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker_log = tmp_path / "docker-args.log"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n" 'printf "%s\\n" "$*" >> "$DOCKER_ARGS_LOG"\n',
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    env = {
+        **os.environ,
+        "DOCKER_ARGS_LOG": str(docker_log),
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+    }
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "down"],
+        check=False,
+        text=True,
+        capture_output=True,
+        env=env,
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert "down --remove-orphans" in docker_log.read_text(encoding="utf-8")
+
+    (deploy_dir / "compose.yaml").write_text("operator change\n", encoding="utf-8")
+    docker_log.write_text("", encoding="utf-8")
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "down"],
+        check=False,
+        text=True,
+        capture_output=True,
+        env=env,
+    )
+
+    assert result.returncode == 0
+    assert "down\n" in docker_log.read_text(encoding="utf-8")
+    assert "--remove-orphans" not in docker_log.read_text(encoding="utf-8")
+    assert result.stderr == (
+        "not removing orphan containers automatically: compose.yaml has local edits\n"
+        "pass --remove-orphans to down if you want to remove stale services\n"
+    )
 
 
 def test_cli_deploy_docker_reports_unknown_override(
