@@ -60,6 +60,10 @@ def _write_github_output(tool: ModuleType) -> Callable[..., None]:
     return cast(Callable[..., None], getattr(tool, "_write_github_output"))
 
 
+def _copy_distributions(tool: ModuleType) -> Callable[..., list[Path]]:
+    return cast(Callable[..., list[Path]], getattr(tool, "_copy_distributions"))
+
+
 def test_parse_package_keys_accepts_all_and_comma_separated_keys() -> None:
     parse_package_keys = _parse_package_keys(_load_tool())
 
@@ -174,3 +178,30 @@ def test_write_github_output_includes_publish_keys(tmp_path: Path) -> None:
         "publish_keys=core,smtp\n"
         "publish_specs=arbiter-core==0.9.0,arbiter-smtp==0.9.1\n"
     )
+
+
+def test_copy_distributions_missing_artifact_explains_build_order(
+    tmp_path: Path,
+) -> None:
+    tool = _load_tool()
+    package_type = getattr(tool, "Package")
+    version_type = getattr(tool, "Version")
+    item_type = getattr(tool, "PlanItem")
+    package = package_type(kind="core", name="arbiter-core", path=Path("core"))
+    item = item_type(
+        package=package,
+        local_version=version_type.parse("0.9.0.dev1"),
+        pypi_version=None,
+        publish=True,
+        reason="project is not on PyPI",
+    )
+
+    with pytest.raises(
+        FileNotFoundError,
+        match="build distributions first, or omit --prepare-output-dir",
+    ):
+        _copy_distributions(tool)(
+            dist_dir=tmp_path / "dist",
+            output_dir=tmp_path / "dist-publish",
+            item=item,
+        )

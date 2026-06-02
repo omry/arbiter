@@ -60,6 +60,9 @@ PLUGIN_RUNTIME_FILES = (
     Path("smtp/src/agent_arbiter_smtp/__init__.py"),
     Path("imap/src/agent_arbiter_imap/__init__.py"),
 )
+GREEN = "\033[32m"
+RED = "\033[31m"
+RESET = "\033[0m"
 
 
 @dataclass(frozen=True, order=True)
@@ -388,6 +391,18 @@ def _write_changes(root: Path, changes: list[Change]) -> None:
         (root / change.path).write_text(change.after, encoding="utf-8")
 
 
+def _colored(symbol: str, color: str) -> str:
+    return f"{color}{symbol}{RESET}"
+
+
+def _success(message: str) -> str:
+    return f"{_colored('✓', GREEN)} {message}"
+
+
+def _failure(message: str) -> str:
+    return f"{_colored('✗', RED)} {message}"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
@@ -418,22 +433,26 @@ def main(argv: list[str] | None = None) -> int:
         root = Path(namespace.root).resolve()
         if namespace.check:
             current_version = check_release_state(root, target)
-            print(f"release line check passed: {target.text} ({current_version})")
+            print(
+                _success(
+                    f"release line check passed: {target.text} ({current_version})"
+                )
+            )
             return 0
         changes = build_changes(root, target)
-    except (FileNotFoundError, ValueError) as exc:
-        print(f"upgrade_release_line: {exc}", file=sys.stderr)
+    except (FileNotFoundError, OSError, ValueError) as exc:
+        print(_failure(f"upgrade_release_line: {exc}"), file=sys.stderr)
         return 1
 
     if namespace.dry_run:
         _print_diff(changes)
-        print(f"would update {len(changes)} file(s)")
+        print(_success(f"would update {len(changes)} file(s)"))
         return 0
 
     _write_changes(root, changes)
     for change in changes:
         print(f"updated {change.path}")
-    print(f"release line is now {target.text} ({target.version})")
+    print(_success(f"release line is now {target.text} ({target.version})"))
     return 0
 
 

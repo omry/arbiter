@@ -191,7 +191,11 @@ def _copy_distributions(
     for filename in _distribution_patterns(item.package, item.local_version):
         source = dist_dir / filename
         if not source.exists():
-            raise FileNotFoundError(f"expected built distribution is missing: {source}")
+            raise FileNotFoundError(
+                f"expected built distribution is missing: {source}; "
+                "build distributions first, or omit --prepare-output-dir when "
+                "you only want to query the publish plan"
+            )
         target = output_dir / filename
         shutil.copy2(source, target)
         copied.append(target)

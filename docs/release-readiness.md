@@ -27,7 +27,7 @@ run, it is not done.
 
 ```bash
 tools/upgrade_release_line 0.9 --check
-tools/plan_pypi_publish --packages all --prepare-output-dir
+tools/plan_pypi_publish --packages all
 ```
 
 Use `--release-version` when validating a fine-grained plugin or meta-package
@@ -35,19 +35,34 @@ release.
 
 ### 2. Local release rehearsal
 
-Build all distributions into a temporary wheelhouse, install from that
-wheelhouse into a fresh virtualenv, and run installed entry points.
+Build all distributions into a temporary wheelhouse:
 
 ```bash
-rm -rf /tmp/arbiter-release
-mkdir -p /tmp/arbiter-release/dist
-.venv/bin/python -m build --sdist --wheel --outdir /tmp/arbiter-release/dist core
-.venv/bin/python -m build --sdist --wheel --outdir /tmp/arbiter-release/dist imap
-.venv/bin/python -m build --sdist --wheel --outdir /tmp/arbiter-release/dist smtp
-.venv/bin/python -m build --sdist --wheel --outdir /tmp/arbiter-release/dist .
+tools/build_release_dists --clean --outdir /tmp/arbiter-release/dist
+```
+
+Use `--packages core,smtp` or `--packages meta:all` for narrower package sets.
+Add `--verbose` when build logs are needed.
+
+Prepare the publish artifact set from the built wheelhouse:
+
+```bash
+tools/plan_pypi_publish \
+  --packages all \
+  --dist-dir /tmp/arbiter-release/dist \
+  --output-dir /tmp/arbiter-release/dist-publish \
+  --prepare-output-dir
+```
+
+Install from the built wheelhouse into a fresh virtualenv and run installed
+entry points:
+
+```bash
 .venv/bin/python -m venv /tmp/arbiter-release/venv
 /tmp/arbiter-release/venv/bin/python -m pip install --upgrade pip
-/tmp/arbiter-release/venv/bin/python -m pip install --no-index --find-links /tmp/arbiter-release/dist arbiter-suite
+/tmp/arbiter-release/venv/bin/python -m pip install \
+  --find-links /tmp/arbiter-release/dist \
+  /tmp/arbiter-release/dist/arbiter_suite-0.9.0.dev1-py3-none-any.whl
 /tmp/arbiter-release/venv/bin/arbiter-server version --json
 ```
 
