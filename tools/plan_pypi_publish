@@ -298,6 +298,7 @@ def _write_github_output(
     publish_count: int,
     publish_keys: list[str],
     publish_specs: list[str],
+    publish_title: str,
 ) -> None:
     if not path:
         return
@@ -306,6 +307,7 @@ def _write_github_output(
         output.write(f"has_publish={'true' if publish_count else 'false'}\n")
         output.write(f"publish_keys={','.join(publish_keys)}\n")
         output.write(f"publish_specs={','.join(publish_specs)}\n")
+        output.write(f"publish_title={publish_title}\n")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -361,6 +363,9 @@ def main(argv: list[str] | None = None) -> int:
         publish_specs = [
             f"{item.package.name}=={item.local_version.text}" for item in publish_items
         ]
+        publish_title = ", ".join(
+            f"{item.package.name} {item.local_version.text}" for item in publish_items
+        )
 
         if namespace.prepare_output_dir:
             output_dir = root / namespace.output_dir
@@ -388,6 +393,7 @@ def main(argv: list[str] | None = None) -> int:
             publish_count=len(publish_items),
             publish_keys=publish_keys,
             publish_specs=publish_specs,
+            publish_title=publish_title,
         )
         return 0
     except (FileNotFoundError, ValueError, urllib.error.URLError) as exc:

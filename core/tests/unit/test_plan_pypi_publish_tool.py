@@ -170,6 +170,7 @@ def test_write_github_output_includes_publish_keys(tmp_path: Path) -> None:
         publish_count=2,
         publish_keys=["core", "smtp"],
         publish_specs=["arbiter-core==0.9.0", "arbiter-smtp==0.9.1"],
+        publish_title="arbiter-core 0.9.0, arbiter-smtp 0.9.1",
     )
 
     assert output_path.read_text(encoding="utf-8") == (
@@ -177,6 +178,7 @@ def test_write_github_output_includes_publish_keys(tmp_path: Path) -> None:
         "has_publish=true\n"
         "publish_keys=core,smtp\n"
         "publish_specs=arbiter-core==0.9.0,arbiter-smtp==0.9.1\n"
+        "publish_title=arbiter-core 0.9.0, arbiter-smtp 0.9.1\n"
     )
 
 

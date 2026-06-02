@@ -45,6 +45,7 @@ jobs:
       has_publish: ${{ steps.pypi-plan.outputs.has_publish }}
       publish_keys: ${{ steps.pypi-plan.outputs.publish_keys }}
       publish_specs: ${{ steps.pypi-plan.outputs.publish_specs }}
+      publish_title: ${{ steps.pypi-plan.outputs.publish_title }}
 
     steps:
       - name: Check out repository
@@ -165,6 +166,7 @@ jobs:
           RELEASE_VERSION: ${{ steps.release.outputs.release_version }}
           PUBLISH_KEYS: ${{ steps.pypi-plan.outputs.publish_keys }}
           PUBLISH_SPECS: ${{ steps.pypi-plan.outputs.publish_specs }}
+          PUBLISH_TITLE: ${{ steps.pypi-plan.outputs.publish_title }}
         run: |
           {
             echo "### Publish plan"
@@ -172,6 +174,7 @@ jobs:
             echo "- Release version: $RELEASE_VERSION"
             echo "- Package keys: $PUBLISH_KEYS"
             echo "- Package specs: $PUBLISH_SPECS"
+            echo "- Publish title: publishing $PUBLISH_TITLE to PyPI"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Smoke install built release
@@ -202,7 +205,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    name: Publish ${{ needs.build.outputs.publish_specs }} to PyPI
+    name: publishing ${{ needs.build.outputs.publish_title }} to PyPI
     needs: build
     runs-on: ubuntu-latest
     if: >-
