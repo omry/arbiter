@@ -1609,7 +1609,11 @@ def test_cli_deploy_docker_update_preserves_local_config_and_env_values(
     env_file.write_text("EXISTING_TOKEN=keep\n", encoding="utf-8")
     docker_env_file = deploy_dir / "docker.env"
     docker_env_file.write_text(
-        "ARBITER_HOST_PORT=9000\n" "LOCAL_ONLY=value\n",
+        "ARBITER_HOST_PORT=9000\n"
+        "AGENT_ARBITER_HOST_BIND=0.0.0.0\n"
+        "AGENT_ARBITER_HOST_PORT=7777\n"
+        "AGENT_ARBITER_DOCKER_SUBNET=172.31.251.0/24\n"
+        "LOCAL_ONLY=value\n",
         encoding="utf-8",
     )
     requirements_file = deploy_dir / "requirements.txt"
@@ -1632,12 +1636,12 @@ def test_cli_deploy_docker_update_preserves_local_config_and_env_values(
         "ARBITER_CONFIG_DIR=./conf\n"
         "ARBITER_CONFIG_NAME=arbiter-server\n"
         "ARBITER_REQUIREMENTS_FILE=./requirements.txt\n"
-        "ARBITER_HOST_BIND=127.0.0.1\n"
+        "ARBITER_HOST_BIND=0.0.0.0\n"
         "ARBITER_HOST_PORT=9000\n"
         "ARBITER_CONTAINER_PORT=8025\n"
         "ARBITER_DOCKER_NETWORK_NAME=arbiter\n"
         "ARBITER_DOCKER_BRIDGE_NAME=arbiter0\n"
-        "ARBITER_DOCKER_SUBNET=172.31.250.0/24\n"
+        "ARBITER_DOCKER_SUBNET=172.31.251.0/24\n"
         "\n"
         "# Extra local Compose values.\n"
         "LOCAL_ONLY=value\n"
@@ -1732,14 +1736,48 @@ def test_cli_deploy_docker_update_repairs_stale_template_manifest(
     assert main(["deploy", "docker", f"docker.dir={deploy_dir}", "update"]) == 0
 
     output = capsys.readouterr().out
-    assert f"skipped modified file: {compose_file}\n" not in output
-    assert f"skipped modified file: {helper_file}\n" not in output
+    assert f"skipped managed file with local edits: {compose_file}\n" not in output
+    assert f"skipped managed file with local edits: {helper_file}\n" not in output
     assert f"template already up to date: {compose_file}\n" not in output
     assert f"template already up to date: {helper_file}\n" not in output
     assert f"wrote {manifest_path}\n" in output
     repaired_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert repaired_manifest["files"]["compose.yaml"]["sha256"] == compose_hash
     assert repaired_manifest["files"]["arbiter-docker"]["sha256"] == helper_hash
+
+
+def test_cli_deploy_docker_update_migrates_legacy_manifest_name(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    manifest_path = deploy_dir / ".arbiter-deploy.json"
+    legacy_manifest_path = deploy_dir / ".agent-arbiter-deploy.json"
+    legacy_manifest_path.write_text(
+        manifest_path.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    manifest_path.unlink()
+
+    assert main(["deploy", "docker", f"docker.dir={deploy_dir}", "update"]) == 0
+
+    assert manifest_path.exists()
+    assert not legacy_manifest_path.exists()
+    assert (
+        "skipped managed file without manifest ownership" not in capsys.readouterr().out
+    )
 
 
 def test_cli_deploy_docker_update_skips_modified_manifest_owned_files(
@@ -1770,7 +1808,7 @@ def test_cli_deploy_docker_update_skips_modified_manifest_owned_files(
     assert compose_file.read_text(encoding="utf-8") == "operator change\n"
     assert manifest_path.read_text(encoding="utf-8") == original_manifest
     output = capsys.readouterr().out
-    assert f"skipped modified file: {compose_file}\n" in output
+    assert f"skipped managed file with local edits: {compose_file}\n" in output
     assert f"wrote {manifest_path}\n" not in output
     assert "Files already up to date:" not in output
 

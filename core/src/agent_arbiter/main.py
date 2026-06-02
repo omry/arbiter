@@ -71,6 +71,7 @@ DEFAULT_CONFIG_DIR = "~/.arbiter"
 DEFAULT_SERVER_CONFIG_NAME = "arbiter-server"
 DEFAULT_DOCKER_DEPLOY_DIR = "./arbiter-docker"
 DEPLOY_MANIFEST_FILE_NAME = ".arbiter-deploy.json"
+LEGACY_DEPLOY_MANIFEST_FILE_NAMES = (".agent-arbiter-deploy.json",)
 ARBITER_ALL_META_PACKAGE = "arbiter-suite"
 DOCKER_META_PACKAGE_GROUPS = {
     ARBITER_ALL_META_PACKAGE: (
@@ -100,6 +101,10 @@ DOCKER_COMPOSE_ENV_DEFAULTS = [
     ("ARBITER_DOCKER_BRIDGE_NAME", "arbiter0"),
     ("ARBITER_DOCKER_SUBNET", "172.31.250.0/24"),
 ]
+LEGACY_DOCKER_COMPOSE_ENV_NAMES = {
+    name.replace("ARBITER_", "AGENT_ARBITER_", 1): name
+    for name, _default in DOCKER_COMPOSE_ENV_DEFAULTS
+}
 GROUP_SELECTION_PATTERN = re.compile(
     r"^\s*-\s*(?P<item>[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)?)\s*(?:#.*)?$"
 )
@@ -1085,7 +1090,21 @@ def _resolve_docker_deploy_requirements(
     return default_requirements
 
 
+def _migrate_docker_compose_env_values(
+    existing_values: Mapping[str, str],
+) -> dict[str, str]:
+    migrated_values = dict(existing_values)
+    for legacy_name, current_name in LEGACY_DOCKER_COMPOSE_ENV_NAMES.items():
+        if legacy_name not in existing_values:
+            continue
+        if current_name not in existing_values:
+            migrated_values[current_name] = existing_values[legacy_name]
+        migrated_values.pop(legacy_name, None)
+    return migrated_values
+
+
 def _format_docker_compose_env_file(existing_values: Mapping[str, str]) -> str:
+    existing_values = _migrate_docker_compose_env_values(existing_values)
     lines = [
         "# Docker Compose settings for the Arbiter deployment.",
         "# These values control the container wrapper, not Arbiter runtime config.",
@@ -1132,9 +1151,30 @@ def _deploy_manifest_path(deploy_dir: Path) -> Path:
     return deploy_dir / DEPLOY_MANIFEST_FILE_NAME
 
 
-def _load_deploy_manifest(deploy_dir: Path) -> dict[str, str]:
+def _legacy_deploy_manifest_paths(deploy_dir: Path) -> tuple[Path, ...]:
+    return tuple(deploy_dir / name for name in LEGACY_DEPLOY_MANIFEST_FILE_NAMES)
+
+
+def _existing_deploy_manifest_path(deploy_dir: Path) -> Path | None:
     manifest_path = _deploy_manifest_path(deploy_dir)
-    if not manifest_path.exists():
+    if manifest_path.exists():
+        return manifest_path
+    for legacy_path in _legacy_deploy_manifest_paths(deploy_dir):
+        if legacy_path.exists():
+            return legacy_path
+    return None
+
+
+def _deploy_manifest_needs_migration(deploy_dir: Path) -> bool:
+    manifest_path = _existing_deploy_manifest_path(deploy_dir)
+    return manifest_path is not None and manifest_path != _deploy_manifest_path(
+        deploy_dir
+    )
+
+
+def _load_deploy_manifest(deploy_dir: Path) -> dict[str, str]:
+    manifest_path = _existing_deploy_manifest_path(deploy_dir)
+    if manifest_path is None:
         return {}
     data = json.loads(manifest_path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
@@ -1158,6 +1198,9 @@ def _write_deploy_manifest(
     file_hashes: Mapping[str, str],
 ) -> None:
     manifest_path = _deploy_manifest_path(deploy_dir)
+    for legacy_path in _legacy_deploy_manifest_paths(deploy_dir):
+        if legacy_path.exists():
+            legacy_path.unlink()
     manifest = {
         "schema_version": 1,
         "generator": "arbiter-server deploy docker",
@@ -1212,10 +1255,10 @@ def _update_manifest_owned_deploy_file(
 
     previous_hash = manifest_hashes.get(relative_path)
     if previous_hash is None:
-        print(f"skipped untracked file: {path}")
+        print(f"skipped managed file without manifest ownership: {path}")
         return "skipped"
     if current_hash != previous_hash:
-        print(f"skipped modified file: {path}")
+        print(f"skipped managed file with local edits: {path}")
         return "skipped"
 
     _write_manifest_owned_deploy_file(
@@ -1305,6 +1348,7 @@ def _run_deploy_docker(argv: Sequence[str]) -> int:
 
     if parsed.action == "update":
         deploy_dir.mkdir(parents=True, exist_ok=True)
+        manifest_needs_migration = _deploy_manifest_needs_migration(deploy_dir)
         manifest_hashes = _load_deploy_manifest(deploy_dir)
         original_manifest_hashes = dict(manifest_hashes)
         update_statuses = [
@@ -1361,7 +1405,7 @@ def _run_deploy_docker(argv: Sequence[str]) -> int:
         ):
             _write_deploy_file(paths["docker_env"], docker_env_content)
             wrote_local_state = True
-        if manifest_hashes != original_manifest_hashes:
+        if manifest_hashes != original_manifest_hashes or manifest_needs_migration:
             _write_deploy_manifest(deploy_dir, file_hashes=manifest_hashes)
         elif all(status == "up_to_date" for status in update_statuses) and not (
             wrote_local_state

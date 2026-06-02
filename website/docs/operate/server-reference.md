@@ -118,9 +118,11 @@ arbiter-server deploy docker update [docker.dir=PATH] [docker.requirement=REQ ..
   override.
 - `deploy docker update`: refresh manifest-owned templates
   (`compose.yaml` and `arbiter-docker`) only when they are missing or still
-  match the recorded manifest hash. Existing untracked or modified template
-  files are skipped. It regenerates `docker.env` while preserving known and
-  extra local values and never rewrites an existing `requirements.txt`. If it
+  match the recorded manifest hash. Existing templates without manifest
+  ownership or with local edits are skipped. It regenerates `docker.env`
+  while preserving known and extra local values, migrating legacy
+  `AGENT_ARBITER_*` Compose values, and never rewrites an existing
+  `requirements.txt`. If it
   creates missing local-checkout source requirements, it also creates the
   read-only source mount override when missing.
 - `docker.dir=PATH`: deployment directory to create or update.
