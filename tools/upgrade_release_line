@@ -406,8 +406,7 @@ def _failure(message: str) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Upgrade Agent Arbiter packages and docs to a new "
-            "MAJOR.MINOR release line."
+            "Upgrade Arbiter packages and docs to a new " "MAJOR.MINOR release line."
         )
     )
     parser.add_argument("release_line", help="target release line, for example 0.9")

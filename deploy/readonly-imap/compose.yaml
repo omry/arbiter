@@ -1,10 +1,10 @@
 services:
-  agent-arbiter-readonly:
+  arbiter-readonly:
     build:
       context: ../..
       dockerfile: Dockerfile
-    image: agent-arbiter:readonly-local
-    container_name: agent-arbiter-readonly
+    image: arbiter:readonly-local
+    container_name: arbiter-readonly
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -14,16 +14,16 @@ services:
     security_opt:
       - no-new-privileges:true
     environment:
-      AGENT_ARBITER_SERVER_HOST: 0.0.0.0
-      AGENT_ARBITER_SERVER_PORT: 8025
-      AGENT_ARBITER_SERVER_PATH: /mcp
-      AGENT_ARBITER_IMAP_HOST: ${AGENT_ARBITER_IMAP_HOST:?set AGENT_ARBITER_IMAP_HOST}
-      AGENT_ARBITER_IMAP_PORT: ${AGENT_ARBITER_IMAP_PORT:-993}
-      AGENT_ARBITER_IMAP_TLS: ${AGENT_ARBITER_IMAP_TLS:-implicit}
-      AGENT_ARBITER_IMAP_VERIFY_PEER: ${AGENT_ARBITER_IMAP_VERIFY_PEER:-true}
-      AGENT_ARBITER_IMAP_TIMEOUT_SECONDS: ${AGENT_ARBITER_IMAP_TIMEOUT_SECONDS:-30.0}
-      AGENT_ARBITER_IMAP_USERNAME_FILE: /run/secrets/imap_username
-      AGENT_ARBITER_IMAP_PASSWORD_FILE: /run/secrets/imap_password
+      ARBITER_SERVER_HOST: 0.0.0.0
+      ARBITER_SERVER_PORT: 8025
+      ARBITER_SERVER_PATH: /mcp
+      ARBITER_IMAP_HOST: ${ARBITER_IMAP_HOST:?set ARBITER_IMAP_HOST}
+      ARBITER_IMAP_PORT: ${ARBITER_IMAP_PORT:-993}
+      ARBITER_IMAP_TLS: ${ARBITER_IMAP_TLS:-implicit}
+      ARBITER_IMAP_VERIFY_PEER: ${ARBITER_IMAP_VERIFY_PEER:-true}
+      ARBITER_IMAP_TIMEOUT_SECONDS: ${ARBITER_IMAP_TIMEOUT_SECONDS:-30.0}
+      ARBITER_IMAP_USERNAME_FILE: /run/secrets/imap_username
+      ARBITER_IMAP_PASSWORD_FILE: /run/secrets/imap_password
     secrets:
       - source: imap_username
         target: imap_username
@@ -36,12 +36,12 @@ services:
         gid: "10001"
         mode: 0440
     volumes:
-      - ${AGENT_ARBITER_CONFIG_FILE:-./config.yaml}:/config/config.yaml:ro
+      - ${ARBITER_CONFIG_FILE:-./config.yaml}:/config/config.yaml:ro
     ports:
-      - "127.0.0.1:${AGENT_ARBITER_HOST_PORT:-8025}:8025"
+      - "127.0.0.1:${ARBITER_HOST_PORT:-8025}:8025"
 
 secrets:
   imap_username:
-    file: ${AGENT_ARBITER_SECRET_DIR:-/opt/agent-arbiter-readonly/secrets}/imap_username
+    file: ${ARBITER_SECRET_DIR:-/opt/arbiter-readonly/secrets}/imap_username
   imap_password:
-    file: ${AGENT_ARBITER_SECRET_DIR:-/opt/agent-arbiter-readonly/secrets}/imap_password
+    file: ${ARBITER_SECRET_DIR:-/opt/arbiter-readonly/secrets}/imap_password

@@ -1,6 +1,6 @@
-# Agent Arbiter
+# Arbiter
 
-Agent Arbiter provides policy-controlled access to configured services for agents. Today it exposes that access through MCP and a client CLI; additional interfaces may be added later. The current service surface covers sending mail over SMTP and reading IMAP folders through explicit account policies.
+Arbiter is a capability firewall between AI agents and services. Today it exposes policy-controlled access through MCP and a client CLI; additional interfaces may be added later. The current service surface covers sending mail over SMTP and reading IMAP folders through explicit account policies.
 
 ## Project Status
 
@@ -37,7 +37,7 @@ Run the test suite from the repo root with:
 - `.venv/bin/python -m nox -s tests`
 - `.venv/bin/python -m nox -s lint`
 
-The `lint` session runs both `black --check` and the Agent Arbiter `mypy` passes.
+The `lint` session runs both `black --check` and the Arbiter `mypy` passes.
 
 For focused local runs without `nox`, use the same environment directly, for example:
 
@@ -67,14 +67,14 @@ The design is documented in the `docs/` structure used by the MCP server templat
 
 ## Local Streamable HTTP Run
 
-For local Codex or VS Code integration, run Agent Arbiter as a streamable HTTP MCP
+For local Codex or VS Code integration, run Arbiter as a streamable HTTP MCP
 server and point the client at:
 
 ```text
 http://127.0.0.1:8025/mcp
 ```
 
-Agent Arbiter does not ship a runnable service config. Bootstrap a Hydra
+Arbiter does not ship a runnable service config. Bootstrap a Hydra
 config, edit it, then run the server. The default config directory is
 `~/.arbiter`; pass `--config-dir <dir>` before a subcommand to use a different
 location. `config.local/` is ignored scratchspace for repository-local
@@ -99,8 +99,8 @@ For local development, a shell-owned env file can be useful:
 # ~/.arbiter/local.env
 SMTP_PRIMARY_ACCOUNT_USERNAME=agent@example.com
 SMTP_PRIMARY_ACCOUNT_PASSWORD=change-me
-AGENT_ARBITER_IMAP_USERNAME=agent@example.com
-AGENT_ARBITER_IMAP_PASSWORD=change-me
+ARBITER_IMAP_USERNAME=agent@example.com
+ARBITER_IMAP_PASSWORD=change-me
 ```
 
 Point the root config at the env file:
@@ -173,4 +173,4 @@ secrets and no SMTP access, see:
 
 ## License
 
-Agent Arbiter is distributed under the MIT License. See [LICENSE](LICENSE).
+Arbiter is distributed under the MIT License. See [LICENSE](LICENSE).

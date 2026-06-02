@@ -13,9 +13,9 @@ COPY imap ./imap
 RUN python -m pip install --no-cache-dir --upgrade pip \
     && python -m pip install --no-cache-dir ./core ./smtp ./imap
 
-RUN addgroup --system --gid 10001 agent-arbiter \
-    && adduser --system --uid 10001 --ingroup agent-arbiter \
-        --home /nonexistent --no-create-home agent-arbiter
+RUN addgroup --system --gid 10001 arbiter \
+    && adduser --system --uid 10001 --ingroup arbiter \
+        --home /nonexistent --no-create-home arbiter
 
 USER 10001:10001
 EXPOSE 8025

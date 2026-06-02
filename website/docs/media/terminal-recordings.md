@@ -2,7 +2,7 @@
 title: Terminal Recordings
 ---
 
-Agent Arbiter docs should include short terminal sessions for CLI-heavy flows.
+Arbiter docs should include short terminal sessions for CLI-heavy flows.
 The recordings are meant to make the workflow legible without replacing
 copyable commands.
 

@@ -4,8 +4,8 @@ const {themes} = require('prism-react-renderer');
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
-  title: 'Agent Arbiter',
-  tagline: 'Policy-controlled service access for agents',
+  title: 'Arbiter',
+  tagline: 'A capability firewall between AI agents and services',
   favicon: 'img/logo-mark.svg',
 
   url: 'https://arbiter.yadan.net',
@@ -87,9 +87,9 @@ const config = {
         respectPrefersColorScheme: false,
       },
       navbar: {
-        title: 'Agent Arbiter',
+        title: 'Arbiter',
         logo: {
-          alt: 'Agent Arbiter logo',
+          alt: 'Arbiter logo',
           src: 'img/logo-mark.svg',
         },
         items: [
@@ -141,7 +141,7 @@ const config = {
             ],
           },
         ],
-        copyright: `Copyright © ${new Date().getFullYear()} Agent Arbiter contributors.`,
+        copyright: `Copyright © ${new Date().getFullYear()} Arbiter contributors.`,
       },
       prism: {
         theme: themes.dracula,

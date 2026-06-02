@@ -3,13 +3,13 @@ title: Arbiter CLI Reference
 ---
 
 `arbiter` is the client-facing command for agents and humans. It talks to an
-Agent Arbiter MCP server and exposes capability, account, operation, and raw
+Arbiter MCP server and exposes capability, account, operation, and raw
 MCP commands.
 
 Most users should start with `cap`, `accounts`, and `op`. The raw `mcp`
 commands are available for inspection and debugging.
 
-Agent Arbiter keeps MCP tool count small by exposing a hierarchical discovery
+Arbiter keeps MCP tool count small by exposing a hierarchical discovery
 surface. Start broad with capabilities, then drill into accounts and operation
 schemas before running an operation:
 

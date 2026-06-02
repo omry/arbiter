@@ -3,7 +3,7 @@
 ## Status
 
 - Stage: `v1`
-- Owner: `Agent Arbiter server`
+- Owner: `Arbiter server`
 
 ## Purpose
 

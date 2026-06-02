@@ -5,8 +5,8 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "arbiter-smtp"
 version = "0.9.0.dev1"
-description = "SMTP service plugin for Agent Arbiter"
-readme = { text = "SMTP service plugin for Agent Arbiter.", content-type = "text/markdown" }
+description = "SMTP service plugin for Arbiter"
+readme = { text = "SMTP service plugin for Arbiter.", content-type = "text/markdown" }
 requires-python = ">=3.10,<3.15"
 license = { text = "MIT" }
 authors = [
@@ -50,7 +50,7 @@ where = ["src"]
 "agent_arbiter_smtp" = ["py.typed"]
 
 [tool.towncrier]
-name = "Agent Arbiter SMTP"
+name = "Arbiter SMTP"
 package = "agent_arbiter_smtp"
 package_dir = "src"
 filename = "NEWS.md"

@@ -8,7 +8,7 @@ from typing import Mapping
 import pytest
 
 
-def _agent_arbiter_command() -> Path:
+def _arbiter_server_command() -> Path:
     command = Path(sys.executable).with_name("arbiter-server")
     if not command.exists():
         raise AssertionError(f"arbiter-server console script not found: {command}")
@@ -22,9 +22,9 @@ def _arbiter_command() -> Path:
     return command
 
 
-def _run_agent_arbiter(*args: str) -> subprocess.CompletedProcess[str]:
+def _run_arbiter_server(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [str(_agent_arbiter_command()), *args],
+        [str(_arbiter_server_command()), *args],
         check=False,
         text=True,
         stdout=subprocess.PIPE,
@@ -107,11 +107,11 @@ def _run_arbiter(
         ),
     ],
 )
-def test_agent_arbiter_console_script_help(
+def test_arbiter_console_script_help(
     args: tuple[str, ...],
     expected: str,
 ) -> None:
-    result = _run_agent_arbiter(*args)
+    result = _run_arbiter_server(*args)
 
     assert result.returncode == 0
     assert expected in result.stdout
@@ -154,7 +154,7 @@ def test_arbiter_client_console_script_help(
     assert result.stderr == ""
 
 
-def test_agent_arbiter_console_script_env_bootstrap_and_check(
+def test_arbiter_console_script_env_bootstrap_and_check(
     tmp_path: Path,
 ) -> None:
     config_file = tmp_path / "arbiter-server.yaml"
@@ -168,7 +168,7 @@ def test_agent_arbiter_console_script_env_bootstrap_and_check(
         encoding="utf-8",
     )
 
-    bootstrap = _run_agent_arbiter(
+    bootstrap = _run_arbiter_server(
         "--config-dir",
         str(tmp_path),
         "env",
@@ -193,7 +193,7 @@ def test_agent_arbiter_console_script_env_bootstrap_and_check(
         "SMTP_PRIMARY_ACCOUNT_PASSWORD=\n"
     )
 
-    check = _run_agent_arbiter(
+    check = _run_arbiter_server(
         "--config-dir",
         str(tmp_path),
         "env",
@@ -205,10 +205,10 @@ def test_agent_arbiter_console_script_env_bootstrap_and_check(
     assert check.stderr == ""
 
 
-def test_agent_arbiter_console_script_bootstrap_arbiter(
+def test_arbiter_console_script_bootstrap_arbiter(
     tmp_path: Path,
 ) -> None:
-    result = _run_agent_arbiter("bootstrap", "arbiter", "--config-dir", str(tmp_path))
+    result = _run_arbiter_server("bootstrap", "arbiter", "--config-dir", str(tmp_path))
 
     assert result.returncode == 0
     assert result.stdout == (
@@ -219,10 +219,10 @@ def test_agent_arbiter_console_script_bootstrap_arbiter(
     assert (tmp_path / "arbiter-server.yaml").exists()
 
 
-def test_agent_arbiter_console_script_bootstrap_plugin_account(
+def test_arbiter_console_script_bootstrap_plugin_account(
     tmp_path: Path,
 ) -> None:
-    result = _run_agent_arbiter(
+    result = _run_arbiter_server(
         "--config-dir",
         str(tmp_path),
         "bootstrap",
@@ -238,10 +238,10 @@ def test_agent_arbiter_console_script_bootstrap_plugin_account(
     assert (tmp_path / "arbiter" / "policy" / "smtp" / "primary_policy.yaml").exists()
 
 
-def test_agent_arbiter_console_script_bootstrap_plugin_policy(
+def test_arbiter_console_script_bootstrap_plugin_policy(
     tmp_path: Path,
 ) -> None:
-    result = _run_agent_arbiter(
+    result = _run_arbiter_server(
         "--config-dir",
         str(tmp_path),
         "bootstrap",
@@ -256,17 +256,17 @@ def test_agent_arbiter_console_script_bootstrap_plugin_policy(
     assert (tmp_path / "arbiter" / "policy" / "smtp" / "readonly.yaml").exists()
 
 
-def test_agent_arbiter_console_script_config_show_and_check(
+def test_arbiter_console_script_config_show_and_check(
     tmp_path: Path,
 ) -> None:
-    bootstrap = _run_agent_arbiter(
+    bootstrap = _run_arbiter_server(
         "--config-dir",
         str(tmp_path),
         "bootstrap",
         "arbiter",
     )
     assert bootstrap.returncode == 0
-    account = _run_agent_arbiter(
+    account = _run_arbiter_server(
         "--config-dir",
         str(tmp_path),
         "bootstrap",
@@ -276,7 +276,7 @@ def test_agent_arbiter_console_script_config_show_and_check(
         "primary",
     )
     assert account.returncode == 0
-    activate = _run_agent_arbiter(
+    activate = _run_arbiter_server(
         "--config-dir",
         str(tmp_path),
         "config",
@@ -286,13 +286,13 @@ def test_agent_arbiter_console_script_config_show_and_check(
         "primary",
     )
     assert activate.returncode == 0
-    env_bootstrap = _run_agent_arbiter(
+    env_bootstrap = _run_arbiter_server(
         "--config-dir", str(tmp_path), "env", "bootstrap"
     )
     assert env_bootstrap.returncode == 0
 
-    show = _run_agent_arbiter("--config-dir", str(tmp_path), "config", "show")
-    check = _run_agent_arbiter("--config-dir", str(tmp_path), "config", "check")
+    show = _run_arbiter_server("--config-dir", str(tmp_path), "config", "show")
+    check = _run_arbiter_server("--config-dir", str(tmp_path), "config", "check")
 
     assert show.returncode == 0
     assert "arbiter:" in show.stdout
@@ -303,17 +303,17 @@ def test_agent_arbiter_console_script_config_show_and_check(
     assert check.stderr == ""
 
 
-def test_agent_arbiter_console_script_config_deactivate(
+def test_arbiter_console_script_config_deactivate(
     tmp_path: Path,
 ) -> None:
     assert (
-        _run_agent_arbiter(
+        _run_arbiter_server(
             "--config-dir", str(tmp_path), "bootstrap", "arbiter"
         ).returncode
         == 0
     )
     assert (
-        _run_agent_arbiter(
+        _run_arbiter_server(
             "--config-dir",
             str(tmp_path),
             "bootstrap",
@@ -325,7 +325,7 @@ def test_agent_arbiter_console_script_config_deactivate(
         == 0
     )
     assert (
-        _run_agent_arbiter(
+        _run_arbiter_server(
             "--config-dir",
             str(tmp_path),
             "config",
@@ -337,7 +337,7 @@ def test_agent_arbiter_console_script_config_deactivate(
         == 0
     )
 
-    result = _run_agent_arbiter(
+    result = _run_arbiter_server(
         "--config-dir",
         str(tmp_path),
         "config",
@@ -352,21 +352,21 @@ def test_agent_arbiter_console_script_config_deactivate(
     assert result.stderr == ""
 
 
-def test_agent_arbiter_console_script_plugins_list() -> None:
-    result = _run_agent_arbiter("--config-dir", ".", "plugins", "list")
+def test_arbiter_console_script_plugins_list() -> None:
+    result = _run_arbiter_server("--config-dir", ".", "plugins", "list")
 
     assert result.returncode == 0
     assert result.stdout == "imap\nsmtp\n"
     assert result.stderr == ""
 
 
-def test_agent_arbiter_console_script_serve_reports_unrunnable_config(
+def test_arbiter_console_script_serve_reports_unrunnable_config(
     tmp_path: Path,
 ) -> None:
-    result = _run_agent_arbiter("--config-dir", str(tmp_path), "bootstrap", "arbiter")
+    result = _run_arbiter_server("--config-dir", str(tmp_path), "bootstrap", "arbiter")
     assert result.returncode == 0
 
-    serve = _run_agent_arbiter("--config-dir", str(tmp_path), "serve")
+    serve = _run_arbiter_server("--config-dir", str(tmp_path), "serve")
 
     assert serve.returncode == 1
     assert "config must define at least one service account" in serve.stderr
@@ -398,7 +398,7 @@ def test_arbiter_client_console_script_reports_clean_connection_failure(
     assert result.returncode == 1
     assert result.stdout == ""
     assert result.stderr == (
-        "Agent Arbiter connection error: could not connect to Agent Arbiter at "
+        "Arbiter connection error: could not connect to Arbiter at "
         "http://127.0.0.1:9/mcp (client override arbiter.mcp_url). "
         "Is arbiter-server serve running?\n"
     )
@@ -423,7 +423,7 @@ def test_arbiter_client_console_script_reads_client_config(
     assert result.returncode == 1
     assert result.stdout == ""
     assert result.stderr == (
-        "Agent Arbiter connection error: could not connect to Agent Arbiter at "
+        "Arbiter connection error: could not connect to Arbiter at "
         f"http://127.0.0.1:9/mcp (client config {client_config}). "
         "Is arbiter-server serve running?\n"
     )

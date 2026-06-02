@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define the deployment-owned configuration contract for the Agent Arbiter server.
+Define the deployment-owned configuration contract for the Arbiter server.
 
 ## Configuration system
 
@@ -12,7 +12,7 @@ for hierarchical configuration and environment-variable interpolation.
 Examples below use OmegaConf interpolation. Secrets may be sourced from
 environment variables via `oc.env` or from files via `secret_file`.
 
-Agent Arbiter does not ship a runnable service config. Operators create a
+Arbiter does not ship a runnable service config. Operators create a
 Hydra config and pass its directory with `--config-dir`. The repository ignores
 `config.local/` as scratchspace for local configs and secrets.
 

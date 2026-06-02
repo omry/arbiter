@@ -7,7 +7,7 @@ SMTP account, and shows the composed config.
 
 ## Install
 
-Create a virtualenv and install Agent Arbiter from pip. The virtualenv keeps
+Create a virtualenv and install Arbiter from pip. The virtualenv keeps
 the server, client, and plugin packages isolated from your system Python.
 
 ```bash
@@ -18,8 +18,8 @@ python3 -m venv .venv
 
 :::note
 
-The PyPI package `arbiter` is unrelated to Agent Arbiter. Install
-`arbiter-suite` for the default Agent Arbiter bundle, or install packages such
+The PyPI package `arbiter` is unrelated to Arbiter. Install
+`arbiter-suite` for the default Arbiter bundle, or install packages such
 as `arbiter-core`, `arbiter-smtp`, and `arbiter-imap` explicitly.
 
 :::
@@ -30,7 +30,7 @@ Use the virtualenv commands directly, or activate it before running examples.
 
 :::warning
 
-Agent Arbiter only helps if agents cannot change the deployment and cannot
+Arbiter only helps if agents cannot change the deployment and cannot
 reach the protected service another way. Keep config, credentials, plugins, and
 startup scripts operator-owned, and do not give agents direct service
 access.
@@ -42,11 +42,11 @@ Before production use, read [Security Model](../operate/security.md) and
 
 ## Create config
 
-Agent Arbiter uses `~/.arbiter` by default. To keep config somewhere else, add
+Arbiter uses `~/.arbiter` by default. To keep config somewhere else, add
 `--config-dir <dir>` before the subcommand, for example
 `arbiter-server --config-dir ./config.local config show`.
 
-Agent Arbiter config is built with Hydra and OmegaConf. For how the defaults
+Arbiter config is built with Hydra and OmegaConf. For how the defaults
 list, config groups, schemas, interpolation, and command-line overrides fit
 together, see [Configuration Model](../operate/configuration-model.md).
 
@@ -106,7 +106,7 @@ authenticate: true
 username: ${oc.env:SMTP_BOT_ACCOUNT_USERNAME}
 password: ${oc.env:SMTP_BOT_ACCOUNT_PASSWORD}
 from_email: agent@example.com
-from_name: Agent Arbiter
+from_name: Arbiter
 tls: starttls
 verify_peer: true
 timeout_seconds: 30
@@ -130,7 +130,7 @@ arbiter-server config show
 ```yaml
 arbiter:
   server:
-    name: agent-arbiter
+    name: arbiter
     transport: streamable-http
     host: 127.0.0.1
     port: 8000
@@ -151,7 +151,7 @@ arbiter:
 ## Environment values
 
 Generated account configs keep secrets out of YAML by referencing environment
-variables with `${oc.env:...}`. Agent Arbiter does not own those secrets, but it
+variables with `${oc.env:...}`. Arbiter does not own those secrets, but it
 can help you prepare and check the local env file named by the config.
 
 Use `env bootstrap` when the config changed and you want the local env file to

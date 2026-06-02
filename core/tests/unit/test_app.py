@@ -2,7 +2,7 @@ from email.message import EmailMessage
 
 import pytest
 
-from agent_arbiter.app import CORE_TOOL_NAMES, AgentArbiterApp
+from agent_arbiter.app import CORE_TOOL_NAMES, ArbiterApp
 from agent_arbiter_imap.config import (
     IMAPAccessPolicyConfig,
     IMAPConfig,
@@ -203,13 +203,13 @@ def _app(
     *,
     smtp_runtime: SMTPRuntime | None = None,
     imap_runtime: IMAPRuntime | None = None,
-) -> AgentArbiterApp:
+) -> ArbiterApp:
     runtimes: dict[str, object] = {}
     if smtp_runtime is not None:
         runtimes["smtp"] = smtp_runtime
     if imap_runtime is not None:
         runtimes["imap"] = imap_runtime
-    return AgentArbiterApp(RuntimeRegistry(runtimes))
+    return ArbiterApp(RuntimeRegistry(runtimes))
 
 
 def test_tool_names_contains_core_discovery_tools() -> None:
@@ -268,7 +268,7 @@ def test_list_accounts_accepts_entry_point_supplied_service_runtime() -> None:
                 }
             }
 
-    app = AgentArbiterApp(RuntimeRegistry({"external": FakeRuntime()}))
+    app = ArbiterApp(RuntimeRegistry({"external": FakeRuntime()}))
 
     assert app.tool_names() == list(CORE_TOOL_NAMES)
     assert app.list_accounts() == {

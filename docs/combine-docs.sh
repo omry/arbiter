@@ -3,7 +3,7 @@ set -euo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 project_dir=$(cd -- "$script_dir/.." && pwd)
-outfile=${1:-"$script_dir/agent_arbiter_design_docs.md"}
+outfile=${1:-"$script_dir/arbiter_design_docs.md"}
 
 docs=(
   "$script_dir/overview.md"
@@ -20,7 +20,7 @@ docs=(
 )
 
 {
-  printf '# Agent Arbiter Design Docs Bundle\n\n'
+  printf '# Arbiter Design Docs Bundle\n\n'
   printf 'Generated from repo docs in reading order.\n\n'
   printf '## Included Files\n\n'
 

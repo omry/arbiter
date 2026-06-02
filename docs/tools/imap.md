@@ -3,7 +3,7 @@
 ## Status
 
 - Stage: `implemented initial tool family`
-- Owner: `Agent Arbiter server`
+- Owner: `Arbiter server`
 
 ## Purpose
 
@@ -111,4 +111,4 @@ The future audit model is:
 
 - write one tool document per IMAP operation
 - decide what caller authentication or authorization model, if any, should
-  protect the bot-to-Agent Arbiter MCP connection
+  protect the bot-to-Arbiter MCP connection

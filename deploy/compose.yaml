@@ -1,47 +1,47 @@
 services:
-  agent-arbiter:
+  arbiter:
     image: python:3.11-slim
-    container_name: agent-arbiter
+    container_name: arbiter
     restart: unless-stopped
     env_file:
-      - ./agent-arbiter.env
+      - ./arbiter.env
     environment:
       # Bind to all container interfaces so Docker's host-loopback port publish can
       # reach the service. The service stays host-local because ports publish
       # only on 127.0.0.1.
-      AGENT_ARBITER_SERVER_HOST: 0.0.0.0
-      AGENT_ARBITER_INSTALL_TARGET: ${AGENT_ARBITER_CONTAINER_INSTALL_TARGET:?set AGENT_ARBITER_CONTAINER_INSTALL_TARGET}
+      ARBITER_SERVER_HOST: 0.0.0.0
+      ARBITER_INSTALL_TARGET: ${ARBITER_CONTAINER_INSTALL_TARGET:?set ARBITER_CONTAINER_INSTALL_TARGET}
     volumes:
       - ./config.yaml:/config/config.yaml:ro
-      - ${AGENT_ARBITER_LOCAL_SOURCE_DIR:-./empty-source}:/source/agent-arbiter:ro
+      - ${ARBITER_LOCAL_SOURCE_DIR:-./empty-source}:/source/arbiter:ro
     ports:
       - "127.0.0.1:8025:8025"
     networks:
-      - agent-arbiter
+      - arbiter
     command: >
       sh -lc
-      'install_target="$${AGENT_ARBITER_INSTALL_TARGET}" &&
-      if [ "$$install_target" = /source/agent-arbiter ]; then
-        rm -rf /tmp/agent-arbiter-source &&
-        rm -rf /tmp/agent-arbiter-wheels &&
-        mkdir -p /tmp/agent-arbiter-source &&
-        mkdir -p /tmp/agent-arbiter-wheels &&
-        cp -a /source/agent-arbiter/README.md /source/agent-arbiter/core /source/agent-arbiter/smtp /source/agent-arbiter/imap /tmp/agent-arbiter-source/ &&
-        find /tmp/agent-arbiter-source -type d \( -name "*.egg-info" -o -name "__pycache__" \) -prune -exec rm -rf {} + &&
-        python -m pip wheel --no-cache-dir --no-deps --wheel-dir /tmp/agent-arbiter-wheels /tmp/agent-arbiter-source/core /tmp/agent-arbiter-source/smtp /tmp/agent-arbiter-source/imap &&
-        python -m pip install --no-cache-dir /tmp/agent-arbiter-wheels/*.whl;
+      'install_target="$${ARBITER_INSTALL_TARGET}" &&
+      if [ "$$install_target" = /source/arbiter ]; then
+        rm -rf /tmp/arbiter-source &&
+        rm -rf /tmp/arbiter-wheels &&
+        mkdir -p /tmp/arbiter-source &&
+        mkdir -p /tmp/arbiter-wheels &&
+        cp -a /source/arbiter/README.md /source/arbiter/core /source/arbiter/smtp /source/arbiter/imap /tmp/arbiter-source/ &&
+        find /tmp/arbiter-source -type d \( -name "*.egg-info" -o -name "__pycache__" \) -prune -exec rm -rf {} + &&
+        python -m pip wheel --no-cache-dir --no-deps --wheel-dir /tmp/arbiter-wheels /tmp/arbiter-source/core /tmp/arbiter-source/smtp /tmp/arbiter-source/imap &&
+        python -m pip install --no-cache-dir /tmp/arbiter-wheels/*.whl;
       else
         python -m pip install --no-cache-dir "$$install_target";
       fi &&
       exec arbiter-server --config-dir /config --config-name config serve'
 
 networks:
-  agent-arbiter:
-    name: agent-arbiter
+  arbiter:
+    name: arbiter
     driver: bridge
     driver_opts:
-      com.docker.network.bridge.name: "${AGENT_ARBITER_DOCKER_BRIDGE_NAME:-agent-arbiter0}"
+      com.docker.network.bridge.name: "${ARBITER_DOCKER_BRIDGE_NAME:-arbiter0}"
     ipam:
       config:
         # Override only if the default subnet conflicts with another host network.
-        - subnet: "${AGENT_ARBITER_DOCKER_SUBNET:-172.31.250.0/24}"
+        - subnet: "${ARBITER_DOCKER_SUBNET:-172.31.250.0/24}"

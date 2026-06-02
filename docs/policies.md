@@ -15,7 +15,7 @@ Current implications:
 - `describe_caps` and `describe_cap` return configured account summaries
 - callers may explicitly select any configured account
 - at this stage, policy enforcement is configuration-driven rather than caller-identity-driven
-- Agent Arbiter is the authority boundary: the bot can access whatever Agent
+- Arbiter is the authority boundary: the bot can access whatever Agent
   Arbiter exposes through configured accounts, enabled services, and policy
   objects
 - account names and descriptions, including labels such as `personal`, are
@@ -157,7 +157,7 @@ Before broadening deployment, revisit at least these questions:
 - whether sending should be restricted to known correspondents
 - whether inbox access should start as read-only before any write or delete operations are allowed
 - whether destructive IMAP operations should be disabled by default
-- whether the bot-to-Agent Arbiter MCP connection needs caller authentication or
+- whether the bot-to-Arbiter MCP connection needs caller authentication or
   authorization, such as a shared secret, bearer token, password, client
   certificate, or mTLS/PKI
 
@@ -216,9 +216,9 @@ IMAP tools follow these rules:
 
 - Store credentials outside source control.
 - Treat account names and descriptions as advisory labels only.
-- Put every must-enforce access decision in Agent Arbiter config.
+- Put every must-enforce access decision in Arbiter config.
 - Fail closed on TLS validation errors.
 - Avoid exposing raw protocol errors that may leak secrets.
 - Enforce outbound rate limits to reduce abuse, loops, and accidental message storms.
 - Keep durable audit data metadata-only by default and make retention configurable.
-- Consider bot-to-Agent Arbiter authentication before allowing broader usage.
+- Consider bot-to-Arbiter authentication before allowing broader usage.

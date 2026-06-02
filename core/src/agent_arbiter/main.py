@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from hydra import compose, initialize_config_dir
 from omegaconf import DictConfig, OmegaConf
 
-from .app import AgentArbiterApp
+from .app import ArbiterApp
 from .cli_errors import print_cli_error
 from .config import (
     AppConfig,
@@ -70,42 +70,42 @@ DEFAULT_ENV_FILE_NAME = ".env"
 DEFAULT_CONFIG_DIR = "~/.arbiter"
 DEFAULT_SERVER_CONFIG_NAME = "arbiter-server"
 DEFAULT_DOCKER_DEPLOY_DIR = "./arbiter-docker"
-DEPLOY_MANIFEST_FILE_NAME = ".agent-arbiter-deploy.json"
-AGENT_ARBITER_ALL_META_PACKAGE = "arbiter-suite"
+DEPLOY_MANIFEST_FILE_NAME = ".arbiter-deploy.json"
+ARBITER_ALL_META_PACKAGE = "arbiter-suite"
 DOCKER_META_PACKAGE_GROUPS = {
-    AGENT_ARBITER_ALL_META_PACKAGE: (
+    ARBITER_ALL_META_PACKAGE: (
         "arbiter-core",
         "arbiter-smtp",
         "arbiter-imap",
     )
 }
-DOCKER_LOCAL_SOURCE_CONTAINER_ROOT = "/source/agent-arbiter"
+DOCKER_LOCAL_SOURCE_CONTAINER_ROOT = "/source/arbiter"
 DOCKER_LOCAL_SOURCE_REQUIREMENTS = (
     f"{DOCKER_LOCAL_SOURCE_CONTAINER_ROOT}/core",
     f"{DOCKER_LOCAL_SOURCE_CONTAINER_ROOT}/smtp",
     f"{DOCKER_LOCAL_SOURCE_CONTAINER_ROOT}/imap",
 )
 DOCKER_COMPOSE_ENV_DEFAULTS = [
-    ("AGENT_ARBITER_IMAGE", "python:3.11-slim"),
-    ("AGENT_ARBITER_CONTAINER_NAME", "agent-arbiter"),
-    ("AGENT_ARBITER_RESTART", "unless-stopped"),
-    ("AGENT_ARBITER_APP_ENV_FILE", "./conf/.env"),
-    ("AGENT_ARBITER_CONFIG_DIR", "./conf"),
-    ("AGENT_ARBITER_CONFIG_NAME", "arbiter-server"),
-    ("AGENT_ARBITER_REQUIREMENTS_FILE", "./requirements.txt"),
-    ("AGENT_ARBITER_HOST_BIND", "127.0.0.1"),
-    ("AGENT_ARBITER_HOST_PORT", "8025"),
-    ("AGENT_ARBITER_CONTAINER_PORT", "8025"),
-    ("AGENT_ARBITER_DOCKER_NETWORK_NAME", "agent-arbiter"),
-    ("AGENT_ARBITER_DOCKER_BRIDGE_NAME", "agent-arbiter0"),
-    ("AGENT_ARBITER_DOCKER_SUBNET", "172.31.250.0/24"),
+    ("ARBITER_IMAGE", "python:3.11-slim"),
+    ("ARBITER_CONTAINER_NAME", "arbiter"),
+    ("ARBITER_RESTART", "unless-stopped"),
+    ("ARBITER_APP_ENV_FILE", "./conf/.env"),
+    ("ARBITER_CONFIG_DIR", "./conf"),
+    ("ARBITER_CONFIG_NAME", "arbiter-server"),
+    ("ARBITER_REQUIREMENTS_FILE", "./requirements.txt"),
+    ("ARBITER_HOST_BIND", "127.0.0.1"),
+    ("ARBITER_HOST_PORT", "8025"),
+    ("ARBITER_CONTAINER_PORT", "8025"),
+    ("ARBITER_DOCKER_NETWORK_NAME", "arbiter"),
+    ("ARBITER_DOCKER_BRIDGE_NAME", "arbiter0"),
+    ("ARBITER_DOCKER_SUBNET", "172.31.250.0/24"),
 ]
 GROUP_SELECTION_PATTERN = re.compile(
     r"^\s*-\s*(?P<item>[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)?)\s*(?:#.*)?$"
 )
 MISC_ENV_BLOCK = "miscellaneous"
 MAIN_CONFIG_TEMPLATE = """defaults:
-# Agent Arbiter composes this config at startup from the defaults below.
+# Arbiter composes this config at startup from the defaults below.
 # Inspect the composed config with:
 #   arbiter-server --config-dir <dir> --config-name arbiter-server config show
 # Override composed values with Hydra overrides, for example:
@@ -118,7 +118,7 @@ MAIN_CONFIG_TEMPLATE = """defaults:
 """
 SERVER_CONFIG_TEMPLATE = """# @package arbiter
 server:
-  name: agent-arbiter
+  name: arbiter
   transport: streamable-http
   host: 127.0.0.1
   port: 8000
@@ -228,7 +228,7 @@ def build_app(
     cfg: HydraConfig,
     service_plugins: Sequence[ServicePlugin] | None = None,
     runtime_dependencies: dict[str, object] | None = None,
-) -> AgentArbiterApp:
+) -> ArbiterApp:
     app_config = _instantiate_app_config(cfg)
     available_plugins = (
         discover_service_plugins() if service_plugins is None else service_plugins
@@ -250,7 +250,7 @@ def build_app(
             policies=policies,
             context=runtime_context,
         )
-    return AgentArbiterApp(RuntimeRegistry(runtimes))
+    return ArbiterApp(RuntimeRegistry(runtimes))
 
 
 def _csv_or_none(values: list[str]) -> str:
@@ -270,7 +270,7 @@ def log_startup_summary(cfg: AppConfig) -> None:
     active_services = configured_service_names(cfg.arbiter.account)
 
     LOGGER.info(
-        "Agent Arbiter starting version=%s transport=%s bind=%s:%s%s "
+        "Arbiter starting version=%s transport=%s bind=%s:%s%s "
         "services=%s service_accounts=%s",
         arbiter_core_version(),
         cfg.arbiter.server.transport,
@@ -295,8 +295,7 @@ def ensure_runnable_config(
 ) -> None:
     if not configured_service_names(cfg.arbiter.account):
         raise ValueError(
-            "config must define at least one service account before Agent "
-            "Arbiter can run\n"
+            "config must define at least one service account before Arbiter can run\n"
             f"currently installed arbiter plugins: "
             f"{_installed_plugin_summary(service_plugins)}\n"
             "use `arbiter-server --config-dir DIR bootstrap plugin PLUGIN "
@@ -396,8 +395,7 @@ def _register_core_tools(
 ) -> None:
     @server.tool(
         description=(
-            "Return Agent Arbiter core and loaded service plugin version "
-            "information."
+            "Return Arbiter core and loaded service plugin version " "information."
         )
     )
     def version_info() -> dict[str, object]:
@@ -405,7 +403,7 @@ def _register_core_tools(
 
     @server.tool(
         description=(
-            "Return the available Agent Arbiter capability names. Use "
+            "Return the available Arbiter capability names. Use "
             "describe_caps or describe_cap to drill down before "
             "choosing an operation."
         )
@@ -415,7 +413,7 @@ def _register_core_tools(
 
     @server.tool(
         description=(
-            "Return bounded summaries of all Agent Arbiter capabilities, including "
+            "Return bounded summaries of all Arbiter capabilities, including "
             "account and operation previews."
         )
     )
@@ -430,7 +428,7 @@ def _register_core_tools(
 
     @server.tool(
         description=(
-            "Return focused account and operation context for one Agent Arbiter "
+            "Return focused account and operation context for one Arbiter "
             "capability."
         )
     )
@@ -439,7 +437,7 @@ def _register_core_tools(
 
     @server.tool(
         description=(
-            "Return the description and input schema for one Agent Arbiter "
+            "Return the description and input schema for one Arbiter "
             "operation. Operation ids use CAPABILITY:OPERATION syntax."
         )
     )
@@ -448,7 +446,7 @@ def _register_core_tools(
 
     @server.tool(
         description=(
-            "Run one Agent Arbiter operation by id. Operation ids use "
+            "Run one Arbiter operation by id. Operation ids use "
             "CAPABILITY:OPERATION syntax."
         )
     )
@@ -899,14 +897,14 @@ def _find_agent_arbiter_checkout(start: Path) -> Path | None:
 
 
 def _default_deploy_requirements() -> DockerDeployRequirements | None:
-    meta_all_version = distribution_version(AGENT_ARBITER_ALL_META_PACKAGE)
+    meta_all_version = distribution_version(ARBITER_ALL_META_PACKAGE)
     if (
         meta_all_version != "unknown"
         and ".dev" not in meta_all_version
         and "+" not in meta_all_version
     ):
         return DockerDeployRequirements(
-            requirements=(f"{AGENT_ARBITER_ALL_META_PACKAGE}=={meta_all_version}",)
+            requirements=(f"{ARBITER_ALL_META_PACKAGE}=={meta_all_version}",)
         )
     checkout = _find_agent_arbiter_checkout(Path.cwd())
     if checkout is None:
@@ -924,7 +922,7 @@ def _format_deploy_requirements(requirements: Sequence[str]) -> str:
 def _format_local_source_compose_override(source_root: Path) -> str:
     return (
         "services:\n"
-        "  agent-arbiter:\n"
+        "  arbiter:\n"
         "    volumes:\n"
         f"      - {source_root}:{DOCKER_LOCAL_SOURCE_CONTAINER_ROOT}:ro\n"
     )
@@ -1089,8 +1087,8 @@ def _resolve_docker_deploy_requirements(
 
 def _format_docker_compose_env_file(existing_values: Mapping[str, str]) -> str:
     lines = [
-        "# Docker Compose settings for the Agent Arbiter deployment.",
-        "# These values control the container wrapper, not Agent Arbiter runtime config.",
+        "# Docker Compose settings for the Arbiter deployment.",
+        "# These values control the container wrapper, not Arbiter runtime config.",
         "",
     ]
     default_names = {name for name, _default in DOCKER_COMPOSE_ENV_DEFAULTS}
@@ -1299,7 +1297,7 @@ def _run_deploy_docker(argv: Sequence[str]) -> int:
         (deploy_dir / "conf").mkdir(exist_ok=True)
         print("")
         print("Next steps:")
-        print(f"  bootstrap or copy an Agent Arbiter config into {deploy_dir / 'conf'}")
+        print(f"  bootstrap or copy an Arbiter config into {deploy_dir / 'conf'}")
         print(f"  {paths['helper']} sync-env")
         print(f"  {paths['helper']} edit-env")
         print(f"  {paths['helper']} up")
@@ -1393,7 +1391,7 @@ def _run_serve(
         server = build_server(app_config)
         _run_server(server, cast(TransportMode, app_config.arbiter.server.transport))
     except KeyboardInterrupt:
-        print("Agent Arbiter server stopped.", file=sys.stderr)
+        print("Arbiter server stopped.", file=sys.stderr)
         return 130
     except ValueError as exc:
         print_cli_error(str(exc), area="config")
@@ -2051,7 +2049,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     subcommands = parser.add_subparsers(dest="command", required=True)
 
-    serve = subcommands.add_parser("serve", help="run the Agent Arbiter MCP server")
+    serve = subcommands.add_parser("serve", help="run the Arbiter MCP server")
     _add_override_arguments(
         serve,
         help_text="Hydra-style config overrides applied before serving",
@@ -2069,7 +2067,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     show = config_subcommands.add_parser(
         "show",
-        help="print the composed Agent Arbiter config",
+        help="print the composed Arbiter config",
     )
     show.add_argument(
         "--resolve",
@@ -2096,7 +2094,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     bootstrap_arbiter = bootstrap_subcommands.add_parser(
         "arbiter",
-        help="create the main Agent Arbiter config",
+        help="create the main Arbiter config",
     )
     bootstrap_arbiter.add_argument(
         "--force",
@@ -2137,7 +2135,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     version_command = subcommands.add_parser(
         "version",
-        help="print Agent Arbiter core and plugin versions",
+        help="print Arbiter core and plugin versions",
     )
     version_command.add_argument(
         "--json",

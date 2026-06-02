@@ -2,7 +2,7 @@
 title: Architecture
 ---
 
-Agent Arbiter is a policy-controlled service access runtime. Its capabilities
+Arbiter is a policy-controlled service access runtime. Its capabilities
 are loaded through service plugins, activated by config, and currently exposed
 through MCP and CLI surfaces.
 
@@ -37,7 +37,7 @@ Service operations use ids such as `smtp:send_email` and
 ## Repository shape
 
 ```text
-core/   Agent Arbiter server, client CLI, plugin contracts
+core/   Arbiter server, client CLI, plugin contracts
 smtp/   SMTP service plugin
 imap/   IMAP service plugin
 docs/   source markdown notes

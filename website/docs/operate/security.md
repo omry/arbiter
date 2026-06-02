@@ -2,7 +2,7 @@
 title: Security Model
 ---
 
-Agent Arbiter's current trust model assumes the caller is trusted once connected
+Arbiter's current trust model assumes the caller is trusted once connected
 to the MCP server. Caller authentication is not part of the first server
 contract yet.
 
@@ -33,11 +33,11 @@ then talk to the upstream service using its native protocol.
 Do not expose the same credentials to the agent through environment variables,
 workspace files, shell startup files, local credential stores, unrestricted API
 tokens, or helper tools. If an agent can use the protected service directly,
-Agent Arbiter is no longer the enforcement point.
+Arbiter is no longer the enforcement point.
 
 ## Bypass paths
 
-Agent Arbiter is not a general sandbox. It gates service access only when the
+Arbiter is not a general sandbox. It gates service access only when the
 agent cannot reach that service another way.
 
 Common bypasses include:
@@ -46,7 +46,7 @@ Common bypasses include:
 - local tools such as `sendmail`
 - unrestricted API tokens
 - writable config, env files, plugin packages, or startup scripts
-- administrator access to the Agent Arbiter deployment
+- administrator access to the Arbiter deployment
 - another network path to the same protected service
 
 If an agent can edit the policy source or avoid the server entirely, prompt
@@ -58,17 +58,17 @@ Binding to `127.0.0.1` protects against network access from other hosts, but any
 local process that can reach the MCP endpoint can use whatever the configured
 policy allows.
 
-For production, run Agent Arbiter as a separate least-privileged user. Harden
+For production, run Arbiter as a separate least-privileged user. Harden
 filesystem permissions so agents and other untrusted users cannot modify config,
-environment files, plugin packages, the Agent Arbiter installation, or startup
-scripts. Do not run Agent Arbiter as root or an administrator.
+environment files, plugin packages, the Arbiter installation, or startup
+scripts. Do not run Arbiter as root or an administrator.
 
 For Docker deployments, treat the Docker socket and Docker group as
 root-equivalent.
 
 ## Practical checklist
 
-- Keep Agent Arbiter config outside agent-writable workspaces.
+- Keep Arbiter config outside agent-writable workspaces.
 - Store service credentials only in operator-owned config or env files.
 - Ensure agents do not inherit the upstream service credentials.
 - Remove local tools or API tokens that reach the protected service directly.
@@ -78,5 +78,5 @@ root-equivalent.
 ## Future work
 
 Client identification and authentication are planned design work. Until then,
-deploy Agent Arbiter only where the MCP endpoint is reachable by trusted local
+deploy Arbiter only where the MCP endpoint is reachable by trusted local
 clients.

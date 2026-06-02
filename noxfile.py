@@ -69,7 +69,7 @@ def deploy_test(session: nox.Session) -> None:
     session.run(
         "pytest",
         "imap/tests/integration/test_deploy_docker_integration.py",
-        env={"AGENT_ARBITER_RUN_DOCKER_DEPLOY_TESTS": "1"},
+        env={"ARBITER_RUN_DOCKER_DEPLOY_TESTS": "1"},
     )
 
 

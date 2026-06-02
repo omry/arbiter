@@ -540,7 +540,7 @@ password: ${{oc.env:SMTP_{env_suffix}_PASSWORD}}
 
 # Sender identity used in message headers.
 from_email: agent@example.com
-from_name: Agent Arbiter
+from_name: Arbiter
 
 # TLS mode: starttls, implicit, or none.
 tls: starttls
@@ -567,7 +567,7 @@ limits:
 # Dedupe window for repeated send attempts.
 idempotency:
   expiration_days: 7
-  cache_dir: .agent-arbiter/smtp-idempotency
+  cache_dir: .arbiter/smtp-idempotency
 
 # Empty lists do not restrict recipients. Add entries to enforce allow/block rules.
 recipient_policy:

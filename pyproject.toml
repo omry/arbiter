@@ -69,7 +69,7 @@ mypy_path = "core/src:smtp/src:imap/src"
 target-version = ["py310"]
 
 [tool.towncrier]
-name = "Agent Arbiter"
+name = "Arbiter"
 filename = "NEWS.md"
 directory = "newsfragments"
 issue_format = "#{issue}"

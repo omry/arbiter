@@ -1,59 +1,59 @@
 services:
-  agent-arbiter:
-    image: ${AGENT_ARBITER_IMAGE:-python:3.11-slim}
-    container_name: ${AGENT_ARBITER_CONTAINER_NAME:-agent-arbiter}
-    restart: ${AGENT_ARBITER_RESTART:-unless-stopped}
+  arbiter:
+    image: ${ARBITER_IMAGE:-python:3.11-slim}
+    container_name: ${ARBITER_CONTAINER_NAME:-arbiter}
+    restart: ${ARBITER_RESTART:-unless-stopped}
     env_file:
-      - ${AGENT_ARBITER_APP_ENV_FILE:-./conf/.env}
+      - ${ARBITER_APP_ENV_FILE:-./conf/.env}
     environment:
       # Bind to all container interfaces so Docker's host-loopback port publish can
       # reach the service. The service stays host-local because ports publish
       # only on 127.0.0.1.
-      AGENT_ARBITER_SERVER_HOST: 0.0.0.0
-      AGENT_ARBITER_CONTAINER_PORT: ${AGENT_ARBITER_CONTAINER_PORT:-8025}
-      AGENT_ARBITER_CONFIG_NAME: ${AGENT_ARBITER_CONFIG_NAME:-arbiter-server}
+      ARBITER_SERVER_HOST: 0.0.0.0
+      ARBITER_CONTAINER_PORT: ${ARBITER_CONTAINER_PORT:-8025}
+      ARBITER_CONFIG_NAME: ${ARBITER_CONFIG_NAME:-arbiter-server}
     volumes:
-      - ${AGENT_ARBITER_CONFIG_DIR:-./conf}:/config:ro
-      - ${AGENT_ARBITER_REQUIREMENTS_FILE:-./requirements.txt}:/requirements.txt:ro
+      - ${ARBITER_CONFIG_DIR:-./conf}:/config:ro
+      - ${ARBITER_REQUIREMENTS_FILE:-./requirements.txt}:/requirements.txt:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "${AGENT_ARBITER_HOST_BIND:-127.0.0.1}:${AGENT_ARBITER_HOST_PORT:-8025}:${AGENT_ARBITER_CONTAINER_PORT:-8025}"
+      - "${ARBITER_HOST_BIND:-127.0.0.1}:${ARBITER_HOST_PORT:-8025}:${ARBITER_CONTAINER_PORT:-8025}"
     networks:
-      - agent-arbiter
+      - arbiter
     command: >
       sh -lc
-      'if grep -q "/source/agent-arbiter" /requirements.txt; then
-        rm -rf /tmp/agent-arbiter-source &&
-        rm -rf /tmp/agent-arbiter-wheels &&
-        mkdir -p /tmp/agent-arbiter-source &&
-        mkdir -p /tmp/agent-arbiter-wheels &&
-        cp -a /source/agent-arbiter/. /tmp/agent-arbiter-source/ &&
-        find /tmp/agent-arbiter-source -type d \( -name "*.egg-info" -o -name "__pycache__" \) -prune -exec rm -rf {} + &&
-        sed "s#/source/agent-arbiter#/tmp/agent-arbiter-source#g" /requirements.txt > /tmp/requirements.txt &&
-        awk "!/^[[:space:]]*(#|$)/ && !/^[[:space:]]*\\/tmp\\/agent-arbiter-source\\// { print }" /tmp/requirements.txt > /tmp/requirements.pinned &&
-        awk "/^[[:space:]]*\\/tmp\\/agent-arbiter-source\\// { print }" /tmp/requirements.txt | while IFS= read -r requirement; do
-          python -m pip wheel --no-cache-dir --no-deps --wheel-dir /tmp/agent-arbiter-wheels "$$requirement";
+      'if grep -q "/source/arbiter" /requirements.txt; then
+        rm -rf /tmp/arbiter-source &&
+        rm -rf /tmp/arbiter-wheels &&
+        mkdir -p /tmp/arbiter-source &&
+        mkdir -p /tmp/arbiter-wheels &&
+        cp -a /source/arbiter/. /tmp/arbiter-source/ &&
+        find /tmp/arbiter-source -type d \( -name "*.egg-info" -o -name "__pycache__" \) -prune -exec rm -rf {} + &&
+        sed "s#/source/arbiter#/tmp/arbiter-source#g" /requirements.txt > /tmp/requirements.txt &&
+        awk "!/^[[:space:]]*(#|$)/ && !/^[[:space:]]*\\/tmp\\/arbiter-source\\// { print }" /tmp/requirements.txt > /tmp/requirements.pinned &&
+        awk "/^[[:space:]]*\\/tmp\\/arbiter-source\\// { print }" /tmp/requirements.txt | while IFS= read -r requirement; do
+          python -m pip wheel --no-cache-dir --no-deps --wheel-dir /tmp/arbiter-wheels "$$requirement";
         done &&
         if [ -d /wheels ] && find /wheels -maxdepth 1 -name "*.whl" -print -quit | grep -q .; then
-          python -m pip install --no-cache-dir --no-index --find-links /wheels -r /tmp/requirements.pinned /tmp/agent-arbiter-wheels/*.whl;
+          python -m pip install --no-cache-dir --no-index --find-links /wheels -r /tmp/requirements.pinned /tmp/arbiter-wheels/*.whl;
         else
-          python -m pip install --no-cache-dir -r /tmp/requirements.pinned /tmp/agent-arbiter-wheels/*.whl;
+          python -m pip install --no-cache-dir -r /tmp/requirements.pinned /tmp/arbiter-wheels/*.whl;
         fi;
       elif [ -d /wheels ] && find /wheels -maxdepth 1 -name "*.whl" -print -quit | grep -q .; then
         python -m pip install --no-cache-dir --no-index --find-links /wheels -r /requirements.txt;
       else
         python -m pip install --no-cache-dir -r /requirements.txt;
       fi &&
-      exec arbiter-server --config-dir /config --config-name "$AGENT_ARBITER_CONFIG_NAME" serve "arbiter.server.host=$AGENT_ARBITER_SERVER_HOST" "arbiter.server.port=$AGENT_ARBITER_CONTAINER_PORT"'
+      exec arbiter-server --config-dir /config --config-name "$ARBITER_CONFIG_NAME" serve "arbiter.server.host=$ARBITER_SERVER_HOST" "arbiter.server.port=$ARBITER_CONTAINER_PORT"'
 
 networks:
-  agent-arbiter:
-    name: ${AGENT_ARBITER_DOCKER_NETWORK_NAME:-agent-arbiter}
+  arbiter:
+    name: ${ARBITER_DOCKER_NETWORK_NAME:-arbiter}
     driver: bridge
     driver_opts:
-      com.docker.network.bridge.name: "${AGENT_ARBITER_DOCKER_BRIDGE_NAME:-agent-arbiter0}"
+      com.docker.network.bridge.name: "${ARBITER_DOCKER_BRIDGE_NAME:-arbiter0}"
     ipam:
       config:
         # Override only if the default subnet conflicts with another host network.
-        - subnet: "${AGENT_ARBITER_DOCKER_SUBNET:-172.31.250.0/24}"
+        - subnet: "${ARBITER_DOCKER_SUBNET:-172.31.250.0/24}"

@@ -2,7 +2,7 @@
 title: Release Process
 ---
 
-Agent Arbiter publishes several Python distributions from one repository:
+Arbiter publishes several Python distributions from one repository:
 
 - `core`: `arbiter-core`, the real core runtime package
 - `imap`: `arbiter-imap`, the IMAP plugin

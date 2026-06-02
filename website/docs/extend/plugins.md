@@ -29,7 +29,7 @@ smtp = "agent_arbiter_smtp:plugin"
 
 ## Version contract
 
-Plugins use compatibility-line versions. A plugin for Agent Arbiter core
+Plugins use compatibility-line versions. A plugin for Arbiter core
 `0.9.x` should use a package version on the `0.9` line, such as
 `0.9.0.dev1`, `0.9.0`, or `0.9.1`, and declare the same core API line at
 runtime. The plugin runtime should derive `version` from installed package
@@ -45,7 +45,7 @@ class ExampleServicePlugin:
     core_api_version = "0.9"
 ```
 
-At plugin discovery and config registration time, Agent Arbiter rejects plugins
+At plugin discovery and config registration time, Arbiter rejects plugins
 whose `core_api_version` does not match the loaded core API line. It also
 rejects plugin package versions that are not on that same `major.minor` line.
 

@@ -22,7 +22,7 @@ class SMTPLimitsConfig:
 @dataclass
 class SMTPIdempotencyConfig:
     expiration_days: int = 7
-    cache_dir: str = ".agent-arbiter/smtp-idempotency"
+    cache_dir: str = ".arbiter/smtp-idempotency"
 
 
 @dataclass
@@ -43,7 +43,7 @@ class SMTPConfig(Policy):
     username: str = ""
     password: str = ""
     from_email: str = "agent@example.com"
-    from_name: str = "Agent Arbiter"
+    from_name: str = "Arbiter"
     tls: MailTlsMode = MailTlsMode.starttls
     verify_peer: bool = True
     timeout_seconds: float = 30.0
@@ -68,7 +68,7 @@ SMTP_ACCOUNT_EXAMPLE = SMTPConfig(
     username="${oc.env:SMTP_BOT_ACCOUNT_USERNAME}",
     password="${oc.env:SMTP_BOT_ACCOUNT_PASSWORD}",
     from_email="agent@example.com",
-    from_name="Agent Arbiter",
+    from_name="Arbiter",
     tls=MailTlsMode.starttls,
     verify_peer=True,
     timeout_seconds=30.0,

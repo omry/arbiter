@@ -1,9 +1,9 @@
-# Agent Arbiter Backlog
+# Arbiter Backlog
 
 ## Agent instructions
 
 When helping with backlog work, treat this file as the active planning
-surface for Agent Arbiter. Keep it short, concrete, and easy to scan. Prefer
+surface for Arbiter. Keep it short, concrete, and easy to scan. Prefer
 moving work between queues over growing process, and avoid inventing GitHub
 issues unless the user asks for them.
 
@@ -26,7 +26,7 @@ This file is the day-to-day queue for design and implementation gaps.
 
 ## Direction
 
-- Current platform name: `Agent Arbiter`.
+- Current platform name: `Arbiter`.
 - Architecture direction: one service equals one independently installable
   plugin. SMTP and IMAP should move out of the core package into separate
   plugin distributions so future services such as CalDAV, CardDAV, and Sieve
@@ -42,7 +42,7 @@ This file is the day-to-day queue for design and implementation gaps.
       metadata and deployment requirements docs agree; release notes and status notes
       are current; and a build/install smoke path is verified.
 
-- [ ] `P1` Run an Agent Arbiter security analysis before initial release.
+- [ ] `P1` Run an Arbiter security analysis before initial release.
       Do one focused threat-model and implementation review pass over the
       current architecture before publishing packages. Cover the MCP boundary,
       local and Docker deployment modes, config and env-file handling, plugin
@@ -90,7 +90,7 @@ This file is the day-to-day queue for design and implementation gaps.
       Plugin authors need consistent conventions for distribution package
       names, Python module names, entry point names, capability names, and
       config group names. Version policy should use compatibility-line
-      versions: plugins stay on the Agent Arbiter core `major.minor` line
+      versions: plugins stay on the Arbiter core `major.minor` line
       they support, with the plugin patch/sub-version free for plugin-only
       fixes. Runtime plugin loading should enforce that the plugin's declared
       compatibility line matches the loaded core line. Acceptance checks:
@@ -110,7 +110,7 @@ This file is the day-to-day queue for design and implementation gaps.
       previous runtime active; and logs expose which services changed.
 
 - [ ] `P2` Let Hydra own server logging configuration.
-      Agent Arbiter is a server process, so operators need proper logging
+      Arbiter is a server process, so operators need proper logging
       without a parallel Arbiter-specific logging surface. Hydra should remain
       the owner of server logging configuration, including job and Hydra
       logging groups, while the CLI stays simple and prints user-facing
@@ -146,10 +146,10 @@ This file is the day-to-day queue for design and implementation gaps.
 
 - [ ] `P2` Design client identification and caller authentication.
       V1 assumes the caller is trusted once connected. Future hardening should
-      decide whether Agent Arbiter needs to identify CLI and MCP clients, only
+      decide whether Arbiter needs to identify CLI and MCP clients, only
       authenticate them, or do both. Candidate mechanisms may include a shared
       secret, bearer token, password, client certificate, or mTLS/PKI so
-      deployments can prevent unsafe access to the Agent Arbiter MCP boundary.
+      deployments can prevent unsafe access to the Arbiter MCP boundary.
       Acceptance checks: candidate mechanisms are compared; the design defines
       whether client identity is stable, user-visible, and recorded in logs or
       audit events; the chosen model works for local agent/Codex use, generic
@@ -157,7 +157,7 @@ This file is the day-to-day queue for design and implementation gaps.
       without leaking credentials.
 
 - [ ] `P2` Add an installation security evaluator.
-      Operators need a tool that checks whether an Agent Arbiter installation
+      Operators need a tool that checks whether an Arbiter installation
       is safe to run: config files, env files, installed package files, plugin
       packages, and startup scripts should not be writable by agent-controlled
       users, and the server should not run as root/admin in normal production
@@ -191,7 +191,7 @@ This file is the day-to-day queue for design and implementation gaps.
       versioning and compatibility expectations; and choose the first language
       target, if any.
 
-- [ ] `P2` Evaluate SQL as a future Agent Arbiter service plugin.
+- [ ] `P2` Evaluate SQL as a future Arbiter service plugin.
       SQL is a valuable agent use case because database access is high-stakes
       and policy control can materially reduce blast radius. It is also
       technically challenging: query input, result output, and large result

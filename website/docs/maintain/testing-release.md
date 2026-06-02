@@ -9,7 +9,7 @@ Use the repo-local virtualenv when running checks:
 .venv/bin/python -m nox -s lint
 ```
 
-Agent Arbiter formally supports Python 3.10 through 3.14. The compatibility
+Arbiter formally supports Python 3.10 through 3.14. The compatibility
 matrix is derived from `project.requires-python`, and Nox is allowed to
 download missing interpreters when needed:
 

@@ -22,7 +22,7 @@ from .version import arbiter_core_version
 
 
 DEFAULT_MCP_URL = "http://127.0.0.1:8000/mcp"
-MCP_URL_ENV_VAR = "AGENT_ARBITER_MCP_URL"
+MCP_URL_ENV_VAR = "ARBITER_MCP_URL"
 DEFAULT_CONFIG_DIR = "~/.arbiter"
 DEFAULT_CLIENT_CONFIG_NAME = "arbiter-client"
 BOOTSTRAP_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -249,7 +249,7 @@ def _resolve_mcp_url(namespace: argparse.Namespace) -> ResolvedMCPURL:
 
 def _connection_error_message(namespace: argparse.Namespace) -> str:
     return (
-        f"could not connect to Agent Arbiter at {namespace.mcp_url} "
+        f"could not connect to Arbiter at {namespace.mcp_url} "
         f"({namespace.mcp_url_source}). Is arbiter-server serve running?"
     )
 
@@ -308,7 +308,7 @@ def _warn_if_remote_version_mismatch(initialize_result: object) -> None:
     ):
         return
     print(
-        "Agent Arbiter core version warning: "
+        "Arbiter core version warning: "
         f"local CLI core version {local_version} does not match "
         f"remote server core version {remote_version}.",
         file=sys.stderr,
@@ -361,7 +361,7 @@ async def call_arbiter_operation(
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="arbiter",
-        description="Client CLI for an Agent Arbiter MCP server.",
+        description="Client CLI for an Arbiter MCP server.",
         epilog=(
             f"Uses {DEFAULT_CONFIG_DIR}/{DEFAULT_CLIENT_CONFIG_NAME}.yaml by "
             "default. "
@@ -426,7 +426,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     capabilities = subcommands.add_parser(
         "cap",
-        help="discover Agent Arbiter capabilities (alias: capabilities)",
+        help="discover Arbiter capabilities (alias: capabilities)",
     )
     capabilities_subcommands = capabilities.add_subparsers(
         dest="capabilities_command",
@@ -452,7 +452,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     operation = subcommands.add_parser(
         "op",
-        help="inspect or run Agent Arbiter operations (alias: operation)",
+        help="inspect or run Arbiter operations (alias: operation)",
     )
     operation_subcommands = operation.add_subparsers(
         dest="operation_command",
@@ -741,7 +741,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         return anyio.run(_run_async, namespace)
     except KeyboardInterrupt:
-        print("Agent Arbiter client stopped.", file=sys.stderr)
+        print("Arbiter client stopped.", file=sys.stderr)
         return 130
     except ToolCallError as exc:
         print_cli_error(str(exc), area="tool")

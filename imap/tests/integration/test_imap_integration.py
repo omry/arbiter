@@ -120,7 +120,7 @@ class _LocalIMAPServerRunner:
                     self._handle_connection(connection)
 
     def _handle_connection(self, connection: socket.socket) -> None:
-        connection.sendall(b"* OK Agent Arbiter test IMAP server ready\r\n")
+        connection.sendall(b"* OK Arbiter test IMAP server ready\r\n")
         reader = connection.makefile("rb")
         while not self._stop.is_set():
             raw_line = reader.readline()

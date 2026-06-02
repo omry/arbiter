@@ -10,7 +10,7 @@ http://127.0.0.1:8025/mcp
 
 The service listens on all container interfaces so Docker's host-loopback port
 publish can reach it. The host publish remains loopback-only unless you change
-`AGENT_ARBITER_HOST_BIND`.
+`ARBITER_HOST_BIND`.
 
 ## Docker env values
 
@@ -22,22 +22,22 @@ Edit Docker wrapper settings with:
 
 Common values in `docker.env`:
 
-- `AGENT_ARBITER_HOST_BIND`: host bind address, default `127.0.0.1`.
-- `AGENT_ARBITER_HOST_PORT`: host port, default `8025`.
-- `AGENT_ARBITER_CONTAINER_PORT`: container port, default `8025`.
-- `AGENT_ARBITER_DOCKER_NETWORK_NAME`: Docker network name, default
-  `agent-arbiter`.
-- `AGENT_ARBITER_DOCKER_BRIDGE_NAME`: bridge interface name, default
-  `agent-arbiter0`.
-- `AGENT_ARBITER_DOCKER_SUBNET`: bridge subnet, default `172.31.250.0/24`.
+- `ARBITER_HOST_BIND`: host bind address, default `127.0.0.1`.
+- `ARBITER_HOST_PORT`: host port, default `8025`.
+- `ARBITER_CONTAINER_PORT`: container port, default `8025`.
+- `ARBITER_DOCKER_NETWORK_NAME`: Docker network name, default
+  `arbiter`.
+- `ARBITER_DOCKER_BRIDGE_NAME`: bridge interface name, default
+  `arbiter0`.
+- `ARBITER_DOCKER_SUBNET`: bridge subnet, default `172.31.250.0/24`.
 
 ## Bridge overrides
 
 The standard Compose file uses a deterministic Docker bridge so firewall rules
 can target stable names:
 
-- Docker network name: `agent-arbiter`
-- bridge interface: `agent-arbiter0`
+- Docker network name: `arbiter`
+- bridge interface: `arbiter0`
 - bridge subnet: `172.31.250.0/24`
 
 If that subnet or interface name conflicts with the host, override them for the
@@ -46,9 +46,9 @@ network interface limits:
 
 ```bash
 cd /opt/arbiter
-AGENT_ARBITER_DOCKER_BRIDGE_NAME=arbiter1 \
-AGENT_ARBITER_DOCKER_SUBNET=172.31.251.0/24 \
-sudo --preserve-env=AGENT_ARBITER_DOCKER_BRIDGE_NAME,AGENT_ARBITER_DOCKER_SUBNET \
+ARBITER_DOCKER_BRIDGE_NAME=arbiter1 \
+ARBITER_DOCKER_SUBNET=172.31.251.0/24 \
+sudo --preserve-env=ARBITER_DOCKER_BRIDGE_NAME,ARBITER_DOCKER_SUBNET \
   docker compose --env-file /opt/arbiter/docker.env \
   -f /opt/arbiter/compose.yaml up -d
 ```

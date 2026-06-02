@@ -19,7 +19,7 @@ LOGGER = logging.getLogger(__name__)
 
 @dataclass
 class FastMCPConfig:
-    name: str = "agent-arbiter"
+    name: str = "arbiter"
     transport: str = "streamable-http"
     host: str = "127.0.0.1"
     port: int = 8000

@@ -40,10 +40,10 @@ function HomepageHeader() {
       <div className={clsx('container', styles.heroInner)}>
         <div className={styles.heroCopy}>
           <Heading as="h1" className="hero__title">
-            Agent Arbiter
+            Arbiter
           </Heading>
           <p className="hero__subtitle">
-            Policy-controlled service access for agents through CLI and MCP.
+            A capability firewall between AI agents and services.
           </p>
           <div className={styles.buttons}>
             <Link
@@ -62,7 +62,7 @@ function HomepageHeader() {
           <img
             className={styles.heroLogo}
             src="img/logo.svg"
-            alt="Agent Arbiter logo"
+            alt="Arbiter logo"
           />
           <div className={styles.pluginStack}>
             <div className={styles.pluginEyebrow}>Featured plugins</div>
@@ -82,8 +82,8 @@ function HomepageHeader() {
 export default function Home() {
   return (
     <Layout
-      title="Agent Arbiter"
-      description="Policy-controlled service access for agents">
+      title="Arbiter"
+      description="A capability firewall between AI agents and services">
       <HomepageHeader />
       <main>
         <section className="padding-vert--xl">

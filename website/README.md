@@ -1,4 +1,4 @@
-# Agent Arbiter Website
+# Arbiter Website
 
 This directory contains the Docusaurus website.
 

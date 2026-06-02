@@ -15,9 +15,9 @@ import pytest
 
 
 pytestmark = pytest.mark.skipif(
-    os.environ.get("AGENT_ARBITER_RUN_DOCKER_DEPLOY_TESTS") != "1",
+    os.environ.get("ARBITER_RUN_DOCKER_DEPLOY_TESTS") != "1",
     reason=(
-        "set AGENT_ARBITER_RUN_DOCKER_DEPLOY_TESTS=1 to run the Docker "
+        "set ARBITER_RUN_DOCKER_DEPLOY_TESTS=1 to run the Docker "
         "deployment integration test"
     ),
 )
@@ -129,25 +129,25 @@ def _docker_env_subnet(port: int) -> str:
 
 def _configure_deploy_network(deploy_dir: Path, host_port: int) -> None:
     docker_env = deploy_dir / "docker.env"
-    _replace_env_value(docker_env, "AGENT_ARBITER_HOST_PORT", str(host_port))
+    _replace_env_value(docker_env, "ARBITER_HOST_PORT", str(host_port))
     _replace_env_value(
         docker_env,
-        "AGENT_ARBITER_CONTAINER_NAME",
-        f"agent-arbiter-test-{host_port}",
+        "ARBITER_CONTAINER_NAME",
+        f"arbiter-test-{host_port}",
     )
     _replace_env_value(
         docker_env,
-        "AGENT_ARBITER_DOCKER_NETWORK_NAME",
-        f"agent-arbiter-test-{host_port}",
+        "ARBITER_DOCKER_NETWORK_NAME",
+        f"arbiter-test-{host_port}",
     )
     _replace_env_value(
         docker_env,
-        "AGENT_ARBITER_DOCKER_BRIDGE_NAME",
+        "ARBITER_DOCKER_BRIDGE_NAME",
         f"aa{host_port}",
     )
     _replace_env_value(
         docker_env,
-        "AGENT_ARBITER_DOCKER_SUBNET",
+        "ARBITER_DOCKER_SUBNET",
         _docker_env_subnet(host_port),
     )
 
@@ -158,7 +158,7 @@ def _docker_container_logs(
     host_port: int,
 ) -> subprocess.CompletedProcess[str]:
     return _run(
-        ["docker", "logs", f"agent-arbiter-test-{host_port}"],
+        ["docker", "logs", f"arbiter-test-{host_port}"],
         cwd=repo_root,
         timeout=20,
     )
@@ -190,7 +190,7 @@ def _write_imap_only_config(path: Path, imap_server: Any) -> None:
         "\n"
         "arbiter:\n"
         "  server:\n"
-        "    name: agent-arbiter-mcp\n"
+        "    name: arbiter-mcp\n"
         "    transport: streamable-http\n"
         "    host: 0.0.0.0\n"
         "    port: 8025\n"
@@ -353,16 +353,16 @@ def _build_deploy_wheelhouse(repo_root: Path, wheelhouse: Path) -> dict[str, Pat
             "sh",
             "-lc",
             (
-                "mkdir -p /tmp/agent-arbiter-wheel-build && "
+                "mkdir -p /tmp/arbiter-wheel-build && "
                 "cp -a /repo/core /repo/smtp /repo/imap "
-                "/tmp/agent-arbiter-wheel-build/ && "
-                "find /tmp/agent-arbiter-wheel-build -type d "
+                "/tmp/arbiter-wheel-build/ && "
+                "find /tmp/arbiter-wheel-build -type d "
                 '\\( -name "*.egg-info" -o -name "__pycache__" \\) '
                 "-prune -exec rm -rf {} + && "
                 "python -m pip wheel --wheel-dir /wheelhouse "
-                "/tmp/agent-arbiter-wheel-build/core "
-                "/tmp/agent-arbiter-wheel-build/smtp "
-                "/tmp/agent-arbiter-wheel-build/imap"
+                "/tmp/arbiter-wheel-build/core "
+                "/tmp/arbiter-wheel-build/smtp "
+                "/tmp/arbiter-wheel-build/imap"
             ),
         ],
         cwd=repo_root,
@@ -408,9 +408,9 @@ def test_docker_deployment_serves_real_imap_operation(
             "deploy",
             "docker",
             f"docker.dir={deploy_dir}",
-            "docker.requirement=/source/agent-arbiter/core",
-            "docker.requirement=/source/agent-arbiter/smtp",
-            "docker.requirement=/source/agent-arbiter/imap",
+            "docker.requirement=/source/arbiter/core",
+            "docker.requirement=/source/arbiter/smtp",
+            "docker.requirement=/source/arbiter/imap",
             "init",
         ],
         cwd=repo_root,
@@ -424,9 +424,9 @@ def test_docker_deployment_serves_real_imap_operation(
     (config_dir / ".env").write_text("", encoding="utf-8")
     (deploy_dir / "compose.override.yaml").write_text(
         "services:\n"
-        "  agent-arbiter:\n"
+        "  arbiter:\n"
         "    volumes:\n"
-        f"      - {repo_root}:/source/agent-arbiter:ro\n",
+        f"      - {repo_root}:/source/arbiter:ro\n",
         encoding="utf-8",
     )
     host_port = free_tcp_port_factory()
@@ -491,7 +491,7 @@ def test_docker_deployment_serves_real_imap_operation_from_wheelhouse(
     (config_dir / ".env").write_text("", encoding="utf-8")
     (deploy_dir / "compose.override.yaml").write_text(
         "services:\n"
-        "  agent-arbiter:\n"
+        "  arbiter:\n"
         "    volumes:\n"
         f"      - {wheelhouse}:/wheels:ro\n",
         encoding="utf-8",

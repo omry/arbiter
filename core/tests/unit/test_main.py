@@ -265,7 +265,7 @@ def test_discover_service_plugins_rejects_wrong_core_api_version(
     with pytest.raises(
         RuntimeError,
         match=(
-            "service plugin stale targets Agent Arbiter core API 0.7, "
+            "service plugin stale targets Arbiter core API 0.7, "
             "but loaded core API is 0.9"
         ),
     ):
@@ -406,7 +406,7 @@ def test_server_cli_reports_clean_keyboard_interrupt(
 
     assert main(["--config-dir", "/tmp", "serve"]) == 130
 
-    assert capsys.readouterr().err == "Agent Arbiter server stopped.\n"
+    assert capsys.readouterr().err == "Arbiter server stopped.\n"
 
 
 def test_compose_config_registers_configs_before_composing(
@@ -416,7 +416,7 @@ def test_compose_config_registers_configs_before_composing(
     calls: list[str] = []
 
     (tmp_path / "config.yaml").write_text(
-        "arbiter:\n  server:\n    name: agent-arbiter\n",
+        "arbiter:\n  server:\n    name: arbiter\n",
         encoding="utf-8",
     )
 
@@ -427,7 +427,7 @@ def test_compose_config_registers_configs_before_composing(
 
     cfg = compose_config(config_dir=tmp_path, config_name="config")
 
-    assert cfg.arbiter.server.name == "agent-arbiter"
+    assert cfg.arbiter.server.name == "arbiter"
     assert calls == ["register_configs"]
 
 
@@ -435,19 +435,19 @@ def test_compose_config_loads_env_file_before_composing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("AGENT_ARBITER_TEST_SERVER_NAME", raising=False)
+    monkeypatch.delenv("ARBITER_TEST_SERVER_NAME", raising=False)
     (tmp_path / "config.yaml").write_text(
         "arbiter:\n"
         "  env_file: local.env\n"
         "  server:\n"
-        "    name: ${oc.env:AGENT_ARBITER_TEST_SERVER_NAME}\n",
+        "    name: ${oc.env:ARBITER_TEST_SERVER_NAME}\n",
         encoding="utf-8",
     )
     env_file = tmp_path / "local.env"
     env_file.write_text(
         "\n"
         "# Local operator-owned environment.\n"
-        'export AGENT_ARBITER_TEST_SERVER_NAME="from-env-file" # comment\n',
+        'export ARBITER_TEST_SERVER_NAME="from-env-file" # comment\n',
         encoding="utf-8",
     )
 
@@ -464,16 +464,16 @@ def test_load_env_file_keeps_existing_process_env(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("AGENT_ARBITER_TEST_ENV_FILE_PRECEDENCE", "from-process")
+    monkeypatch.setenv("ARBITER_TEST_ENV_FILE_PRECEDENCE", "from-process")
     env_file = tmp_path / "local.env"
     env_file.write_text(
-        'AGENT_ARBITER_TEST_ENV_FILE_PRECEDENCE="from file"\n',
+        'ARBITER_TEST_ENV_FILE_PRECEDENCE="from file"\n',
         encoding="utf-8",
     )
 
     load_env_file(env_file)
 
-    assert os.environ["AGENT_ARBITER_TEST_ENV_FILE_PRECEDENCE"] == "from-process"
+    assert os.environ["ARBITER_TEST_ENV_FILE_PRECEDENCE"] == "from-process"
 
 
 def test_load_env_file_reports_invalid_lines(tmp_path: Path) -> None:
@@ -534,7 +534,7 @@ def test_cli_env_check_reports_missing_env(
     assert main(["--config-dir", str(tmp_path), "env", "check"]) == 1
 
     assert capsys.readouterr().err == (
-        "Agent Arbiter env error: missing required environment variables:\n"
+        "Arbiter env error: missing required environment variables:\n"
         "  SMTP_PRIMARY_ACCOUNT_PASSWORD (arbiter-smtp)\n"
     )
 
@@ -679,22 +679,22 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
     assert "python -m pip wheel --no-cache-dir --no-deps --wheel-dir" in compose_text
     assert (
         "python -m pip install --no-cache-dir -r /tmp/requirements.pinned "
-        "/tmp/agent-arbiter-wheels/*.whl"
+        "/tmp/arbiter-wheels/*.whl"
     ) in compose_text
-    assert "AGENT_ARBITER_SERVER_HOST: 0.0.0.0" in compose_text
+    assert "ARBITER_SERVER_HOST: 0.0.0.0" in compose_text
     assert (
-        '"arbiter.server.host=$AGENT_ARBITER_SERVER_HOST" '
-        '"arbiter.server.port=$AGENT_ARBITER_CONTAINER_PORT"'
+        '"arbiter.server.host=$ARBITER_SERVER_HOST" '
+        '"arbiter.server.port=$ARBITER_CONTAINER_PORT"'
     ) in compose_text
     assert not (deploy_dir / "config.yaml").exists()
     assert (deploy_dir / "conf").is_dir()
     assert not (deploy_dir / "conf" / ".env").exists()
     docker_env = (deploy_dir / "docker.env").read_text(encoding="utf-8")
-    assert "AGENT_ARBITER_HOST_BIND=127.0.0.1\n" in docker_env
-    assert "AGENT_ARBITER_HOST_PORT=8025\n" in docker_env
-    assert "AGENT_ARBITER_DOCKER_NETWORK_NAME=agent-arbiter\n" in docker_env
-    assert "AGENT_ARBITER_DOCKER_SUBNET=172.31.250.0/24\n" in docker_env
-    assert "AGENT_ARBITER_LOCAL_SOURCE_DIR" not in docker_env
+    assert "ARBITER_HOST_BIND=127.0.0.1\n" in docker_env
+    assert "ARBITER_HOST_PORT=8025\n" in docker_env
+    assert "ARBITER_DOCKER_NETWORK_NAME=arbiter\n" in docker_env
+    assert "ARBITER_DOCKER_SUBNET=172.31.250.0/24\n" in docker_env
+    assert "ARBITER_LOCAL_SOURCE_DIR" not in docker_env
     assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
         "arbiter-suite==1.2.3\n"
     )
@@ -703,7 +703,7 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
     assert helper.exists()
     assert helper.stat().st_mode & 0o111
     manifest = json.loads(
-        (deploy_dir / ".agent-arbiter-deploy.json").read_text(encoding="utf-8")
+        (deploy_dir / ".arbiter-deploy.json").read_text(encoding="utf-8")
     )
     assert manifest["generator"] == "arbiter-server deploy docker"
     assert manifest["agent_arbiter_core_version"] == "9.8.7"
@@ -768,7 +768,7 @@ def test_cli_deploy_docker_init_refuses_existing_file(
 
     assert compose_file.read_text(encoding="utf-8") == "existing\n"
     assert capsys.readouterr().err == (
-        "Agent Arbiter deploy error: refusing to overwrite existing deployment "
+        "Arbiter deploy error: refusing to overwrite existing deployment "
         f"file: {compose_file}\n"
         "  use update to refresh generated files\n"
     )
@@ -847,7 +847,7 @@ def test_cli_deploy_docker_init_rejects_conflicting_duplicate_package_pins(
     )
 
     assert capsys.readouterr().err == (
-        "Agent Arbiter deploy error: conflicting docker.requirement pins for "
+        "Arbiter deploy error: conflicting docker.requirement pins for "
         "arbiter-smtp: 0.9.1, 0.9.2\n"
     )
     assert not deploy_dir.exists()
@@ -873,7 +873,7 @@ def test_cli_deploy_docker_init_rejects_unpinned_requirement(
     )
 
     assert capsys.readouterr().err == (
-        "Agent Arbiter deploy error: docker.requirement must be an exact "
+        "Arbiter deploy error: docker.requirement must be an exact "
         "package pin (name==version) or an absolute container path\n"
         "  value: arbiter-suite\n"
     )
@@ -899,15 +899,13 @@ def test_cli_deploy_docker_init_uses_local_checkout_default_requirements(
     assert main(["deploy", "docker", f"docker.dir={deploy_dir}", "init"]) == 0
 
     assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
-        "/source/agent-arbiter/core\n"
-        "/source/agent-arbiter/smtp\n"
-        "/source/agent-arbiter/imap\n"
+        "/source/arbiter/core\n" "/source/arbiter/smtp\n" "/source/arbiter/imap\n"
     )
     assert (deploy_dir / "compose.override.yaml").read_text(encoding="utf-8") == (
         "services:\n"
-        "  agent-arbiter:\n"
+        "  arbiter:\n"
         "    volumes:\n"
-        f"      - {checkout.resolve()}:/source/agent-arbiter:ro\n"
+        f"      - {checkout.resolve()}:/source/arbiter:ro\n"
     )
     capsys.readouterr()
 
@@ -926,7 +924,7 @@ def test_cli_deploy_docker_init_rejects_unlocated_local_dev_default_requirement(
     assert main(["deploy", "docker", f"docker.dir={deploy_dir}", "init"]) == 2
 
     assert capsys.readouterr().err == (
-        "Agent Arbiter deploy error: cannot infer default docker requirements\n"
+        "Arbiter deploy error: cannot infer default docker requirements\n"
         "  pass docker.requirement=arbiter-suite==VERSION for the all-in-one "
         "meta package\n"
         "  or pass one or more docker.requirement=PACKAGE==VERSION entries "
@@ -949,7 +947,7 @@ def test_cli_deploy_docker_init_accepts_absolute_path_requirement(
                 "deploy",
                 "docker",
                 f"docker.dir={deploy_dir}",
-                "docker.requirement=/source/agent-arbiter/core",
+                "docker.requirement=/source/arbiter/core",
                 "init",
             ]
         )
@@ -957,7 +955,7 @@ def test_cli_deploy_docker_init_accepts_absolute_path_requirement(
     )
 
     assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
-        "/source/agent-arbiter/core\n"
+        "/source/arbiter/core\n"
     )
     capsys.readouterr()
 
@@ -1161,7 +1159,7 @@ def test_cli_deploy_docker_generated_helper_doctor_can_color_status_prefixes(
     fake_docker.chmod(0o755)
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
-    env["AGENT_ARBITER_COLOR"] = "always"
+    env["ARBITER_COLOR"] = "always"
     env["NO_COLOR"] = "1"
 
     result = subprocess.run(
@@ -1215,7 +1213,7 @@ def test_cli_deploy_docker_generated_helper_doctor_can_disable_color(
     fake_docker.chmod(0o755)
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
-    env["AGENT_ARBITER_COLOR"] = "never"
+    env["ARBITER_COLOR"] = "never"
 
     result = subprocess.run(
         [deploy_dir / "arbiter-docker", "doctor"],
@@ -1293,13 +1291,13 @@ def test_cli_deploy_docker_generated_helper_preinstall_rejects_source_override(
     (config_dir / ".env").write_text("", encoding="utf-8")
     (deploy_dir / "compose.override.yaml").write_text(
         "services:\n"
-        "  agent-arbiter:\n"
+        "  arbiter:\n"
         "    volumes:\n"
-        "      - /home/example/agent-arbiter:/source/agent-arbiter:ro\n",
+        "      - /home/example/arbiter:/source/arbiter:ro\n",
         encoding="utf-8",
     )
     (deploy_dir / "requirements.txt").write_text(
-        "/source/agent-arbiter/core\n",
+        "/source/arbiter/core\n",
         encoding="utf-8",
     )
 
@@ -1325,7 +1323,7 @@ def test_cli_deploy_docker_generated_helper_preinstall_rejects_source_override(
         f"{deploy_dir / 'compose.override.yaml'}\n"
     ) in result.stdout
     assert (
-        "      remove the /source/agent-arbiter mount after switching " "requirements\n"
+        "      remove the /source/arbiter mount after switching " "requirements\n"
     ) in result.stdout
 
 
@@ -1416,7 +1414,7 @@ def test_cli_deploy_docker_generated_helper_doctor_colors_tty_by_default(
     fake_docker.chmod(0o755)
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
-    env.pop("AGENT_ARBITER_COLOR", None)
+    env.pop("ARBITER_COLOR", None)
 
     result = subprocess.run(
         ["script", "-q", "-c", f"{deploy_dir / 'arbiter-docker'} doctor", "/dev/null"],
@@ -1519,7 +1517,7 @@ def test_cli_deploy_docker_generated_helper_preserves_requirements_after_bad_edi
     )
     editor.chmod(0o755)
     env = os.environ.copy()
-    env["AGENT_ARBITER_EDITOR"] = str(editor)
+    env["ARBITER_EDITOR"] = str(editor)
 
     result = subprocess.run(
         [deploy_dir / "arbiter-docker", "edit-requirements"],
@@ -1601,7 +1599,7 @@ def test_cli_deploy_docker_update_preserves_local_config_and_env_values(
     config_file.write_text(
         "arbiter:\n"
         "  server:\n"
-        "    host: ${oc.env:AGENT_ARBITER_SERVER_HOST,127.0.0.1}\n"
+        "    host: ${oc.env:ARBITER_SERVER_HOST,127.0.0.1}\n"
         "  etc:\n"
         "    token: ${oc.env:EXISTING_TOKEN}\n"
         "    timeout: ${oc.env:NEW_TIMEOUT,30}\n",
@@ -1611,7 +1609,7 @@ def test_cli_deploy_docker_update_preserves_local_config_and_env_values(
     env_file.write_text("EXISTING_TOKEN=keep\n", encoding="utf-8")
     docker_env_file = deploy_dir / "docker.env"
     docker_env_file.write_text(
-        "AGENT_ARBITER_HOST_PORT=9000\n" "LOCAL_ONLY=value\n",
+        "ARBITER_HOST_PORT=9000\n" "LOCAL_ONLY=value\n",
         encoding="utf-8",
     )
     requirements_file = deploy_dir / "requirements.txt"
@@ -1623,23 +1621,23 @@ def test_cli_deploy_docker_update_preserves_local_config_and_env_values(
     assert requirements_file.read_text(encoding="utf-8") == "arbiter-suite==old\n"
     assert env_file.read_text(encoding="utf-8") == "EXISTING_TOKEN=keep\n"
     assert docker_env_file.read_text(encoding="utf-8") == (
-        "# Docker Compose settings for the Agent Arbiter deployment.\n"
-        "# These values control the container wrapper, not Agent Arbiter runtime "
+        "# Docker Compose settings for the Arbiter deployment.\n"
+        "# These values control the container wrapper, not Arbiter runtime "
         "config.\n"
         "\n"
-        "AGENT_ARBITER_IMAGE=python:3.11-slim\n"
-        "AGENT_ARBITER_CONTAINER_NAME=agent-arbiter\n"
-        "AGENT_ARBITER_RESTART=unless-stopped\n"
-        "AGENT_ARBITER_APP_ENV_FILE=./conf/.env\n"
-        "AGENT_ARBITER_CONFIG_DIR=./conf\n"
-        "AGENT_ARBITER_CONFIG_NAME=arbiter-server\n"
-        "AGENT_ARBITER_REQUIREMENTS_FILE=./requirements.txt\n"
-        "AGENT_ARBITER_HOST_BIND=127.0.0.1\n"
-        "AGENT_ARBITER_HOST_PORT=9000\n"
-        "AGENT_ARBITER_CONTAINER_PORT=8025\n"
-        "AGENT_ARBITER_DOCKER_NETWORK_NAME=agent-arbiter\n"
-        "AGENT_ARBITER_DOCKER_BRIDGE_NAME=agent-arbiter0\n"
-        "AGENT_ARBITER_DOCKER_SUBNET=172.31.250.0/24\n"
+        "ARBITER_IMAGE=python:3.11-slim\n"
+        "ARBITER_CONTAINER_NAME=arbiter\n"
+        "ARBITER_RESTART=unless-stopped\n"
+        "ARBITER_APP_ENV_FILE=./conf/.env\n"
+        "ARBITER_CONFIG_DIR=./conf\n"
+        "ARBITER_CONFIG_NAME=arbiter-server\n"
+        "ARBITER_REQUIREMENTS_FILE=./requirements.txt\n"
+        "ARBITER_HOST_BIND=127.0.0.1\n"
+        "ARBITER_HOST_PORT=9000\n"
+        "ARBITER_CONTAINER_PORT=8025\n"
+        "ARBITER_DOCKER_NETWORK_NAME=arbiter\n"
+        "ARBITER_DOCKER_BRIDGE_NAME=arbiter0\n"
+        "ARBITER_DOCKER_SUBNET=172.31.250.0/24\n"
         "\n"
         "# Extra local Compose values.\n"
         "LOCAL_ONLY=value\n"
@@ -1668,15 +1666,13 @@ def test_cli_deploy_docker_update_creates_local_checkout_source_override(
     assert main(["deploy", "docker", f"docker.dir={deploy_dir}", "update"]) == 0
 
     assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
-        "/source/agent-arbiter/core\n"
-        "/source/agent-arbiter/smtp\n"
-        "/source/agent-arbiter/imap\n"
+        "/source/arbiter/core\n" "/source/arbiter/smtp\n" "/source/arbiter/imap\n"
     )
     assert (deploy_dir / "compose.override.yaml").read_text(encoding="utf-8") == (
         "services:\n"
-        "  agent-arbiter:\n"
+        "  arbiter:\n"
         "    volumes:\n"
-        f"      - {checkout.resolve()}:/source/agent-arbiter:ro\n"
+        f"      - {checkout.resolve()}:/source/arbiter:ro\n"
     )
     capsys.readouterr()
 
@@ -1727,7 +1723,7 @@ def test_cli_deploy_docker_update_repairs_stale_template_manifest(
     helper_file = deploy_dir / "arbiter-docker"
     compose_hash = hashlib.sha256(compose_file.read_bytes()).hexdigest()
     helper_hash = hashlib.sha256(helper_file.read_bytes()).hexdigest()
-    manifest_path = deploy_dir / ".agent-arbiter-deploy.json"
+    manifest_path = deploy_dir / ".arbiter-deploy.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["files"]["compose.yaml"]["sha256"] = "stale-compose"
     manifest["files"]["arbiter-docker"]["sha256"] = "stale-helper"
@@ -1766,7 +1762,7 @@ def test_cli_deploy_docker_update_skips_modified_manifest_owned_files(
     capsys.readouterr()
     compose_file = deploy_dir / "compose.yaml"
     compose_file.write_text("operator change\n", encoding="utf-8")
-    manifest_path = deploy_dir / ".agent-arbiter-deploy.json"
+    manifest_path = deploy_dir / ".arbiter-deploy.json"
     original_manifest = manifest_path.read_text(encoding="utf-8")
 
     assert main(["deploy", "docker", f"docker.dir={deploy_dir}", "update"]) == 0
@@ -1785,7 +1781,7 @@ def test_cli_deploy_docker_reports_unknown_override(
     assert main(["deploy", "docker", "docker.image=python", "init"]) == 2
 
     assert capsys.readouterr().err == (
-        "Agent Arbiter deploy error: unknown docker deploy override: docker.image\n"
+        "Arbiter deploy error: unknown docker deploy override: docker.image\n"
     )
 
 
@@ -1997,7 +1993,7 @@ def test_cli_bootstrap_arbiter_writes_main_config(
     config_file = config_dir / "arbiter-server.yaml"
     assert config_file.read_text(encoding="utf-8") == (
         "defaults:\n"
-        "# Agent Arbiter composes this config at startup from the defaults "
+        "# Arbiter composes this config at startup from the defaults "
         "below.\n"
         "# Inspect the composed config with:\n"
         "#   arbiter-server --config-dir <dir> --config-name arbiter-server config show\n"
@@ -2013,7 +2009,7 @@ def test_cli_bootstrap_arbiter_writes_main_config(
     assert server_file.read_text(encoding="utf-8") == (
         "# @package arbiter\n"
         "server:\n"
-        "  name: agent-arbiter\n"
+        "  name: arbiter\n"
         "  transport: streamable-http\n"
         "  host: 127.0.0.1\n"
         "  port: 8000\n"
@@ -2030,8 +2026,8 @@ def test_cli_bootstrap_arbiter_writes_main_config(
 
     assert main(["--config-dir", str(config_dir), "config", "check"]) == 1
     assert capsys.readouterr().err == (
-        "Agent Arbiter config error: config must define at least one service "
-        "account before Agent Arbiter can run\n"
+        "Arbiter config error: config must define at least one service "
+        "account before Arbiter can run\n"
         "  currently installed arbiter plugins: imap, smtp\n"
         "  use `arbiter-server --config-dir DIR bootstrap plugin PLUGIN account "
         "NAME` to create an account config\n"
@@ -2046,8 +2042,8 @@ def test_cli_bootstrap_arbiter_writes_main_config(
     monkeypatch.setattr("agent_arbiter.main._run_server", fake_run_server)
     assert main(["--config-dir", str(config_dir), "serve"]) == 1
     assert capsys.readouterr().err == (
-        "Agent Arbiter config error: config must define at least one service "
-        "account before Agent Arbiter can run\n"
+        "Arbiter config error: config must define at least one service "
+        "account before Arbiter can run\n"
         "  currently installed arbiter plugins: imap, smtp\n"
         "  use `arbiter-server --config-dir DIR bootstrap plugin PLUGIN account "
         "NAME` to create an account config\n"
@@ -2160,7 +2156,7 @@ def test_cli_bootstrap_plugin_account_refuses_existing_policy_without_partial_wr
     assert not account_file.exists()
     assert policy_file.read_text(encoding="utf-8") == "existing: true\n"
     assert capsys.readouterr().err == (
-        "Agent Arbiter bootstrap error: refusing to overwrite existing file: "
+        "Arbiter bootstrap error: refusing to overwrite existing file: "
         f"{policy_file}\n"
     )
 
@@ -2478,7 +2474,7 @@ def test_cli_bootstrap_plugin_refuses_missing_example(
     )
 
     assert capsys.readouterr().err == (
-        "Agent Arbiter bootstrap error: service plugin does not provide an "
+        "Arbiter bootstrap error: service plugin does not provide an "
         "account bootstrap example: imap\n"
     )
 
@@ -2548,7 +2544,7 @@ def test_log_startup_summary_includes_safe_runtime_context(
     log_startup_summary(cfg)
 
     message = caplog.messages[0]
-    assert "Agent Arbiter starting version=1.2.3" in message
+    assert "Arbiter starting version=1.2.3" in message
     assert "transport=streamable-http" in message
     assert "bind=127.0.0.1:8000/mcp" in message
     assert "services=smtp" in message
@@ -2906,7 +2902,7 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
 
     server = cast(Any, build_server(cfg, service_plugins=_test_service_plugins()))
 
-    assert server.name == "agent-arbiter"
+    assert server.name == "arbiter"
     assert server.stateless_http is True
     assert server.json_response is True
     assert server.settings.host == "127.0.0.1"
@@ -3343,7 +3339,7 @@ def test_build_server_describes_send_email_tool_schema() -> None:
     assert describe_op_tool.parameters["properties"]["id"]["type"] == "string"
 
     run_op_tool = server._tool_manager._tools["run_op"]
-    assert "Run one Agent Arbiter operation by id" in run_op_tool.description
+    assert "Run one Arbiter operation by id" in run_op_tool.description
     run_parameters = run_op_tool.parameters["properties"]
     assert run_parameters["id"]["type"] == "string"
     assert run_parameters["arguments"]["anyOf"] == [

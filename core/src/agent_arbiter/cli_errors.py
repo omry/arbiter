@@ -13,7 +13,7 @@ def format_cli_error(
 ) -> str:
     area_text = f" {area}" if area else ""
     message_lines = message.splitlines() or [""]
-    lines = [f"Agent Arbiter{area_text} error: {message_lines[0]}"]
+    lines = [f"Arbiter{area_text} error: {message_lines[0]}"]
     lines.extend(f"  {line}" for line in message_lines[1:])
     lines.extend(f"  {detail}" for detail in details)
     return "\n".join(lines)

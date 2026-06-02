@@ -142,7 +142,7 @@ def service_plugin_runtime_info(
     except AttributeError as exc:
         raise RuntimeError(
             f"service plugin {service_plugin.name} does not declare "
-            "an Agent Arbiter core API version"
+            "an Arbiter core API version"
         ) from exc
 
     return ServicePluginRuntimeInfo(
@@ -158,7 +158,7 @@ def validate_service_plugin_compatibility(
     info = service_plugin_runtime_info(service_plugin)
     if info.core_api_version != CORE_API_VERSION:
         raise RuntimeError(
-            f"service plugin {info.name} targets Agent Arbiter core API "
+            f"service plugin {info.name} targets Arbiter core API "
             f"{info.core_api_version}, but loaded core API is {CORE_API_VERSION}"
         )
 

@@ -3,7 +3,7 @@ title: Server Reference
 ---
 
 `arbiter-server` is the operator-facing command for configuring and running the
-Agent Arbiter MCP server.
+Arbiter MCP server.
 
 ## Global options
 
@@ -98,7 +98,7 @@ checkout has uncommitted changes.
 arbiter-server version [--json]
 ```
 
-- `version`: print the loaded Agent Arbiter core version, core API line, source
+- `version`: print the loaded Arbiter core version, core API line, source
   checkout state when available, and installed service plugin versions.
 - `version --json`: print the same information as JSON.
 
@@ -141,9 +141,9 @@ missing, sets ownership and modes, installs a root-managed systemd unit, and
 does not add the `arbiter` user to the Docker group. Use
 `arbiter-docker doctor --agent-user USER` to check common filesystem and Docker
 socket mistakes for an agent identity. `doctor`, `up`, and `restart` also
-reject unpinned package requirements. Agent Arbiter config and `.env` are
+reject unpinned package requirements. Arbiter config and `.env` are
 supplied separately through the config tooling using the directory named by
-`AGENT_ARBITER_CONFIG_DIR` and `AGENT_ARBITER_CONFIG_NAME` in `docker.env`.
+`ARBITER_CONFIG_DIR` and `ARBITER_CONFIG_NAME` in `docker.env`.
 
 ## plugins
 

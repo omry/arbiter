@@ -2,9 +2,9 @@
 
 ## Purpose
 
-Create deployment-owned Agent Arbiter config files from canonical templates.
+Create deployment-owned Arbiter config files from canonical templates.
 
-Agent Arbiter does not ship a runnable service config. Operators create a Hydra
+Arbiter does not ship a runnable service config. Operators create a Hydra
 config directory, edit the generated files, then run the server against that
 directory.
 
@@ -24,7 +24,7 @@ config directory instead.
 
 ## Main config
 
-Create the main Agent Arbiter config:
+Create the main Arbiter config:
 
 ```bash
 arbiter-server --config-dir "$PWD/config.local" bootstrap arbiter
@@ -40,7 +40,7 @@ The root config is intentionally only a defaults list:
 
 ```yaml
 defaults:
-  # Agent Arbiter composes this config at startup from the defaults below.
+  # Arbiter composes this config at startup from the defaults below.
   # Inspect the composed config with:
   #   arbiter-server --config-dir <dir> --config-name arbiter-server config show
   # Override composed values with Hydra overrides, for example:

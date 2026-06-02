@@ -53,7 +53,7 @@ defaults:
 
 arbiter:
   server:
-    name: agent-arbiter
+    name: arbiter
   account: {}
   policy: {}
   etc: {}
@@ -68,7 +68,7 @@ def test_compose_config_returns_hydra_config() -> None:
     cfg = _compose_config()
 
     assert isinstance(cfg, DictConfig)
-    assert cfg.arbiter.server.name == "agent-arbiter"
+    assert cfg.arbiter.server.name == "arbiter"
     assert cfg.arbiter.server.transport == "streamable-http"
     assert cfg.arbiter.server.host == "127.0.0.1"
     assert cfg.arbiter.server.port == 8000
@@ -116,24 +116,24 @@ def test_hydra_config_preserves_lazy_interpolations() -> None:
         ]
     )
 
-    assert cfg.arbiter.server.name == "agent-arbiter"
-    assert cfg.arbiter.account.smtp.primary.from_name == "agent-arbiter"
+    assert cfg.arbiter.server.name == "arbiter"
+    assert cfg.arbiter.account.smtp.primary.from_name == "arbiter"
 
 
 def test_standard_deployment_config_composes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("AGENT_ARBITER_BOT_SMTP_HOST", "smtp.example.com")
-    monkeypatch.setenv("AGENT_ARBITER_BOT_SMTP_USERNAME", "bot@example.com")
-    monkeypatch.setenv("AGENT_ARBITER_BOT_SMTP_PASSWORD", "secret")
-    monkeypatch.setenv("AGENT_ARBITER_BOT_SMTP_FROM_EMAIL", "bot@example.com")
-    monkeypatch.setenv("AGENT_ARBITER_BOT_IMAP_HOST", "imap.example.com")
-    monkeypatch.setenv("AGENT_ARBITER_BOT_IMAP_USERNAME", "bot@example.com")
-    monkeypatch.setenv("AGENT_ARBITER_BOT_IMAP_PASSWORD", "secret")
-    monkeypatch.setenv("AGENT_ARBITER_PERSONAL_SMTP_HOST", "smtp.example.com")
-    monkeypatch.setenv("AGENT_ARBITER_PERSONAL_SMTP_USERNAME", "omry@example.com")
-    monkeypatch.setenv("AGENT_ARBITER_PERSONAL_SMTP_PASSWORD", "secret")
-    monkeypatch.setenv("AGENT_ARBITER_PERSONAL_SMTP_FROM_EMAIL", "omry@example.com")
+    monkeypatch.setenv("ARBITER_BOT_SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("ARBITER_BOT_SMTP_USERNAME", "bot@example.com")
+    monkeypatch.setenv("ARBITER_BOT_SMTP_PASSWORD", "secret")
+    monkeypatch.setenv("ARBITER_BOT_SMTP_FROM_EMAIL", "bot@example.com")
+    monkeypatch.setenv("ARBITER_BOT_IMAP_HOST", "imap.example.com")
+    monkeypatch.setenv("ARBITER_BOT_IMAP_USERNAME", "bot@example.com")
+    monkeypatch.setenv("ARBITER_BOT_IMAP_PASSWORD", "secret")
+    monkeypatch.setenv("ARBITER_PERSONAL_SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("ARBITER_PERSONAL_SMTP_USERNAME", "omry@example.com")
+    monkeypatch.setenv("ARBITER_PERSONAL_SMTP_PASSWORD", "secret")
+    monkeypatch.setenv("ARBITER_PERSONAL_SMTP_FROM_EMAIL", "omry@example.com")
 
     deploy_config_dir = Path(__file__).parents[3] / "deploy"
     _register_all_configs()
@@ -143,7 +143,7 @@ def test_standard_deployment_config_composes(
     ):
         cfg = compose(config_name="config")
 
-    assert cfg.arbiter.server.name == "agent-arbiter-mcp"
+    assert cfg.arbiter.server.name == "arbiter-mcp"
     assert cfg.arbiter.policy.smtp.bot.require_confirmation is False
     assert cfg.arbiter.policy.smtp.personal.require_confirmation is True
     assert set(cfg.arbiter.account.smtp) == {"primary", "personal"}
@@ -172,9 +172,9 @@ def test_readonly_imap_deployment_config_composes(
     password_file = tmp_path / "imap_password"
     username_file.write_text("user@example.com\n", encoding="utf-8")
     password_file.write_text("secret\n", encoding="utf-8")
-    monkeypatch.setenv("AGENT_ARBITER_IMAP_HOST", "imap.example.com")
-    monkeypatch.setenv("AGENT_ARBITER_IMAP_USERNAME_FILE", str(username_file))
-    monkeypatch.setenv("AGENT_ARBITER_IMAP_PASSWORD_FILE", str(password_file))
+    monkeypatch.setenv("ARBITER_IMAP_HOST", "imap.example.com")
+    monkeypatch.setenv("ARBITER_IMAP_USERNAME_FILE", str(username_file))
+    monkeypatch.setenv("ARBITER_IMAP_PASSWORD_FILE", str(password_file))
 
     config_dir = Path(__file__).parents[3] / "deploy" / "readonly-imap"
     _register_all_configs()

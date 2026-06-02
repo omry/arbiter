@@ -90,9 +90,7 @@ def build_distributions(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Build Agent Arbiter release distributions."
-    )
+    parser = argparse.ArgumentParser(description="Build Arbiter release distributions.")
     parser.add_argument("--root", default=".", help=argparse.SUPPRESS)
     parser.add_argument(
         "--outdir",

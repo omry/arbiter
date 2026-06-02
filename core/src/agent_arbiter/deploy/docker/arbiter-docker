@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-deploy_dir="${AGENT_ARBITER_DOCKER_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)}"
+deploy_dir="${ARBITER_DOCKER_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)}"
 compose_file="$deploy_dir/compose.yaml"
 compose_env_file="$deploy_dir/docker.env"
 requirements_file="$deploy_dir/requirements.txt"
@@ -13,11 +13,11 @@ Usage: arbiter-docker COMMAND
 
 Commands:
   sync-env      Run arbiter-server env bootstrap for the configured config
-  edit-config   Edit the main config file with $AGENT_ARBITER_EDITOR, $EDITOR, or vi
+  edit-config   Edit the main config file with $ARBITER_EDITOR, $EDITOR, or vi
   edit-requirements
                 Edit Python requirements installed inside the container
-  edit-env      Edit the configured env file with $AGENT_ARBITER_EDITOR, $EDITOR, or vi
-  edit-docker   Edit docker.env with $AGENT_ARBITER_EDITOR, $EDITOR, or vi
+  edit-env      Edit the configured env file with $ARBITER_EDITOR, $EDITOR, or vi
+  edit-docker   Edit docker.env with $ARBITER_EDITOR, $EDITOR, or vi
   up            Start or update the Docker Compose service
   restart       Recreate the Docker Compose service
   down          Stop and remove the Docker Compose service
@@ -41,8 +41,8 @@ Install options:
   --dry-run           Print the install plan without changing the host
 
 Environment:
-  AGENT_ARBITER_DOCKER_DIR   Deployment directory, default script directory
-  AGENT_ARBITER_EDITOR       Editor for edit-config/edit-env
+  ARBITER_DOCKER_DIR   Deployment directory, default script directory
+  ARBITER_EDITOR       Editor for edit-config/edit-env
 EOF
 }
 
@@ -171,15 +171,15 @@ deploy_path_from_compose_value() {
 }
 
 config_dir_path() {
-  deploy_path_from_compose_value "$(compose_env_value AGENT_ARBITER_CONFIG_DIR ./conf)"
+  deploy_path_from_compose_value "$(compose_env_value ARBITER_CONFIG_DIR ./conf)"
 }
 
 config_name_value() {
-  compose_env_value AGENT_ARBITER_CONFIG_NAME arbiter-server
+  compose_env_value ARBITER_CONFIG_NAME arbiter-server
 }
 
 app_env_path() {
-  deploy_path_from_compose_value "$(compose_env_value AGENT_ARBITER_APP_ENV_FILE ./conf/.env)"
+  deploy_path_from_compose_value "$(compose_env_value ARBITER_APP_ENV_FILE ./conf/.env)"
 }
 
 config_main_file() {
@@ -201,8 +201,8 @@ run_editor() {
   local path="$1"
   local -a editor=()
 
-  if [[ -n "${AGENT_ARBITER_EDITOR:-}" ]]; then
-    read -r -a editor <<<"$AGENT_ARBITER_EDITOR"
+  if [[ -n "${ARBITER_EDITOR:-}" ]]; then
+    read -r -a editor <<<"$ARBITER_EDITOR"
   elif [[ -n "${EDITOR:-}" ]]; then
     read -r -a editor <<<"$EDITOR"
   else
@@ -254,8 +254,8 @@ doctor_agent_group_names=""
 doctor_preinstall=0
 
 color_enabled() {
-  [[ "${AGENT_ARBITER_COLOR:-}" == always ]] && return 0
-  [[ "${AGENT_ARBITER_COLOR:-}" == never ]] && return 1
+  [[ "${ARBITER_COLOR:-}" == always ]] && return 0
+  [[ "${ARBITER_COLOR:-}" == never ]] && return 1
   [[ -t 1 ]]
 }
 
@@ -502,14 +502,14 @@ doctor_check_preinstall_ready() {
   doctor_check_path_under_deploy_dir "$active_config_dir" "config directory"
   doctor_check_path_under_deploy_dir "$active_app_env" "app env file"
 
-  if [[ -f "$requirements_file" ]] && grep -Eq '^[[:space:]]*/source/agent-arbiter(/|$)' "$requirements_file"; then
+  if [[ -f "$requirements_file" ]] && grep -Eq '^[[:space:]]*/source/arbiter(/|$)' "$requirements_file"; then
     doctor_fail "preinstall cannot promote local source requirements: $requirements_file"
     printf '      use pinned packages (name==version) or /wheels/*.whl entries before install\n'
   fi
 
-  if [[ -f "$compose_override_file" ]] && grep -q '/source/agent-arbiter' "$compose_override_file"; then
+  if [[ -f "$compose_override_file" ]] && grep -q '/source/arbiter' "$compose_override_file"; then
     doctor_fail "preinstall cannot promote a local source mount: $compose_override_file"
-    printf '      remove the /source/agent-arbiter mount after switching requirements\n'
+    printf '      remove the /source/arbiter mount after switching requirements\n'
   fi
 
   if [[ "$doctor_status" -eq 0 ]]; then
@@ -524,8 +524,8 @@ doctor_check_docker_network_subnet() {
   local network_name
   local network_subnet
 
-  configured_network="$(compose_env_value AGENT_ARBITER_DOCKER_NETWORK_NAME agent-arbiter)"
-  configured_subnet="$(compose_env_value AGENT_ARBITER_DOCKER_SUBNET 172.31.250.0/24)"
+  configured_network="$(compose_env_value ARBITER_DOCKER_NETWORK_NAME arbiter)"
+  configured_subnet="$(compose_env_value ARBITER_DOCKER_SUBNET 172.31.250.0/24)"
   [[ -n "$configured_subnet" ]] || return
 
   if ! docker network ls >/dev/null 2>&1; then
@@ -746,7 +746,7 @@ install_ensure_identity() {
       --gid "$install_group" \
       --home-dir "$install_target_dir" \
       --shell /usr/sbin/nologin \
-      --comment "Agent Arbiter service user" \
+      --comment "Arbiter service user" \
       "$install_user"
   fi
 }
@@ -819,7 +819,7 @@ install_write_systemd_unit() {
 
   cat >"$unit_file" <<EOF
 [Unit]
-Description=Agent Arbiter Docker service
+Description=Arbiter Docker service
 Requires=docker.service
 After=docker.service
 

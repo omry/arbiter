@@ -38,13 +38,13 @@ def test_extract_release_notes_returns_requested_section() -> None:
 
 <!-- towncrier release notes start -->
 
-# Agent Arbiter 0.9.0 (2026-06-01)
+# Arbiter 0.9.0 (2026-06-01)
 
 ## Features
 
 - Publish the initial packages.
 
-# Agent Arbiter 0.8.0 (2026-05-01)
+# Arbiter 0.8.0 (2026-05-01)
 
 ## Bugfixes
 
@@ -53,7 +53,7 @@ def test_extract_release_notes_returns_requested_section() -> None:
 
     assert (
         _extract_release_notes()(notes, "0.9.0")
-        == """# Agent Arbiter 0.9.0 (2026-06-01)
+        == """# Arbiter 0.9.0 (2026-06-01)
 
 ## Features
 
@@ -77,7 +77,7 @@ def test_extract_release_notes_uses_package_key_defaults(
 
 <!-- towncrier release notes start -->
 
-# Agent Arbiter IMAP 0.9.0 (2026-06-01)
+# Arbiter IMAP 0.9.0 (2026-06-01)
 
 ## Features
 

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define the stable error contract shared by the Agent Arbiter server.
+Define the stable error contract shared by the Arbiter server.
 
 ## Status
 

@@ -1,6 +1,6 @@
 # Internal temporary release readiness notes
 
-This checklist is for preparing the initial Agent Arbiter release. It is an
+This checklist is for preparing the initial Arbiter release. It is an
 internal working document, not website documentation.
 
 Publishing one or more dev wheels is useful validation, but it does not make the

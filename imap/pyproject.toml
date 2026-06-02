@@ -5,8 +5,8 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "arbiter-imap"
 version = "0.9.0.dev1"
-description = "IMAP service plugin for Agent Arbiter"
-readme = { text = "IMAP service plugin for Agent Arbiter.", content-type = "text/markdown" }
+description = "IMAP service plugin for Arbiter"
+readme = { text = "IMAP service plugin for Arbiter.", content-type = "text/markdown" }
 requires-python = ">=3.10,<3.15"
 license = { text = "MIT" }
 authors = [
@@ -49,7 +49,7 @@ where = ["src"]
 "agent_arbiter_imap" = ["py.typed"]
 
 [tool.towncrier]
-name = "Agent Arbiter IMAP"
+name = "Arbiter IMAP"
 package = "agent_arbiter_imap"
 package_dir = "src"
 filename = "NEWS.md"

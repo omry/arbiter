@@ -2,7 +2,7 @@
 title: Core Concepts
 ---
 
-Agent Arbiter uses a few terms deliberately.
+Arbiter uses a few terms deliberately.
 
 ## Capability
 

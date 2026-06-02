@@ -2,14 +2,14 @@
 title: Configuration Model
 ---
 
-Agent Arbiter treats configuration as the deployment authority. Operators
+Arbiter treats configuration as the deployment authority. Operators
 declare which services exist, which accounts are available, which policies
 apply, and where credentials are referenced. Agents consume the approved MCP
 surface that results from that configuration.
 
 ## Security note
 
-Agents should interact with Agent Arbiter only through approved surfaces, such
+Agents should interact with Arbiter only through approved surfaces, such
 as MCP or the Arbiter CLI. They must not control the config directory or Agent
 Arbiter deployment, because changing those inputs lets them circumvent the
 policy they are supposed to be constrained by.
@@ -98,7 +98,7 @@ arbiter-server serve arbiter.server.port=8025
 
 That command starts the server on port `8025` for that process only.
 
-Hydra also supports config group overrides. Agent Arbiter uses config groups for
+Hydra also supports config group overrides. Arbiter uses config groups for
 server settings, accounts, and policies, but normal account activation should go
 through `arbiter-server config activate` so the root composition remains
 consistent.
@@ -162,7 +162,7 @@ Use `arbiter-server config show` to inspect the composed result and
 ## Env file management
 
 Generated account configs should reference credentials through
-`${oc.env:...}` rather than storing secrets directly in YAML. Agent Arbiter can
+`${oc.env:...}` rather than storing secrets directly in YAML. Arbiter can
 help maintain the local env file named by server config:
 
 ```yaml title="~/.arbiter/arbiter-server.yaml"

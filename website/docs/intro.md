@@ -1,10 +1,10 @@
 ---
 id: intro
-title: What Is Agent Arbiter?
+title: What Is Arbiter?
 slug: /
 ---
 
-Agent Arbiter provides policy-controlled access to configured services for
+Arbiter provides policy-controlled access to configured services for
 agents. Today it exposes that access through MCP and a client CLI; additional
 interfaces may be added later.
 
@@ -25,7 +25,7 @@ flowchart LR
     agent -- Uses --> access
   end
 
-  subgraph arbiterRuntime[Agent Arbiter]
+  subgraph arbiterRuntime[Arbiter]
     direction TB
 
     subgraph arbiterContent[" "]

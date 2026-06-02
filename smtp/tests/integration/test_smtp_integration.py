@@ -12,7 +12,7 @@ from aiosmtpd.smtp import MISSING
 import pytest
 import trustme
 
-from agent_arbiter.app import AgentArbiterApp
+from agent_arbiter.app import ArbiterApp
 from agent_arbiter.services import RuntimeRegistry
 from agent_arbiter_smtp import SMTPRuntime
 from agent_arbiter_smtp.client import SMTPSubmissionClient
@@ -97,8 +97,8 @@ def _smtp_config(
     return SMTPConfig(tls=tls, authenticate=authenticate, **overrides)
 
 
-def _build_app(smtp_config: SMTPConfig) -> AgentArbiterApp:
-    return AgentArbiterApp(
+def _build_app(smtp_config: SMTPConfig) -> ArbiterApp:
+    return ArbiterApp(
         RuntimeRegistry(
             {
                 "smtp": SMTPRuntime(
@@ -111,7 +111,7 @@ def _build_app(smtp_config: SMTPConfig) -> AgentArbiterApp:
     )
 
 
-def _send_test_message(app: AgentArbiterApp) -> None:
+def _send_test_message(app: ArbiterApp) -> None:
     app.runtime_registry.require("smtp", SMTPRuntime).send_email(
         account="primary",
         to=["to@example.com"],
@@ -135,7 +135,7 @@ def _assert_captured_message(handler: CapturingHandler) -> None:
         "cc@example.com",
         "bcc@example.com",
     ]
-    assert parsed_message["From"] == "Agent Arbiter <agent@example.com>"
+    assert parsed_message["From"] == "Arbiter <agent@example.com>"
     assert parsed_message["To"] == "to@example.com"
     assert parsed_message["Cc"] == "cc@example.com"
     assert parsed_message["Subject"] == "Integration Hello"
@@ -200,7 +200,7 @@ def test_send_email_submits_to_plain_smtp_server(smtp_server_factory) -> None:
         host=controller.hostname,
         port=controller.port,
         from_email="agent@example.com",
-        from_name="Agent Arbiter",
+        from_name="Arbiter",
         starttls=False,
         use_ssl=False,
     )
@@ -227,7 +227,7 @@ def test_send_email_submits_html_only_message(smtp_server_factory) -> None:
         host=controller.hostname,
         port=controller.port,
         from_email="agent@example.com",
-        from_name="Agent Arbiter",
+        from_name="Arbiter",
         starttls=False,
         use_ssl=False,
     )
@@ -249,7 +249,7 @@ def test_send_email_submits_html_only_message(smtp_server_factory) -> None:
 
     assert envelope.mail_from == "agent@example.com"
     assert envelope.rcpt_tos == ["to@example.com"]
-    assert parsed_message["From"] == "Agent Arbiter <agent@example.com>"
+    assert parsed_message["From"] == "Arbiter <agent@example.com>"
     assert parsed_message["To"] == "to@example.com"
     assert parsed_message["Subject"] == "Integration Hello"
     assert parsed_message["Bcc"] is None
@@ -311,7 +311,7 @@ def test_send_email_surfaces_rcpt_rejections(smtp_server_factory) -> None:
         host=controller.hostname,
         port=controller.port,
         from_email="agent@example.com",
-        from_name="Agent Arbiter",
+        from_name="Arbiter",
         starttls=False,
         use_ssl=False,
     )
@@ -343,7 +343,7 @@ def test_send_email_fails_closed_when_only_some_recipients_are_refused(
         host=controller.hostname,
         port=controller.port,
         from_email="agent@example.com",
-        from_name="Agent Arbiter",
+        from_name="Arbiter",
         starttls=False,
         use_ssl=False,
     )
@@ -369,7 +369,7 @@ def test_send_email_surfaces_data_rejections(smtp_server_factory) -> None:
         host=controller.hostname,
         port=controller.port,
         from_email="agent@example.com",
-        from_name="Agent Arbiter",
+        from_name="Arbiter",
         starttls=False,
         use_ssl=False,
     )
@@ -391,7 +391,7 @@ def test_send_email_surfaces_unknown_submission_status_on_disconnect(
         host=controller.hostname,
         port=controller.port,
         from_email="agent@example.com",
-        from_name="Agent Arbiter",
+        from_name="Arbiter",
         starttls=False,
         use_ssl=False,
     )
@@ -412,7 +412,7 @@ def test_send_email_submits_over_starttls_when_peer_verification_is_disabled(
         host=controller.hostname,
         port=controller.port,
         from_email="agent@example.com",
-        from_name="Agent Arbiter",
+        from_name="Arbiter",
         starttls=True,
         use_ssl=False,
         verify_peer=False,
@@ -432,7 +432,7 @@ def test_send_email_fails_on_starttls_with_invalid_certificate(
         host=controller.hostname,
         port=controller.port,
         from_email="agent@example.com",
-        from_name="Agent Arbiter",
+        from_name="Arbiter",
         starttls=True,
         use_ssl=False,
         verify_peer=True,
@@ -453,7 +453,7 @@ def test_send_email_submits_over_smtps_when_peer_verification_is_disabled(
         host=controller.hostname,
         port=controller.port,
         from_email="agent@example.com",
-        from_name="Agent Arbiter",
+        from_name="Arbiter",
         starttls=False,
         use_ssl=True,
         verify_peer=False,
@@ -473,7 +473,7 @@ def test_send_email_fails_on_smtps_with_invalid_certificate(
         host=controller.hostname,
         port=controller.port,
         from_email="agent@example.com",
-        from_name="Agent Arbiter",
+        from_name="Arbiter",
         starttls=False,
         use_ssl=True,
         verify_peer=True,
@@ -504,7 +504,7 @@ def test_send_email_authenticates_successfully_after_starttls(
         username="user",
         password="secret",
         from_email="agent@example.com",
-        from_name="Agent Arbiter",
+        from_name="Arbiter",
         starttls=True,
         use_ssl=False,
         verify_peer=False,
@@ -532,7 +532,7 @@ def test_send_email_surfaces_authentication_failures(
         username="user",
         password="wrong",
         from_email="agent@example.com",
-        from_name="Agent Arbiter",
+        from_name="Arbiter",
         starttls=True,
         use_ssl=False,
         verify_peer=False,

@@ -40,13 +40,13 @@ arbiter-server deploy docker \
   init
 ```
 
-The requirements file is operator-owned deployment state. Agent Arbiter accepts
+The requirements file is operator-owned deployment state. Arbiter accepts
 initial pinned values from CLI input, but it does not auto-update core or
 plugin versions. Review version changes, edit the file deliberately, then
 restart or reinstall the service.
 
-The PyPI package `arbiter` is unrelated to Agent Arbiter. Use `arbiter-suite`
-for the default bundle, or exact pins for Agent Arbiter packages such as
+The PyPI package `arbiter` is unrelated to Arbiter. Use `arbiter-suite`
+for the default bundle, or exact pins for Arbiter packages such as
 `arbiter-core`, `arbiter-smtp`, and `arbiter-imap`.
 
 ## Meta package with overrides
@@ -62,7 +62,7 @@ arbiter-server deploy docker \
   init
 ```
 
-Agent Arbiter expands that into real package pins in `requirements.txt` so pip
+Arbiter expands that into real package pins in `requirements.txt` so pip
 does not see conflicting meta-package dependencies:
 
 ```text title="./arbiter-docker/requirements.txt"
@@ -83,7 +83,7 @@ must already be present:
 
 ```yaml title="./arbiter-docker/compose.override.yaml"
 services:
-  agent-arbiter:
+  arbiter:
     volumes:
       - /opt/arbiter/wheels:/wheels:ro
 ```
@@ -99,25 +99,25 @@ wheelhouse, or it can name wheels directly:
 ## Local checkout testing
 
 When run from a local checkout with a dev version such as `0.9.0.dev1`, `init`
-writes `/source/agent-arbiter/...` requirements and a local
+writes `/source/arbiter/...` requirements and a local
 `compose.override.yaml` that mounts the checkout read-only.
 
 For local checkout testing, the only non-pinned entries allowed are absolute
 container paths:
 
 ```text title="./arbiter-docker/requirements.txt"
-/source/agent-arbiter/core
-/source/agent-arbiter/smtp
+/source/arbiter/core
+/source/arbiter/smtp
 ```
 
 Mount the checkout explicitly with a local Compose override when using
-`/source/agent-arbiter/...` entries:
+`/source/arbiter/...` entries:
 
 ```yaml title="./arbiter-docker/compose.override.yaml"
 services:
-  agent-arbiter:
+  arbiter:
     volumes:
-      - /home/example/agent-arbiter:/source/agent-arbiter:ro
+      - /home/example/arbiter:/source/arbiter:ro
 ```
 
 At container startup, the deployment copies the mounted checkout to temporary
@@ -127,4 +127,4 @@ wheels.
 Source checkout requirements are for testing. `doctor --preinstall` rejects
 them for Linux install because they are not production install state. Switch to
 pinned packages or `/wheels/*.whl` entries before running `install`, then
-remove the `/source/agent-arbiter` mount from `compose.override.yaml`.
+remove the `/source/arbiter` mount from `compose.override.yaml`.

@@ -1,1 +1,1 @@
-"""Agent Arbiter server package."""
+"""Arbiter server package."""

@@ -2,12 +2,12 @@
 title: Deployment
 ---
 
-Agent Arbiter's Docker deployment is a two-phase flow:
+Arbiter's Docker deployment is a two-phase flow:
 
 1. Prepare a deployment directory as an unprivileged operator.
 2. Promote the checked directory to a Linux host install with `sudo`.
 
-The generated service installs the requested Agent Arbiter package target at
+The generated service installs the requested Arbiter package target at
 container startup, mounts deployment-owned config from the host, and publishes
 MCP on host loopback by default:
 
@@ -24,7 +24,7 @@ arbiter-server deploy docker init
 sudo ./arbiter-docker/arbiter-docker install --to /opt/arbiter --user arbiter
 ```
 
-`init` is only a file generator. It does not create Agent Arbiter config, start
+`init` is only a file generator. It does not create Arbiter config, start
 Docker, or run the server. Prepare config and env in `./arbiter-docker`, then
 run `doctor --preinstall` before promoting that directory to `/opt/arbiter`.
 

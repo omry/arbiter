@@ -17,13 +17,13 @@ global console app.
 # Also check common permission mistakes for the agent user.
 ./arbiter-docker/arbiter-docker doctor --agent-user codex
 
-# Edit Agent Arbiter runtime values and credentials.
+# Edit Arbiter runtime values and credentials.
 ./arbiter-docker/arbiter-docker edit-env
 
 # Edit Docker wrapper settings.
 ./arbiter-docker/arbiter-docker edit-docker
 
-# Edit pinned Agent Arbiter core/plugin package requirements.
+# Edit pinned Arbiter core/plugin package requirements.
 ./arbiter-docker/arbiter-docker edit-requirements
 ```
 
@@ -34,7 +34,7 @@ global console app.
 - `doctor --agent-user USER`: also check common permission mistakes for an
   agent identity, such as write access to deployment files, read access to
   `conf/.env`, or Docker socket access.
-- `edit-env`: edit Agent Arbiter runtime values and credentials.
+- `edit-env`: edit Arbiter runtime values and credentials.
 - `edit-docker`: edit Docker wrapper settings.
 - `edit-requirements`: edit the pinned packages installed inside the container.
 
@@ -67,7 +67,7 @@ sudo journalctl -u arbiter.service -f
 
 ## Update generated files
 
-Use `update` to refresh a deployment directory after Agent Arbiter changes its
+Use `update` to refresh a deployment directory after Arbiter changes its
 generated Docker templates:
 
 ```bash
@@ -79,7 +79,7 @@ hidden manifest to tell the difference between generated files that are
 unchanged and files the operator has taken over:
 
 - Manifest-owned templates: `compose.yaml` and `arbiter-docker` are rewritten
-  when they are missing, or when the manifest says Agent Arbiter generated them
+  when they are missing, or when the manifest says Arbiter generated them
   and their current content still matches the recorded hash. If one of those
   files exists but is not in the manifest, or if its hash changed, `update`
   skips it.
@@ -92,7 +92,7 @@ unchanged and files the operator has taken over:
   source install, it also creates `compose.override.yaml` when the override is
   missing.
 
-To change the deployed Agent Arbiter version or plugin set, edit the
+To change the deployed Arbiter version or plugin set, edit the
 requirements file, then promote the prepared directory again:
 
 ```bash

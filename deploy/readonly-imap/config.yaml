@@ -14,11 +14,11 @@ hydra:
 
 arbiter:
   server:
-    name: agent-arbiter-readonly
+    name: arbiter-readonly
     transport: streamable-http
-    host: ${oc.env:AGENT_ARBITER_SERVER_HOST,0.0.0.0}
-    port: ${oc.env:AGENT_ARBITER_SERVER_PORT,8025}
-    path: ${oc.env:AGENT_ARBITER_SERVER_PATH,/mcp}
+    host: ${oc.env:ARBITER_SERVER_HOST,0.0.0.0}
+    port: ${oc.env:ARBITER_SERVER_PORT,8025}
+    path: ${oc.env:ARBITER_SERVER_PATH,/mcp}
     stateless_http: true
     json_response: true
 
@@ -32,9 +32,9 @@ arbiter:
         port: ${arbiter.etc.mailserver.port}
         username: ${arbiter.etc.mailserver.username}
         password: ${arbiter.etc.mailserver.password}
-        tls: ${oc.env:AGENT_ARBITER_IMAP_TLS,implicit}
-        verify_peer: ${oc.env:AGENT_ARBITER_IMAP_VERIFY_PEER,true}
-        timeout_seconds: ${oc.env:AGENT_ARBITER_IMAP_TIMEOUT_SECONDS,30.0}
+        tls: ${oc.env:ARBITER_IMAP_TLS,implicit}
+        verify_peer: ${oc.env:ARBITER_IMAP_VERIFY_PEER,true}
+        timeout_seconds: ${oc.env:ARBITER_IMAP_TIMEOUT_SECONDS,30.0}
         default_folder: TARGET_IMAP_FOLDER
         folders:
           TARGET_IMAP_FOLDER:
@@ -59,7 +59,7 @@ arbiter:
 
   etc:
     mailserver:
-      host: ${oc.env:AGENT_ARBITER_IMAP_HOST}
-      port: ${oc.env:AGENT_ARBITER_IMAP_PORT,993}
-      username: ${secret_file:${oc.env:AGENT_ARBITER_IMAP_USERNAME_FILE,/run/secrets/imap_username}}
-      password: ${secret_file:${oc.env:AGENT_ARBITER_IMAP_PASSWORD_FILE,/run/secrets/imap_password}}
+      host: ${oc.env:ARBITER_IMAP_HOST}
+      port: ${oc.env:ARBITER_IMAP_PORT,993}
+      username: ${secret_file:${oc.env:ARBITER_IMAP_USERNAME_FILE,/run/secrets/imap_username}}
+      password: ${secret_file:${oc.env:ARBITER_IMAP_PASSWORD_FILE,/run/secrets/imap_password}}

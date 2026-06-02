@@ -19,7 +19,7 @@ class AccountSummariesRuntime(Protocol):
     def account_summaries(self) -> dict[str, object]: ...
 
 
-class AgentArbiterApp:
+class ArbiterApp:
     """Core facade over entry-point supplied service runtimes."""
 
     def __init__(

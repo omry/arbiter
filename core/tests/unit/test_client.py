@@ -16,7 +16,7 @@ def isolate_client_config(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.delenv("AGENT_ARBITER_MCP_URL", raising=False)
+    monkeypatch.delenv("ARBITER_MCP_URL", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
 
 
@@ -94,7 +94,7 @@ def test_client_lists_tools_as_json(
         return [
             {
                 "name": "list_caps",
-                "description": "List Agent Arbiter capability names.",
+                "description": "List Arbiter capability names.",
                 "input_schema": {"type": "object"},
             },
         ]
@@ -114,7 +114,7 @@ def test_client_lists_tools_as_json(
     )
 
     assert capsys.readouterr().out == (
-        '{"tools": [{"description": "List Agent Arbiter capability names.", '
+        '{"tools": [{"description": "List Arbiter capability names.", '
         '"input_schema": {"type": "object"}, "name": "list_caps"}]}\n'
     )
 
@@ -192,7 +192,7 @@ def test_client_rejects_top_level_mcp_url_in_client_config(
     )
 
     assert capsys.readouterr().err == (
-        "Agent Arbiter client config error: unsupported client config key(s) in "
+        "Arbiter client config error: unsupported client config key(s) in "
         f"{config_file}: mcp_url\n"
     )
 
@@ -230,7 +230,7 @@ def test_client_mcp_url_env_overrides_client_config(
         "arbiter:\n  mcp_url: http://localhost:9003/mcp\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("AGENT_ARBITER_MCP_URL", "http://localhost:9004/mcp")
+    monkeypatch.setenv("ARBITER_MCP_URL", "http://localhost:9004/mcp")
 
     async def fake_list_tools(url: str) -> list[Mapping[str, object]]:
         assert url == "http://localhost:9004/mcp"
@@ -265,7 +265,7 @@ def test_client_override_overrides_env_and_client_config(
         "arbiter:\n  mcp_url: http://localhost:9005/mcp\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("AGENT_ARBITER_MCP_URL", "http://localhost:9006/mcp")
+    monkeypatch.setenv("ARBITER_MCP_URL", "http://localhost:9006/mcp")
 
     async def fake_list_tools(url: str) -> list[Mapping[str, object]]:
         assert url == "http://localhost:9007/mcp"
@@ -328,8 +328,7 @@ def test_client_rejects_unknown_client_override(
     assert client.main(["mcp", "tools", "unknown=value"]) == 1
 
     assert capsys.readouterr().err == (
-        "Agent Arbiter client config error: unsupported client override key(s): "
-        "unknown\n"
+        "Arbiter client config error: unsupported client override key(s): " "unknown\n"
     )
 
 
@@ -339,8 +338,7 @@ def test_client_rejects_top_level_mcp_url_override(
     assert client.main(["mcp", "tools", "mcp_url=http://localhost:9000/mcp"]) == 1
 
     assert capsys.readouterr().err == (
-        "Agent Arbiter client config error: unsupported client override key(s): "
-        "mcp_url\n"
+        "Arbiter client config error: unsupported client override key(s): " "mcp_url\n"
     )
 
 
@@ -350,7 +348,7 @@ def test_client_rejects_malformed_client_override(
     assert client.main(["mcp", "tools", "--unknown"]) == 1
 
     assert capsys.readouterr().err == (
-        "Agent Arbiter client config error: client override must use KEY=VALUE "
+        "Arbiter client config error: client override must use KEY=VALUE "
         "syntax: --unknown\n"
     )
 
@@ -391,7 +389,7 @@ def test_client_bootstrap_refuses_to_overwrite_existing_config(
 
     assert client.main(["--config-dir", str(tmp_path), "bootstrap", "client"]) == 1
     assert capsys.readouterr().err == (
-        "Agent Arbiter client config error: refusing to overwrite existing file: "
+        "Arbiter client config error: refusing to overwrite existing file: "
         f"{config_file}\n"
     )
 
@@ -751,7 +749,7 @@ def test_client_unwraps_mcp_tool_errors_for_high_level_commands(
 
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert captured.err == "Agent Arbiter tool error: unknown capability: imap:bot\n"
+    assert captured.err == "Arbiter tool error: unknown capability: imap:bot\n"
 
 
 def test_client_lists_accounts_accepts_plain_payload(
@@ -783,7 +781,7 @@ def test_client_warns_when_remote_version_differs(
     )
 
     assert capsys.readouterr().err == (
-        "Agent Arbiter core version warning: local CLI core version 1.2.3 "
+        "Arbiter core version warning: local CLI core version 1.2.3 "
         "does not match remote server core version 1.2.4.\n"
     )
 
@@ -834,7 +832,7 @@ def test_client_reports_clean_keyboard_interrupt(
 
     assert client.main(["mcp", "tools"]) == 130
 
-    assert capsys.readouterr().err == "Agent Arbiter client stopped.\n"
+    assert capsys.readouterr().err == "Arbiter client stopped.\n"
 
 
 def test_client_reports_clean_connection_failure(
@@ -857,7 +855,7 @@ def test_client_reports_clean_connection_failure(
     assert client.main(["mcp", "tools"]) == 1
 
     assert capsys.readouterr().err == (
-        "Agent Arbiter connection error: could not connect to Agent Arbiter at "
+        "Arbiter connection error: could not connect to Arbiter at "
         "http://127.0.0.1:8000/mcp "
         f"(built-in default; no client config found at {tmp_path / '.arbiter' / 'arbiter-client.yaml'}). "
         "Is arbiter-server serve running?\n"
@@ -882,7 +880,7 @@ def test_client_reports_clean_read_failure(
     assert client.main(["cap"]) == 1
 
     assert capsys.readouterr().err == (
-        "Agent Arbiter connection error: could not connect to Agent Arbiter at "
+        "Arbiter connection error: could not connect to Arbiter at "
         "http://127.0.0.1:8000/mcp "
         f"(built-in default; no client config found at {tmp_path / '.arbiter' / 'arbiter-client.yaml'}). "
         "Is arbiter-server serve running?\n"
@@ -919,7 +917,7 @@ def test_client_connection_failure_reports_url_from_client_config(
     )
 
     assert capsys.readouterr().err == (
-        "Agent Arbiter connection error: could not connect to Agent Arbiter at "
+        "Arbiter connection error: could not connect to Arbiter at "
         f"http://localhost:9011/mcp (client config {config_file}). "
         "Is arbiter-server serve running?\n"
     )

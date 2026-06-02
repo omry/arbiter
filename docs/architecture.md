@@ -69,7 +69,7 @@ across installed services rather than belonging to `core/`, `smtp/`, or `imap/`.
 ## Repository shape
 
 ```text
-agent-arbiter/
+arbiter/
   README.md
   pyproject.toml     # shared test/type/format tool config, not a package
   noxfile.py         # repo-level orchestration across packages

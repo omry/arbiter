@@ -1,11 +1,11 @@
-# RFC: Agent Arbiter Overview
+# RFC: Arbiter Overview
 
-- Document ID: `agent-arbiter-overview`
+- Document ID: `arbiter-overview`
 - Version: `0.9.0.dev1`
 - Status: `Draft`
 - Authors: `Codex`, `Omry Yadan`
 - Last Updated: `2026-05-24`
-- Intended Use: implementation-driving overview for the Agent Arbiter server
+- Intended Use: implementation-driving overview for the Arbiter server
 
 ## Purpose
 
@@ -64,7 +64,7 @@ SMTP and IMAP settings belong to server configuration, not tool payloads. The ca
 
 ### 3. Configuration is the authority boundary
 
-Agent Arbiter enforces what the configured account and policy allow. Account
+Arbiter enforces what the configured account and policy allow. Account
 names and descriptions may guide voluntary caller behavior, but labels such as
 `personal` are not built-in enforcement tiers.
 
@@ -73,7 +73,7 @@ Questions to resolve before broader or more sensitive deployments:
 - whether the account's configured SMTP recipient policy is narrow enough
 - whether the account's configured IMAP policy should start read-only
 - whether destructive IMAP operations should be disabled
-- whether the bot-to-Agent Arbiter MCP connection needs caller authentication or
+- whether the bot-to-Arbiter MCP connection needs caller authentication or
   authorization, such as a shared secret, bearer token, password, client
   certificate, or mTLS/PKI
 
@@ -109,7 +109,7 @@ Implications of the current trust model:
 - `describe_caps` and `describe_cap` return configured account summaries
 - callers may explicitly select any configured account
 - caller authentication between the bot and the MCP server is out of scope for the current design
-- Agent Arbiter config is the enforcement boundary for v1
+- Arbiter config is the enforcement boundary for v1
 
 ## Current Implementation Status
 
@@ -142,7 +142,7 @@ Still open:
 - Whether service-scoped policies should remain the long-term home for caller
   confirmation metadata as well as runtime access policy
 - What caller authentication or authorization model, if any, should protect
-  the bot-to-Agent Arbiter MCP connection
+  the bot-to-Arbiter MCP connection
 
 ## Recommended next step
 
