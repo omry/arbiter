@@ -12,59 +12,15 @@ Run commands from the directory where you created the staging directory:
 cd arbiter-docker
 arbiter-server --config-dir ./conf bootstrap arbiter
 arbiter-server --config-dir ./conf bootstrap plugin smtp account bot
+arbiter-server --config-dir ./conf bootstrap plugin imap account bot
 ```
 
-Edit the generated SMTP files before activating them:
+Edit the generated account and policy files before activating them:
 
 - `conf/arbiter/account/smtp/bot.yaml`
 - `conf/arbiter/policy/smtp/bot_policy.yaml`
-
-Create the IMAP account file, creating parent directories as needed:
-
-```yaml title="conf/arbiter/account/imap/bot.yaml"
-# @package arbiter.account.imap.bot
-defaults:
-  - /arbiter/account/imap/schema@_here_
-  - _self_
-
-description: IMAP account for bot mailbox access.
-policy: bot_policy
-
-host: imap.example.com
-port: 993
-username: ${oc.env:IMAP_BOT_ACCOUNT_USERNAME}
-password: ${oc.env:IMAP_BOT_ACCOUNT_PASSWORD}
-tls: implicit
-verify_peer: true
-timeout_seconds: 30
-
-default_folder: INBOX
-folders:
-  INBOX:
-    description: Primary inbox.
-```
-
-Create the IMAP policy file, creating parent directories as needed:
-
-```yaml title="conf/arbiter/policy/imap/bot_policy.yaml"
-# @package arbiter.policy.imap.bot_policy
-defaults:
-  - /arbiter/policy/imap/schema@_here_
-  - _self_
-
-allow_read: true
-allow_search: true
-allow_move: false
-allow_delete: false
-confirmation_required: []
-system_flags:
-  seen: read_only
-  flagged: read_only
-  answered: read_only
-  deleted: hidden
-  draft: hidden
-user_flags: {}
-```
+- `conf/arbiter/account/imap/bot.yaml`
+- `conf/arbiter/policy/imap/bot_policy.yaml`
 
 Activate both accounts:
 
@@ -76,9 +32,10 @@ arbiter-server --config-dir ./conf config activate account imap bot
 Create or update the deployment env file, then fill in the credentials:
 
 ```bash
-./arbiter-docker sync-env
-./arbiter-docker edit-env
+arbiter-server --config-dir ./conf env bootstrap
 ```
+
+Then edit `conf/.env`.
 
 Expected credential placeholders:
 

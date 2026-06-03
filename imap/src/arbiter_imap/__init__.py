@@ -541,6 +541,70 @@ class IMAPRuntime:
         return visible_flags
 
 
+def _imap_account_bootstrap_template(
+    *,
+    name: str,
+    policy_name: str,
+    env_suffix: str,
+) -> str:
+    return f"""# @package arbiter.account.imap.{name}
+defaults:
+  # Extend the plugin-owned structured schema, then override values below.
+  - schema@_here_
+  - _self_
+
+# Human-facing summary shown by account listing tools.
+description: IMAP account for (${{.username}})
+
+# Matching policy generated alongside this account.
+policy: {policy_name}
+
+# IMAP mailbox endpoint.
+host: imap.example.com
+port: 993
+
+# Credentials are read from the Arbiter process environment.
+username: ${{oc.env:IMAP_{env_suffix}_USERNAME}}
+password: ${{oc.env:IMAP_{env_suffix}_PASSWORD}}
+
+# TLS mode: implicit, starttls, or none.
+tls: implicit
+verify_peer: true
+timeout_seconds: 30
+
+# Default mailbox folder for tools that accept an optional folder.
+default_folder: INBOX
+folders:
+  INBOX:
+    description: Primary inbox.
+"""
+
+
+def _imap_policy_bootstrap_template(*, name: str) -> str:
+    return f"""# @package arbiter.policy.imap.{name}
+defaults:
+  # Extend the plugin-owned structured schema, then override values below.
+  - schema@_here_
+  - _self_
+
+# Read/search are enabled by default; mutating mailbox actions are disabled.
+allow_read: true
+allow_search: true
+allow_move: false
+allow_delete: false
+confirmation_required: []
+
+# System flags remain visible but read-only unless deliberately opened up.
+system_flags:
+  seen: read_only
+  flagged: read_only
+  answered: read_only
+  deleted: read_only
+  draft: read_only
+user_flags: {{}}
+"""
+
+
 class IMAPServicePlugin:
     name = "imap"
     version = distribution_version("arbiter-imap", package_file=__file__)
@@ -550,6 +614,17 @@ class IMAPServicePlugin:
         register_imap_configs(config_store)
 
     def bootstrap_config(self, *, kind: str, name: str) -> object | None:
+        if kind == "account":
+            env_suffix = name.upper().replace("-", "_")
+            if not env_suffix.endswith("_ACCOUNT"):
+                env_suffix = f"{env_suffix}_ACCOUNT"
+            return _imap_account_bootstrap_template(
+                name=name,
+                policy_name=f"{name}_policy",
+                env_suffix=env_suffix,
+            )
+        if kind == "policy":
+            return _imap_policy_bootstrap_template(name=name)
         return None
 
     def build_runtime(

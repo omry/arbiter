@@ -2065,6 +2065,71 @@ doctor_check_env_file() {
   fi
 }
 
+doctor_file_other_perm_digit() {
+  local path="$1"
+  local mode
+  local perms
+
+  mode="$(stat -c '%a' "$path")"
+  perms="${mode: -3}"
+  printf '%s\n' "${perms:2:1}"
+}
+
+doctor_file_group_perm_digit() {
+  local path="$1"
+  local mode
+  local perms
+
+  mode="$(stat -c '%a' "$path")"
+  perms="${mode: -3}"
+  printf '%s\n' "${perms:1:1}"
+}
+
+doctor_check_config_file_permissions() {
+  local config_dir="$1"
+  local app_env="$2"
+  local app_env_real
+  local file
+  local file_real
+  local other_digit
+  local checked=0
+  local failed=0
+
+  [[ -d "$config_dir" ]] || return
+  app_env_real="$(normalize_path_allow_missing "$app_env")"
+
+  while IFS= read -r -d '' file; do
+    file_real="$(normalize_path_allow_missing "$file")"
+    [[ "$file_real" == "$app_env_real" ]] && continue
+    checked=1
+    other_digit="$(doctor_file_other_perm_digit "$file")"
+    if (( (10#$other_digit & 6) != 0 )); then
+      doctor_fail "config file is world-readable or world-writable: $file"
+      failed=1
+    fi
+  done < <(find "$config_dir" -type f -print0)
+
+  [[ "$checked" -eq 1 ]] || return
+  if [[ "$failed" -eq 0 ]]; then
+    doctor_ok "config files are not world-readable or world-writable"
+  fi
+}
+
+doctor_check_app_env_permissions() {
+  local path="$1"
+  local group_digit
+  local other_digit
+
+  [[ -f "$path" ]] || return
+  group_digit="$(doctor_file_group_perm_digit "$path")"
+  other_digit="$(doctor_file_other_perm_digit "$path")"
+  if (( (10#$group_digit & 6) != 0 || (10#$other_digit & 6) != 0 )); then
+    doctor_fail "app env file is readable or writable outside its owner: $path"
+  else
+    doctor_ok "app env file is only readable and writable by its owner"
+  fi
+}
+
 doctor_check_requirements_file() {
   local path="$1"
 
@@ -2415,6 +2480,8 @@ doctor() {
   doctor_check_file "$deploy_dir/arbiter-docker" "helper script"
   doctor_check_env_file "$active_app_env" "app env file"
   doctor_check_env_file "$compose_env_file" "docker env file"
+  doctor_check_config_file_permissions "$active_config_dir" "$active_app_env"
+  doctor_check_app_env_permissions "$active_app_env"
   doctor_check_requirements_file "$requirements_file"
 
   if [[ "$doctor_preinstall" -eq 1 ]]; then

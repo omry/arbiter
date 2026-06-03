@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
@@ -14,7 +15,7 @@ from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, distribution, entry_points
 from importlib.resources import files
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tempfile import TemporaryDirectory, mkstemp
 from typing import TYPE_CHECKING, Any, Literal, cast
 from urllib.parse import unquote, urlparse
 
@@ -77,6 +78,8 @@ DEPLOY_PINNED_REQUIREMENT_PARTS_PATTERN = re.compile(
 DEFAULT_ENV_FILE_NAME = ".env"
 DEFAULT_CONFIG_DIR = "~/.arbiter"
 DEFAULT_SERVER_CONFIG_NAME = "arbiter-server"
+CONFIG_FILE_MODE = 0o640
+ENV_FILE_MODE = 0o600
 DEFAULT_DOCKER_DEPLOY_DIR = "./arbiter-docker"
 DEPLOY_MANIFEST_FILE_NAME = ".arbiter-deploy.json"
 ARBITER_CORE_PACKAGE = "arbiter-core"
@@ -663,6 +666,63 @@ def _read_env_file_values(
     return values
 
 
+def _write_text_with_mode(path: Path, content: str, mode: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    file_descriptor, temporary_name = mkstemp(
+        prefix=f".{path.name}.",
+        dir=path.parent,
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        os.fchmod(file_descriptor, mode)
+        with os.fdopen(file_descriptor, "w", encoding="utf-8") as handle:
+            file_descriptor = -1
+            handle.write(content)
+        os.replace(temporary_path, path)
+        path.chmod(mode)
+    except BaseException:
+        if file_descriptor != -1:
+            os.close(file_descriptor)
+        try:
+            temporary_path.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def _other_read_write_bits(mode: int) -> int:
+    return mode & (stat.S_IROTH | stat.S_IWOTH)
+
+
+def _group_or_other_read_write_bits(mode: int) -> int:
+    return mode & (stat.S_IRGRP | stat.S_IWGRP | stat.S_IROTH | stat.S_IWOTH)
+
+
+def _ensure_runtime_config_permissions(
+    *,
+    config_dir: Path,
+    env_file: Path | None,
+) -> None:
+    for config_file in sorted(config_dir.rglob("*.yaml")):
+        if not config_file.is_file():
+            continue
+        if _other_read_write_bits(config_file.stat().st_mode):
+            raise ValueError(
+                "unsafe config file permissions: "
+                f"{config_file} must not be readable or writable by others; "
+                f"run `chmod o-rw {config_file}`"
+            )
+
+    if env_file is None or not env_file.exists():
+        return
+    if _group_or_other_read_write_bits(env_file.stat().st_mode):
+        raise ValueError(
+            "unsafe app env file permissions: "
+            f"{env_file} must not be readable or writable by group or others; "
+            f"run `chmod 600 {env_file}`"
+        )
+
+
 def load_env_file(env_file: str | Path) -> None:
     env_file_path = Path(env_file).expanduser()
     for key, raw_value in _read_env_file_values(env_file_path).items():
@@ -701,14 +761,14 @@ def _configure_default_env_file(
     for index, line in enumerate(lines):
         if line.strip() == "arbiter:":
             lines[index + 1 : index + 1] = [env_line]
-            config_file.write_text("".join(lines), encoding="utf-8")
+            _write_text_with_mode(config_file, "".join(lines), CONFIG_FILE_MODE)
             return config_dir / DEFAULT_ENV_FILE_NAME
     if lines and not lines[-1].endswith("\n"):
         lines[-1] = f"{lines[-1]}\n"
     if lines and lines[-1].strip():
         lines.append("\n")
     lines.extend(["arbiter:\n", env_line])
-    config_file.write_text("".join(lines), encoding="utf-8")
+    _write_text_with_mode(config_file, "".join(lines), CONFIG_FILE_MODE)
     return config_dir / DEFAULT_ENV_FILE_NAME
 
 
@@ -717,12 +777,18 @@ def compose_config(
     config_dir: str | Path,
     config_name: str,
     overrides: Sequence[str] = (),
+    enforce_runtime_permissions: bool = False,
 ) -> DictConfig:
     config_dir_path = Path(config_dir).expanduser().resolve()
     env_file = _configured_env_file(
         config_dir=config_dir_path,
         config_name=config_name,
     )
+    if enforce_runtime_permissions:
+        _ensure_runtime_config_permissions(
+            config_dir=config_dir_path,
+            env_file=env_file,
+        )
     if env_file is not None:
         load_env_file(env_file)
     register_configs()
@@ -914,10 +980,11 @@ def _run_env_bootstrap(
 
     content = _format_env_file_blocks(block_values)
     if env_file.exists() and env_file.read_text(encoding="utf-8") == content:
+        env_file.chmod(ENV_FILE_MODE)
         print(f"env file already up to date: {env_file}")
         return 0
     env_file.parent.mkdir(parents=True, exist_ok=True)
-    env_file.write_text(content, encoding="utf-8")
+    _write_text_with_mode(env_file, content, ENV_FILE_MODE)
     print(f"wrote {env_file}")
     return 0
 
@@ -1682,6 +1749,7 @@ def _run_serve(
             config_dir=config_dir,
             config_name=config_name,
             overrides=overrides,
+            enforce_runtime_permissions=True,
         )
         app_config = _instantiate_app_config(cfg)
         ensure_runnable_config(app_config)
@@ -1748,7 +1816,7 @@ def _write_bootstrap_file(path: Path, content: str, *, force: bool) -> int:
         )
         return 1
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
+    _write_text_with_mode(path, content, CONFIG_FILE_MODE)
     print(f"wrote {path}")
     return 0
 
@@ -1767,7 +1835,7 @@ def _write_bootstrap_files(
             return 1
     for path, content in files:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        _write_text_with_mode(path, content, CONFIG_FILE_MODE)
         print(f"wrote {path}")
     return 0
 
@@ -2054,7 +2122,7 @@ def _resolve_policy_config_name(
 
 
 def _write_main_config_lines(config_file: Path, lines: Sequence[str]) -> None:
-    config_file.write_text("".join(lines), encoding="utf-8")
+    _write_text_with_mode(config_file, "".join(lines), CONFIG_FILE_MODE)
 
 
 def _run_config_activate_account(

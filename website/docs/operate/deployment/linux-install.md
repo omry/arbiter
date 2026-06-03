@@ -6,7 +6,6 @@ Install promotes a prepared deployment directory to a Linux host. Prepare config
 and env first, then run the privileged step.
 
 ```bash
-./arbiter-docker/arbiter-docker sync-env
 ./arbiter-docker/arbiter-docker doctor --preinstall
 sudo ./arbiter-docker/arbiter-docker install --to /opt/arbiter --user arbiter
 ```

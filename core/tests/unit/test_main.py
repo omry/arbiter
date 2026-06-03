@@ -17,8 +17,10 @@ from omegaconf import OmegaConf
 from arbiter_core.config import AppConfig, ArbiterConfig, DiscoveryConfig
 from arbiter_core.app import CORE_TOOL_NAMES
 from arbiter_core.main import (
+    ENV_FILE_MODE,
     _build_local_source_wheel,
     _run_server,
+    _write_text_with_mode,
     build_app,
     build_server,
     compose_config,
@@ -596,6 +598,87 @@ def test_load_env_file_reports_invalid_lines(tmp_path: Path) -> None:
         load_env_file(env_file)
 
 
+def test_write_text_with_mode_replaces_from_restricted_temp(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env_file = tmp_path / "local.env"
+    env_file.write_text("OLD_SECRET=value\n", encoding="utf-8")
+    env_file.chmod(0o644)
+    observed: dict[str, object] = {}
+    real_replace = os.replace
+
+    def replace(
+        source: str | os.PathLike[str], destination: str | os.PathLike[str]
+    ) -> None:
+        source_path = Path(source)
+        destination_path = Path(destination)
+        observed["source_mode"] = source_path.stat().st_mode & 0o777
+        observed["source_content"] = source_path.read_text(encoding="utf-8")
+        observed["destination_content_before"] = destination_path.read_text(
+            encoding="utf-8"
+        )
+        observed["destination_mode_before"] = destination_path.stat().st_mode & 0o777
+        real_replace(source, destination)
+
+    monkeypatch.setattr("arbiter_core.main.os.replace", replace)
+
+    _write_text_with_mode(env_file, "NEW_SECRET=value\n", ENV_FILE_MODE)
+
+    assert observed == {
+        "source_mode": 0o600,
+        "source_content": "NEW_SECRET=value\n",
+        "destination_content_before": "OLD_SECRET=value\n",
+        "destination_mode_before": 0o644,
+    }
+    assert env_file.read_text(encoding="utf-8") == "NEW_SECRET=value\n"
+    assert (env_file.stat().st_mode & 0o777) == 0o600
+
+
+def test_cli_serve_rejects_world_readable_config_file(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_file = tmp_path / "arbiter-server.yaml"
+    config_file.write_text(
+        "arbiter:\n  server:\n    transport: stdio\n", encoding="utf-8"
+    )
+    config_file.chmod(0o644)
+    monkeypatch.setattr(
+        "arbiter_core.main.build_server",
+        lambda _cfg, **_kwargs: pytest.fail("server should not be built"),
+    )
+
+    assert main(["--config-dir", str(tmp_path), "serve"]) == 1
+
+    assert "unsafe config file permissions" in capsys.readouterr().err
+
+
+def test_cli_serve_rejects_group_readable_env_file(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_file = tmp_path / "arbiter-server.yaml"
+    config_file.write_text(
+        "arbiter:\n" "  env_file: local.env\n" "  server:\n" "    transport: stdio\n",
+        encoding="utf-8",
+    )
+    config_file.chmod(0o640)
+    env_file = tmp_path / "local.env"
+    env_file.write_text("", encoding="utf-8")
+    env_file.chmod(0o640)
+    monkeypatch.setattr(
+        "arbiter_core.main.build_server",
+        lambda _cfg, **_kwargs: pytest.fail("server should not be built"),
+    )
+
+    assert main(["--config-dir", str(tmp_path), "serve"]) == 1
+
+    assert "unsafe app env file permissions" in capsys.readouterr().err
+
+
 def test_cli_env_check_accepts_env_file_and_process_env(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -724,9 +807,11 @@ def test_cli_env_bootstrap_reports_noop_when_env_file_is_current(
         "# arbiter-smtp\n" "SMTP_PRIMARY_ACCOUNT_PASSWORD=\n",
         encoding="utf-8",
     )
+    env_file.chmod(0o644)
 
     assert main(["--config-dir", str(tmp_path), "env", "bootstrap"]) == 0
 
+    assert (env_file.stat().st_mode & 0o777) == 0o600
     assert capsys.readouterr().out == f"env file already up to date: {env_file}\n"
 
 
@@ -762,6 +847,8 @@ def test_cli_env_bootstrap_configures_default_env_file(
         "SMTP_PRIMARY_ACCOUNT_USERNAME=\n"
         "SMTP_PRIMARY_ACCOUNT_PASSWORD=\n"
     )
+    assert ((tmp_path / "arbiter-server.yaml").stat().st_mode & 0o777) == 0o640
+    assert ((tmp_path / ".env").stat().st_mode & 0o777) == 0o600
     assert capsys.readouterr().out == f"wrote {tmp_path / '.env'}\n"
 
 
@@ -2495,7 +2582,9 @@ def test_cli_deploy_docker_generated_helper_up_reports_docker_permission_error(
     capsys.readouterr()
     config_dir = deploy_dir / "conf"
     (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
     (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     docker_calls = tmp_path / "docker-calls"
@@ -2551,7 +2640,9 @@ def test_cli_deploy_docker_generated_helper_up_prints_mcp_url(
     capsys.readouterr()
     config_dir = deploy_dir / "conf"
     (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
     (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
     docker_env = deploy_dir / "docker.env"
     docker_env.write_text(
         docker_env.read_text(encoding="utf-8").replace(
@@ -2743,7 +2834,9 @@ def test_cli_deploy_docker_generated_helper_up_auto_selects_staging_subnet(
     capsys.readouterr()
     config_dir = deploy_dir / "conf"
     (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
     (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     docker_calls = tmp_path / "docker-calls"
@@ -2812,7 +2905,9 @@ def test_cli_deploy_docker_generated_helper_up_reports_other_deployment_owner(
     capsys.readouterr()
     config_dir = deploy_dir / "conf"
     (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
     (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     docker_calls = tmp_path / "docker-calls"
@@ -2966,7 +3061,9 @@ def test_cli_deploy_docker_generated_helper_doctor_rejects_unpinned_requirements
     capsys.readouterr()
     config_dir = deploy_dir / "conf"
     (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
     (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     fake_docker = fake_bin / "docker"
@@ -3042,7 +3139,9 @@ def test_cli_deploy_docker_generated_helper_doctor_rejects_raw_meta_override(
     capsys.readouterr()
     config_dir = deploy_dir / "conf"
     (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
     (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
     (deploy_dir / "requirements.txt").write_text(
         "arbiter-suite==0.9.0\n" "arbiter-smtp==0.9.1\n",
         encoding="utf-8",
@@ -3106,7 +3205,9 @@ def test_cli_deploy_docker_generated_helper_doctor_can_color_status_prefixes(
     capsys.readouterr()
     config_dir = deploy_dir / "conf"
     (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
     (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
     (deploy_dir / "requirements.txt").write_text("arbiter-suite\n", encoding="utf-8")
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -3164,7 +3265,9 @@ def test_cli_deploy_docker_generated_helper_doctor_can_disable_color(
     capsys.readouterr()
     config_dir = deploy_dir / "conf"
     (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
     (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     fake_docker = fake_bin / "docker"
@@ -3218,7 +3321,9 @@ def test_cli_deploy_docker_generated_helper_preinstall_skips_docker_checks(
     capsys.readouterr()
     config_dir = deploy_dir / "conf"
     (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
     (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     env = os.environ.copy()
@@ -3236,6 +3341,46 @@ def test_cli_deploy_docker_generated_helper_preinstall_skips_docker_checks(
     assert result.returncode == 0
     assert "Docker Compose" not in result.stdout
     assert "ok: preinstall checks passed\n" in result.stdout
+
+
+def test_cli_deploy_docker_generated_helper_doctor_rejects_unsafe_config_permissions(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    config_dir = deploy_dir / "conf"
+    (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o644)
+    (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o640)
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "doctor", "--preinstall"],
+        check=False,
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert "fail: config file is world-readable or world-writable:" in result.stdout
+    assert (
+        "fail: app env file is readable or writable outside its owner:" in result.stdout
+    )
+    assert "ok: preinstall checks passed\n" not in result.stdout
 
 
 def test_cli_deploy_docker_generated_helper_preinstall_checks_wheel_paths(
@@ -3258,7 +3403,9 @@ def test_cli_deploy_docker_generated_helper_preinstall_checks_wheel_paths(
     capsys.readouterr()
     config_dir = deploy_dir / "conf"
     (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
     (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
 
     missing_result = subprocess.run(
         [deploy_dir / "arbiter-docker", "doctor", "--preinstall"],
@@ -3316,7 +3463,9 @@ def test_cli_deploy_docker_generated_helper_preinstall_rejects_absolute_runtime_
     capsys.readouterr()
     config_dir = deploy_dir / "conf"
     (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
     (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
     docker_env = deploy_dir / "docker.env"
     docker_env.write_text(
         docker_env.read_text(encoding="utf-8").replace(
@@ -3365,7 +3514,9 @@ def test_cli_deploy_docker_generated_helper_preinstall_rejects_runtime_path_trav
     capsys.readouterr()
     config_dir = deploy_dir / "conf"
     (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
     (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
     docker_env = deploy_dir / "docker.env"
     docker_env.write_text(
         docker_env.read_text(encoding="utf-8").replace(
@@ -3414,7 +3565,9 @@ def test_cli_deploy_docker_generated_helper_preinstall_rejects_source_override(
     capsys.readouterr()
     config_dir = deploy_dir / "conf"
     (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
     (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
     (deploy_dir / "compose.override.yaml").write_text(
         "services:\n"
         "  arbiter:\n"
@@ -3480,7 +3633,9 @@ def test_cli_deploy_docker_generated_helper_install_dry_run_plans_promotion(
     capsys.readouterr()
     config_dir = deploy_dir / "conf"
     (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
     (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
 
     result = subprocess.run(
         [
@@ -3536,7 +3691,9 @@ def test_cli_deploy_docker_generated_helper_install_omits_missing_docker_unit(
     capsys.readouterr()
     config_dir = deploy_dir / "conf"
     (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
     (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     (fake_bin / "id").write_text(
@@ -3664,7 +3821,9 @@ def test_cli_deploy_docker_generated_helper_install_aborts_on_bad_wheelhouse(
     capsys.readouterr()
     config_dir = deploy_dir / "conf"
     (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
     (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     (fake_bin / "id").write_text(
@@ -3760,7 +3919,9 @@ def test_cli_deploy_docker_generated_helper_doctor_colors_tty_by_default(
     capsys.readouterr()
     config_dir = deploy_dir / "conf"
     (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
     (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     fake_docker = fake_bin / "docker"
@@ -3814,7 +3975,9 @@ def test_cli_deploy_docker_generated_helper_doctor_rejects_docker_subnet_overlap
     capsys.readouterr()
     config_dir = deploy_dir / "conf"
     (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
     (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     fake_docker = fake_bin / "docker"
@@ -4543,6 +4706,8 @@ def test_cli_bootstrap_arbiter_writes_main_config(
         "  max_account_preview_limit: 25\n"
         "  max_operation_preview_limit: 25\n"
     )
+    assert (config_file.stat().st_mode & 0o777) == 0o640
+    assert (server_file.stat().st_mode & 0o777) == 0o640
     assert capsys.readouterr().out == (
         f"wrote {config_file}\n" f"wrote {server_file}\n"
     )
@@ -4977,28 +5142,78 @@ def test_cli_config_deactivate_account_keeps_shared_policy(
     assert "    - smtp/shared\n" not in config_yaml
 
 
-def test_cli_bootstrap_plugin_refuses_missing_example(
+def test_cli_bootstrap_plugin_imap_account_writes_service_example(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    config_dir = tmp_path / "conf"
+
+    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+    capsys.readouterr()
     assert (
         main(
             [
                 "--config-dir",
-                str(tmp_path),
+                str(config_dir),
                 "bootstrap",
                 "plugin",
                 "imap",
                 "account",
-                "primary",
+                "bot",
             ]
         )
-        == 1
+        == 0
     )
 
-    assert capsys.readouterr().err == (
-        "Arbiter bootstrap error: service plugin does not provide an "
-        "account bootstrap example: imap\n"
+    account_file = config_dir / "arbiter" / "account" / "imap" / "bot.yaml"
+    account_yaml = account_file.read_text(encoding="utf-8")
+    assert "# @package arbiter.account.imap.bot\n" in account_yaml
+    assert "defaults:\n" in account_yaml
+    assert "  - schema@_here_\n" in account_yaml
+    assert "  - _self_\n" in account_yaml
+    assert "# Human-facing summary shown by account listing tools.\n" in account_yaml
+    assert "description: IMAP account for (${.username})\n" in account_yaml
+    assert "# Matching policy generated alongside this account.\n" in account_yaml
+    assert "policy: bot_policy\n" in account_yaml
+    assert "host: imap.example.com\n" in account_yaml
+    assert "port: 993\n" in account_yaml
+    assert "# Credentials are read from the Arbiter process environment.\n" in (
+        account_yaml
+    )
+    assert "username: ${oc.env:IMAP_BOT_ACCOUNT_USERNAME}\n" in account_yaml
+    assert "password: ${oc.env:IMAP_BOT_ACCOUNT_PASSWORD}\n" in account_yaml
+    assert "default_folder: INBOX\n" in account_yaml
+    assert "folders:\n" in account_yaml
+    assert "  INBOX:\n" in account_yaml
+    policy_file = config_dir / "arbiter" / "policy" / "imap" / "bot_policy.yaml"
+    policy_yaml = policy_file.read_text(encoding="utf-8")
+    assert "# @package arbiter.policy.imap.bot_policy\n" in policy_yaml
+    assert "defaults:\n" in policy_yaml
+    assert "  - schema@_here_\n" in policy_yaml
+    assert "  - _self_\n" in policy_yaml
+    assert (
+        "# Read/search are enabled by default; mutating mailbox actions are disabled.\n"
+        in (policy_yaml)
+    )
+    assert "allow_read: true\n" in policy_yaml
+    assert "allow_search: true\n" in policy_yaml
+    assert "allow_move: false\n" in policy_yaml
+    assert "allow_delete: false\n" in policy_yaml
+    assert "seen: read_only\n" in policy_yaml
+    assert "user_flags: {}\n" in policy_yaml
+    main_config = (config_dir / "arbiter-server.yaml").read_text(encoding="utf-8")
+    assert "/arbiter/account/imap@arbiter.account.imap.bot" not in main_config
+    assert "/arbiter/policy/imap@arbiter.policy.imap.bot_policy" not in main_config
+    assert capsys.readouterr().out == (
+        f"wrote {account_file}\n"
+        f"wrote {policy_file}\n"
+        "\n"
+        "Edit the generated account and policy files, then activate the account:\n"
+        f"  arbiter-server --config-dir {config_dir} "
+        "config activate account imap bot\n"
+        "\n"
+        "Then inspect the composed config with:\n"
+        f"  arbiter-server --config-dir {config_dir} config show\n"
     )
 
 
