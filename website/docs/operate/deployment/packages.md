@@ -62,15 +62,43 @@ initial pinned values from CLI input, but it does not auto-update core or
 plugin versions. Review version changes, edit the file deliberately, then
 restart or reinstall the service.
 
+## Service plugin selection
+
+Use the bundle plugin menu for the usual case of selecting Arbiter service
+plugins:
+
+```bash
+./arbiter-docker/arbiter-docker bundle list-plugins
+./arbiter-docker/arbiter-docker bundle add imap
+./arbiter-docker/arbiter-docker bundle add smtp
+./arbiter-docker/arbiter-docker bundle add arbiter-suite
+./arbiter-docker/arbiter-docker bundle remove smtp
+./arbiter-docker/arbiter-docker bundle remove arbiter-suite
+./arbiter-docker/arbiter-docker bundle list
+```
+
+`bundle add` and `bundle remove` update `requirements.txt`. Adding a plugin
+uses the current `arbiter-core` package version as the plugin pin; use
+`bundle upgrade` afterwards when you want the resolver to choose newer package
+versions. Adding or removing `arbiter-suite` is interpreted as adding or
+removing all plugins in that meta package. Removing a plugin or meta package
+from an `arbiter-suite` requirement expands the suite into `arbiter-core` plus
+the remaining selected plugin pins.
+
 After editing the root requirements, prepare the wheelhouse:
 
 ```bash
 ./arbiter-docker/arbiter-docker bundle prepare
+./arbiter-docker/arbiter-docker bundle prepare --pypi-only
 ```
 
 `bundle prepare` builds a complete wheelhouse with the configured runtime image
 and validates that the wheelhouse can satisfy the networkless runtime install
-command.
+command. It also removes stale wheels that are not part of that resolved
+install set. With package pins, use `--pypi-only` to resolve the selected
+package names from the package index, including pre/dev releases, rewrite
+`requirements.txt` to those exact versions, and ignore the existing deployment
+wheelhouse while building.
 
 Use `bundle check` to validate an already-prepared wheelhouse without
 downloading packages or building wheels.

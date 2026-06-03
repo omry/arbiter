@@ -116,6 +116,29 @@ validate_requirements_file() {
   ' "$path"
 }
 
+requirements_has_absolute_paths() {
+  local path="$1"
+
+  awk '
+    {
+      line = $0
+      sub(/^[[:space:]]+/, "", line)
+      sub(/[[:space:]]+$/, "", line)
+      if (line == "" || line ~ /^#/) {
+        next
+      }
+      sub(/[[:space:]]+#.*$/, "", line)
+      sub(/[[:space:]]+$/, "", line)
+      if (line ~ /^\//) {
+        found = 1
+      }
+    }
+    END {
+      exit found ? 0 : 1
+    }
+  ' "$path"
+}
+
 edit_requirements() {
   local edited_requirements
 
@@ -245,8 +268,279 @@ bundle_list_all() {
   rm -f "$root_requirements" "$resolved_requirements"
 }
 
+bundle_list_plugins() {
+  printf 'imap\n'
+  printf 'smtp\n'
+}
+
+bundle_plugin_package() {
+  case "$1" in
+    imap)
+      printf 'arbiter-imap\n'
+      ;;
+    smtp)
+      printf 'arbiter-smtp\n'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+bundle_meta_plugins() {
+  case "$1" in
+    arbiter-suite)
+      bundle_list_plugins
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+bundle_item_plugins() {
+  if bundle_plugin_package "$1" >/dev/null; then
+    printf '%s\n' "$1"
+    return
+  fi
+  bundle_meta_plugins "$1"
+}
+
+bundle_supported_items_message() {
+  printf 'supported plugins: imap, smtp; supported meta packages: arbiter-suite\n'
+}
+
 normalize_distribution_name() {
   printf '%s\n' "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[-_.][-_\.]*/-/g'
+}
+
+bundle_requirement_version() {
+  local package="$1"
+
+  awk -v package="$package" '
+    function normalize(name) {
+      name = tolower(name)
+      gsub(/[-_.]+/, "-", name)
+      return name
+    }
+    BEGIN {
+      wanted = normalize(package)
+    }
+    {
+      line = $0
+      sub(/^[[:space:]]+/, "", line)
+      sub(/[[:space:]]+#.*$/, "", line)
+      sub(/[[:space:]]+$/, "", line)
+      if (line == "" || line ~ /^\//) {
+        next
+      }
+      name = line
+      sub(/==.*/, "", name)
+      sub(/\[.*/, "", name)
+      version = line
+      sub(/^[^=]*==/, "", version)
+      if (normalize(name) == wanted) {
+        print version
+        found = 1
+        exit
+      }
+    }
+    END {
+      exit found ? 0 : 1
+    }
+  ' "$requirements_file"
+}
+
+bundle_write_without_packages() {
+  local output_file="$1"
+  shift
+  local packages="$*"
+
+  awk -v packages="$packages" '
+    function normalize(name) {
+      name = tolower(name)
+      gsub(/[-_.]+/, "-", name)
+      return name
+    }
+    BEGIN {
+      split(packages, package_list, " ")
+      for (i in package_list) {
+        skip[normalize(package_list[i])] = 1
+      }
+    }
+    {
+      line = $0
+      sub(/^[[:space:]]+/, "", line)
+      sub(/[[:space:]]+#.*$/, "", line)
+      sub(/[[:space:]]+$/, "", line)
+      if (line != "" && line !~ /^\//) {
+        name = line
+        sub(/==.*/, "", name)
+        sub(/\[.*/, "", name)
+        if (normalize(name) in skip) {
+          next
+        }
+      }
+      print $0
+    }
+  ' "$requirements_file" >"$output_file"
+}
+
+bundle_update_requirements_file() {
+  local updated_file="$1"
+
+  if ! validate_requirements_file "$updated_file"; then
+    printf 'error: generated requirements are invalid; requirements unchanged: %s\n' "$requirements_file" >&2
+    rm -f "$updated_file"
+    return 1
+  fi
+  mv "$updated_file" "$requirements_file"
+  printf 'updated requirements file: %s\n' "$requirements_file"
+}
+
+bundle_add_plugin() {
+  local item="${1:-}"
+  local plugin
+  local package
+  local version
+  local tmp_file
+  local last_char
+  local plugins_text
+  local selected_count=0
+  local added_count=0
+  local -a plugins=()
+
+  if [[ -z "$item" || $# -ne 1 ]]; then
+    printf 'error: bundle add requires exactly one plugin or meta package name\n' >&2
+    { printf '       '; bundle_supported_items_message; } >&2
+    return 2
+  fi
+  if ! plugins_text="$(bundle_item_plugins "$item")"; then
+    printf 'error: unsupported bundle item: %s\n' "$item" >&2
+    { printf '       '; bundle_supported_items_message; } >&2
+    return 2
+  fi
+  mapfile -t plugins <<<"$plugins_text"
+
+  require_file "$requirements_file"
+  validate_requirements_file "$requirements_file"
+  if bundle_requirement_version arbiter-suite >/dev/null; then
+    printf 'bundle item already selected by arbiter-suite: %s\n' "$item"
+    return 0
+  fi
+  if ! version="$(bundle_requirement_version arbiter-core)"; then
+    printf 'error: cannot add bundle item without an arbiter-core package pin: %s\n' "$item" >&2
+    printf '       add arbiter-core==VERSION to requirements.txt first\n' >&2
+    return 1
+  fi
+
+  tmp_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-docker-requirements.XXXXXX")"
+  cp "$requirements_file" "$tmp_file"
+  last_char=""
+  if [[ -s "$tmp_file" ]]; then
+    last_char="$(tail -c 1 "$tmp_file")"
+  fi
+  if [[ -n "$last_char" ]]; then
+    printf '\n' >>"$tmp_file"
+  fi
+  for plugin in "${plugins[@]}"; do
+    package="$(bundle_plugin_package "$plugin")"
+    if bundle_requirement_version "$package" >/dev/null; then
+      selected_count=$((selected_count + 1))
+      continue
+    fi
+    printf '%s==%s\n' "$package" "$version" >>"$tmp_file"
+    added_count=$((added_count + 1))
+  done
+  if [[ "$added_count" -eq 0 ]]; then
+    rm -f "$tmp_file"
+    if [[ "$selected_count" -eq "${#plugins[@]}" ]]; then
+      printf 'bundle item already selected: %s\n' "$item"
+    fi
+    return 0
+  fi
+  bundle_update_requirements_file "$tmp_file"
+}
+
+bundle_remove_plugin() {
+  local item="${1:-}"
+  local plugin
+  local package
+  local suite_version
+  local tmp_file
+  local other_requirements_file
+  local supported_plugin
+  local supported_package
+  local plugins_text
+  local remove_plugins=""
+  local selected_count=0
+  local -a plugins=()
+  local -a packages=()
+
+  if [[ -z "$item" || $# -ne 1 ]]; then
+    printf 'error: bundle remove requires exactly one plugin or meta package name\n' >&2
+    { printf '       '; bundle_supported_items_message; } >&2
+    return 2
+  fi
+  if ! plugins_text="$(bundle_item_plugins "$item")"; then
+    printf 'error: unsupported bundle item: %s\n' "$item" >&2
+    { printf '       '; bundle_supported_items_message; } >&2
+    return 2
+  fi
+  mapfile -t plugins <<<"$plugins_text"
+  for plugin in "${plugins[@]}"; do
+    remove_plugins+=" $plugin "
+    packages+=("$(bundle_plugin_package "$plugin")")
+  done
+
+  require_file "$requirements_file"
+  validate_requirements_file "$requirements_file"
+  tmp_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-docker-requirements.XXXXXX")"
+
+  if suite_version="$(bundle_requirement_version arbiter-suite)"; then
+    other_requirements_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-docker-requirements.XXXXXX")"
+    bundle_write_without_packages \
+      "$other_requirements_file" \
+      arbiter-suite \
+      arbiter-core \
+      arbiter-imap \
+      arbiter-smtp
+    {
+      printf 'arbiter-core==%s\n' "$suite_version"
+      while IFS= read -r supported_plugin; do
+        [[ "$remove_plugins" != *" $supported_plugin "* ]] || continue
+        supported_package="$(bundle_plugin_package "$supported_plugin")"
+        printf '%s==%s\n' "$supported_package" "$suite_version"
+      done < <(bundle_list_plugins)
+      awk '
+        {
+          line = $0
+          sub(/^[[:space:]]+/, "", line)
+          sub(/[[:space:]]+$/, "", line)
+          if (line != "") {
+            print $0
+          }
+        }
+      ' "$other_requirements_file"
+    } >"$tmp_file"
+    rm -f "$other_requirements_file"
+    bundle_update_requirements_file "$tmp_file"
+    return
+  fi
+
+  for package in "${packages[@]}"; do
+    if bundle_requirement_version "$package" >/dev/null; then
+      selected_count=$((selected_count + 1))
+    fi
+  done
+  if [[ "$selected_count" -eq 0 ]]; then
+    rm -f "$tmp_file"
+    printf 'bundle item not selected: %s\n' "$item"
+    return 0
+  fi
+
+  bundle_write_without_packages "$tmp_file" "${packages[@]}"
+  bundle_update_requirements_file "$tmp_file"
 }
 
 wheel_name_version() {
@@ -658,11 +952,56 @@ bundle_upgrade_build_input() {
   fi
 }
 
+bundle_pypi_prepare_build_input() {
+  local input_file="$1"
+  local roots_file="$2"
+  local root_count=0
+  local line
+  local name
+  local base_name
+
+  require_file "$requirements_file"
+  validate_requirements_file "$requirements_file"
+  if requirements_has_absolute_paths "$requirements_file"; then
+    printf 'error: prepare --pypi-only requires package pins, but requirements.txt contains absolute paths\n' >&2
+    printf '       replace /wheels/*.whl or source paths with package==version pins\n' >&2
+    return 1
+  fi
+
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    name="${line%%==*}"
+    base_name="${name%%[*}"
+    printf '%s\n' "$name" >>"$input_file"
+    printf '%s\t%s\n' "$(normalize_distribution_name "$base_name")" "$name" >>"$roots_file"
+    root_count=$((root_count + 1))
+  done < <(
+    awk '
+      {
+        line = $0
+        sub(/^[[:space:]]+/, "", line)
+        sub(/[[:space:]]+#.*$/, "", line)
+        sub(/[[:space:]]+$/, "", line)
+        if (line != "") {
+          print line
+        }
+      }
+    ' "$requirements_file"
+  )
+
+  if [[ "$root_count" -eq 0 ]]; then
+    printf 'error: requirements file has no root requirements: %s\n' "$requirements_file" >&2
+    return 1
+  fi
+}
+
 bundle_upgrade_resolve() {
   local input_file="$1"
   local roots_file="$2"
   local output_file="$3"
   local pypi_only="$4"
+  local allow_pre="${5:-0}"
+  local action_label="${6:-bundle upgrade}"
   local tmp_dir
   local image
   local docker_user
@@ -672,6 +1011,7 @@ bundle_upgrade_resolve() {
   local -a parse_command
   local -a wheel_mount_args=()
   local -a find_links_args=()
+  local -a pre_args=()
 
   tmp_dir="$(dirname "$input_file")"
   image="$(compose_env_value ARBITER_IMAGE python:3.11-slim)"
@@ -680,6 +1020,9 @@ bundle_upgrade_resolve() {
   if [[ "$pypi_only" -eq 0 && -d "$active_wheels_dir" ]]; then
     wheel_mount_args=(-v "$active_wheels_dir:/wheels:ro")
     find_links_args=(--find-links /wheels)
+  fi
+  if [[ "$allow_pre" -eq 1 ]]; then
+    pre_args=(--pre)
   fi
   require_docker_access
 
@@ -691,6 +1034,7 @@ bundle_upgrade_resolve() {
     "$image"
     python -m pip --disable-pip-version-check install
     --dry-run --ignore-installed
+    "${pre_args[@]}"
     "${find_links_args[@]}"
     --report /work/report.json
     -r /work/requirements.in
@@ -698,7 +1042,7 @@ bundle_upgrade_resolve() {
 
   if ! "${resolve_command[@]}" >"$tmp_dir/pip-resolve.out" 2>&1; then
     cat "$tmp_dir/pip-resolve.out" >&2
-    printf 'error: failed to resolve bundle upgrade\n' >&2
+    printf 'error: failed to resolve %s\n' "$action_label" >&2
     return 1
   fi
 
@@ -740,6 +1084,72 @@ with open("/work/requirements.out", "w", encoding="utf-8") as handle:
   )
   "${parse_command[@]}"
   cp "$tmp_dir/requirements.out" "$output_file"
+}
+
+prepare_pypi_only_requirements() {
+  local target_requirements_file="$1"
+  local tmp_dir
+  local input_file
+  local roots_file
+  local output_file
+
+  tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/arbiter-pypi-prepare.XXXXXX")"
+  input_file="$tmp_dir/requirements.in"
+  roots_file="$tmp_dir/roots.tsv"
+  output_file="$tmp_dir/requirements.resolved"
+
+  if ! bundle_pypi_prepare_build_input "$input_file" "$roots_file"; then
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+  if ! bundle_upgrade_resolve "$input_file" "$roots_file" "$output_file" 1 1 "package-index preparation"; then
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+  if ! validate_requirements_file "$output_file"; then
+    printf 'error: resolved requirements are invalid; requirements unchanged: %s\n' "$requirements_file" >&2
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+
+  cp "$output_file" "$target_requirements_file"
+  rm -rf "$tmp_dir"
+}
+
+prepare_pypi_only() {
+  local target_wheels_dir="$1"
+  local docker_user="$2"
+  local image="$3"
+  local tmp_dir
+  local staged_requirements_file
+  local staged_wheels_dir
+
+  tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/arbiter-pypi-prepare-transaction.XXXXXX")"
+  staged_requirements_file="$tmp_dir/requirements.txt"
+  staged_wheels_dir="$tmp_dir/wheels"
+  mkdir -p "$staged_wheels_dir"
+
+  if ! prepare_pypi_only_requirements "$staged_requirements_file"; then
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+  if ! prepare_dependency_wheelhouse "$staged_requirements_file" "$staged_wheels_dir" "$docker_user" "$image" 1 1; then
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+  if ! validate_dependency_wheelhouse "$staged_requirements_file" "$staged_wheels_dir" "$docker_user" "$image" 1; then
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+
+  replace_dependency_wheelhouse "$staged_wheels_dir" "$target_wheels_dir"
+  if ! cmp -s "$requirements_file" "$staged_requirements_file"; then
+    cp "$staged_requirements_file" "$requirements_file"
+    printf 'updated requirements file from package index: %s\n' "$requirements_file"
+  fi
+  printf 'prepared dependency wheelhouse: %s\n' "$target_wheels_dir"
+  printf 'validated dependency wheelhouse: %s\n' "$target_wheels_dir"
+  rm -rf "$tmp_dir"
 }
 
 bundle_upgrade() {
@@ -2210,15 +2620,40 @@ install_apply_permissions() {
   fi
 }
 
-prepare_dependency_wheelhouse() {
+copy_existing_wheelhouse() {
+  local source_wheels_dir="$1"
+  local target_wheels_dir="$2"
+  local wheel
+
+  [[ -d "$source_wheels_dir" ]] || return 0
+  mkdir -p "$target_wheels_dir"
+  shopt -s nullglob
+  for wheel in "$source_wheels_dir"/*.whl; do
+    cp -p "$wheel" "$target_wheels_dir/"
+  done
+  shopt -u nullglob
+}
+
+replace_dependency_wheelhouse() {
+  local source_wheels_dir="$1"
+  local target_wheels_dir="$2"
+
+  mkdir -p "$target_wheels_dir"
+  find "$target_wheels_dir" -maxdepth 1 -type f -name '*.whl' -delete
+  find "$source_wheels_dir" -maxdepth 1 -type f -name '*.whl' -exec cp -p {} "$target_wheels_dir/" \;
+}
+
+prune_dependency_wheelhouse() {
   local target_requirements_file
   local target_wheels_dir
-  local image
   local docker_user
+  local image
   local quiet
-  local tmp_wheels_dir
+  local tmp_dir
   local output_file=""
-  local -a docker_command
+  local prune_script
+  local -a report_command
+  local -a prune_command
 
   target_requirements_file="$1"
   target_wheels_dir="$2"
@@ -2226,17 +2661,131 @@ prepare_dependency_wheelhouse() {
   image="$4"
   quiet="${5:-0}"
 
+  require_file "$target_requirements_file"
+  require_dir "$target_wheels_dir"
+  require_docker_access
+
+  tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/arbiter-wheelhouse-prune.XXXXXX")"
+  report_command=(
+    docker run --rm
+    --user "$docker_user"
+    -v "$target_requirements_file:/requirements.txt:ro"
+    -v "$target_wheels_dir:/wheels:ro"
+    -v "$tmp_dir:/work"
+    "$image"
+    python -m pip --disable-pip-version-check install
+    --dry-run --ignore-installed
+    --no-index --find-links /wheels
+    --report /work/report.json
+    -r /requirements.txt
+  )
+
+  prune_script='import json
+import re
+from pathlib import Path
+
+def normalize(name):
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+with open("/work/report.json", encoding="utf-8") as handle:
+    report = json.load(handle)
+
+referenced = set()
+for entry in report.get("install", []):
+    metadata = entry.get("metadata", {})
+    name = metadata.get("name")
+    version = metadata.get("version")
+    if name and version:
+        referenced.add((normalize(name), str(version)))
+
+for wheel in Path("/wheels").glob("*.whl"):
+    parts = wheel.name[:-4].split("-", 2)
+    if len(parts) < 2 or (normalize(parts[0]), parts[1]) not in referenced:
+        wheel.unlink()
+'
+  prune_command=(
+    docker run --rm
+    --user "$docker_user"
+    -v "$tmp_dir:/work:ro"
+    -v "$target_wheels_dir:/wheels"
+    "$image"
+    python -c "$prune_script"
+  )
+
+  if [[ "$quiet" -eq 1 ]]; then
+    output_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-wheelhouse-prune.XXXXXX")"
+  fi
+
+  if [[ "$quiet" -eq 1 ]]; then
+    if ! "${report_command[@]}" >"$output_file" 2>&1; then
+      cat "$output_file" >&2
+      rm -f "$output_file"
+      rm -rf "$tmp_dir"
+      printf 'error: failed to resolve prepared wheelhouse contents: %s\n' "$target_wheels_dir" >&2
+      return 1
+    fi
+    if ! "${prune_command[@]}" >"$output_file" 2>&1; then
+      cat "$output_file" >&2
+      rm -f "$output_file"
+      rm -rf "$tmp_dir"
+      printf 'error: failed to prune dependency wheelhouse: %s\n' "$target_wheels_dir" >&2
+      return 1
+    fi
+  else
+    if ! "${report_command[@]}"; then
+      rm -rf "$tmp_dir"
+      printf 'error: failed to resolve prepared wheelhouse contents: %s\n' "$target_wheels_dir" >&2
+      return 1
+    fi
+    if ! "${prune_command[@]}"; then
+      rm -rf "$tmp_dir"
+      printf 'error: failed to prune dependency wheelhouse: %s\n' "$target_wheels_dir" >&2
+      return 1
+    fi
+  fi
+
+  if [[ -n "$output_file" ]]; then
+    rm -f "$output_file"
+  fi
+  rm -rf "$tmp_dir"
+}
+
+prepare_dependency_wheelhouse() {
+  local target_requirements_file
+  local target_wheels_dir
+  local image
+  local docker_user
+  local quiet
+  local pypi_only
+  local tmp_wheels_dir
+  local output_file=""
+  local -a docker_command
+  local -a wheel_input_mount_args=()
+  local -a find_links_args=()
+
+  target_requirements_file="$1"
+  target_wheels_dir="$2"
+  docker_user="$3"
+  image="$4"
+  quiet="${5:-0}"
+  pypi_only="${6:-0}"
+
+  if [[ "$pypi_only" -eq 0 ]]; then
+    wheel_input_mount_args=(-v "$target_wheels_dir:/wheels:ro")
+    find_links_args=(--find-links /wheels)
+  fi
+
   if [[ "${install_dry_run:-0}" -eq 1 ]]; then
     docker_command=(
       docker run --rm
       --user "$docker_user"
       -v "$target_requirements_file:/requirements.txt:ro"
-      -v "$target_wheels_dir:/wheels:ro"
+      "${wheel_input_mount_args[@]}"
       -v "$target_wheels_dir:/wheelhouse"
       "$image"
       python -m pip --disable-pip-version-check wheel
       --no-cache-dir
-      --find-links /wheels
+      "${find_links_args[@]}"
       --wheel-dir /wheelhouse
       -r /requirements.txt
     )
@@ -2250,16 +2799,19 @@ prepare_dependency_wheelhouse() {
 
   mkdir -p "$target_wheels_dir"
   tmp_wheels_dir="$(mktemp -d "${TMPDIR:-/tmp}/arbiter-wheelhouse.XXXXXX")"
+  if [[ "$pypi_only" -eq 0 ]]; then
+    copy_existing_wheelhouse "$target_wheels_dir" "$tmp_wheels_dir"
+  fi
   docker_command=(
     docker run --rm
     --user "$docker_user"
     -v "$target_requirements_file:/requirements.txt:ro"
-    -v "$target_wheels_dir:/wheels:ro"
+    "${wheel_input_mount_args[@]}"
     -v "$tmp_wheels_dir:/wheelhouse"
     "$image"
     python -m pip --disable-pip-version-check wheel
     --no-cache-dir
-    --find-links /wheels
+    "${find_links_args[@]}"
     --wheel-dir /wheelhouse
     -r /requirements.txt
   )
@@ -2285,8 +2837,11 @@ prepare_dependency_wheelhouse() {
     rm -rf "$tmp_wheels_dir"
     return 1
   fi
-  find "$target_wheels_dir" -maxdepth 1 -type f -name '*.whl' -delete
-  find "$tmp_wheels_dir" -maxdepth 1 -type f -name '*.whl' -exec cp -p {} "$target_wheels_dir/" \;
+  if ! prune_dependency_wheelhouse "$target_requirements_file" "$tmp_wheels_dir" "$docker_user" "$image" "$quiet"; then
+    rm -rf "$tmp_wheels_dir"
+    return 1
+  fi
+  replace_dependency_wheelhouse "$tmp_wheels_dir" "$target_wheels_dir"
   rm -rf "$tmp_wheels_dir"
   if [[ -n "$output_file" ]]; then
     rm -f "$output_file"
@@ -2377,17 +2932,33 @@ prepare() {
   local target_wheels_dir
   local image
   local docker_user
+  local pypi_only=0
 
-  if (($#)); then
-    printf 'error: prepare does not accept options yet; edit requirements.txt or use bundle prepare\n' >&2
-    return 2
-  fi
+  while (($#)); do
+    case "$1" in
+      --pypi-only)
+        pypi_only=1
+        ;;
+      *)
+        printf 'error: unknown prepare option: %s\n' "$1" >&2
+        return 2
+        ;;
+    esac
+    shift
+  done
+
   require_file "$requirements_file"
   validate_requirements_file "$requirements_file"
   target_wheels_dir="$(wheels_dir_path)"
   image="$(compose_env_value ARBITER_IMAGE python:3.11-slim)"
   docker_user="$(id -u):$(id -g)"
-  prepare_dependency_wheelhouse "$requirements_file" "$target_wheels_dir" "$docker_user" "$image"
+  if [[ "$pypi_only" -eq 1 ]]; then
+    if ! prepare_pypi_only "$target_wheels_dir" "$docker_user" "$image"; then
+      return 1
+    fi
+    return
+  fi
+  prepare_dependency_wheelhouse "$requirements_file" "$target_wheels_dir" "$docker_user" "$image" 0 "$pypi_only"
   validate_dependency_wheelhouse "$requirements_file" "$target_wheels_dir" "$docker_user" "$image"
 }
 
@@ -2401,7 +2972,7 @@ prepare_quiet() {
   target_wheels_dir="$(wheels_dir_path)"
   image="$(compose_env_value ARBITER_IMAGE python:3.11-slim)"
   docker_user="$(id -u):$(id -g)"
-  prepare_dependency_wheelhouse "$requirements_file" "$target_wheels_dir" "$docker_user" "$image" 1
+  prepare_dependency_wheelhouse "$requirements_file" "$target_wheels_dir" "$docker_user" "$image" 1 0
   validate_dependency_wheelhouse "$requirements_file" "$target_wheels_dir" "$docker_user" "$image" 1
 }
 
@@ -2450,12 +3021,21 @@ bundle() {
           ;;
       esac
       ;;
+    list-plugins)
+      if (($#)); then
+        printf 'error: list-plugins does not accept arguments\n' >&2
+        return 2
+      fi
+      bundle_list_plugins
+      ;;
     upgrade)
       bundle_upgrade "$@"
       ;;
-    add | remove)
-      printf 'error: bundle %s is not implemented yet; edit requirements.txt, then run bundle prepare\n' "$subcommand" >&2
-      return 2
+    add)
+      bundle_add_plugin "$@"
+      ;;
+    remove)
+      bundle_remove_plugin "$@"
       ;;
     "" | -h | --help | help)
       cat <<'EOF'
@@ -2466,10 +3046,16 @@ Commands:
   check         Validate the prepared wheelhouse without downloading packages
   list          Show root requirements
   list all      Show root and transitive wheelhouse packages
+  list-plugins  Show service plugins supported by add/remove
+  add ITEM      Add a service plugin, or all plugins in a meta package
+  remove ITEM   Remove a service plugin, or all plugins in a meta package
   upgrade       Upgrade package root requirements and rebuild the wheelhouse
 
 Upgrade options:
   --pypi-only   Resolve from the package index only; skip local repo wheels
+
+Prepare options:
+  --pypi-only   Resolve selected packages from the index, rewrite requirements.txt after success, and build without the existing wheelhouse
 EOF
       ;;
     *)

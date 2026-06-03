@@ -2,14 +2,9 @@
 title: Networking
 ---
 
-Prepared staging directories publish MCP on a staging-specific port by default:
-
-```text
-http://127.0.0.1:18025/mcp
-```
-
-This keeps staging local while avoiding the installed service's default
-`127.0.0.1:8025` bind.
+Prepared staging directories publish MCP on a staging-specific host port by
+default. This keeps staging local while avoiding the installed service's default
+host port.
 
 The service listens on all container interfaces so Docker's host-loopback port
 publish can reach it. The host publish remains loopback-only unless you change
@@ -35,6 +30,20 @@ Common values in `docker.env`:
   `arbiter-stg0` before install and `arbiter0` after install.
 - `ARBITER_DOCKER_SUBNET`: bridge subnet, staging default
   `172.31.251.0/24`; installed default `172.31.250.0/24`.
+
+## Staging and install identities
+
+Staging and installed deployments use different Docker identifiers so a
+prepared directory can be tested on the same machine as the installed service.
+The generated staging directory starts with staging names and ports. During
+`install`, the copied directory is rewritten to the installed identity.
+
+The host port is rewritten because it is the address clients use: staging needs
+a stable local port that does not take over the installed service's default.
+The Docker subnet is separate because Docker bridge networks cannot overlap.
+If the default staged subnet already overlaps another Docker network, staged
+`up` updates `ARBITER_DOCKER_SUBNET` in `docker.env` to an unused staging
+candidate before Compose creates the network.
 
 ## Bridge overrides
 

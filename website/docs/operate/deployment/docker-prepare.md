@@ -2,9 +2,9 @@
 title: Prepare Docker Deployment
 ---
 
-Prepare the deployment directory as an unprivileged operator. This phase writes
-files, config, and env locally; it does not start Docker or install anything
-under `/opt`.
+Prepare and test the deployment directory as an unprivileged operator. This
+phase writes files, config, and env locally; it can start the staged container
+for smoke testing, but it does not install anything under `/opt`.
 
 ## Create the directory
 
@@ -12,40 +12,70 @@ under `/opt`.
 arbiter-server deploy docker init
 ```
 
-By default this creates `./arbiter-docker`. `init` refuses to overwrite existing
-managed files and writes:
+By default this creates `./arbiter-docker`, including an `arbiter-docker`
+helper script for preparing and installing the Arbiter Docker container. `init`
+refuses to overwrite existing managed files.
 
-- `compose.yaml`: Docker Compose service definition.
-- `docker.env`: Docker Compose/container wrapper settings such as host port,
-  image, restart policy, config directory/name, and network values.
-- `conf/`: default config directory. `init` creates the directory but not the
-  config or env file.
+<details>
+<summary>Files created by init</summary>
+
+Most operators should use the `arbiter-docker` helper and Arbiter config
+commands instead of editing generated deployment files directly.
+
+- `arbiter-docker`: local helper script for this deployment.
+- `conf/`: deployment config directory.
 - `requirements.txt`: exact package pins or explicit wheel paths installed
   inside the container.
-- `wheels/`: generated wheelhouse when the current Python environment contains
-  editable local Arbiter packages.
-- `compose.override.yaml`: optional local Compose overrides, such as an
-  explicit source checkout mount for testing.
-- `arbiter-docker`: the local helper script for this deployment.
-- `.arbiter-deploy.json`: hidden manifest that records hashes for
-  generated template files.
+- `wheels/`: prepared dependency wheelhouse.
+- `docker.env`: Docker Compose/container wrapper settings.
+- `compose.yaml`: generated Docker Compose service definition.
+- `compose.override.yaml`: optional generated local Compose overrides.
+- `.arbiter-deploy.json`: generated file manifest.
 
-Prepared Docker directories are staged deployments. The generated Compose
-command passes `arbiter.deployment_scope=staged` to the server, so startup
-logs, `version_info`, and clients can distinguish a staged server from an
-installed one. Staged directories also use staging-specific Docker wrapper
-defaults so they can run next to an installed Arbiter without changing files by
-hand:
+</details>
 
-- MCP URL: `http://127.0.0.1:18025/mcp`
-- container name: `arbiter-staging`
-- Docker network: `arbiter-staging`
-- bridge interface: `arbiter-stg0`
-- bridge subnet: `172.31.251.0/24`
+Prepared Docker directories are staged deployments. They use staging-specific
+Docker names and ports so they can run next to an installed Arbiter. During
+install, the copied directory is rewritten to the installed identity. For the
+networking details, see [Networking](./networking.md).
 
-When `up` sees that the staged subnet overlaps an existing Docker network, the
-helper rewrites `ARBITER_DOCKER_SUBNET` in `docker.env` to an unused staging
-candidate before starting Compose.
+## Prepare packages
+
+Prepare the dependency wheelhouse before configuring accounts:
+
+```bash
+./arbiter-docker/arbiter-docker bundle prepare
+```
+
+`bundle prepare` validates `requirements.txt` and builds a complete wheelhouse
+from the configured package pins or wheel paths. Running it before config work
+catches package resolution, Docker image, and wheel compatibility problems
+early. Each run prunes stale wheels that are no longer part of the resolved
+runtime install set.
+
+Use `--pypi-only` when `requirements.txt` contains package pins and you want
+preparation to resolve the selected package names from the package index
+instead of considering existing wheels from the deployment wheelhouse:
+
+```bash
+./arbiter-docker/arbiter-docker bundle prepare --pypi-only
+```
+
+This rewrites `requirements.txt` to the exact versions selected from the
+package index, including pre/dev releases, then builds and validates the
+wheelhouse.
+
+If the current Python environment uses editable local Arbiter packages, refresh
+the generated package pins and local wheels before preparing the wheelhouse:
+
+```bash
+arbiter-server deploy docker update --force
+./arbiter-docker/arbiter-docker bundle prepare
+```
+
+For Linux install, use pinned packages or generated `/wheels/*.whl` entries and
+remove any local source mount. A prepared wheelhouse lets the installed service
+start without downloading packages or building wheels at runtime.
 
 ## Add config
 
@@ -78,6 +108,19 @@ Keep `docker.env` separate from `conf/.env`: `docker.env` controls the Compose
 wrapper, while `conf/.env` is created by Arbiter env tooling and belongs
 to the config package.
 
+## Start and test
+
+After adding config and env, start the staged service and smoke test the MCP
+endpoint:
+
+```bash
+./arbiter-docker/arbiter-docker up
+./arbiter-docker/arbiter-docker test
+```
+
+`up` prints the MCP URL for this staged directory. `test` calls `version_info`
+through that URL and waits through transient startup connection failures.
+
 ## Preinstall check
 
 Before promoting the directory to a host install:
@@ -92,24 +135,6 @@ requirements or `/source/arbiter` mounts are present, because local source
 mounts are not production install state. It also rejects absolute host paths in
 `docker.env` for runtime files; use paths relative to the deployment directory
 so the installed service only reads from the installation path.
-
-If the current Python environment uses editable local Arbiter packages, refresh
-the generated package pins and local wheels before preparing the wheelhouse:
-
-```bash
-arbiter-server deploy docker update --force
-```
-
-Then prepare the wheelhouse with:
-
-```bash
-./arbiter-docker/arbiter-docker bundle prepare
-```
-
-For Linux install, use pinned packages or generated `/wheels/*.whl` entries and
-remove any local source mount. `bundle prepare` prepares a complete wheelhouse
-so the installed service can start without downloading packages or building
-wheels at runtime.
 
 For package pins, wheelhouses, and source checkout testing, see
 [Packages and wheels](./packages.md).

@@ -25,9 +25,10 @@ const sidebars = {
           link: {type: 'doc', id: 'operate/deployment'},
           items: [
             'operate/deployment/docker-prepare',
-            'operate/deployment/linux-install',
-            'operate/deployment/operations',
             'operate/deployment/packages',
+            'operate/deployment/bot-accounts',
+            'operate/deployment/operations',
+            'operate/deployment/linux-install',
             'operate/deployment/networking',
           ],
         },

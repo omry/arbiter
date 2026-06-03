@@ -530,9 +530,7 @@ def test_compose_config_deployment_scope_override_uses_structured_schema(
         encoding="utf-8",
     )
     (tmp_path / "arbiter" / "server.yaml").write_text(
-        "# @package arbiter\n"
-        "server:\n"
-        "  name: arbiter\n",
+        "# @package arbiter\n" "server:\n" "  name: arbiter\n",
         encoding="utf-8",
     )
 
@@ -1350,6 +1348,209 @@ def test_cli_deploy_docker_generated_helper_bundle_lists_root_requirements(
     )
 
 
+def test_cli_deploy_docker_generated_helper_bundle_lists_supported_plugins(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-core==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "bundle", "list-plugins"],
+        check=False,
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == "imap\nsmtp\n"
+
+
+def test_cli_deploy_docker_generated_helper_bundle_adds_and_removes_plugin_requirements(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-core==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    add_imap = subprocess.run(
+        [deploy_dir / "arbiter-docker", "bundle", "add", "imap"],
+        check=False,
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+    )
+    add_smtp = subprocess.run(
+        [deploy_dir / "arbiter-docker", "bundle", "add", "smtp"],
+        check=False,
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+    )
+    remove_smtp = subprocess.run(
+        [deploy_dir / "arbiter-docker", "bundle", "remove", "smtp"],
+        check=False,
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+    )
+
+    assert add_imap.returncode == 0
+    assert add_smtp.returncode == 0
+    assert remove_smtp.returncode == 0
+    assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
+        "arbiter-core==1.2.3\n" "arbiter-imap==1.2.3\n"
+    )
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "bundle", "list"],
+        check=False,
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == (
+        "root\tarbiter-core==1.2.3\n" "root\tarbiter-imap==1.2.3\n"
+    )
+
+
+def test_cli_deploy_docker_generated_helper_bundle_adds_and_removes_meta_package_plugins(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-core==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    add_suite = subprocess.run(
+        [deploy_dir / "arbiter-docker", "bundle", "add", "arbiter-suite"],
+        check=False,
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+    )
+    assert add_suite.returncode == 0
+    assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
+        "arbiter-core==1.2.3\n" "arbiter-imap==1.2.3\n" "arbiter-smtp==1.2.3\n"
+    )
+
+    remove_suite = subprocess.run(
+        [deploy_dir / "arbiter-docker", "bundle", "remove", "arbiter-suite"],
+        check=False,
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+    )
+    assert remove_suite.returncode == 0
+    assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
+        "arbiter-core==1.2.3\n"
+    )
+
+
+def test_cli_deploy_docker_generated_helper_bundle_remove_expands_suite_requirement(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "bundle", "remove", "smtp"],
+        check=False,
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
+        "arbiter-core==1.2.3\n" "arbiter-imap==1.2.3\n"
+    )
+
+
+def test_cli_deploy_docker_generated_helper_bundle_remove_meta_package_from_suite_requirement(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "bundle", "remove", "arbiter-suite"],
+        check=False,
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
+        "arbiter-core==1.2.3\n"
+    )
+
+
 def test_cli_deploy_docker_generated_helper_bundle_lists_all_wheelhouse_packages(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -1826,10 +2027,21 @@ def test_cli_deploy_docker_generated_helper_bundle_upgrade_refreshes_wheel_roots
         "transitive:\n"
         "  no changes\n"
     )
-    docker_call_lines = docker_calls.read_text(encoding="utf-8").splitlines()
-    assert len(docker_call_lines) == 4
+    docker_call_lines = [
+        line
+        for line in docker_calls.read_text(encoding="utf-8").splitlines()
+        if line == "info" or line.startswith("run --rm")
+    ]
+    assert len(docker_call_lines) == 7
     assert docker_call_lines[0] == "info"
     assert docker_call_lines[2] == "info"
+    assert (
+        "--dry-run --ignore-installed --no-index --find-links /wheels"
+        in docker_call_lines[3]
+    )
+    assert "--report /work/report.json" in docker_call_lines[3]
+    assert " python -c " in docker_call_lines[4]
+    assert docker_call_lines[5] == "info"
 
 
 def test_cli_deploy_docker_generated_helper_bundle_check_validates_without_prepare(
@@ -1903,11 +2115,34 @@ def test_cli_deploy_docker_generated_helper_bundle_prepare_builds_wheelhouse(
         == 0
     )
     capsys.readouterr()
+    stale_wheel = deploy_dir / "wheels" / "stale-9.9.9-py3-none-any.whl"
+    stale_wheel.write_text("stale\n", encoding="utf-8")
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     docker_calls = tmp_path / "docker-calls"
     (fake_bin / "docker").write_text(
-        "#!/usr/bin/env sh\n" f'printf "%s\\n" "$*" >> "{docker_calls}"\n' "exit 0\n",
+        "#!/usr/bin/env sh\n"
+        f'printf "%s\\n" "$*" >> "{docker_calls}"\n'
+        'wheelhouse=""\n'
+        'wheels=""\n'
+        'for arg in "$@"; do\n'
+        '  case "$arg" in\n'
+        '    *:/wheelhouse) wheelhouse="${arg%:/wheelhouse}" ;;\n'
+        '    *:/wheels) wheels="${arg%:/wheels}" ;;\n'
+        '    *:/wheels:ro) wheels="${arg%:/wheels:ro}" ;;\n'
+        "  esac\n"
+        "done\n"
+        'case "$*" in\n'
+        '  *" pip --disable-pip-version-check wheel "*)\n'
+        '    printf "wheel\\n" > "$wheelhouse/arbiter_suite-1.2.3-py3-none-any.whl"\n'
+        "    exit 0\n"
+        "    ;;\n"
+        '  *" python -c "*)\n'
+        '    rm -f "$wheels/stale-9.9.9-py3-none-any.whl"\n'
+        "    exit 0\n"
+        "    ;;\n"
+        "esac\n"
+        "exit 0\n",
         encoding="utf-8",
     )
     (fake_bin / "docker").chmod(0o755)
@@ -1925,8 +2160,12 @@ def test_cli_deploy_docker_generated_helper_bundle_prepare_builds_wheelhouse(
 
     assert result.returncode == 0
     docker_user = f"{os.getuid()}:{os.getgid()}"
-    docker_call_lines = docker_calls.read_text(encoding="utf-8").splitlines()
-    assert len(docker_call_lines) == 4
+    docker_call_lines = [
+        line
+        for line in docker_calls.read_text(encoding="utf-8").splitlines()
+        if line == "info" or line.startswith("run --rm")
+    ]
+    assert len(docker_call_lines) == 7
     assert docker_call_lines[0] == "info"
     assert docker_call_lines[1].startswith(
         f"run --rm --user {docker_user} "
@@ -1940,7 +2179,14 @@ def test_cli_deploy_docker_generated_helper_bundle_prepare_builds_wheelhouse(
         "--find-links /wheels --wheel-dir /wheelhouse -r /requirements.txt"
     )
     assert docker_call_lines[2] == "info"
-    assert docker_call_lines[3] == (
+    assert (
+        "--dry-run --ignore-installed --no-index --find-links /wheels"
+        in docker_call_lines[3]
+    )
+    assert "--report /work/report.json" in docker_call_lines[3]
+    assert " python -c " in docker_call_lines[4]
+    assert docker_call_lines[5] == "info"
+    assert docker_call_lines[6] == (
         f"run --rm --user {docker_user} "
         f"-v {deploy_dir / 'requirements.txt'}:/requirements.txt:ro "
         f"-v {deploy_dir / 'wheels'}:/wheels:ro "
@@ -1951,6 +2197,282 @@ def test_cli_deploy_docker_generated_helper_bundle_prepare_builds_wheelhouse(
     )
     assert "prepared dependency wheelhouse" in result.stdout
     assert "validated dependency wheelhouse" in result.stdout
+    assert not stale_wheel.exists()
+    assert (deploy_dir / "wheels" / "arbiter_suite-1.2.3-py3-none-any.whl").exists()
+
+
+def test_cli_deploy_docker_generated_helper_prepare_pypi_only_resolves_index_pins(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-core==0.9.0.dev2",
+                "docker.requirement=arbiter-smtp==0.9.0.dev2",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker_calls = tmp_path / "docker-calls"
+    resolve_input = tmp_path / "resolve-input"
+    (fake_bin / "docker").write_text(
+        "#!/usr/bin/env sh\n"
+        f'printf "%s\\n" "$*" >> "{docker_calls}"\n'
+        'work=""\n'
+        'for arg in "$@"; do\n'
+        '  case "$arg" in\n'
+        '    *:/work) work="${arg%:/work}" ;;\n'
+        "  esac\n"
+        "done\n"
+        'case "$*" in\n'
+        '  *"--report /work/report.json"*)\n'
+        f'    cp "$work/requirements.in" "{resolve_input}"\n'
+        "    cat > \"$work/report.json\" <<'JSON'\n"
+        '{"install":[{"metadata":{"name":"arbiter-core","version":"0.9.0.dev1"}},'
+        '{"metadata":{"name":"arbiter-smtp","version":"0.9.0.dev1"}}]}\n'
+        "JSON\n"
+        "    exit 0\n"
+        "    ;;\n"
+        '  *" python -c "*)\n'
+        '    printf "arbiter-core==0.9.0.dev1\\narbiter-smtp==0.9.0.dev1\\n" > "$work/requirements.out"\n'
+        "    exit 0\n"
+        "    ;;\n"
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "docker").chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "prepare", "--pypi-only"],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    docker_user = f"{os.getuid()}:{os.getgid()}"
+    assert resolve_input.read_text(encoding="utf-8") == (
+        "arbiter-core\n" "arbiter-smtp\n"
+    )
+    assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
+        "arbiter-core==0.9.0.dev1\n" "arbiter-smtp==0.9.0.dev1\n"
+    )
+    docker_call_lines = [
+        line
+        for line in docker_calls.read_text(encoding="utf-8").splitlines()
+        if line == "info" or line.startswith("run --rm")
+    ]
+    assert len(docker_call_lines) == 10
+    assert docker_call_lines[0] == "info"
+    assert "--report /work/report.json" in docker_call_lines[1]
+    assert "--pre" in docker_call_lines[1]
+    assert f"-v {deploy_dir / 'wheels'}:/wheels:ro" not in docker_call_lines[1]
+    assert "--find-links /wheels" not in docker_call_lines[1]
+    assert " python -c " in docker_call_lines[2]
+    assert docker_call_lines[3] == "info"
+    assert docker_call_lines[4].startswith(
+        f"run --rm --user {docker_user} " "-v /tmp/arbiter-pypi-prepare-transaction."
+    )
+    assert ":/requirements.txt:ro -v /tmp/arbiter-wheelhouse." in docker_call_lines[4]
+    assert docker_call_lines[4].endswith(
+        ":/wheelhouse python:3.11-slim python -m pip "
+        "--disable-pip-version-check wheel --no-cache-dir "
+        "--wheel-dir /wheelhouse -r /requirements.txt"
+    )
+    assert f"-v {deploy_dir / 'wheels'}:/wheels:ro" not in docker_call_lines[4]
+    assert "--find-links /wheels" not in docker_call_lines[4]
+    assert docker_call_lines[5] == "info"
+    assert (
+        "--dry-run --ignore-installed --no-index --find-links /wheels"
+        in docker_call_lines[6]
+    )
+    assert "--report /work/report.json" in docker_call_lines[6]
+    assert " python -c " in docker_call_lines[7]
+    assert docker_call_lines[8] == "info"
+    assert docker_call_lines[9].startswith(
+        f"run --rm --user {docker_user} " "-v /tmp/arbiter-pypi-prepare-transaction."
+    )
+    assert (
+        ":/requirements.txt:ro -v /tmp/arbiter-pypi-prepare-transaction."
+        in docker_call_lines[9]
+    )
+    assert docker_call_lines[9].endswith(
+        "/wheels:/wheels:ro python:3.11-slim python -m pip "
+        "--disable-pip-version-check install --no-cache-dir "
+        "--target /tmp/arbiter-wheelhouse-check --no-index --find-links /wheels "
+        "-r /requirements.txt"
+    )
+    assert "prepared dependency wheelhouse" in result.stdout
+    assert "validated dependency wheelhouse" in result.stdout
+
+
+def test_cli_deploy_docker_generated_helper_prepare_pypi_only_is_transactional(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-core==0.9.0.dev2",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    old_wheel = deploy_dir / "wheels" / "old.whl"
+    old_wheel.write_text("old wheel\n", encoding="utf-8")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "docker").write_text(
+        "#!/usr/bin/env sh\n"
+        'work=""\n'
+        'for arg in "$@"; do\n'
+        '  case "$arg" in\n'
+        '    *:/work) work="${arg%:/work}" ;;\n'
+        "  esac\n"
+        "done\n"
+        'case "$*" in\n'
+        '  *"--report /work/report.json"*)\n'
+        "    cat > \"$work/report.json\" <<'JSON'\n"
+        '{"install":[{"metadata":{"name":"arbiter-core","version":"0.9.0.dev1"}}]}\n'
+        "JSON\n"
+        "    exit 0\n"
+        "    ;;\n"
+        '  *" python -c "*)\n'
+        '    printf "arbiter-core==0.9.0.dev1\\n" > "$work/requirements.out"\n'
+        "    exit 0\n"
+        "    ;;\n"
+        '  *" pip --disable-pip-version-check wheel "*)\n'
+        '    printf "wheel build failed\\n" >&2\n'
+        "    exit 7\n"
+        "    ;;\n"
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "docker").chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "prepare", "--pypi-only"],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
+        "arbiter-core==0.9.0.dev2\n"
+    )
+    assert old_wheel.read_text(encoding="utf-8") == "old wheel\n"
+
+
+def test_cli_deploy_docker_generated_helper_prepare_pypi_only_reports_prepare_resolve_failure(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-core==0.9.0.dev2",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "docker").write_text(
+        "#!/usr/bin/env sh\n"
+        'case "$*" in\n'
+        '  *"--report /work/report.json"*)\n'
+        '    printf "resolve failed\\n" >&2\n'
+        "    exit 7\n"
+        "    ;;\n"
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "docker").chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "prepare", "--pypi-only"],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert "error: failed to resolve package-index preparation" in result.stderr
+
+
+def test_cli_deploy_docker_generated_helper_prepare_pypi_only_rejects_wheel_roots(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    (deploy_dir / "requirements.txt").write_text(
+        "/wheels/arbiter_core-1.2.3-py3-none-any.whl\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "prepare", "--pypi-only"],
+        check=False,
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert (
+        "error: prepare --pypi-only requires package pins, "
+        "but requirements.txt contains absolute paths"
+    ) in result.stderr
 
 
 def test_cli_deploy_docker_generated_helper_up_reports_docker_permission_error(
@@ -2032,8 +2554,9 @@ def test_cli_deploy_docker_generated_helper_up_prints_mcp_url(
     (config_dir / ".env").write_text("", encoding="utf-8")
     docker_env = deploy_dir / "docker.env"
     docker_env.write_text(
-        docker_env.read_text(encoding="utf-8")
-        .replace("ARBITER_HOST_BIND=127.0.0.1\n", "ARBITER_HOST_BIND=0.0.0.0\n"),
+        docker_env.read_text(encoding="utf-8").replace(
+            "ARBITER_HOST_BIND=127.0.0.1\n", "ARBITER_HOST_BIND=0.0.0.0\n"
+        ),
         encoding="utf-8",
     )
     fake_bin = tmp_path / "bin"
@@ -2195,8 +2718,7 @@ def test_cli_deploy_docker_generated_helper_test_calls_version_info(
 
     assert result.returncode == 1
     assert result.stdout == (
-        " \033[31m✘\033[0m MCP test: "
-        "\033[94mhttp://127.0.0.1:18025/mcp\033[0m\n"
+        " \033[31m✘\033[0m MCP test: " "\033[94mhttp://127.0.0.1:18025/mcp\033[0m\n"
     )
     assert result.stderr == ""
 
@@ -2416,7 +2938,9 @@ def test_cli_deploy_docker_generated_helper_info_reports_other_deployment_owner(
     assert f"deploy dir: {deploy_dir}" in result.stdout
     assert "compose project: staged-arbiter" in result.stdout
     assert "container name: arbiter-staging" in result.stdout
-    assert "container name in use by another deployment: arbiter-staging" in result.stdout
+    assert (
+        "container name in use by another deployment: arbiter-staging" in result.stdout
+    )
     assert "owner deployment dir: /tmp/other-staging" in result.stdout
     assert "owner compose file: /tmp/other-staging/compose.yaml" in result.stdout
     assert "status: exited" in result.stdout
@@ -3089,9 +3613,9 @@ def test_cli_deploy_docker_generated_helper_install_omits_missing_docker_unit(
     assert "ARBITER_DOCKER_NETWORK_NAME:-arbiter" in installed_compose
     assert "ARBITER_DOCKER_BRIDGE_NAME:-arbiter0" in installed_compose
     assert "ARBITER_DOCKER_SUBNET:-172.31.250.0/24" in installed_compose
-    assert "ARBITER_DEPLOYMENT_SCOPE" not in (
-        install_dir / "docker.env"
-    ).read_text(encoding="utf-8")
+    assert "ARBITER_DEPLOYMENT_SCOPE" not in (install_dir / "docker.env").read_text(
+        encoding="utf-8"
+    )
     installed_docker_env = (install_dir / "docker.env").read_text(encoding="utf-8")
     assert "ARBITER_CONTAINER_NAME=arbiter\n" in installed_docker_env
     assert "ARBITER_HOST_BIND=127.0.0.1\n" in installed_docker_env
