@@ -147,6 +147,7 @@ class DockerDeployArgs:
     action: str
     directory: Path
     requirements: tuple[str, ...]
+    force: bool
 
 
 @dataclass(frozen=True)
@@ -1019,7 +1020,6 @@ def _docker_requirement_for_installed_distribution(
             wheel = _build_local_source_wheel(source_root, wheel_dir)
             if wheel is None:
                 return None
-            return f"{DOCKER_WHEELS_CONTAINER_ROOT}/{wheel.name}"
     if version == "unknown":
         return None
     return f"{distribution_name}=={version}"
@@ -1178,9 +1178,13 @@ def _parse_docker_deploy_args(args: Sequence[str]) -> DockerDeployArgs | None:
     action: str | None = None
     directory = Path(DEFAULT_DOCKER_DEPLOY_DIR)
     requirements: list[str] = []
+    force = False
 
     for arg in _strip_arg_separator(args):
-        if arg in {"init", "update", "pin-installed"}:
+        if arg == "--force":
+            force = True
+            continue
+        if arg in {"init", "update"}:
             if action is not None:
                 print_cli_error(
                     f"multiple deploy actions provided: {action}, {arg}",
@@ -1194,7 +1198,7 @@ def _parse_docker_deploy_args(args: Sequence[str]) -> DockerDeployArgs | None:
                 f"unknown docker deploy argument: {arg}",
                 area="deploy",
                 details=[
-                    "expected init, update, pin-installed, docker.dir=PATH, or "
+                    "expected init, update, --force, docker.dir=PATH, or "
                     "docker.requirement=REQUIREMENT"
                 ],
             )
@@ -1211,7 +1215,13 @@ def _parse_docker_deploy_args(args: Sequence[str]) -> DockerDeployArgs | None:
 
     if action is None:
         print_cli_error(
-            "docker deploy requires an action: init, update, or pin-installed",
+            "docker deploy requires an action: init or update",
+            area="deploy",
+        )
+        return None
+    if force and action != "update":
+        print_cli_error(
+            "--force is only supported with docker deploy update",
             area="deploy",
         )
         return None
@@ -1228,6 +1238,7 @@ def _parse_docker_deploy_args(args: Sequence[str]) -> DockerDeployArgs | None:
         action=action,
         directory=directory.expanduser(),
         requirements=tuple(requirements),
+        force=force,
     )
 
 
@@ -1257,63 +1268,6 @@ def _resolve_docker_deploy_requirements(
         )
         return None
     return default_requirements
-
-
-def _compose_override_is_generated_local_source_mount(text: str) -> bool:
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    return (
-        len(lines) == 4
-        and lines[0] == "services:"
-        and lines[1] == "arbiter:"
-        and lines[2] == "volumes:"
-        and lines[3].startswith("- ")
-        and f":{DOCKER_LOCAL_SOURCE_CONTAINER_ROOT}:ro" in lines[3]
-    )
-
-
-def _run_deploy_docker_pin_installed(
-    deploy_dir: Path, paths: Mapping[str, Path]
-) -> int:
-    requirements = _installed_python_deploy_requirements(
-        wheel_dir=deploy_dir / "wheels"
-    )
-    if requirements is None:
-        print_cli_error(
-            "cannot infer installed docker requirements",
-            area="deploy",
-            details=[
-                "run from a Python environment with arbiter-core and desired "
-                "service plugins installed",
-                "or edit requirements.txt to exact package pins manually",
-            ],
-        )
-        return 1
-
-    deploy_dir.mkdir(parents=True, exist_ok=True)
-    _write_deploy_file(
-        paths["requirements"],
-        _format_deploy_requirements(requirements.requirements),
-    )
-
-    compose_override = paths["compose_override"]
-    if compose_override.exists():
-        override_text = compose_override.read_text(encoding="utf-8")
-        if _compose_override_is_generated_local_source_mount(override_text):
-            compose_override.unlink()
-            print(f"removed local source override: {compose_override}")
-        elif DOCKER_LOCAL_SOURCE_CONTAINER_ROOT in override_text:
-            print_cli_error(
-                "cannot safely remove local source mount from edited compose override",
-                area="deploy",
-                details=[
-                    f"file: {compose_override}",
-                    f"remove the {DOCKER_LOCAL_SOURCE_CONTAINER_ROOT} volume "
-                    "manually, then retry install",
-                ],
-            )
-            return 1
-
-    return 0
 
 
 def _format_docker_compose_env_file(existing_values: Mapping[str, str]) -> str:
@@ -1417,6 +1371,37 @@ def _write_manifest_owned_deploy_file(
     manifest_hashes[relative_path] = _sha256_file(path)
 
 
+def _deploy_requirement_names(requirements: Sequence[str]) -> set[str] | None:
+    names: set[str] = set()
+    for requirement in requirements:
+        parts = _pinned_requirement_parts(requirement)
+        if parts is None:
+            return None
+        name, _version = parts
+        names.add(_normalized_distribution_name(name))
+    return names
+
+
+def _read_deploy_requirements(path: Path) -> tuple[str, ...]:
+    requirements: list[str] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        requirement = line.strip()
+        if not requirement or requirement.startswith("#"):
+            continue
+        requirements.append(requirement.split(" #", 1)[0].strip())
+    return tuple(requirements)
+
+
+def _ensure_deploy_file_mode(path: Path, *, executable: bool) -> bool:
+    if not executable:
+        return False
+    current_mode = path.stat().st_mode
+    if current_mode & 0o111:
+        return False
+    path.chmod(0o755)
+    return True
+
+
 def _update_manifest_owned_deploy_file(
     *,
     path: Path,
@@ -1424,6 +1409,7 @@ def _update_manifest_owned_deploy_file(
     content: str,
     executable: bool,
     manifest_hashes: dict[str, str],
+    force: bool,
 ) -> Literal["updated", "up_to_date", "skipped"]:
     if not path.exists():
         _write_manifest_owned_deploy_file(
@@ -1439,13 +1425,35 @@ def _update_manifest_owned_deploy_file(
     desired_hash = _sha256_bytes(content.encode("utf-8"))
     if current_hash == desired_hash:
         manifest_hashes[relative_path] = current_hash
+        if _ensure_deploy_file_mode(path, executable=executable):
+            return "updated"
         return "up_to_date"
 
     previous_hash = manifest_hashes.get(relative_path)
     if previous_hash is None:
+        if force:
+            print(f"force updating managed file without manifest ownership: {path}")
+            _write_manifest_owned_deploy_file(
+                path=path,
+                relative_path=relative_path,
+                content=content,
+                executable=executable,
+                manifest_hashes=manifest_hashes,
+            )
+            return "updated"
         print(f"skipped managed file without manifest ownership: {path}")
         return "skipped"
     if current_hash != previous_hash:
+        if force:
+            print(f"force updating managed file with local edits: {path}")
+            _write_manifest_owned_deploy_file(
+                path=path,
+                relative_path=relative_path,
+                content=content,
+                executable=executable,
+                manifest_hashes=manifest_hashes,
+            )
+            return "updated"
         print(f"skipped managed file with local edits: {path}")
         return "skipped"
 
@@ -1468,15 +1476,6 @@ def _run_deploy_docker(argv: Sequence[str]) -> int:
     paths = _deploy_managed_paths(deploy_dir)
     compose_text = _deploy_template_text("compose.yaml")
     helper_text = _deploy_template_text("arbiter-docker")
-
-    if parsed.action == "pin-installed":
-        if parsed.requirements:
-            print_cli_error(
-                "pin-installed does not accept docker.requirement overrides",
-                area="deploy",
-            )
-            return 2
-        return _run_deploy_docker_pin_installed(deploy_dir, paths)
 
     if parsed.action == "init":
         manifest_path = _deploy_manifest_path(deploy_dir)
@@ -1549,6 +1548,7 @@ def _run_deploy_docker(argv: Sequence[str]) -> int:
                 content=compose_text,
                 executable=False,
                 manifest_hashes=manifest_hashes,
+                force=parsed.force,
             ),
             _update_manifest_owned_deploy_file(
                 path=paths["helper"],
@@ -1556,6 +1556,7 @@ def _run_deploy_docker(argv: Sequence[str]) -> int:
                 content=helper_text,
                 executable=True,
                 manifest_hashes=manifest_hashes,
+                force=parsed.force,
             ),
         ]
         try:
@@ -1568,16 +1569,40 @@ def _run_deploy_docker(argv: Sequence[str]) -> int:
             return 1
         docker_env_content = _format_docker_compose_env_file(existing_docker_env)
         wrote_local_state = False
-        if not paths["requirements"].exists():
-            requirement_resolution = _resolve_docker_deploy_requirements(
+        update_requirement_resolution: DockerDeployRequirements | None = None
+        refresh_existing_requirements = False
+        if parsed.force and paths["requirements"].exists():
+            update_requirement_resolution = _resolve_docker_deploy_requirements(
                 parsed.requirements,
                 wheel_dir=deploy_dir / "wheels",
             )
-            if requirement_resolution is None:
+            if update_requirement_resolution is None:
                 return 2
+            if parsed.requirements:
+                refresh_existing_requirements = True
+            else:
+                existing_names = _deploy_requirement_names(
+                    _read_deploy_requirements(paths["requirements"])
+                )
+                resolved_names = _deploy_requirement_names(
+                    update_requirement_resolution.requirements
+                )
+                refresh_existing_requirements = (
+                    existing_names is not None and existing_names == resolved_names
+                )
+        if not paths["requirements"].exists() or refresh_existing_requirements:
+            if update_requirement_resolution is None:
+                update_requirement_resolution = _resolve_docker_deploy_requirements(
+                    parsed.requirements,
+                    wheel_dir=deploy_dir / "wheels",
+                )
+                if update_requirement_resolution is None:
+                    return 2
+            if paths["requirements"].exists() and refresh_existing_requirements:
+                print(f"force updating requirements file: {paths['requirements']}")
             _write_deploy_file(
                 paths["requirements"],
-                _format_deploy_requirements(requirement_resolution.requirements),
+                _format_deploy_requirements(update_requirement_resolution.requirements),
             )
             wrote_local_state = True
         if (

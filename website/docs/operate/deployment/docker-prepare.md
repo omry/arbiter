@@ -20,7 +20,7 @@ managed files and writes:
   image, restart policy, config directory/name, and network values.
 - `conf/`: default config directory. `init` creates the directory but not the
   config or env file.
-- `requirements.txt`: exact package pins or generated wheel paths installed
+- `requirements.txt`: exact package pins or explicit wheel paths installed
   inside the container.
 - `wheels/`: generated wheelhouse when the current Python environment contains
   editable local Arbiter packages.
@@ -72,17 +72,27 @@ Before promoting the directory to a host install:
 `doctor --preinstall` checks that the prepared directory is self-contained and
 ready to promote. It skips Docker daemon checks and fails when source checkout
 requirements or `/source/arbiter` mounts are present, because local source
-mounts are not production install state. `install` can refresh an old
-source-based deployment from the current Python environment; editable local
-packages become wheels in the deployment wheelhouse. You can run the same step
-directly with:
+mounts are not production install state. It also rejects absolute host paths in
+`docker.env` for runtime files; use paths relative to the deployment directory
+so the installed service only reads from the installation path.
+
+If the current Python environment uses editable local Arbiter packages, refresh
+the generated package pins and local wheels before preparing the wheelhouse:
 
 ```bash
-./arbiter-docker/arbiter-docker pin-installed
+arbiter-server deploy docker update --force
+```
+
+Then prepare the wheelhouse with:
+
+```bash
+./arbiter-docker/arbiter-docker bundle prepare
 ```
 
 For Linux install, use pinned packages or generated `/wheels/*.whl` entries and
-remove any local source mount.
+remove any local source mount. `bundle prepare` prepares a complete wheelhouse
+so the installed service can start without downloading packages or building
+wheels at runtime.
 
 For package pins, wheelhouses, and source checkout testing, see
 [Packages and wheels](./packages.md).

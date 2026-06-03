@@ -33,16 +33,17 @@ environment you used to prepare the deployment.
 
 For editable local packages, such as an Arbiter checkout installed with
 `pip install -e`, Arbiter builds wheels into `./arbiter-docker/wheels` and
-uses those wheels directly:
+keeps package pins in `requirements.txt`:
 
 ```text title="./arbiter-docker/requirements.txt"
-/wheels/arbiter_core-0.9.0.dev2-py3-none-any.whl
-/wheels/arbiter_imap-0.9.0.dev2-py3-none-any.whl
-/wheels/arbiter_smtp-0.9.0.dev2-py3-none-any.whl
+arbiter-core==0.9.0.dev2
+arbiter-imap==0.9.0.dev2
+arbiter-smtp==0.9.0.dev2
 ```
 
 The generated Compose file mounts `./wheels` at `/wheels`, so the deployment
-remains self-contained when promoted to a Linux host.
+can satisfy those pins from the prepared wheelhouse when promoted to a Linux
+host.
 
 ## Explicit package pins
 
@@ -61,15 +62,39 @@ initial pinned values from CLI input, but it does not auto-update core or
 plugin versions. Review version changes, edit the file deliberately, then
 restart or reinstall the service.
 
-To refresh an existing deployment from the current Python environment:
+After editing the root requirements, prepare the wheelhouse:
 
 ```bash
-./arbiter-docker/arbiter-docker pin-installed
+./arbiter-docker/arbiter-docker bundle prepare
 ```
 
-`pin-installed` rebuilds wheels for editable local packages. `install` also
-runs that refresh automatically when it detects an old local source checkout
-setup.
+`bundle prepare` builds a complete wheelhouse with the configured runtime image
+and validates that the wheelhouse can satisfy the networkless runtime install
+command.
+
+Use `bundle check` to validate an already-prepared wheelhouse without
+downloading packages or building wheels.
+
+Use `bundle list` to show the root requirements. Use `bundle list all` after
+preparation to show every package in the wheelhouse, marked as `root` or
+`transitive`.
+
+Use `bundle upgrade` to upgrade package root requirements and rebuild the
+wheelhouse:
+
+```bash
+./arbiter-docker/arbiter-docker bundle upgrade
+./arbiter-docker/arbiter-docker bundle upgrade 0.9
+./arbiter-docker/arbiter-docker bundle upgrade arbiter-smtp
+./arbiter-docker/arbiter-docker bundle upgrade arbiter-smtp==0.9.4
+```
+
+`bundle upgrade` upgrades the prepared bundle. To upgrade a Linux systemd
+deployment, run `install` again after the bundle is prepared. Wheel roots such
+as `/wheels/*.whl` are local artifacts, so a no-argument `bundle upgrade`
+refreshes the wheelhouse without changing those root wheel paths. On success,
+the command reports changed root packages first, followed by changed
+transitive packages.
 
 The PyPI package `arbiter` is unrelated to Arbiter. Use `arbiter-suite`
 for the default bundle, or exact pins for Arbiter packages such as
@@ -103,17 +128,24 @@ used only as the bundle selection shorthand.
 ## Networkless installs
 
 For networkless installs, put wheels in `./arbiter-docker/wheels`, or set
-`ARBITER_WHEELS_DIR` in `docker.env` to another wheelhouse path. The generated
-Compose file mounts that directory at `/wheels`.
+`ARBITER_WHEELS_DIR` in `docker.env` to another relative wheelhouse path. The
+generated Compose file mounts that directory at `/wheels`. Linux install
+rejects absolute host paths for runtime files so the service does not read from
+outside the installation path.
 
 ```text title="./arbiter-docker/docker.env"
 ARBITER_WHEELS_DIR=./wheels
 ```
 
-When `/wheels` contains `.whl` files, the generated container command uses
-`pip install --no-index --find-links /wheels ...`, so every required wheel must
-already be present. The requirements file can keep pinned package names that
-resolve from the wheelhouse, or it can name wheels directly:
+During preparation, `arbiter-docker bundle prepare` builds a complete wheelhouse
+with the configured runtime image, including wheels built from source
+distributions when an index does not provide a prebuilt wheel. The generated
+container command then uses
+`pip install --no-index --find-links /wheels ...`, so service startup does not
+depend on network access. Install validates the promoted wheelhouse before
+writing or restarting the systemd service. The requirements file can keep
+pinned package names that resolve from the wheelhouse. For explicit local
+artifact bundles, it can also name container wheel paths directly:
 
 ```text title="./arbiter-docker/requirements.txt"
 /wheels/arbiter_core-0.9.0.dev2-py3-none-any.whl

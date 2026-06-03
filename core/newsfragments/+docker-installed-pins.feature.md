@@ -1,1 +1,0 @@
-Docker deploy generation now follows the currently installed Arbiter core and service plugin packages, building deployment wheels for editable local packages and refreshing old source-based deployments with `pin-installed`.

@@ -131,6 +131,33 @@ This file is the day-to-day queue for design and implementation gaps.
       or refuse to run on failure; and document intentional overrides for local
       development.
 
+- [ ] `P2` Add Docker deployment uninstall support.
+      Operators who use `arbiter-docker install` need a matching cleanup path.
+      Acceptance checks: `arbiter-docker uninstall` stops and disables the
+      installed systemd service; removes the generated unit; optionally removes
+      the installed deployment directory behind an explicit confirmation or flag;
+      preserves user-owned config/secrets unless removal is explicitly requested;
+      and prints a clear summary of what was removed and what remains.
+
+- [ ] `P2` Add Docker deployment upgrade support.
+      Operators need an explicit path for updating an installed deployment
+      without guessing which source directory, wheelhouse, or systemd state is
+      authoritative. Acceptance checks: define whether upgrade is a mode of
+      `install` or a separate command; refresh requirements and the installed
+      wheelhouse before restarting; preserve config and secrets by default;
+      report the old and new package set when possible; and document rollback
+      expectations.
+
+- [ ] `P2` Add Docker bundle lock and package-management commands.
+      The Docker helper has `bundle prepare`, `bundle check`, `bundle list`,
+      wheelhouse-based `bundle list all`, and package-root `bundle upgrade`,
+      but operators also need a managed way to add/remove roots and persist
+      resolver state.
+      Acceptance checks: support `bundle add` and `bundle remove` for one or
+      more root packages; persist enough lock metadata to report resolved
+      package changes after prepare/upgrade; and detect when the wheelhouse or
+      lock is stale relative to root requirements.
+
 - [ ] `P2` Generate baseline CLI parameters from MCP tool schemas.
       The MCP surface already defines rich input shape metadata, and that
       contract should become the default source for a generic CLI layer rather

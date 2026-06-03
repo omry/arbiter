@@ -104,51 +104,9 @@ arbiter-server version [--json]
 
 ## deploy
 
-Create or update deployment files from the installed `arbiter-server` command.
-
-```bash
-arbiter-server deploy docker init [docker.dir=PATH] [docker.requirement=REQ ...]
-arbiter-server deploy docker update [docker.dir=PATH] [docker.requirement=REQ ...]
-```
-
-- `deploy docker init`: write a local Docker deployment directory. Defaults to
-  `./arbiter-docker`, refuses to overwrite existing managed files, and does not
-  create config, start Docker, or run the server. By default, it follows the
-  Arbiter core package and installed service plugin packages from the current
-  Python environment. Editable local packages are built into deployment wheels;
-  non-local packages are written as exact pins.
-- `deploy docker update`: refresh manifest-owned templates
-  (`compose.yaml` and `arbiter-docker`) only when they are missing or still
-  match the recorded manifest hash. Existing templates without manifest
-  ownership or with local edits are skipped. It regenerates `docker.env`
-  while preserving known and extra local values, and never rewrites an existing
-  `requirements.txt`.
-- `deploy docker pin-installed`: rewrite `requirements.txt` from the current
-  Python environment, rebuilding wheels for editable local packages. If the
-  deployment has the generated local source checkout override, it removes that
-  override.
-- `docker.dir=PATH`: deployment directory to create or update.
-- `docker.requirement=REQ`: package requirement to seed into
-  `requirements.txt` when it is created. Package requirements must be exact
-  pins such as `arbiter-core==0.9.0.dev2`; absolute container paths are allowed
-  for local source testing when a local Compose override mounts the source tree.
-  May be repeated for explicit core and plugin pins.
-
-The generated deployment directory includes `docker.env` for Compose/container
-settings, a default `conf/` config directory, and its own `arbiter-docker`
-helper for local operations such as `up`, `logs`, `restart`, `sync-env`,
-`pin-installed`, `info`, `doctor`, and `install`. Use
-`arbiter-docker doctor --preinstall` to check a
-prepared directory before promoting it to a Linux host with
-`sudo ./arbiter-docker install --to /opt/arbiter --user arbiter`. The install
-step copies the prepared directory, creates the dedicated user/group if
-missing, sets ownership and modes, installs a root-managed systemd unit, and
-does not add the `arbiter` user to the Docker group. Use
-`arbiter-docker doctor --agent-user USER` to check common filesystem and Docker
-socket mistakes for an agent identity. `doctor`, `up`, and `restart` also
-reject unpinned package requirements. Arbiter config and `.env` are
-supplied separately through the config tooling using the directory named by
-`ARBITER_CONFIG_DIR` and `ARBITER_CONFIG_NAME` in `docker.env`.
+Create or update Docker deployment files from the installed `arbiter-server`
+command. See [Deployment](./deployment.md) for the Docker deployment workflow,
+generated helper commands, package bundle management, and Linux install.
 
 ## plugins
 
