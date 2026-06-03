@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from enum import Enum
 from importlib.metadata import entry_points
 import logging
 from pathlib import Path
@@ -40,6 +41,12 @@ class DiscoveryConfig:
             raise ValueError("max_operation_preview_limit must be >= 1")
 
 
+class DeploymentScope(str, Enum):
+    unknown = "unknown"
+    staged = "staged"
+    installed = "installed"
+
+
 @dataclass
 class Policy:
     pass
@@ -47,7 +54,9 @@ class Policy:
 
 @dataclass
 class ArbiterConfig:
+    env_file: str | None = None
     server: FastMCPConfig = field(default_factory=FastMCPConfig)
+    deployment_scope: DeploymentScope = DeploymentScope.unknown
     discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
     account: dict[str, Any] = field(default_factory=dict)
     policy: dict[str, Any] = field(default_factory=dict)

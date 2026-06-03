@@ -17,6 +17,8 @@ sudo ./arbiter-docker/arbiter-docker install --to /opt/arbiter --user arbiter
 
 - creates the `arbiter` system user/group if missing
 - copies the prepared deployment directory to `/opt/arbiter`
+- rewrites the copied Compose command to pass
+  `arbiter.deployment_scope=installed`
 - sets ownership to `arbiter:arbiter`
 - tightens file modes
 - writes `/etc/systemd/system/arbiter.service`

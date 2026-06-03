@@ -45,17 +45,20 @@ For a prepared local directory:
 
 ```bash
 ./arbiter-docker/arbiter-docker up
+./arbiter-docker/arbiter-docker test
 ./arbiter-docker/arbiter-docker ps
 ./arbiter-docker/arbiter-docker logs
 ./arbiter-docker/arbiter-docker restart
 ./arbiter-docker/arbiter-docker down
 ```
 
-- `up`: start or update the Compose service.
+- `up`: start or update the Compose service, then print the MCP URL.
+- `test`: call `version_info` through the computed MCP URL with the local
+  `arbiter` client.
 - `ps`: show Docker Compose service status.
 - `logs`: follow Docker Compose logs.
 - `restart`: recreate the container, which also reinstalls the configured
-  requirements.
+  requirements, then print the MCP URL.
 - `down`: stop and remove the Compose service.
 
 After changing the root Arbiter package or plugin requirements, prepare the

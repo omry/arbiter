@@ -138,6 +138,7 @@ def _expected_version_info(
     plugins = sorted(_test_service_plugins(), key=lambda plugin: plugin.name)
     return {
         "core": {"version": CORE_VERSION, "api_version": CORE_API_VERSION},
+        "deployment_scope": "unknown",
         "source": {"commit": commit, "dirty": dirty},
         "plugins": [
             {
@@ -486,7 +487,7 @@ def test_server_cli_reports_clean_keyboard_interrupt(
     )
     monkeypatch.setattr(
         "arbiter_core.main.build_server",
-        lambda _cfg: object(),
+        lambda _cfg, **_kwargs: object(),
     )
     monkeypatch.setattr("arbiter_core.main._run_server", raise_keyboard_interrupt)
 
@@ -515,6 +516,33 @@ def test_compose_config_registers_configs_before_composing(
 
     assert cfg.arbiter.server.name == "arbiter"
     assert calls == ["register_configs"]
+
+
+def test_compose_config_deployment_scope_override_uses_structured_schema(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "arbiter").mkdir()
+    (tmp_path / "arbiter-server.yaml").write_text(
+        "defaults:\n"
+        "  - arbiter_app_config_schema\n"
+        "  - arbiter: server\n"
+        "  - _self_\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "arbiter" / "server.yaml").write_text(
+        "# @package arbiter\n"
+        "server:\n"
+        "  name: arbiter\n",
+        encoding="utf-8",
+    )
+
+    cfg = compose_config(
+        config_dir=tmp_path,
+        config_name="arbiter-server",
+        overrides=["arbiter.deployment_scope=staged"],
+    )
+
+    assert cfg.arbiter.deployment_scope == "staged"
 
 
 def test_compose_config_loads_env_file_before_composing(
@@ -770,20 +798,36 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
         "-r /tmp/requirements.pinned /tmp/arbiter-wheels/*.whl"
     ) in compose_text
     assert "${ARBITER_WHEELS_DIR:-./wheels}:/wheels:ro" in compose_text
+    assert "container_name: ${ARBITER_CONTAINER_NAME:-arbiter-staging}" in compose_text
     assert "ARBITER_SERVER_HOST: 0.0.0.0" in compose_text
     assert (
+        '"${ARBITER_HOST_BIND:-127.0.0.1}:'
+        '${ARBITER_HOST_PORT:-18025}:${ARBITER_CONTAINER_PORT:-8025}"'
+    ) in compose_text
+    assert "name: ${ARBITER_DOCKER_NETWORK_NAME:-arbiter-staging}" in compose_text
+    assert (
+        'com.docker.network.bridge.name: "${ARBITER_DOCKER_BRIDGE_NAME:-arbiter-stg0}"'
+        in compose_text
+    )
+    assert 'subnet: "${ARBITER_DOCKER_SUBNET:-172.31.251.0/24}"' in compose_text
+    assert "ARBITER_DEPLOYMENT_SCOPE" not in compose_text
+    assert (
         '"arbiter.server.host=$$ARBITER_SERVER_HOST" '
-        '"arbiter.server.port=$$ARBITER_CONTAINER_PORT"'
+        '"arbiter.server.port=$$ARBITER_CONTAINER_PORT" '
+        '"arbiter.deployment_scope=staged"'
     ) in compose_text
     assert not (deploy_dir / "config.yaml").exists()
     assert (deploy_dir / "conf").is_dir()
     assert not (deploy_dir / "conf" / ".env").exists()
     docker_env = (deploy_dir / "docker.env").read_text(encoding="utf-8")
+    assert "ARBITER_DEPLOYMENT_SCOPE" not in docker_env
+    assert "ARBITER_CONTAINER_NAME=arbiter-staging\n" in docker_env
     assert "ARBITER_HOST_BIND=127.0.0.1\n" in docker_env
-    assert "ARBITER_HOST_PORT=8025\n" in docker_env
+    assert "ARBITER_HOST_PORT=18025\n" in docker_env
     assert "ARBITER_WHEELS_DIR=./wheels\n" in docker_env
-    assert "ARBITER_DOCKER_NETWORK_NAME=arbiter\n" in docker_env
-    assert "ARBITER_DOCKER_SUBNET=172.31.250.0/24\n" in docker_env
+    assert "ARBITER_DOCKER_NETWORK_NAME=arbiter-staging\n" in docker_env
+    assert "ARBITER_DOCKER_BRIDGE_NAME=arbiter-stg0\n" in docker_env
+    assert "ARBITER_DOCKER_SUBNET=172.31.251.0/24\n" in docker_env
     assert "ARBITER_LOCAL_SOURCE_DIR" not in docker_env
     assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
         "arbiter-core==0.9.0.dev2\n"
@@ -1179,6 +1223,7 @@ def test_build_local_source_wheel_returns_wheel_from_current_build(
         assert check is False
         assert text is True
         assert capture_output is True
+        assert "--no-build-isolation" in args
         temporary_wheel_dir = Path(args[args.index("--wheel-dir") + 1])
         (temporary_wheel_dir / "current-1.2.3-py3-none-any.whl").write_text(
             "current\n",
@@ -1454,7 +1499,7 @@ def test_cli_deploy_docker_generated_helper_bundle_upgrade_updates_roots_and_pre
         "arbiter-core==1.2.0\n" "arbiter-smtp==1.1.0\n"
     )
     assert upgrade_input.read_text(encoding="utf-8") == (
-        "arbiter-core\n" "arbiter-smtp\n"
+        "arbiter-core>=1.0.0\n" "arbiter-smtp>=1.0.0\n"
     )
     assert result.stdout == (
         f"bundle upgrade complete: {deploy_dir}\n"
@@ -1465,9 +1510,272 @@ def test_cli_deploy_docker_generated_helper_bundle_upgrade_updates_roots_and_pre
         "  no changes\n"
     )
     docker_call_text = docker_calls.read_text(encoding="utf-8")
-    assert "--dry-run --ignore-installed --report /work/report.json" in docker_call_text
+    assert f"-v {deploy_dir / 'wheels'}:/wheels:ro" in docker_call_text
+    assert (
+        "--dry-run --ignore-installed --find-links /wheels "
+        "--report /work/report.json"
+    ) in docker_call_text
     assert "--find-links /wheels --wheel-dir /wheelhouse -r /requirements.txt" in (
         docker_call_text
+    )
+
+
+def test_cli_deploy_docker_generated_helper_bundle_upgrade_builds_repo_wheels(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    for project_dir in ("core", "imap", "smtp"):
+        source_dir = tmp_path / project_dir
+        source_dir.mkdir()
+        (source_dir / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-core==1.0.0",
+                "docker.requirement=arbiter-smtp==1.0.0",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker_calls = tmp_path / "docker-calls"
+    python_calls = tmp_path / "python-calls"
+    upgrade_input = tmp_path / "upgrade-input"
+    venv_bin = tmp_path / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    (venv_bin / "python").write_text(
+        "#!/usr/bin/env sh\n"
+        f'printf "%s\\n" "$*" >> "{python_calls}"\n'
+        'wheel_dir=""\n'
+        'last=""\n'
+        'while [ "$#" -gt 0 ]; do\n'
+        '  if [ "$1" = "--wheel-dir" ]; then\n'
+        "    shift\n"
+        '    wheel_dir="$1"\n'
+        "  fi\n"
+        '  last="$1"\n'
+        "  shift\n"
+        "done\n"
+        'mkdir -p "$wheel_dir"\n'
+        'case "$last" in\n'
+        '  */core) touch "$wheel_dir/arbiter_core-1.2.0-py3-none-any.whl" ;;\n'
+        '  */smtp) touch "$wheel_dir/arbiter_smtp-1.1.0-py3-none-any.whl" ;;\n'
+        "  *) exit 3 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    (venv_bin / "python").chmod(0o755)
+    (fake_bin / "docker").write_text(
+        "#!/usr/bin/env sh\n"
+        f'printf "%s\\n" "$*" >> "{docker_calls}"\n'
+        'work=""\n'
+        'for arg in "$@"; do\n'
+        '  case "$arg" in\n'
+        '    *:/work) work="${arg%:/work}" ;;\n'
+        "  esac\n"
+        "done\n"
+        'case "$*" in\n'
+        '  *"--report /work/report.json"*)\n'
+        f'    cp "$work/requirements.in" "{upgrade_input}"\n'
+        "    cat > \"$work/report.json\" <<'JSON'\n"
+        '{"install":[{"metadata":{"name":"arbiter-core","version":"1.2.0"}},'
+        '{"metadata":{"name":"arbiter-smtp","version":"1.1.0"}}]}\n'
+        "JSON\n"
+        "    exit 0\n"
+        "    ;;\n"
+        '  *" python -c "*)\n'
+        '    printf "arbiter-core==1.2.0\\narbiter-smtp==1.1.0\\n" > "$work/requirements.out"\n'
+        "    exit 0\n"
+        "    ;;\n"
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "docker").chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "bundle", "upgrade"],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    python_call_text = python_calls.read_text(encoding="utf-8")
+    assert "--no-build-isolation" in python_call_text
+    assert f"{tmp_path / 'core'}" in python_call_text
+    assert f"{tmp_path / 'smtp'}" in python_call_text
+    assert upgrade_input.read_text(encoding="utf-8") == (
+        "arbiter-core>=1.0.0\n" "arbiter-smtp>=1.0.0\n"
+    )
+    assert f"-v {deploy_dir / 'wheels'}:/wheels:ro" in docker_calls.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_cli_deploy_docker_generated_helper_bundle_upgrade_pypi_only_skips_repo_wheels(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    for project_dir in ("core", "imap", "smtp"):
+        source_dir = tmp_path / project_dir
+        source_dir.mkdir()
+        (source_dir / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-core==1.0.0",
+                "docker.requirement=arbiter-smtp==1.0.0",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker_calls = tmp_path / "docker-calls"
+    python_calls = tmp_path / "python-calls"
+    upgrade_input = tmp_path / "upgrade-input"
+    (fake_bin / "python").write_text(
+        "#!/usr/bin/env sh\n" f'printf "%s\\n" "$*" >> "{python_calls}"\n' "exit 13\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "python").chmod(0o755)
+    (fake_bin / "docker").write_text(
+        "#!/usr/bin/env sh\n"
+        f'printf "%s\\n" "$*" >> "{docker_calls}"\n'
+        'work=""\n'
+        'for arg in "$@"; do\n'
+        '  case "$arg" in\n'
+        '    *:/work) work="${arg%:/work}" ;;\n'
+        "  esac\n"
+        "done\n"
+        'case "$*" in\n'
+        '  *"--report /work/report.json"*)\n'
+        f'    cp "$work/requirements.in" "{upgrade_input}"\n'
+        "    cat > \"$work/report.json\" <<'JSON'\n"
+        '{"install":[{"metadata":{"name":"arbiter-core","version":"1.2.0"}},'
+        '{"metadata":{"name":"arbiter-smtp","version":"1.1.0"}}]}\n'
+        "JSON\n"
+        "    exit 0\n"
+        "    ;;\n"
+        '  *" python -c "*)\n'
+        '    printf "arbiter-core==1.2.0\\narbiter-smtp==1.1.0\\n" > "$work/requirements.out"\n'
+        "    exit 0\n"
+        "    ;;\n"
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "docker").chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "bundle", "upgrade", "--pypi-only"],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert not python_calls.exists()
+    assert upgrade_input.read_text(encoding="utf-8") == (
+        "arbiter-core>=1.0.0\n" "arbiter-smtp>=1.0.0\n"
+    )
+    resolve_call = next(
+        line
+        for line in docker_calls.read_text(encoding="utf-8").splitlines()
+        if "--report /work/report.json" in line
+    )
+    assert "--find-links /wheels" not in resolve_call
+    assert f"-v {deploy_dir / 'wheels'}:/wheels:ro" not in resolve_call
+
+
+def test_cli_deploy_docker_generated_helper_bundle_upgrade_package_keeps_lower_bound(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-core==1.0.0",
+                "docker.requirement=arbiter-smtp==1.0.0",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    upgrade_input = tmp_path / "upgrade-input"
+    (fake_bin / "docker").write_text(
+        "#!/usr/bin/env sh\n"
+        'work=""\n'
+        'for arg in "$@"; do\n'
+        '  case "$arg" in\n'
+        '    *:/work) work="${arg%:/work}" ;;\n'
+        "  esac\n"
+        "done\n"
+        'case "$*" in\n'
+        '  *"--report /work/report.json"*)\n'
+        f'    cp "$work/requirements.in" "{upgrade_input}"\n'
+        "    cat > \"$work/report.json\" <<'JSON'\n"
+        '{"install":[{"metadata":{"name":"arbiter-core","version":"1.0.0"}},'
+        '{"metadata":{"name":"arbiter-smtp","version":"1.1.0"}}]}\n'
+        "JSON\n"
+        "    exit 0\n"
+        "    ;;\n"
+        '  *" python -c "*)\n'
+        '    printf "arbiter-core==1.0.0\\narbiter-smtp==1.1.0\\n" > "$work/requirements.out"\n'
+        "    exit 0\n"
+        "    ;;\n"
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "docker").chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "bundle", "upgrade", "arbiter-smtp"],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert upgrade_input.read_text(encoding="utf-8") == (
+        "arbiter-core==1.0.0\n" "arbiter-smtp>=1.0.0\n"
+    )
+    assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
+        "arbiter-core==1.0.0\n" "arbiter-smtp==1.1.0\n"
     )
 
 
@@ -1518,7 +1826,10 @@ def test_cli_deploy_docker_generated_helper_bundle_upgrade_refreshes_wheel_roots
         "transitive:\n"
         "  no changes\n"
     )
-    assert len(docker_calls.read_text(encoding="utf-8").splitlines()) == 2
+    docker_call_lines = docker_calls.read_text(encoding="utf-8").splitlines()
+    assert len(docker_call_lines) == 4
+    assert docker_call_lines[0] == "info"
+    assert docker_call_lines[2] == "info"
 
 
 def test_cli_deploy_docker_generated_helper_bundle_check_validates_without_prepare(
@@ -1562,6 +1873,7 @@ def test_cli_deploy_docker_generated_helper_bundle_check_validates_without_prepa
     assert result.returncode == 0
     docker_user = f"{os.getuid()}:{os.getgid()}"
     assert docker_calls.read_text(encoding="utf-8") == (
+        "info\n"
         f"run --rm --user {docker_user} "
         f"-v {deploy_dir / 'requirements.txt'}:/requirements.txt:ro "
         f"-v {deploy_dir / 'wheels'}:/wheels:ro "
@@ -1614,19 +1926,21 @@ def test_cli_deploy_docker_generated_helper_bundle_prepare_builds_wheelhouse(
     assert result.returncode == 0
     docker_user = f"{os.getuid()}:{os.getgid()}"
     docker_call_lines = docker_calls.read_text(encoding="utf-8").splitlines()
-    assert len(docker_call_lines) == 2
-    assert docker_call_lines[0].startswith(
+    assert len(docker_call_lines) == 4
+    assert docker_call_lines[0] == "info"
+    assert docker_call_lines[1].startswith(
         f"run --rm --user {docker_user} "
         f"-v {deploy_dir / 'requirements.txt'}:/requirements.txt:ro "
         f"-v {deploy_dir / 'wheels'}:/wheels:ro "
         "-v /tmp/arbiter-wheelhouse."
     )
-    assert docker_call_lines[0].endswith(
+    assert docker_call_lines[1].endswith(
         ":/wheelhouse python:3.11-slim python -m pip "
         "--disable-pip-version-check wheel --no-cache-dir "
         "--find-links /wheels --wheel-dir /wheelhouse -r /requirements.txt"
     )
-    assert docker_call_lines[1] == (
+    assert docker_call_lines[2] == "info"
+    assert docker_call_lines[3] == (
         f"run --rm --user {docker_user} "
         f"-v {deploy_dir / 'requirements.txt'}:/requirements.txt:ro "
         f"-v {deploy_dir / 'wheels'}:/wheels:ro "
@@ -1637,6 +1951,475 @@ def test_cli_deploy_docker_generated_helper_bundle_prepare_builds_wheelhouse(
     )
     assert "prepared dependency wheelhouse" in result.stdout
     assert "validated dependency wheelhouse" in result.stdout
+
+
+def test_cli_deploy_docker_generated_helper_up_reports_docker_permission_error(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    config_dir = deploy_dir / "conf"
+    (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / ".env").write_text("", encoding="utf-8")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker_calls = tmp_path / "docker-calls"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env sh\n"
+        f'printf "%s\\n" "$*" >> "{docker_calls}"\n'
+        'if [ "$1" = info ]; then\n'
+        "  printf 'permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock\\n' >&2\n"
+        "  exit 1\n"
+        "fi\n"
+        "exit 9\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "up"],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert docker_calls.read_text(encoding="utf-8") == "info\n"
+    assert "error: Docker daemon is not accessible by user" in result.stderr
+    assert "sudo usermod -aG docker" in result.stderr
+    assert "log out and back in" in result.stderr
+    assert "docker said: permission denied" in result.stderr
+
+
+def test_cli_deploy_docker_generated_helper_up_prints_mcp_url(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    config_dir = deploy_dir / "conf"
+    (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / ".env").write_text("", encoding="utf-8")
+    docker_env = deploy_dir / "docker.env"
+    docker_env.write_text(
+        docker_env.read_text(encoding="utf-8")
+        .replace("ARBITER_HOST_BIND=127.0.0.1\n", "ARBITER_HOST_BIND=0.0.0.0\n"),
+        encoding="utf-8",
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker_calls = tmp_path / "docker-calls"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env sh\n"
+        f'printf "%s\\n" "$*" >> "{docker_calls}"\n'
+        'if [ "$1" = info ]; then exit 0; fi\n'
+        'if [ "$1" = inspect ]; then exit 1; fi\n'
+        'if [ "$1" = compose ]; then exit 0; fi\n'
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "up"],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == (
+        " ✔ Staging MCP port: 8025 -> 18025 to prevent collision\n"
+        " ✔ MCP URL: http://127.0.0.1:18025/mcp\n"
+    )
+    assert result.stderr == ""
+
+    color_env = {**env, "ARBITER_COLOR": "always"}
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "up"],
+        check=False,
+        cwd=tmp_path,
+        env=color_env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == (
+        " \033[32m✔\033[0m Staging MCP port: 8025 -> 18025 to prevent collision\n"
+        " \033[32m✔\033[0m MCP URL: "
+        "\033[94mhttp://127.0.0.1:18025/mcp\033[0m\n"
+    )
+    assert result.stderr == ""
+
+    docker_env.write_text(
+        docker_env.read_text(encoding="utf-8").replace(
+            "ARBITER_HOST_PORT=18025\n",
+            "ARBITER_HOST_PORT=8025\n",
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "up"],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == " ✔ MCP URL: http://127.0.0.1:8025/mcp\n"
+    assert result.stderr == ""
+
+    docker_call_text = docker_calls.read_text(encoding="utf-8")
+    assert "info\n" in docker_call_text
+    assert "inspect arbiter-staging --format" in docker_call_text
+    assert "compose --env-file" in docker_call_text
+    assert "up -d\n" in docker_call_text
+
+
+def test_cli_deploy_docker_generated_helper_test_calls_version_info(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    arbiter_calls = tmp_path / "arbiter-calls"
+    fake_arbiter = fake_bin / "arbiter"
+    fake_arbiter_count = tmp_path / "arbiter-count"
+    fake_arbiter.write_text(
+        "#!/usr/bin/env sh\n"
+        f'printf "%s\\n" "$*" >> "{arbiter_calls}"\n'
+        "count=0\n"
+        f'if [ -f "{fake_arbiter_count}" ]; then count="$(cat "{fake_arbiter_count}")"; fi\n'
+        f'printf "%s\\n" "$((count + 1))" > "{fake_arbiter_count}"\n'
+        'if [ "$count" -lt "${ARBITER_TEST_CONNECT_FAILURES:-0}" ]; then\n'
+        "  printf 'Arbiter connection error: could not connect\\n' >&2\n"
+        "  exit 1\n"
+        "fi\n"
+        'exit "${ARBITER_TEST_STATUS:-0}"\n',
+        encoding="utf-8",
+    )
+    fake_arbiter.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "test"],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == " ✔ MCP test: http://127.0.0.1:18025/mcp\n"
+    assert result.stderr == ""
+    assert arbiter_calls.read_text(encoding="utf-8") == (
+        "mcp call version_info arbiter.mcp_url=http://127.0.0.1:18025/mcp\n"
+    )
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "test"],
+        check=False,
+        cwd=tmp_path,
+        env={**env, "ARBITER_TEST_CONNECT_FAILURES": "2"},
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == " ✔ MCP test: http://127.0.0.1:18025/mcp\n"
+    assert result.stderr == ""
+    assert fake_arbiter_count.read_text(encoding="utf-8") == "3\n"
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "test"],
+        check=False,
+        cwd=tmp_path,
+        env={**env, "ARBITER_COLOR": "always", "ARBITER_TEST_STATUS": "7"},
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert result.stdout == (
+        " \033[31m✘\033[0m MCP test: "
+        "\033[94mhttp://127.0.0.1:18025/mcp\033[0m\n"
+    )
+    assert result.stderr == ""
+
+
+def test_cli_deploy_docker_generated_helper_up_auto_selects_staging_subnet(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    config_dir = deploy_dir / "conf"
+    (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / ".env").write_text("", encoding="utf-8")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker_calls = tmp_path / "docker-calls"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env sh\n"
+        f'printf "%s\\n" "$*" >> "{docker_calls}"\n'
+        'if [ "$1" = info ]; then exit 0; fi\n'
+        'if [ "$1" = network ] && [ "$2" = ls ] && [ "${3:-}" = -q ]; then\n'
+        "  printf 'network-id\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        'if [ "$1" = network ] && [ "$2" = inspect ]; then\n'
+        "  printf 'existing-network 172.31.251.0/24 \\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        'if [ "$1" = inspect ]; then exit 1; fi\n'
+        'if [ "$1" = compose ]; then exit 0; fi\n'
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "up"],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert (
+        "updated staging Docker subnet: 172.31.251.0/24 -> 10.213.200.0/24\n"
+        in result.stdout
+    )
+    assert " ✔ Staging MCP port: 8025 -> 18025 to prevent collision\n" in result.stdout
+    assert " ✔ MCP URL: http://127.0.0.1:18025/mcp\n" in result.stdout
+    assert result.stderr == ""
+    assert "ARBITER_DOCKER_SUBNET=10.213.200.0/24\n" in (
+        deploy_dir / "docker.env"
+    ).read_text(encoding="utf-8")
+    assert "compose --env-file" in docker_calls.read_text(encoding="utf-8")
+
+
+def test_cli_deploy_docker_generated_helper_up_reports_other_deployment_owner(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "staged-arbiter"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    config_dir = deploy_dir / "conf"
+    (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / ".env").write_text("", encoding="utf-8")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker_calls = tmp_path / "docker-calls"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env sh\n"
+        f'printf "%s\\n" "$*" >> "{docker_calls}"\n'
+        'if [ "$1" = info ]; then\n'
+        "  exit 0\n"
+        "fi\n"
+        'if [ "$1" = inspect ] && [ "$2" = arbiter-staging ]; then\n'
+        "  cat <<'EOF'\n"
+        "name=/arbiter-staging\n"
+        "project=other-staging\n"
+        "service=arbiter\n"
+        "config_files=/tmp/other-staging/compose.yaml\n"
+        "working_dir=/tmp/other-staging\n"
+        "oneoff=False\n"
+        "image=python:3.11-slim\n"
+        "created=2026-06-03T06:15:38Z\n"
+        "status=exited\n"
+        "restart=unless-stopped\n"
+        "EOF\n"
+        "  exit 0\n"
+        "fi\n"
+        'if [ "$1" = compose ]; then\n'
+        "  exit 9\n"
+        "fi\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "up"],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert "compose up" not in docker_calls.read_text(encoding="utf-8")
+    assert (
+        "error: container name is already owned by another deployment: arbiter-staging"
+        in result.stderr
+    )
+    assert f"this deployment dir: {deploy_dir}" in result.stderr
+    assert "owner compose project: other-staging" in result.stderr
+    assert "owner deployment dir: /tmp/other-staging" in result.stderr
+    assert "owner compose file: /tmp/other-staging/compose.yaml" in result.stderr
+    assert "status: exited" in result.stderr
+    assert "docker ps shows only running containers" in result.stderr
+    assert "docker ps -a --filter name=^/arbiter-staging$" in result.stderr
+    assert f"set ARBITER_CONTAINER_NAME in {deploy_dir / 'docker.env'}" in result.stderr
+
+
+def test_cli_deploy_docker_generated_helper_info_reports_other_deployment_owner(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "staged-arbiter"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env sh\n"
+        'if [ "$1" = info ]; then\n'
+        "  exit 0\n"
+        "fi\n"
+        'if [ "$1" = inspect ] && [ "$2" = arbiter-staging ]; then\n'
+        "  cat <<'EOF'\n"
+        "name=/arbiter-staging\n"
+        "project=other-staging\n"
+        "service=arbiter\n"
+        "config_files=/tmp/other-staging/compose.yaml\n"
+        "working_dir=/tmp/other-staging\n"
+        "oneoff=False\n"
+        "image=python:3.11-slim\n"
+        "created=2026-06-03T06:15:38Z\n"
+        "status=exited\n"
+        "restart=unless-stopped\n"
+        "EOF\n"
+        "  exit 0\n"
+        "fi\n"
+        'if [ "$1" = compose ] && [ "$2" = version ]; then\n'
+        "  printf 'Docker Compose version v2.fake\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "info"],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert f"deploy dir: {deploy_dir}" in result.stdout
+    assert "compose project: staged-arbiter" in result.stdout
+    assert "container name: arbiter-staging" in result.stdout
+    assert "container name in use by another deployment: arbiter-staging" in result.stdout
+    assert "owner deployment dir: /tmp/other-staging" in result.stdout
+    assert "owner compose file: /tmp/other-staging/compose.yaml" in result.stdout
+    assert "status: exited" in result.stdout
 
 
 def test_cli_deploy_docker_generated_helper_doctor_rejects_unpinned_requirements(
@@ -1665,6 +2448,9 @@ def test_cli_deploy_docker_generated_helper_doctor_rejects_unpinned_requirements
     fake_docker = fake_bin / "docker"
     fake_docker.write_text(
         "#!/usr/bin/env sh\n"
+        'if [ "$1" = info ]; then\n'
+        "  exit 0\n"
+        "fi\n"
         'if [ "$1" = compose ] && [ "$2" = version ]; then\n'
         "  printf 'Docker Compose version v2.fake\\n'\n"
         "  exit 0\n"
@@ -1742,6 +2528,9 @@ def test_cli_deploy_docker_generated_helper_doctor_rejects_raw_meta_override(
     fake_docker = fake_bin / "docker"
     fake_docker.write_text(
         "#!/usr/bin/env sh\n"
+        'if [ "$1" = info ]; then\n'
+        "  exit 0\n"
+        "fi\n"
         'if [ "$1" = compose ] && [ "$2" = version ]; then\n'
         "  printf 'Docker Compose version v2.fake\\n'\n"
         "  exit 0\n"
@@ -1800,6 +2589,9 @@ def test_cli_deploy_docker_generated_helper_doctor_can_color_status_prefixes(
     fake_docker = fake_bin / "docker"
     fake_docker.write_text(
         "#!/usr/bin/env sh\n"
+        'if [ "$1" = info ]; then\n'
+        "  exit 0\n"
+        "fi\n"
         'if [ "$1" = compose ] && [ "$2" = version ]; then\n'
         "  printf 'Docker Compose version v2.fake\\n'\n"
         "  exit 0\n"
@@ -1854,6 +2646,9 @@ def test_cli_deploy_docker_generated_helper_doctor_can_disable_color(
     fake_docker = fake_bin / "docker"
     fake_docker.write_text(
         "#!/usr/bin/env sh\n"
+        'if [ "$1" = info ]; then\n'
+        "  exit 0\n"
+        "fi\n"
         'if [ "$1" = compose ] && [ "$2" = version ]; then\n'
         "  printf 'Docker Compose version v2.fake\\n'\n"
         "  exit 0\n"
@@ -2184,6 +2979,11 @@ def test_cli_deploy_docker_generated_helper_install_dry_run_plans_promotion(
     assert f"would copy deployment: {deploy_dir} -> /opt/arbiter\n" in result.stdout
     assert "would create system group if missing: arbiter\n" in result.stdout
     assert "would create system user if missing: arbiter\n" in result.stdout
+    assert (
+        "would set deployment scope in compose.yaml: "
+        "arbiter.deployment_scope=installed\n"
+    ) in result.stdout
+    assert "would set installed Docker identity in docker.env\n" in result.stdout
     assert "would write systemd unit: /etc/systemd/system/arbiter.service\n" in (
         result.stdout
     )
@@ -2276,11 +3076,35 @@ def test_cli_deploy_docker_generated_helper_install_omits_missing_docker_unit(
     assert f"systemd unit: {systemd_dir / 'arbiter.service'}\n" in result.stdout
     assert "service: arbiter.service enabled and restarted\n" in result.stdout
     assert result.stderr == ""
+    installed_compose = (install_dir / "compose.yaml").read_text(encoding="utf-8")
+    assert "arbiter.deployment_scope=installed" in installed_compose
+    assert "ARBITER_CONTAINER_NAME:-arbiter-staging" not in installed_compose
+    assert "ARBITER_HOST_PORT:-18025" not in installed_compose
+    assert "ARBITER_DOCKER_NETWORK_NAME:-arbiter-staging" not in installed_compose
+    assert "ARBITER_DOCKER_BRIDGE_NAME:-arbiter-stg0" not in installed_compose
+    assert "ARBITER_DOCKER_SUBNET:-172.31.251.0/24" not in installed_compose
+    assert "ARBITER_CONTAINER_NAME:-arbiter" in installed_compose
+    assert "ARBITER_HOST_BIND:-127.0.0.1" in installed_compose
+    assert "ARBITER_HOST_PORT:-8025" in installed_compose
+    assert "ARBITER_DOCKER_NETWORK_NAME:-arbiter" in installed_compose
+    assert "ARBITER_DOCKER_BRIDGE_NAME:-arbiter0" in installed_compose
+    assert "ARBITER_DOCKER_SUBNET:-172.31.250.0/24" in installed_compose
+    assert "ARBITER_DEPLOYMENT_SCOPE" not in (
+        install_dir / "docker.env"
+    ).read_text(encoding="utf-8")
+    installed_docker_env = (install_dir / "docker.env").read_text(encoding="utf-8")
+    assert "ARBITER_CONTAINER_NAME=arbiter\n" in installed_docker_env
+    assert "ARBITER_HOST_BIND=127.0.0.1\n" in installed_docker_env
+    assert "ARBITER_HOST_PORT=8025\n" in installed_docker_env
+    assert "ARBITER_DOCKER_NETWORK_NAME=arbiter\n" in installed_docker_env
+    assert "ARBITER_DOCKER_BRIDGE_NAME=arbiter0\n" in installed_docker_env
+    assert "ARBITER_DOCKER_SUBNET=172.31.250.0/24\n" in installed_docker_env
     unit_text = (systemd_dir / "arbiter.service").read_text(encoding="utf-8")
     assert "Requires=docker.service\n" not in unit_text
     assert "After=docker.service\n" not in unit_text
     assert f"WorkingDirectory={install_dir}\n" in unit_text
     assert docker_calls.read_text(encoding="utf-8") == (
+        "info\n"
         "run --rm --user 123:123 "
         f"-v {install_dir / 'requirements.txt'}:/requirements.txt:ro "
         f"-v {install_dir / 'wheels'}:/wheels:ro "
@@ -2418,6 +3242,9 @@ def test_cli_deploy_docker_generated_helper_doctor_colors_tty_by_default(
     fake_docker = fake_bin / "docker"
     fake_docker.write_text(
         "#!/usr/bin/env sh\n"
+        'if [ "$1" = info ]; then\n'
+        "  exit 0\n"
+        "fi\n"
         'if [ "$1" = compose ] && [ "$2" = version ]; then\n'
         "  printf 'Docker Compose version v2.fake\\n'\n"
         "  exit 0\n"
@@ -2469,6 +3296,9 @@ def test_cli_deploy_docker_generated_helper_doctor_rejects_docker_subnet_overlap
     fake_docker = fake_bin / "docker"
     fake_docker.write_text(
         "#!/usr/bin/env sh\n"
+        'if [ "$1" = info ]; then\n'
+        "  exit 0\n"
+        "fi\n"
         'if [ "$1" = compose ] && [ "$2" = version ]; then\n'
         "  printf 'Docker Compose version v2.fake\\n'\n"
         "  exit 0\n"
@@ -2478,7 +3308,7 @@ def test_cli_deploy_docker_generated_helper_doctor_rejects_docker_subnet_overlap
         "  exit 0\n"
         "fi\n"
         'if [ "$1" = network ] && [ "$2" = inspect ]; then\n'
-        "  printf 'existing-network 172.31.250.0/24 \\n'\n"
+        "  printf 'existing-network 172.31.251.0/24 \\n'\n"
         "  exit 0\n"
         "fi\n"
         "exit 1\n",
@@ -2499,8 +3329,8 @@ def test_cli_deploy_docker_generated_helper_doctor_rejects_docker_subnet_overlap
 
     assert result.returncode == 1
     assert (
-        "fail: Docker subnet 172.31.250.0/24 already belongs to network "
-        "existing-network\n"
+        "fail: Docker subnet 172.31.251.0/24 overlaps network "
+        "existing-network (172.31.251.0/24)\n"
     ) in result.stdout
 
 
@@ -2643,7 +3473,7 @@ def test_cli_deploy_docker_update_preserves_local_config_and_env_values(
         "config.\n"
         "\n"
         "ARBITER_IMAGE=python:3.11-slim\n"
-        "ARBITER_CONTAINER_NAME=arbiter\n"
+        "ARBITER_CONTAINER_NAME=arbiter-staging\n"
         "ARBITER_RESTART=unless-stopped\n"
         "ARBITER_APP_ENV_FILE=./conf/.env\n"
         "ARBITER_CONFIG_DIR=./conf\n"
@@ -2653,8 +3483,8 @@ def test_cli_deploy_docker_update_preserves_local_config_and_env_values(
         "ARBITER_HOST_BIND=0.0.0.0\n"
         "ARBITER_HOST_PORT=9000\n"
         "ARBITER_CONTAINER_PORT=8025\n"
-        "ARBITER_DOCKER_NETWORK_NAME=arbiter\n"
-        "ARBITER_DOCKER_BRIDGE_NAME=arbiter0\n"
+        "ARBITER_DOCKER_NETWORK_NAME=arbiter-staging\n"
+        "ARBITER_DOCKER_BRIDGE_NAME=arbiter-stg0\n"
         "ARBITER_DOCKER_SUBNET=172.31.251.0/24\n"
         "\n"
         "# Extra local Compose values.\n"
@@ -2993,6 +3823,7 @@ def test_cli_version_prints_core_and_plugin_versions(
     plugins = cast(list[dict[str, str]], version_info["plugins"])
     assert capsys.readouterr().out == (
         f"core {core['version']} (api {core['api_version']})\n"
+        "deployment scope unknown\n"
         "source abc123 dirty\n"
         "plugins:\n"
         f"  {plugins[0]['name']} {plugins[0]['version']} "
@@ -3168,6 +3999,7 @@ def test_cli_bootstrap_arbiter_writes_main_config(
         "# Optionally load a config-dir-relative dotenv file before composition:\n"
         "#   arbiter:\n"
         "#     env_file: local.env\n"
+        "  - arbiter_app_config_schema\n"
         "  - arbiter: server\n"
         "  - _self_\n"
     )
@@ -3182,6 +4014,7 @@ def test_cli_bootstrap_arbiter_writes_main_config(
         "  path: /mcp\n"
         "  stateless_http: true\n"
         "  json_response: true\n"
+        "deployment_scope: unknown\n"
         "discovery:\n"
         "  max_account_preview_limit: 25\n"
         "  max_operation_preview_limit: 25\n"
@@ -3711,8 +4544,10 @@ def test_log_startup_summary_includes_safe_runtime_context(
 
     message = caplog.messages[0]
     assert "Arbiter starting version=1.2.3" in message
+    assert "deployment_scope=unknown" in message
     assert "transport=streamable-http" in message
     assert "bind=127.0.0.1:8000/mcp" in message
+    assert "mcp_url=http://127.0.0.1:8000/mcp" in message
     assert "services=smtp" in message
     assert "service_accounts=smtp:primary" in message
     assert "super-secret" not in message

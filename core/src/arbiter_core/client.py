@@ -26,6 +26,7 @@ MCP_URL_ENV_VAR = "ARBITER_MCP_URL"
 DEFAULT_CONFIG_DIR = "~/.arbiter"
 DEFAULT_CLIENT_CONFIG_NAME = "arbiter-client"
 BOOTSTRAP_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+_STAGED_DEPLOYMENT_WARNING_EMITTED = False
 
 
 @dataclass(frozen=True)
@@ -315,11 +316,36 @@ def _warn_if_remote_version_mismatch(initialize_result: object) -> None:
     )
 
 
+def _warn_if_staged_deployment(version_info: object, url: str) -> None:
+    global _STAGED_DEPLOYMENT_WARNING_EMITTED
+
+    if _STAGED_DEPLOYMENT_WARNING_EMITTED or not isinstance(version_info, Mapping):
+        return
+    deployment_scope = version_info.get("deployment_scope")
+    if deployment_scope != "staged":
+        return
+    print(
+        f"Heads up: connected to staged Arbiter at {url}.",
+        file=sys.stderr,
+    )
+    _STAGED_DEPLOYMENT_WARNING_EMITTED = True
+
+
+async def _warn_if_staged_server(session: ClientSession, url: str) -> None:
+    try:
+        result = await session.call_tool("version_info", {})
+        payload = _tool_result_payload(result)
+    except Exception:
+        return
+    _warn_if_staged_deployment(payload, url)
+
+
 async def list_tools(url: str) -> list[Mapping[str, object]]:
     async with streamablehttp_client(url) as (read_stream, write_stream, _):
         async with ClientSession(read_stream, write_stream) as session:
             initialize_result = await session.initialize()
             _warn_if_remote_version_mismatch(initialize_result)
+            await _warn_if_staged_server(session, url)
             result = await session.list_tools()
     return [
         {
@@ -340,6 +366,11 @@ async def call_tool(
         async with ClientSession(read_stream, write_stream) as session:
             initialize_result = await session.initialize()
             _warn_if_remote_version_mismatch(initialize_result)
+            if name == "version_info":
+                result = await session.call_tool(name, dict(arguments))
+                _warn_if_staged_deployment(_tool_result_payload(result), url)
+                return result
+            await _warn_if_staged_server(session, url)
             return await session.call_tool(name, dict(arguments))
 
 

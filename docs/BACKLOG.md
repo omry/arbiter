@@ -87,6 +87,17 @@ This file is the day-to-day queue for design and implementation gaps.
       the new config only after validation succeeds; failed reloads keep the
       previous runtime active; and logs expose which services changed.
 
+- [ ] `P2` Add per-account service smoke tests. Each service plugin should be
+      able to register a quick stateless account test that uses the configured
+      credentials and returns a structured status. Arbiter should expose one
+      aggregate server endpoint that tests all configured service accounts and
+      reports per-service/per-account results without mutating remote state.
+      Acceptance checks: define the plugin hook contract; implement SMTP and
+      IMAP smoke tests that avoid writes or destructive side effects; expose one
+      MCP tool for all account tests; return clear success, skipped, and failure
+      statuses with operator-useful messages; and document how deployment smoke
+      checks can call the aggregate endpoint.
+
 - [ ] `P2` Let Hydra own server logging configuration.
       Arbiter is a server process, so operators need proper logging
       without a parallel Arbiter-specific logging surface. Hydra should remain

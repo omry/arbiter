@@ -10,6 +10,7 @@ from omegaconf import DictConfig, OmegaConf
 from arbiter_core.config import (
     AppConfig,
     ArbiterConfig,
+    DeploymentScope,
     configured_service_names,
     register_configs,
     service_accounts_for,
@@ -73,6 +74,7 @@ def test_compose_config_returns_hydra_config() -> None:
     assert cfg.arbiter.server.host == "127.0.0.1"
     assert cfg.arbiter.server.port == 8000
     assert cfg.arbiter.server.path == "/mcp"
+    assert cfg.arbiter.deployment_scope == DeploymentScope.unknown
     assert cfg.arbiter.account == {}
     assert cfg.arbiter.policy == {}
     assert cfg.arbiter.etc == {}

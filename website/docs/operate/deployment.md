@@ -9,11 +9,13 @@ Arbiter's Docker deployment is a two-phase flow:
 
 The generated service installs the requested Arbiter package target at
 container startup, mounts deployment-owned config from the host, and publishes
-MCP on host loopback by default:
+MCP on host loopback. Prepared staging directories use:
 
 ```text
-http://127.0.0.1:8025/mcp
+http://127.0.0.1:18025/mcp
 ```
+
+Installed deployments are rewritten to use `http://127.0.0.1:8025/mcp`.
 
 ## Standard flow
 

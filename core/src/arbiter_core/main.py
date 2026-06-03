@@ -28,6 +28,7 @@ from .config import (
     ArbiterConfig,
     DiscoveryConfig,
     FastMCPConfig,
+    DeploymentScope,
     configured_service_names,
     register_configs,
     service_accounts_for,
@@ -91,7 +92,7 @@ DOCKER_LOCAL_SOURCE_CONTAINER_ROOT = "/source/arbiter"
 DOCKER_WHEELS_CONTAINER_ROOT = "/wheels"
 DOCKER_COMPOSE_ENV_DEFAULTS = [
     ("ARBITER_IMAGE", "python:3.11-slim"),
-    ("ARBITER_CONTAINER_NAME", "arbiter"),
+    ("ARBITER_CONTAINER_NAME", "arbiter-staging"),
     ("ARBITER_RESTART", "unless-stopped"),
     ("ARBITER_APP_ENV_FILE", "./conf/.env"),
     ("ARBITER_CONFIG_DIR", "./conf"),
@@ -99,11 +100,11 @@ DOCKER_COMPOSE_ENV_DEFAULTS = [
     ("ARBITER_REQUIREMENTS_FILE", "./requirements.txt"),
     ("ARBITER_WHEELS_DIR", "./wheels"),
     ("ARBITER_HOST_BIND", "127.0.0.1"),
-    ("ARBITER_HOST_PORT", "8025"),
+    ("ARBITER_HOST_PORT", "18025"),
     ("ARBITER_CONTAINER_PORT", "8025"),
-    ("ARBITER_DOCKER_NETWORK_NAME", "arbiter"),
-    ("ARBITER_DOCKER_BRIDGE_NAME", "arbiter0"),
-    ("ARBITER_DOCKER_SUBNET", "172.31.250.0/24"),
+    ("ARBITER_DOCKER_NETWORK_NAME", "arbiter-staging"),
+    ("ARBITER_DOCKER_BRIDGE_NAME", "arbiter-stg0"),
+    ("ARBITER_DOCKER_SUBNET", "172.31.251.0/24"),
 ]
 GROUP_SELECTION_PATTERN = re.compile(
     r"^\s*-\s*(?P<item>[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)?)\s*(?:#.*)?$"
@@ -118,6 +119,7 @@ MAIN_CONFIG_TEMPLATE = """defaults:
 # Optionally load a config-dir-relative dotenv file before composition:
 #   arbiter:
 #     env_file: local.env
+  - arbiter_app_config_schema
   - arbiter: server
   - _self_
 """
@@ -130,6 +132,7 @@ server:
   path: /mcp
   stateless_http: true
   json_response: true
+deployment_scope: unknown
 discovery:
   max_account_preview_limit: 25
   max_operation_preview_limit: 25
@@ -167,6 +170,16 @@ def _select_object(cfg: DictConfig, key: str, default: Any) -> Any:
 
 
 def _instantiate_app_config_from_hydra(cfg: DictConfig) -> AppConfig:
+    raw_deployment_scope = _select_object(
+        cfg,
+        "arbiter.deployment_scope",
+        DeploymentScope.unknown,
+    )
+    deployment_scope = (
+        raw_deployment_scope
+        if isinstance(raw_deployment_scope, DeploymentScope)
+        else DeploymentScope(str(raw_deployment_scope))
+    )
     server_cfg = cast(
         DictConfig,
         OmegaConf.merge(
@@ -192,6 +205,7 @@ def _instantiate_app_config_from_hydra(cfg: DictConfig) -> AppConfig:
     return AppConfig(
         arbiter=ArbiterConfig(
             server=server,
+            deployment_scope=deployment_scope,
             discovery=discovery,
             account=cast(dict[str, Any], _select_object(cfg, "arbiter.account", {})),
             policy=cast(dict[str, Any], _select_object(cfg, "arbiter.policy", {})),
@@ -271,17 +285,28 @@ def _service_accounts_summary(cfg: AppConfig) -> str:
     return ";".join(summaries) if summaries else "none"
 
 
+def _server_mcp_url(cfg: AppConfig) -> str:
+    if cfg.arbiter.server.transport == "stdio":
+        return "stdio"
+    return (
+        f"http://{cfg.arbiter.server.host}:"
+        f"{cfg.arbiter.server.port}{cfg.arbiter.server.path}"
+    )
+
+
 def log_startup_summary(cfg: AppConfig) -> None:
     active_services = configured_service_names(cfg.arbiter.account)
 
     LOGGER.info(
-        "Arbiter starting version=%s transport=%s bind=%s:%s%s "
-        "services=%s service_accounts=%s",
+        "Arbiter starting version=%s deployment_scope=%s transport=%s bind=%s:%s%s "
+        "mcp_url=%s services=%s service_accounts=%s",
         arbiter_core_version(),
+        cfg.arbiter.deployment_scope.value,
         cfg.arbiter.server.transport,
         cfg.arbiter.server.host,
         cfg.arbiter.server.port,
         cfg.arbiter.server.path,
+        _server_mcp_url(cfg),
         _csv_or_none(active_services),
         _service_accounts_summary(cfg),
     )
@@ -350,13 +375,20 @@ def service_plugin_infos(
 
 def runtime_version_info(
     service_plugins: Sequence[ServicePlugin] | None = None,
+    *,
+    deployment_scope: DeploymentScope | str = DeploymentScope.unknown,
 ) -> dict[str, object]:
     source = source_info()
+    if isinstance(deployment_scope, DeploymentScope):
+        deployment_scope_value = deployment_scope.value
+    else:
+        deployment_scope_value = deployment_scope
     return {
         "core": {
             "version": CORE_VERSION,
             "api_version": CORE_API_VERSION,
         },
+        "deployment_scope": deployment_scope_value,
         "source": {
             "commit": source.commit,
             "dirty": source.dirty,
@@ -377,6 +409,7 @@ def _print_runtime_version_info(
 
     core = cast(dict[str, str], version_info["core"])
     print(f"core {core['version']} (api {core['api_version']})")
+    print(f"deployment scope {version_info['deployment_scope']}")
     source = cast(dict[str, object], version_info["source"])
     if source["commit"] is not None:
         dirty = " dirty" if source["dirty"] else ""
@@ -397,6 +430,7 @@ def _register_core_tools(
     server: "FastMCP",
     catalog: OperationCatalog,
     service_plugins: Sequence[ServicePlugin],
+    deployment_scope: DeploymentScope,
 ) -> None:
     @server.tool(
         description=(
@@ -404,7 +438,10 @@ def _register_core_tools(
         )
     )
     def version_info() -> dict[str, object]:
-        return runtime_version_info(service_plugins)
+        return runtime_version_info(
+            service_plugins,
+            deployment_scope=deployment_scope,
+        )
 
     @server.tool(
         description=(
@@ -462,20 +499,9 @@ def _register_core_tools(
         return catalog.invoke_operation(id, arguments)
 
 
-def build_server(
-    cfg: HydraConfig,
-    service_plugins: Sequence[ServicePlugin] | None = None,
-) -> "FastMCP":
+def _create_fastmcp_server(app_config: AppConfig) -> "FastMCP":
     from mcp.server.fastmcp import FastMCP
 
-    app_config = _instantiate_app_config(cfg)
-    available_service_plugins = (
-        discover_service_plugins() if service_plugins is None else service_plugins
-    )
-    active_service_plugins = _configured_service_plugins(
-        app_config, available_service_plugins
-    )
-    app = build_app(app_config, service_plugins=active_service_plugins)
     server = FastMCP(
         app_config.arbiter.server.name,
         stateless_http=app_config.arbiter.server.stateless_http,
@@ -487,14 +513,35 @@ def build_server(
     mcp_server = getattr(server, "_mcp_server", None)
     if mcp_server is not None:
         mcp_server.version = arbiter_core_version()
+    return server
 
+
+def build_server(
+    cfg: HydraConfig,
+    service_plugins: Sequence[ServicePlugin] | None = None,
+) -> "FastMCP":
+    app_config = _instantiate_app_config(cfg)
+    available_service_plugins = (
+        discover_service_plugins() if service_plugins is None else service_plugins
+    )
+    active_service_plugins = _configured_service_plugins(
+        app_config,
+        available_service_plugins,
+    )
+    app = build_app(app_config, service_plugins=active_service_plugins)
+    server = _create_fastmcp_server(app_config)
     catalog = OperationCatalog(
         active_service_plugins,
         ServicePluginContext(runtimes=app.runtime_registry),
         max_account_preview_limit=app_config.arbiter.discovery.max_account_preview_limit,
         max_operation_preview_limit=app_config.arbiter.discovery.max_operation_preview_limit,
     )
-    _register_core_tools(server, catalog, active_service_plugins)
+    _register_core_tools(
+        server,
+        catalog,
+        active_service_plugins,
+        app_config.arbiter.deployment_scope,
+    )
 
     return server
 
@@ -940,6 +987,7 @@ def _build_local_source_wheel(source_root: Path, wheel_dir: Path) -> Path | None
                 "pip",
                 "wheel",
                 "--no-deps",
+                "--no-build-isolation",
                 "--wheel-dir",
                 str(temporary_wheel_dir),
                 str(source_root),

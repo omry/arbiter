@@ -30,6 +30,23 @@ managed files and writes:
 - `.arbiter-deploy.json`: hidden manifest that records hashes for
   generated template files.
 
+Prepared Docker directories are staged deployments. The generated Compose
+command passes `arbiter.deployment_scope=staged` to the server, so startup
+logs, `version_info`, and clients can distinguish a staged server from an
+installed one. Staged directories also use staging-specific Docker wrapper
+defaults so they can run next to an installed Arbiter without changing files by
+hand:
+
+- MCP URL: `http://127.0.0.1:18025/mcp`
+- container name: `arbiter-staging`
+- Docker network: `arbiter-staging`
+- bridge interface: `arbiter-stg0`
+- bridge subnet: `172.31.251.0/24`
+
+When `up` sees that the staged subnet overlaps an existing Docker network, the
+helper rewrites `ARBITER_DOCKER_SUBNET` in `docker.env` to an unused staging
+candidate before starting Compose.
+
 ## Add config
 
 Either bootstrap a config into the default deployment config directory:

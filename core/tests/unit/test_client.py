@@ -18,6 +18,7 @@ def isolate_client_config(
 ) -> None:
     monkeypatch.delenv("ARBITER_MCP_URL", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(client, "_STAGED_DEPLOYMENT_WARNING_EMITTED", False)
 
 
 def test_client_help_uses_arbiter_program_name(
@@ -784,6 +785,54 @@ def test_client_warns_when_remote_version_differs(
         "Arbiter core version warning: local CLI core version 1.2.3 "
         "does not match remote server core version 1.2.4.\n"
     )
+
+
+def test_client_warns_when_connected_to_staged_deployment(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client._warn_if_staged_deployment(
+        {"deployment_scope": "staged"},
+        "http://127.0.0.1:8025/mcp",
+    )
+
+    assert capsys.readouterr().err == (
+        "Heads up: connected to staged Arbiter at http://127.0.0.1:8025/mcp.\n"
+    )
+
+
+def test_client_emits_staged_deployment_warning_once(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client._warn_if_staged_deployment(
+        {"deployment_scope": "staged"},
+        "http://127.0.0.1:8025/mcp",
+    )
+    client._warn_if_staged_deployment(
+        {"deployment_scope": "staged"},
+        "http://127.0.0.1:8025/mcp",
+    )
+
+    assert capsys.readouterr().err == (
+        "Heads up: connected to staged Arbiter at http://127.0.0.1:8025/mcp.\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "version_info",
+    [
+        {"deployment_scope": "installed"},
+        {"deployment_scope": "unknown"},
+        {},
+        None,
+    ],
+)
+def test_client_does_not_warn_for_non_staged_deployment(
+    version_info: object,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client._warn_if_staged_deployment(version_info, "http://127.0.0.1:8025/mcp")
+
+    assert capsys.readouterr().err == ""
 
 
 @pytest.mark.parametrize("remote_version", ["1.2.3", "unknown", None])

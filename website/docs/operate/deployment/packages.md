@@ -84,6 +84,7 @@ wheelhouse:
 
 ```bash
 ./arbiter-docker/arbiter-docker bundle upgrade
+./arbiter-docker/arbiter-docker bundle upgrade --pypi-only
 ./arbiter-docker/arbiter-docker bundle upgrade 0.9
 ./arbiter-docker/arbiter-docker bundle upgrade arbiter-smtp
 ./arbiter-docker/arbiter-docker bundle upgrade arbiter-smtp==0.9.4
@@ -95,6 +96,10 @@ as `/wheels/*.whl` are local artifacts, so a no-argument `bundle upgrade`
 refreshes the wheelhouse without changing those root wheel paths. On success,
 the command reports changed root packages first, followed by changed
 transitive packages.
+
+When run from an Arbiter source checkout, `bundle upgrade` first builds local
+Arbiter wheels for matching root packages and lets the resolver consider those
+wheels. Use `--pypi-only` to resolve upgrades from the package index only.
 
 The PyPI package `arbiter` is unrelated to Arbiter. Use `arbiter-suite`
 for the default bundle, or exact pins for Arbiter packages such as

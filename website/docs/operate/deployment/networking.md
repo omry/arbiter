@@ -2,11 +2,14 @@
 title: Networking
 ---
 
-The generated Compose service publishes MCP on host loopback by default:
+Prepared staging directories publish MCP on a staging-specific port by default:
 
 ```text
-http://127.0.0.1:8025/mcp
+http://127.0.0.1:18025/mcp
 ```
+
+This keeps staging local while avoiding the installed service's default
+`127.0.0.1:8025` bind.
 
 The service listens on all container interfaces so Docker's host-loopback port
 publish can reach it. The host publish remains loopback-only unless you change
@@ -23,38 +26,42 @@ Edit Docker wrapper settings with:
 Common values in `docker.env`:
 
 - `ARBITER_HOST_BIND`: host bind address, default `127.0.0.1`.
-- `ARBITER_HOST_PORT`: host port, default `8025`.
+- `ARBITER_HOST_PORT`: host port, staging default `18025`; installed default
+  `8025`.
 - `ARBITER_CONTAINER_PORT`: container port, default `8025`.
 - `ARBITER_DOCKER_NETWORK_NAME`: Docker network name, default
-  `arbiter`.
+  `arbiter-staging` before install and `arbiter` after install.
 - `ARBITER_DOCKER_BRIDGE_NAME`: bridge interface name, default
-  `arbiter0`.
-- `ARBITER_DOCKER_SUBNET`: bridge subnet, default `172.31.250.0/24`.
+  `arbiter-stg0` before install and `arbiter0` after install.
+- `ARBITER_DOCKER_SUBNET`: bridge subnet, staging default
+  `172.31.251.0/24`; installed default `172.31.250.0/24`.
 
 ## Bridge overrides
 
-The standard Compose file uses a deterministic Docker bridge so firewall rules
-can target stable names:
+The generated Compose file uses a deterministic Docker bridge so firewall rules
+can target stable names. Prepared staging directories default to:
+
+- Docker network name: `arbiter-staging`
+- bridge interface: `arbiter-stg0`
+- bridge subnet: `172.31.251.0/24`
+
+Installed deployments are rewritten to:
 
 - Docker network name: `arbiter`
 - bridge interface: `arbiter0`
 - bridge subnet: `172.31.250.0/24`
 
-If that subnet or interface name conflicts with the host, override them for the
-Compose invocation. Keep the bridge interface name short enough for Linux
-network interface limits:
+If a subnet or interface name conflicts with the host, edit `docker.env` with
+the deployment helper and then run `up` or `restart` again:
 
 ```bash
-cd /opt/arbiter
-ARBITER_DOCKER_BRIDGE_NAME=arbiter1 \
-ARBITER_DOCKER_SUBNET=172.31.251.0/24 \
-sudo --preserve-env=ARBITER_DOCKER_BRIDGE_NAME,ARBITER_DOCKER_SUBNET \
-  docker compose --env-file /opt/arbiter/docker.env \
-  -f /opt/arbiter/compose.yaml up -d
+./arbiter-docker/arbiter-docker edit-docker
+./arbiter-docker/arbiter-docker up
 ```
 
-The helper normally wraps `docker compose` for you. Use the manual form only
-when you need one-off Docker options that the helper does not expose.
+Keep the bridge interface name short enough for Linux network interface limits.
+For installed deployments, run the installed helper from `/opt/arbiter` or use
+the systemd service after editing `/opt/arbiter/docker.env`.
 
 ## Exposure
 

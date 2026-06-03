@@ -23,6 +23,7 @@ Commands:
   edit-docker   Edit docker.env with $ARBITER_EDITOR, $EDITOR, or vi
   up            Start or update the Docker Compose service
   restart       Recreate the Docker Compose service
+  test          Call version_info through the computed MCP URL
   down          Stop and remove the Docker Compose service
   ps            Show Docker Compose service status
   logs          Follow Docker Compose logs
@@ -45,6 +46,8 @@ Install options:
 
 Environment:
   ARBITER_DOCKER_DIR   Deployment directory, default script directory
+  ARBITER_CLIENT_COMMAND
+                      Arbiter client command for test, default arbiter
   ARBITER_EDITOR       Editor for edit-config/edit-env
 EOF
 }
@@ -416,6 +419,128 @@ release_line_upper_bound() {
   fi
 }
 
+repo_root_from_start() {
+  local start="$1"
+
+  [[ -n "$start" ]] || return 1
+  if [[ ! -d "$start" ]]; then
+    start="$(dirname -- "$start")"
+  fi
+  start="$(cd -- "$start" 2>/dev/null && pwd -P)" || return 1
+
+  while [[ "$start" != "/" ]]; do
+    if [[ -f "$start/core/pyproject.toml" && -f "$start/imap/pyproject.toml" && -f "$start/smtp/pyproject.toml" ]]; then
+      printf '%s\n' "$start"
+      return 0
+    fi
+    start="$(dirname -- "$start")"
+  done
+  return 1
+}
+
+find_repo_root() {
+  repo_root_from_start "$PWD" || repo_root_from_start "$deploy_dir"
+}
+
+repo_source_dir_for_package() {
+  case "$(normalize_distribution_name "$1")" in
+    arbiter-core)
+      printf 'core\n'
+      ;;
+    arbiter-imap)
+      printf 'imap\n'
+      ;;
+    arbiter-smtp)
+      printf 'smtp\n'
+      ;;
+  esac
+}
+
+bundle_upgrade_refresh_repo_wheels() {
+  local tmp_dir="$1"
+  local repo_root
+  local active_wheels_dir
+  local python_bin="${ARBITER_PYTHON:-}"
+  local build_dir
+  local output_file
+  local source_list
+  local line
+  local name
+  local source_dir
+  local wheel
+  local built_count=0
+
+  repo_root="$(find_repo_root)" || return 0
+  active_wheels_dir="$(wheels_dir_path)"
+  build_dir="$tmp_dir/repo-wheels"
+  output_file="$tmp_dir/repo-wheel-build.out"
+  source_list="$tmp_dir/repo-wheel-sources"
+
+  if [[ -z "$python_bin" ]]; then
+    if [[ -x "$repo_root/.venv/bin/python" ]]; then
+      python_bin="$repo_root/.venv/bin/python"
+    elif command -v python >/dev/null; then
+      python_bin="python"
+    elif command -v python3 >/dev/null; then
+      python_bin="python3"
+    else
+      printf 'error: cannot build local repo wheels: python command not found\n' >&2
+      printf '       set ARBITER_PYTHON or use bundle upgrade --pypi-only\n' >&2
+      return 1
+    fi
+  fi
+
+  mkdir -p "$active_wheels_dir" "$build_dir"
+  : >"$source_list"
+
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    [[ "$line" != /* ]] || continue
+    name="${line%%==*}"
+    name="${name%%[*}"
+    source_dir="$(repo_source_dir_for_package "$name")"
+    [[ -n "$source_dir" && -d "$repo_root/$source_dir" ]] || continue
+    printf '%s\n' "$repo_root/$source_dir" >>"$source_list"
+  done < <(
+    awk '
+      {
+        line = $0
+        sub(/^[[:space:]]+/, "", line)
+        sub(/[[:space:]]+#.*$/, "", line)
+        sub(/[[:space:]]+$/, "", line)
+        if (line != "") {
+          print line
+        }
+      }
+    ' "$requirements_file"
+  )
+
+  if [[ ! -s "$source_list" ]]; then
+    return 0
+  fi
+  sort -u "$source_list" -o "$source_list"
+
+  while IFS= read -r source_dir; do
+    if ! "$python_bin" -m pip --disable-pip-version-check wheel --no-deps --no-build-isolation --wheel-dir "$build_dir" "$source_dir" >"$output_file" 2>&1; then
+      cat "$output_file" >&2
+      printf 'error: failed to build local repo wheel: %s\n' "$source_dir" >&2
+      printf '       use bundle upgrade --pypi-only to resolve only from the package index\n' >&2
+      return 1
+    fi
+    built_count=$((built_count + 1))
+  done <"$source_list"
+
+  if [[ "$built_count" -eq 0 ]]; then
+    return 0
+  fi
+
+  shopt -s nullglob
+  for wheel in "$build_dir"/*.whl; do
+    cp "$wheel" "$active_wheels_dir/${wheel##*/}"
+  done
+  shopt -u nullglob
+}
+
 bundle_upgrade_build_input() {
   local target="$1"
   local input_file="$2"
@@ -472,14 +597,14 @@ bundle_upgrade_build_input() {
 
     case "$mode" in
       all)
-        spec="$name"
+        spec="$name>=$version"
         ;;
       release)
-        spec="$name>=$target,<$release_upper"
+        spec="$name>=$version,>=$target,<$release_upper"
         ;;
       package)
         if [[ "$normalized_name" == "$target_normalized" ]]; then
-          spec="$name"
+          spec="$name>=$version"
           found_target=1
         fi
         ;;
@@ -537,24 +662,36 @@ bundle_upgrade_resolve() {
   local input_file="$1"
   local roots_file="$2"
   local output_file="$3"
+  local pypi_only="$4"
   local tmp_dir
   local image
   local docker_user
+  local active_wheels_dir
   local parse_script
   local -a resolve_command
   local -a parse_command
+  local -a wheel_mount_args=()
+  local -a find_links_args=()
 
   tmp_dir="$(dirname "$input_file")"
   image="$(compose_env_value ARBITER_IMAGE python:3.11-slim)"
   docker_user="$(id -u):$(id -g)"
+  active_wheels_dir="$(wheels_dir_path)"
+  if [[ "$pypi_only" -eq 0 && -d "$active_wheels_dir" ]]; then
+    wheel_mount_args=(-v "$active_wheels_dir:/wheels:ro")
+    find_links_args=(--find-links /wheels)
+  fi
+  require_docker_access
 
   resolve_command=(
     docker run --rm
     --user "$docker_user"
     -v "$tmp_dir:/work"
+    "${wheel_mount_args[@]}"
     "$image"
     python -m pip --disable-pip-version-check install
     --dry-run --ignore-installed
+    "${find_links_args[@]}"
     --report /work/report.json
     -r /work/requirements.in
   )
@@ -606,7 +743,8 @@ with open("/work/requirements.out", "w", encoding="utf-8") as handle:
 }
 
 bundle_upgrade() {
-  local target="${1:-}"
+  local target=""
+  local pypi_only=0
   local tmp_dir
   local input_file
   local roots_file
@@ -615,10 +753,37 @@ bundle_upgrade() {
   local after_file
   local build_status
 
-  if (($# > 1)); then
-    printf 'error: bundle upgrade accepts at most one package or release-line argument\n' >&2
-    return 2
-  fi
+  while (($#)); do
+    case "$1" in
+      --pypi-only)
+        pypi_only=1
+        ;;
+      --)
+        shift
+        while (($#)); do
+          if [[ -n "$target" ]]; then
+            printf 'error: bundle upgrade accepts at most one package or release-line argument\n' >&2
+            return 2
+          fi
+          target="$1"
+          shift
+        done
+        break
+        ;;
+      -*)
+        printf 'error: unknown bundle upgrade option: %s\n' "$1" >&2
+        return 2
+        ;;
+      *)
+        if [[ -n "$target" ]]; then
+          printf 'error: bundle upgrade accepts at most one package or release-line argument\n' >&2
+          return 2
+        fi
+        target="$1"
+        ;;
+    esac
+    shift
+  done
 
   tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/arbiter-bundle-upgrade.XXXXXX")"
   input_file="$tmp_dir/requirements.in"
@@ -627,6 +792,13 @@ bundle_upgrade() {
   before_file="$tmp_dir/before.tsv"
   after_file="$tmp_dir/after.tsv"
   bundle_write_upgrade_snapshot "$before_file"
+
+  if [[ "$pypi_only" -eq 0 ]]; then
+    if ! bundle_upgrade_refresh_repo_wheels "$tmp_dir"; then
+      rm -rf "$tmp_dir"
+      return 1
+    fi
+  fi
 
   if bundle_upgrade_build_input "$target" "$input_file" "$roots_file"; then
     build_status=0
@@ -645,7 +817,7 @@ bundle_upgrade() {
     rm -rf "$tmp_dir"
     return 1
   fi
-  if ! bundle_upgrade_resolve "$input_file" "$roots_file" "$output_file"; then
+  if ! bundle_upgrade_resolve "$input_file" "$roots_file" "$output_file" "$pypi_only"; then
     rm -rf "$tmp_dir"
     return 1
   fi
@@ -696,6 +868,42 @@ compose_env_value() {
   env_file_value "$compose_env_file" "$key" || printf '%s\n' "$default"
 }
 
+set_compose_env_value() {
+  local key="$1"
+  local value="$2"
+  local tmp_path
+
+  require_file "$compose_env_file"
+  tmp_path="$(mktemp "${TMPDIR:-/tmp}/arbiter-docker-env.XXXXXX")"
+  awk -v key="$key" -v value="$value" '
+    index($0, key "=") == 1 {
+      print key "=" value
+      found = 1
+      next
+    }
+    { print }
+    END {
+      if (!found) {
+        print key "=" value
+      }
+    }
+  ' "$compose_env_file" >"$tmp_path"
+  mv "$tmp_path" "$compose_env_file"
+}
+
+container_name_value() {
+  compose_env_value ARBITER_CONTAINER_NAME arbiter-staging
+}
+
+compose_project_name() {
+  local name="${COMPOSE_PROJECT_NAME:-}"
+
+  if [[ -z "$name" ]]; then
+    name="$(basename -- "$deploy_dir")"
+  fi
+  printf '%s\n' "$name" | tr '[:upper:]' '[:lower:]'
+}
+
 deploy_path_from_compose_value() {
   local value="$1"
 
@@ -720,6 +928,93 @@ config_name_value() {
 
 app_env_path() {
   deploy_path_from_compose_value "$(compose_env_value ARBITER_APP_ENV_FILE ./conf/.env)"
+}
+
+server_host_url_value() {
+  local host
+
+  host="$(compose_env_value ARBITER_HOST_BIND 127.0.0.1)"
+  case "$host" in
+    0.0.0.0)
+      printf '127.0.0.1\n'
+      ;;
+    *:*)
+      printf '[%s]\n' "$host"
+      ;;
+    *)
+      printf '%s\n' "$host"
+      ;;
+  esac
+}
+
+mcp_url_value() {
+  printf 'http://%s:%s/mcp\n' \
+    "$(server_host_url_value)" \
+    "$(compose_env_value ARBITER_HOST_PORT 18025)"
+}
+
+print_mcp_url() {
+  printf ' '
+  doctor_prefix 32 "✔"
+  printf ' MCP URL: '
+  doctor_prefix 94 "$(mcp_url_value)"
+  printf '\n'
+}
+
+print_staging_port_note() {
+  local host_port
+
+  deployment_is_staged || return 0
+  host_port="$(compose_env_value ARBITER_HOST_PORT 18025)"
+  [[ "$host_port" != 8025 ]] || return 0
+  printf ' '
+  doctor_prefix 32 "✔"
+  printf ' Staging MCP port: 8025 -> %s to prevent collision\n' "$host_port"
+}
+
+test_server() {
+  local url
+  local client_command
+  local output_file
+  local timeout
+  local start_time
+
+  url="$(mcp_url_value)"
+  client_command="${ARBITER_CLIENT_COMMAND:-arbiter}"
+  if ! command -v "$client_command" >/dev/null; then
+    printf 'error: Arbiter client command not found: %s\n' "$client_command" >&2
+    printf '       activate the environment that provides arbiter, or set ARBITER_CLIENT_COMMAND\n' >&2
+    return 1
+  fi
+
+  output_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-docker-test.XXXXXX")"
+  timeout="${ARBITER_TEST_TIMEOUT:-60}"
+  start_time="$SECONDS"
+  while true; do
+    if "$client_command" mcp call version_info "arbiter.mcp_url=$url" >"$output_file" 2>&1; then
+      rm -f "$output_file"
+      printf ' '
+      doctor_prefix 32 "✔"
+      printf ' MCP test: '
+      doctor_prefix 94 "$url"
+      printf '\n'
+      return 0
+    fi
+    if ! grep -Eiq 'connection error|could not connect|connection refused|all connection attempts failed' "$output_file"; then
+      break
+    fi
+    if ((SECONDS - start_time >= timeout)); then
+      break
+    fi
+    sleep 1
+  done
+  rm -f "$output_file"
+  printf ' '
+  doctor_prefix 31 "✘"
+  printf ' MCP test: '
+  doctor_prefix 94 "$url"
+  printf '\n'
+  return 1
 }
 
 config_main_file() {
@@ -752,6 +1047,239 @@ run_editor() {
   "${editor[@]}" "$path"
 }
 
+inspect_existing_container() {
+  local container_name="$1"
+  local output_file="$2"
+
+  docker inspect "$container_name" --format \
+    'name={{.Name}}
+project={{index .Config.Labels "com.docker.compose.project"}}
+service={{index .Config.Labels "com.docker.compose.service"}}
+config_files={{index .Config.Labels "com.docker.compose.project.config_files"}}
+working_dir={{index .Config.Labels "com.docker.compose.project.working_dir"}}
+oneoff={{index .Config.Labels "com.docker.compose.oneoff"}}
+image={{.Config.Image}}
+created={{.Created}}
+status={{.State.Status}}
+restart={{.HostConfig.RestartPolicy.Name}}' >"$output_file" 2>/dev/null
+}
+
+container_info_value() {
+  local info_file="$1"
+  local key="$2"
+
+  awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; exit }' "$info_file"
+}
+
+print_container_owner_details() {
+  local info_file="$1"
+  local prefix="$2"
+  local project
+  local service
+  local config_files
+  local working_dir
+  local image
+  local status
+  local restart
+
+  project="$(container_info_value "$info_file" project)"
+  service="$(container_info_value "$info_file" service)"
+  config_files="$(container_info_value "$info_file" config_files)"
+  working_dir="$(container_info_value "$info_file" working_dir)"
+  image="$(container_info_value "$info_file" image)"
+  status="$(container_info_value "$info_file" status)"
+  restart="$(container_info_value "$info_file" restart)"
+
+  if [[ -n "$project" ]]; then
+    printf '%sowner compose project: %s\n' "$prefix" "$project"
+    [[ -n "$service" ]] && printf '%sowner compose service: %s\n' "$prefix" "$service"
+    [[ -n "$working_dir" ]] && printf '%sowner deployment dir: %s\n' "$prefix" "$working_dir"
+    [[ -n "$config_files" ]] && printf '%sowner compose file: %s\n' "$prefix" "$config_files"
+  else
+    printf '%sowner: not labeled as a Docker Compose container\n' "$prefix"
+  fi
+  [[ -n "$image" ]] && printf '%simage: %s\n' "$prefix" "$image"
+  [[ -n "$status" ]] && printf '%sstatus: %s\n' "$prefix" "$status"
+  [[ -n "$restart" ]] && printf '%srestart policy: %s\n' "$prefix" "$restart"
+}
+
+check_container_name_owner() {
+  local mode="$1"
+  local container_name
+  local expected_project
+  local info_file
+  local actual_project
+  local actual_config_files
+  local actual_working_dir
+
+  container_name="$(container_name_value)"
+  expected_project="$(compose_project_name)"
+  info_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-container-owner.XXXXXX")"
+
+  if ! inspect_existing_container "$container_name" "$info_file"; then
+    rm -f "$info_file"
+    return 0
+  fi
+
+  actual_project="$(container_info_value "$info_file" project)"
+  actual_config_files="$(container_info_value "$info_file" config_files)"
+  actual_working_dir="$(container_info_value "$info_file" working_dir)"
+
+  if [[ "$actual_project" == "$expected_project" && "$actual_working_dir" == "$deploy_dir" ]]; then
+    rm -f "$info_file"
+    return 0
+  fi
+  if [[ "$actual_project" == "$expected_project" && "$actual_config_files" == "$compose_file" ]]; then
+    rm -f "$info_file"
+    return 0
+  fi
+
+  case "$mode" in
+    error)
+      printf 'error: container name is already owned by another deployment: %s\n' "$container_name" >&2
+      printf '       this deployment dir: %s\n' "$deploy_dir" >&2
+      printf '       this compose project: %s\n' "$expected_project" >&2
+      print_container_owner_details "$info_file" '       ' >&2
+      printf '       note: docker ps shows only running containers; use docker ps -a --filter name=^/%s$ to see stopped containers\n' "$container_name" >&2
+      printf '       stop it with the owning deployment helper, or set ARBITER_CONTAINER_NAME in %s\n' "$compose_env_file" >&2
+      ;;
+    warn)
+      printf 'container name in use by another deployment: %s\n' "$container_name"
+      printf '  this deployment dir: %s\n' "$deploy_dir"
+      printf '  this compose project: %s\n' "$expected_project"
+      print_container_owner_details "$info_file" '  '
+      ;;
+  esac
+
+  rm -f "$info_file"
+  return 1
+}
+
+deployment_is_staged() {
+  grep -q 'arbiter\.deployment_scope=staged' "$compose_file"
+}
+
+cidr_range() {
+  local cidr="$1"
+  local ip
+  local prefix
+  local a
+  local b
+  local c
+  local d
+  local ip_int
+  local host_count
+  local mask
+  local start
+  local end
+
+  [[ "$cidr" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)\.([0-9]+)/([0-9]+)$ ]] || return 1
+  ip="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}.${BASH_REMATCH[4]}"
+  prefix="${BASH_REMATCH[5]}"
+  IFS=. read -r a b c d <<<"$ip"
+  ((a >= 0 && a <= 255 && b >= 0 && b <= 255 && c >= 0 && c <= 255 && d >= 0 && d <= 255)) || return 1
+  ((prefix >= 0 && prefix <= 32)) || return 1
+
+  ip_int=$(((a << 24) + (b << 16) + (c << 8) + d))
+  host_count=$((1 << (32 - prefix)))
+  mask=$((0xFFFFFFFF ^ (host_count - 1)))
+  start=$((ip_int & mask))
+  end=$((start + host_count - 1))
+  printf '%s %s\n' "$start" "$end"
+}
+
+cidr_overlaps() {
+  local left="$1"
+  local right="$2"
+  local left_range
+  local right_range
+  local left_start
+  local left_end
+  local right_start
+  local right_end
+
+  left_range="$(cidr_range "$left")" || return 1
+  right_range="$(cidr_range "$right")" || return 1
+  read -r left_start left_end <<<"$left_range"
+  read -r right_start right_end <<<"$right_range"
+  ((left_start <= right_end && right_start <= left_end))
+}
+
+docker_network_subnet_lines() {
+  local network_ids
+
+  network_ids="$(docker network ls -q)" || return 1
+  [[ -n "$network_ids" ]] || return 0
+  docker network inspect $network_ids --format '{{.Name}} {{range .IPAM.Config}}{{.Subnet}} {{end}}' 2>/dev/null
+}
+
+docker_subnet_conflict() {
+  local candidate_subnet="$1"
+  local configured_network="$2"
+  local network_line
+  local network_name
+  local network_subnets
+  local network_subnet
+
+  while IFS= read -r network_line; do
+    [[ -n "$network_line" ]] || continue
+    network_name="${network_line%% *}"
+    network_subnets="${network_line#* }"
+    [[ "$network_subnets" != "$network_line" ]] || continue
+    [[ "$network_name" != "$configured_network" ]] || continue
+    for network_subnet in $network_subnets; do
+      [[ "$network_subnet" == */* ]] || continue
+      if cidr_overlaps "$candidate_subnet" "$network_subnet"; then
+        return 0
+      fi
+    done
+  done < <(docker_network_subnet_lines)
+
+  return 1
+}
+
+staging_subnet_candidates() {
+  local third_octet
+
+  printf '172.31.251.0/24\n'
+  for third_octet in {200..239}; do
+    printf '10.213.%s.0/24\n' "$third_octet"
+  done
+  for third_octet in {200..239}; do
+    printf '192.168.%s.0/24\n' "$third_octet"
+  done
+  for third_octet in {240..249}; do
+    printf '172.31.%s.0/24\n' "$third_octet"
+  done
+}
+
+ensure_staging_subnet_available() {
+  local configured_network
+  local configured_subnet
+  local candidate_subnet
+
+  deployment_is_staged || return 0
+  configured_network="$(compose_env_value ARBITER_DOCKER_NETWORK_NAME arbiter-staging)"
+  configured_subnet="$(compose_env_value ARBITER_DOCKER_SUBNET 172.31.251.0/24)"
+  [[ -n "$configured_subnet" ]] || return 0
+
+  if ! docker_subnet_conflict "$configured_subnet" "$configured_network"; then
+    return 0
+  fi
+
+  while IFS= read -r candidate_subnet; do
+    [[ -n "$candidate_subnet" ]] || continue
+    if ! docker_subnet_conflict "$candidate_subnet" "$configured_network"; then
+      set_compose_env_value ARBITER_DOCKER_SUBNET "$candidate_subnet"
+      printf 'updated staging Docker subnet: %s -> %s\n' "$configured_subnet" "$candidate_subnet"
+      return 0
+    fi
+  done < <(staging_subnet_candidates)
+
+  printf 'error: could not find an unused staging Docker subnet\n' >&2
+  return 1
+}
+
 compose() {
   local active_config_dir
 
@@ -763,12 +1291,105 @@ compose() {
   require_file "$compose_env_file"
   require_file "$requirements_file"
   validate_requirements_file "$requirements_file"
+  require_docker_access
+  if [[ "${1:-}" == up ]]; then
+    ensure_staging_subnet_available
+    check_container_name_owner error
+  fi
 
   cd "$deploy_dir"
   if [[ -f "$compose_override_file" ]]; then
     docker compose --env-file "$compose_env_file" -f "$compose_file" -f "$compose_override_file" "$@"
   else
     docker compose --env-file "$compose_env_file" -f "$compose_file" "$@"
+  fi
+}
+
+docker_access_error_matches_permission() {
+  grep -Eiq 'permission denied|permission.*docker|docker.*permission' "$1"
+}
+
+print_docker_access_error() {
+  local output_file="$1"
+  local user_name
+  local groups_line
+
+  user_name="$(id -un 2>/dev/null || printf '%s' "${USER:-unknown}")"
+  groups_line="$(id -nG 2>/dev/null || true)"
+
+  printf 'error: Docker daemon is not accessible by user %s\n' "$user_name" >&2
+  if [[ -n "$groups_line" ]]; then
+    printf '       current groups: %s\n' "$groups_line" >&2
+  fi
+  printf '       run as a user with Docker access, for example:\n' >&2
+  printf '         sudo usermod -aG docker %s\n' "$user_name" >&2
+  printf '       then log out and back in so group membership is refreshed\n' >&2
+  printf '       alternatively run this command with sudo or use the installed systemd service\n' >&2
+  if [[ -s "$output_file" ]]; then
+    printf '       docker said: %s\n' "$(tr '\n' ' ' <"$output_file" | sed 's/[[:space:]]*$//')" >&2
+  fi
+}
+
+require_docker_access() {
+  local output_file
+
+  if ! command -v docker >/dev/null; then
+    printf 'error: docker command not found\n' >&2
+    return 1
+  fi
+
+  output_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-docker-access.XXXXXX")"
+  if docker info >/dev/null 2>"$output_file"; then
+    rm -f "$output_file"
+    return 0
+  fi
+
+  if docker_access_error_matches_permission "$output_file"; then
+    print_docker_access_error "$output_file"
+  else
+    cat "$output_file" >&2
+    printf 'error: Docker daemon is not available\n' >&2
+  fi
+  rm -f "$output_file"
+  return 1
+}
+
+doctor_check_docker_access() {
+  local output_file
+
+  if ! command -v docker >/dev/null; then
+    doctor_fail "docker command not found"
+    return
+  fi
+
+  output_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-docker-access.XXXXXX")"
+  if docker info >/dev/null 2>"$output_file"; then
+    doctor_ok "Docker daemon is accessible"
+  elif docker_access_error_matches_permission "$output_file"; then
+    doctor_fail "Docker daemon is not accessible by this user"
+    doctor_detail "run as a user with Docker access, or add this user to the docker group and log out/back in"
+  else
+    doctor_fail "Docker daemon is not available"
+    if [[ -s "$output_file" ]]; then
+      doctor_detail "$(tr '\n' ' ' <"$output_file" | sed 's/[[:space:]]*$//')"
+    fi
+  fi
+  rm -f "$output_file"
+}
+
+doctor_check_container_name_owner() {
+  local container_name
+
+  if ! command -v docker >/dev/null || ! docker info >/dev/null 2>&1; then
+    return
+  fi
+
+  container_name="$(container_name_value)"
+  if check_container_name_owner quiet; then
+    doctor_ok "container name is not owned by another deployment: $container_name"
+  else
+    doctor_warn "container name is in use by another deployment: $container_name"
+    check_container_name_owner warn || true
   fi
 }
 
@@ -861,12 +1482,18 @@ info() {
   if [[ -f "$compose_override_file" ]]; then
     printf 'compose override file: %s\n' "$compose_override_file"
   fi
+  printf 'compose project: %s\n' "$(compose_project_name)"
+  printf 'container name: %s\n' "$(container_name_value)"
   printf 'config dir: %s\n' "$(config_dir_path)"
   printf 'config name: %s\n' "$(config_name_value)"
   printf 'app env file: %s\n' "$(app_env_path)"
   printf 'docker env file: %s\n' "$compose_env_file"
   printf 'requirements file: %s\n' "$requirements_file"
   printf 'wheels dir: %s\n' "$(wheels_dir_path)"
+  print_mcp_url
+  if command -v docker >/dev/null && docker info >/dev/null 2>&1; then
+    check_container_name_owner warn || true
+  fi
   docker compose version || true
 }
 
@@ -909,6 +1536,10 @@ doctor_ok() {
 
 doctor_warn() {
   doctor_line 33 warn "$1"
+}
+
+doctor_detail() {
+  printf '      %s\n' "$1"
 }
 
 doctor_fail() {
@@ -1221,10 +1852,11 @@ doctor_check_docker_network_subnet() {
   local configured_subnet
   local network_line
   local network_name
+  local network_subnets
   local network_subnet
 
-  configured_network="$(compose_env_value ARBITER_DOCKER_NETWORK_NAME arbiter)"
-  configured_subnet="$(compose_env_value ARBITER_DOCKER_SUBNET 172.31.250.0/24)"
+  configured_network="$(compose_env_value ARBITER_DOCKER_NETWORK_NAME arbiter-staging)"
+  configured_subnet="$(compose_env_value ARBITER_DOCKER_SUBNET 172.31.251.0/24)"
   [[ -n "$configured_subnet" ]] || return
 
   if ! docker network ls >/dev/null 2>&1; then
@@ -1234,14 +1866,17 @@ doctor_check_docker_network_subnet() {
   while read -r network_line; do
     [[ -n "$network_line" ]] || continue
     network_name="${network_line%% *}"
-    network_subnet="${network_line#* }"
-    [[ "$network_subnet" != "$network_line" ]] || continue
-    [[ -n "$network_subnet" ]] || continue
-    if [[ "$network_subnet" == "$configured_subnet" && "$network_name" != "$configured_network" ]]; then
-      doctor_fail "Docker subnet $configured_subnet already belongs to network $network_name"
-      return
-    fi
-  done < <(docker network inspect $(docker network ls -q) --format '{{.Name}} {{range .IPAM.Config}}{{.Subnet}} {{end}}' 2>/dev/null)
+    network_subnets="${network_line#* }"
+    [[ "$network_subnets" != "$network_line" ]] || continue
+    [[ "$network_name" != "$configured_network" ]] || continue
+    for network_subnet in $network_subnets; do
+      [[ "$network_subnet" == */* ]] || continue
+      if cidr_overlaps "$configured_subnet" "$network_subnet"; then
+        doctor_fail "Docker subnet $configured_subnet overlaps network $network_name ($network_subnet)"
+        return
+      fi
+    done
+  done < <(docker_network_subnet_lines)
 
   doctor_ok "Docker subnet is not already used by another network"
 }
@@ -1377,6 +2012,8 @@ doctor() {
     return "$doctor_status"
   fi
 
+  doctor_check_docker_access
+  doctor_check_container_name_owner
   if docker compose version >/dev/null 2>&1; then
     doctor_ok "$(docker compose version)"
   else
@@ -1515,6 +2152,42 @@ install_copy_deployment() {
   fi
 }
 
+install_mark_deployment_installed() {
+  local target_compose_file="$install_target_dir/compose.yaml"
+  local target_docker_env_file="$install_target_dir/docker.env"
+  local tmp_path
+
+  if [[ "${install_dry_run:-0}" -eq 1 ]]; then
+    printf 'would set deployment scope in compose.yaml: %s\n' "arbiter.deployment_scope=installed"
+    printf 'would set installed Docker identity in docker.env\n'
+    return
+  fi
+
+  require_file "$target_compose_file"
+  tmp_path="$(mktemp "${TMPDIR:-/tmp}/arbiter-compose.XXXXXX")"
+  sed \
+    -e 's/arbiter\.deployment_scope=staged/arbiter.deployment_scope=installed/g' \
+    -e 's/ARBITER_CONTAINER_NAME:-arbiter-staging/ARBITER_CONTAINER_NAME:-arbiter/g' \
+    -e 's/ARBITER_HOST_PORT:-18025/ARBITER_HOST_PORT:-8025/g' \
+    -e 's/ARBITER_DOCKER_NETWORK_NAME:-arbiter-staging/ARBITER_DOCKER_NETWORK_NAME:-arbiter/g' \
+    -e 's/ARBITER_DOCKER_BRIDGE_NAME:-arbiter-stg0/ARBITER_DOCKER_BRIDGE_NAME:-arbiter0/g' \
+    -e 's#ARBITER_DOCKER_SUBNET:-172\.31\.251\.0/24#ARBITER_DOCKER_SUBNET:-172.31.250.0/24#g' \
+    "$target_compose_file" >"$tmp_path"
+  mv "$tmp_path" "$target_compose_file"
+
+  require_file "$target_docker_env_file"
+  tmp_path="$(mktemp "${TMPDIR:-/tmp}/arbiter-docker-env.XXXXXX")"
+  sed \
+    -e 's/^ARBITER_CONTAINER_NAME=.*/ARBITER_CONTAINER_NAME=arbiter/' \
+    -e 's/^ARBITER_HOST_BIND=.*/ARBITER_HOST_BIND=127.0.0.1/' \
+    -e 's/^ARBITER_HOST_PORT=.*/ARBITER_HOST_PORT=8025/' \
+    -e 's/^ARBITER_DOCKER_NETWORK_NAME=.*/ARBITER_DOCKER_NETWORK_NAME=arbiter/' \
+    -e 's/^ARBITER_DOCKER_BRIDGE_NAME=.*/ARBITER_DOCKER_BRIDGE_NAME=arbiter0/' \
+    -e 's#^ARBITER_DOCKER_SUBNET=.*#ARBITER_DOCKER_SUBNET=172.31.250.0/24#' \
+    "$target_docker_env_file" >"$tmp_path"
+  mv "$tmp_path" "$target_docker_env_file"
+}
+
 install_apply_permissions() {
   local app_env_rel
   local app_env_target
@@ -1573,10 +2246,7 @@ prepare_dependency_wheelhouse() {
   fi
 
   require_file "$target_requirements_file"
-  if ! command -v docker >/dev/null; then
-    printf 'error: docker command not found\n' >&2
-    exit 1
-  fi
+  require_docker_access
 
   mkdir -p "$target_wheels_dir"
   tmp_wheels_dir="$(mktemp -d "${TMPDIR:-/tmp}/arbiter-wheelhouse.XXXXXX")"
@@ -1659,10 +2329,7 @@ validate_dependency_wheelhouse() {
 
   require_file "$target_requirements_file"
   require_dir "$target_wheels_dir"
-  if ! command -v docker >/dev/null; then
-    printf 'error: docker command not found\n' >&2
-    exit 1
-  fi
+  require_docker_access
 
   docker_command=(
     docker run --rm
@@ -1800,6 +2467,9 @@ Commands:
   list          Show root requirements
   list all      Show root and transitive wheelhouse packages
   upgrade       Upgrade package root requirements and rebuild the wheelhouse
+
+Upgrade options:
+  --pypi-only   Resolve from the package index only; skip local repo wheels
 EOF
       ;;
     *)
@@ -1985,6 +2655,7 @@ install_deployment() {
 
   install_ensure_identity
   install_copy_deployment
+  install_mark_deployment_installed
   install_apply_permissions
   install_validate_wheelhouse
   install_apply_permissions
@@ -2029,9 +2700,16 @@ case "$command" in
     ;;
   up)
     compose up -d
+    print_staging_port_note
+    print_mcp_url
     ;;
   restart)
     compose up -d --force-recreate
+    print_staging_port_note
+    print_mcp_url
+    ;;
+  test)
+    test_server
     ;;
   down)
     compose_down "$@"

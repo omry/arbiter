@@ -38,6 +38,9 @@ command with a Hydra-style argument:
 arbiter cap arbiter.mcp_url=http://127.0.0.1:8000/mcp
 ```
 
+When the server reports `deployment_scope=staged`, the client prints a small
+heads-up on stderr so you know you are talking to a staged deployment.
+
 Default client config:
 
 ```text

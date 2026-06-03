@@ -1,7 +1,7 @@
 services:
   arbiter:
     image: ${ARBITER_IMAGE:-python:3.11-slim}
-    container_name: ${ARBITER_CONTAINER_NAME:-arbiter}
+    container_name: ${ARBITER_CONTAINER_NAME:-arbiter-staging}
     restart: ${ARBITER_RESTART:-unless-stopped}
     env_file:
       - ${ARBITER_APP_ENV_FILE:-./conf/.env}
@@ -19,7 +19,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "${ARBITER_HOST_BIND:-127.0.0.1}:${ARBITER_HOST_PORT:-8025}:${ARBITER_CONTAINER_PORT:-8025}"
+      - "${ARBITER_HOST_BIND:-127.0.0.1}:${ARBITER_HOST_PORT:-18025}:${ARBITER_CONTAINER_PORT:-8025}"
     networks:
       - arbiter
     command: >
@@ -46,15 +46,15 @@ services:
       else
         python -m pip --disable-pip-version-check install --no-cache-dir -r /requirements.txt;
       fi &&
-      exec arbiter-server --config-dir /config --config-name "$$ARBITER_CONFIG_NAME" serve "arbiter.server.host=$$ARBITER_SERVER_HOST" "arbiter.server.port=$$ARBITER_CONTAINER_PORT"'
+      exec arbiter-server --config-dir /config --config-name "$$ARBITER_CONFIG_NAME" serve "arbiter.server.host=$$ARBITER_SERVER_HOST" "arbiter.server.port=$$ARBITER_CONTAINER_PORT" "arbiter.deployment_scope=staged"'
 
 networks:
   arbiter:
-    name: ${ARBITER_DOCKER_NETWORK_NAME:-arbiter}
+    name: ${ARBITER_DOCKER_NETWORK_NAME:-arbiter-staging}
     driver: bridge
     driver_opts:
-      com.docker.network.bridge.name: "${ARBITER_DOCKER_BRIDGE_NAME:-arbiter0}"
+      com.docker.network.bridge.name: "${ARBITER_DOCKER_BRIDGE_NAME:-arbiter-stg0}"
     ipam:
       config:
         # Override only if the default subnet conflicts with another host network.
-        - subnet: "${ARBITER_DOCKER_SUBNET:-172.31.250.0/24}"
+        - subnet: "${ARBITER_DOCKER_SUBNET:-172.31.251.0/24}"
