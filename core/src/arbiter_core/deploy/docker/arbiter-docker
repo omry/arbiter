@@ -1363,12 +1363,18 @@ mcp_url_value() {
     "$(compose_env_value ARBITER_HOST_PORT 18025)"
 }
 
-print_mcp_url() {
+print_mcp_url_value() {
+  local url="$1"
+
   printf ' '
   doctor_prefix 32 "✔"
   printf ' MCP URL: '
-  doctor_prefix 94 "$(mcp_url_value)"
+  doctor_prefix 94 "$url"
   printf '\n'
+}
+
+print_mcp_url() {
+  print_mcp_url_value "$(mcp_url_value)"
 }
 
 print_staging_port_note() {
@@ -1382,14 +1388,13 @@ print_staging_port_note() {
   printf ' Staging MCP port: 8025 -> %s to prevent collision\n' "$host_port"
 }
 
-test_server() {
-  local url
+test_server_url() {
+  local url="$1"
   local client_command
   local output_file
   local timeout
   local start_time
 
-  url="$(mcp_url_value)"
   client_command="${ARBITER_CLIENT_COMMAND:-arbiter}"
   if ! command -v "$client_command" >/dev/null; then
     printf 'error: Arbiter client command not found: %s\n' "$client_command" >&2
@@ -1425,6 +1430,10 @@ test_server() {
   doctor_prefix 94 "$url"
   printf '\n'
   return 1
+}
+
+test_server() {
+  test_server_url "$(mcp_url_value)"
 }
 
 config_main_file() {
@@ -1913,6 +1922,7 @@ doctor_agent_user=""
 doctor_agent_groups=""
 doctor_agent_group_names=""
 doctor_preinstall=0
+doctor_quiet=0
 
 color_enabled() {
   [[ "${ARBITER_COLOR:-}" == always ]] && return 0
@@ -1941,6 +1951,7 @@ doctor_line() {
 }
 
 doctor_ok() {
+  [[ "${doctor_quiet:-0}" -eq 1 ]] && return
   doctor_line 32 ok "$1"
 }
 
@@ -2427,11 +2438,16 @@ doctor() {
   doctor_agent_groups=""
   doctor_agent_group_names=""
   doctor_preinstall=0
+  doctor_quiet=0
 
   while (($#)); do
     case "$1" in
       --preinstall)
         doctor_preinstall=1
+        shift
+        ;;
+      --quiet)
+        doctor_quiet=1
         shift
         ;;
       --agent-user)
@@ -2535,6 +2551,7 @@ install_report_success() {
   printf 'success: installed Arbiter Docker deployment\n'
   printf 'installed to: %s\n' "$install_target_dir"
   printf 'systemd unit: %s\n' "$unit_file"
+  print_mcp_url_value "$(install_mcp_url_value)"
   if [[ "$install_start" -eq 1 ]]; then
     printf 'service: %s.service enabled and restarted\n' "$install_service"
   else
@@ -2587,6 +2604,48 @@ install_target_requirements_file_path() {
 install_target_wheels_dir_path() {
   install_target_path_from_compose_value \
     "$(compose_env_value ARBITER_WHEELS_DIR ./wheels)"
+}
+
+install_env_value() {
+  local key="$1"
+  local default="$2"
+
+  if [[ "${install_dry_run:-0}" -eq 1 ]]; then
+    case "$key" in
+      ARBITER_HOST_BIND)
+        printf '127.0.0.1\n'
+        return
+        ;;
+      ARBITER_HOST_PORT)
+        printf '8025\n'
+        return
+        ;;
+    esac
+  fi
+  env_file_value "$install_target_dir/docker.env" "$key" || printf '%s\n' "$default"
+}
+
+install_server_host_url_value() {
+  local host
+
+  host="$(install_env_value ARBITER_HOST_BIND 127.0.0.1)"
+  case "$host" in
+    0.0.0.0)
+      printf '127.0.0.1\n'
+      ;;
+    *:*)
+      printf '[%s]\n' "$host"
+      ;;
+    *)
+      printf '%s\n' "$host"
+      ;;
+  esac
+}
+
+install_mcp_url_value() {
+  printf 'http://%s:%s/mcp\n' \
+    "$(install_server_host_url_value)" \
+    "$(install_env_value ARBITER_HOST_PORT 8025)"
 }
 
 install_ensure_identity() {
@@ -2665,6 +2724,35 @@ install_mark_deployment_installed() {
   mv "$tmp_path" "$target_docker_env_file"
 }
 
+install_metadata_quote() {
+  printf '%q' "$1"
+}
+
+install_write_target_metadata() {
+  local metadata_file="$install_target_dir/.arbiter-install.env"
+  local installed_at
+  local source_dir
+
+  if [[ "${install_dry_run:-0}" -eq 1 ]]; then
+    printf 'would write install metadata: %s\n' "$metadata_file"
+    return
+  fi
+
+  installed_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  source_dir="$(readlink -f "$deploy_dir")"
+  rm -f "$install_target_dir/.arbiter-installations"
+  cat >"$metadata_file" <<EOF
+ARBITER_INSTALL_PATH=$(install_metadata_quote "$install_target_dir")
+ARBITER_INSTALL_SERVICE=$(install_metadata_quote "$install_service")
+ARBITER_INSTALL_SYSTEMD_UNIT=$(install_metadata_quote "$systemd_unit_dir/${install_service}.service")
+ARBITER_INSTALL_USER=$(install_metadata_quote "$install_user")
+ARBITER_INSTALL_GROUP=$(install_metadata_quote "$install_group")
+ARBITER_INSTALL_MCP_URL=$(install_metadata_quote "$(install_mcp_url_value)")
+ARBITER_INSTALLED_AT=$(install_metadata_quote "$installed_at")
+ARBITER_INSTALLED_FROM=$(install_metadata_quote "$source_dir")
+EOF
+}
+
 install_apply_permissions() {
   local app_env_rel
   local app_env_target
@@ -2685,6 +2773,43 @@ install_apply_permissions() {
   if [[ -f "$app_env_target" ]]; then
     chmod 0600 "$app_env_target"
   fi
+}
+
+install_record_location() {
+  local registry_file="$deploy_dir/.arbiter-installations"
+
+  if [[ "${install_dry_run:-0}" -eq 1 ]]; then
+    printf 'would record install location: %s in %s\n' \
+      "$install_target_dir" "$registry_file"
+    return
+  fi
+
+  touch "$registry_file"
+  if ! grep -Fx -- "$install_target_dir" "$registry_file" >/dev/null; then
+    printf '%s\n' "$install_target_dir" >>"$registry_file"
+  fi
+  chmod 0644 "$registry_file"
+  if [[ -n "${SUDO_UID:-}" && -n "${SUDO_GID:-}" ]]; then
+    chown "$SUDO_UID:$SUDO_GID" "$registry_file"
+  fi
+}
+
+install_test_server() {
+  local url
+  local client_command
+
+  url="$(install_mcp_url_value)"
+  if [[ "${install_dry_run:-0}" -eq 1 ]]; then
+    printf 'would test MCP URL: %s\n' "$url"
+    return 0
+  fi
+
+  client_command="${ARBITER_CLIENT_COMMAND:-arbiter}"
+  if ! command -v "$client_command" >/dev/null; then
+    doctor_warn "skipping MCP test; Arbiter client command not found: $client_command"
+    return 0
+  fi
+  test_server_url "$url"
 }
 
 copy_existing_wheelhouse() {
@@ -3122,7 +3247,7 @@ Upgrade options:
   --pypi-only   Resolve from the package index only; skip local repo wheels
 
 Prepare options:
-  --pypi-only   Resolve selected packages from the index, rewrite requirements.txt after success, and build without the existing wheelhouse
+  --pypi-only   Resolve selected packages from the index instead of the checked-out repo, rewrite requirements.txt after success, and build without the existing wheelhouse
 EOF
       ;;
     *)
@@ -3150,7 +3275,7 @@ install_validate_wheelhouse() {
 
   uid="$(id -u "$install_user")"
   gid="$(id -g "$install_user")"
-  if ! validate_dependency_wheelhouse "$target_requirements_file" "$target_wheels_dir" "$uid:$gid" "$image"; then
+  if ! validate_dependency_wheelhouse "$target_requirements_file" "$target_wheels_dir" "$uid:$gid" "$image" 1; then
     printf '       install aborted before writing/restarting the systemd service\n' >&2
     printf '       run %s prepare, then rerun: sudo %s install\n' "$deploy_dir/arbiter-docker" "$deploy_dir/arbiter-docker" >&2
     return 1
@@ -3300,7 +3425,10 @@ install_deployment() {
     exit 2
   fi
 
-  doctor --preinstall
+  printf 'installing Arbiter to %s as %s:%s (service: %s.service)\n' \
+    "$install_target_dir" "$install_user" "$install_group" "$install_service"
+
+  doctor --preinstall --quiet
 
   if [[ "$install_dry_run" -ne 1 ]]; then
     install_require_root
@@ -3309,14 +3437,19 @@ install_deployment() {
   install_ensure_identity
   install_copy_deployment
   install_mark_deployment_installed
+  install_write_target_metadata
   install_apply_permissions
   install_validate_wheelhouse
   install_apply_permissions
   install_write_systemd_unit
+  install_record_location
   run_install_command systemctl daemon-reload
   run_install_command systemctl enable "${install_service}.service"
   if [[ "$install_start" -eq 1 ]]; then
     run_install_command systemctl restart "${install_service}.service"
+  fi
+  if [[ "$install_start" -eq 1 ]]; then
+    install_test_server
   fi
   install_report_success
 }
