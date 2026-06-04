@@ -23,6 +23,6 @@ Dev package releases do not consume these fragments. Before a final release,
 preview and build the notes with:
 
 ```bash
-.venv/bin/python -m towncrier build --draft --version 0.9.0
-.venv/bin/python -m towncrier build --yes --version 0.9.0
+.venv/bin/python -m towncrier build --draft --config meta/arbiter-suite/pyproject.toml --version 0.9.0
+.venv/bin/python -m towncrier build --yes --config meta/arbiter-suite/pyproject.toml --version 0.9.0
 ```

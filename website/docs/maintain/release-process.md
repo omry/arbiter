@@ -27,7 +27,7 @@ Add fragments under the package that changed:
 core/newsfragments/123.feature.md
 imap/newsfragments/123.bugfix.md
 smtp/newsfragments/+smtp-only-change.feature.md
-newsfragments/+meta-package-change.feature.md
+meta/arbiter-suite/newsfragments/+meta-package-change.feature.md
 ```
 
 Use a GitHub issue or PR number when one exists. Use the `+` orphan prefix when
@@ -46,8 +46,8 @@ publish:
 .venv/bin/python -m towncrier build --draft --config smtp/pyproject.toml --version 0.9.0
 .venv/bin/python -m towncrier build --yes --config smtp/pyproject.toml --version 0.9.0
 
-.venv/bin/python -m towncrier build --draft --version 0.9.0
-.venv/bin/python -m towncrier build --yes --version 0.9.0
+.venv/bin/python -m towncrier build --draft --config meta/arbiter-suite/pyproject.toml --version 0.9.0
+.venv/bin/python -m towncrier build --yes --config meta/arbiter-suite/pyproject.toml --version 0.9.0
 ```
 
 Commit the updated `NEWS.md` files and removed fragments before publishing.
@@ -105,8 +105,8 @@ releases.
 
 ## Final releases
 
-For coordinated releases where all package versions follow the root package,
-publish a GitHub release with a tag like `v0.9.0`. The release workflow
+For coordinated releases where all package versions follow the suite meta
+package, publish a GitHub release with a tag like `v0.9.0`. The release workflow
 validates the matching package release notes, publishes the selected
 distributions to PyPI, and then edits the GitHub release with those notes.
 

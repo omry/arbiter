@@ -448,6 +448,29 @@ def _register_core_tools(
 
     @server.tool(
         description=(
+            "Discover Arbiter server identity, installed plugins, accounts, "
+            "account policy summaries, and operation schemas."
+        )
+    )
+    def info(
+        kind: str = "overview",
+        plugin: str | None = None,
+        account: str | None = None,
+        operation: str | None = None,
+    ) -> dict[str, object]:
+        return catalog.info(
+            kind=kind,
+            plugin=plugin,
+            account=account,
+            operation=operation,
+            version_info=runtime_version_info(
+                service_plugins,
+                deployment_scope=deployment_scope,
+            ),
+        )
+
+    @server.tool(
+        description=(
             "Return the available Arbiter capability names. Use "
             "describe_caps or describe_cap to drill down before "
             "choosing an operation."

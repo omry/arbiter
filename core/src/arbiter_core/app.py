@@ -6,6 +6,7 @@ from .services import RuntimeRegistry
 
 
 CORE_TOOL_NAMES = (
+    "info",
     "version_info",
     "list_caps",
     "describe_caps",

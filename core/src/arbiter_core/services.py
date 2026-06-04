@@ -267,6 +267,62 @@ class OperationCatalog:
             "input_schema": dict(descriptor.input_schema),
         }
 
+    def info(
+        self,
+        *,
+        kind: str = "overview",
+        plugin: str | None = None,
+        account: str | None = None,
+        operation: str | None = None,
+        version_info: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        if kind == "overview":
+            return self._info_overview(version_info or {})
+        if kind == "plugins":
+            return {
+                "kind": "plugins",
+                "plugins": [
+                    self._info_plugin_summary(capability, include_accounts=False)
+                    for capability in sorted(self._capabilities)
+                ],
+            }
+        if kind == "plugin":
+            if plugin is None:
+                raise ValueError("info plugin requires plugin")
+            return self._info_plugin(plugin)
+        if kind == "accounts":
+            if plugin is None:
+                raise ValueError("info accounts requires plugin")
+            return {
+                "kind": "accounts",
+                "plugin": plugin,
+                "accounts": self._info_account_summaries(plugin),
+            }
+        if kind == "account":
+            if plugin is None or account is None:
+                raise ValueError("info account requires plugin and account")
+            return self._info_account(plugin, account)
+        if kind == "ops":
+            if plugin is None:
+                raise ValueError("info ops requires plugin")
+            self._require_capability(plugin)
+            return {
+                "kind": "ops",
+                "plugin": plugin,
+                "operations": [
+                    self._operation_summary(plugin, operation_name)
+                    for operation_name in sorted(self._operations[plugin])
+                ],
+            }
+        if kind == "op":
+            if plugin is None or operation is None:
+                raise ValueError("info op requires plugin and operation")
+            operation_info = self.describe_operation(operation_id(plugin, operation))
+            operation_info["kind"] = "op"
+            return operation_info
+        supported = "account, accounts, op, ops, overview, plugin, plugins"
+        raise ValueError(f"unknown info kind: {kind}; supported kinds: {supported}")
+
     def invoke_operation(
         self,
         operation_ref: str,
@@ -304,6 +360,107 @@ class OperationCatalog:
                 f"unknown operation: {operation_id(capability, operation)}"
             )
         return descriptor
+
+    def _info_overview(
+        self,
+        version_info: Mapping[str, object],
+    ) -> dict[str, object]:
+        overview: dict[str, object] = {
+            "kind": "overview",
+            "deployment_scope": version_info.get("deployment_scope", "unknown"),
+            "plugins": [
+                self._info_plugin_summary(capability, include_accounts=True)
+                for capability in sorted(self._capabilities)
+            ],
+        }
+        core = version_info.get("core")
+        if core is not None:
+            overview["core"] = core
+        source = version_info.get("source")
+        if source is not None:
+            overview["source"] = source
+        return overview
+
+    def _info_plugin_summary(
+        self,
+        capability: str,
+        *,
+        include_accounts: bool,
+    ) -> dict[str, object]:
+        descriptor = self._capabilities[capability]
+        account_summaries = self._account_summaries(capability)
+        operation_names = sorted(self._operations[capability])
+        summary: dict[str, object] = {
+            "id": descriptor.name,
+            "description": descriptor.description,
+            "version": self._plugins[capability].version,
+            "account_count": len(account_summaries),
+            "operation_count": len(operation_names),
+        }
+        if include_accounts:
+            summary["accounts"] = self._info_account_summaries(capability)
+        return summary
+
+    def _info_plugin(self, capability: str) -> dict[str, object]:
+        self._require_capability(capability)
+        summary = self._info_plugin_summary(capability, include_accounts=True)
+        summary["kind"] = "plugin"
+        summary["operations"] = [
+            self._operation_summary(capability, operation)
+            for operation in sorted(self._operations[capability])
+        ]
+        return summary
+
+    def _info_account_summaries(self, capability: str) -> list[dict[str, object]]:
+        self._require_capability(capability)
+        summaries = self._account_summaries(capability)
+        return [
+            self._info_account_summary(capability, account_name, account)
+            for account_name, account in sorted(summaries.items())
+            if isinstance(account_name, str)
+        ]
+
+    def _info_account_summary(
+        self,
+        capability: str,
+        account_name: str,
+        account: object,
+    ) -> dict[str, object]:
+        description = ""
+        guidance = ""
+        if isinstance(account, Mapping):
+            raw_description = account.get("description")
+            if isinstance(raw_description, str):
+                description = raw_description
+            raw_guidance = account.get("guidance")
+            if isinstance(raw_guidance, str):
+                guidance = raw_guidance
+        return {
+            "plugin": capability,
+            "name": account_name,
+            "description": description,
+            "guidance": guidance,
+        }
+
+    def _info_account(self, capability: str, account_name: str) -> dict[str, object]:
+        self._require_capability(capability)
+        accounts = self._account_summaries(capability)
+        account = accounts.get(account_name)
+        if account is None:
+            raise ValueError(f"unknown account for {capability}: {account_name}")
+        details: dict[str, object] = {
+            "kind": "account",
+            "plugin": capability,
+            "account": account_name,
+            "guidance": "",
+        }
+        if isinstance(account, Mapping):
+            details.update(account)
+            if "guidance" not in details:
+                details["guidance"] = ""
+        else:
+            details["details"] = account
+        return details
 
     def _capability_summary(
         self,

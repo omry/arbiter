@@ -19,7 +19,10 @@ RELEASE_NOTES_TARGETS = {
     "core": ReleaseNotesTarget("Arbiter Core", Path("core/NEWS.md")),
     "imap": ReleaseNotesTarget("Arbiter IMAP", Path("imap/NEWS.md")),
     "smtp": ReleaseNotesTarget("Arbiter SMTP", Path("smtp/NEWS.md")),
-    "meta:all": ReleaseNotesTarget("Arbiter", Path("NEWS.md")),
+    "meta:all": ReleaseNotesTarget(
+        "Arbiter",
+        Path("meta/arbiter-suite/NEWS.md"),
+    ),
 }
 
 

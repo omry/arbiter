@@ -5,7 +5,7 @@ import nox  # type: ignore[import-not-found]
 
 nox.options.sessions = ["tests", "lint"]
 
-PYPROJECT = nox.project.load_toml("pyproject.toml")
+CORE_PYPROJECT = nox.project.load_toml("core/pyproject.toml")
 
 BLACK_TARGETS = [
     "core/src",
@@ -20,7 +20,7 @@ BLACK_TARGETS = [
     "tools/plan_pypi_publish",
     "tools/upgrade_release_line",
 ]
-SUPPORTED_PYTHONS = nox.project.python_versions(PYPROJECT)
+SUPPORTED_PYTHONS = nox.project.python_versions(CORE_PYPROJECT)
 STRICT_MYPY_TARGETS = ["core/src", "smtp/src", "imap/src"]
 SUPPLEMENTAL_MYPY_TARGETS = [
     "core/tests",
@@ -76,7 +76,7 @@ def deploy_test(session: nox.Session) -> None:
 @nox.session  # type: ignore[untyped-decorator]
 def lint(session: nox.Session) -> None:
     install_project(session)
-    session.run("black", "--check", *BLACK_TARGETS)
+    session.run("black", "--check", "--target-version", "py310", *BLACK_TARGETS)
     session.run("mypy", *STRICT_MYPY_TARGETS)
     session.run(
         "mypy",

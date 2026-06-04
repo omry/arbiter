@@ -75,6 +75,11 @@ def _print_json(value: object) -> None:
     print(json.dumps(value, default=_json_default, sort_keys=True))
 
 
+def _print_yaml(value: object) -> None:
+    yaml_ready = json.loads(json.dumps(value, default=_json_default))
+    print(OmegaConf.to_yaml(OmegaConf.create(yaml_ready), resolve=True), end="")
+
+
 def _print_account_summary(accounts: Mapping[str, object]) -> None:
     for capability, names in accounts.items():
         print(capability)
@@ -624,6 +629,53 @@ def _build_parser() -> argparse.ArgumentParser:
         help="overwrite an existing config file",
     )
 
+    info = subcommands.add_parser(
+        "info",
+        help="discover Arbiter server identity, plugins, accounts, and operations",
+    )
+    info.add_argument(
+        "--yaml",
+        action="store_true",
+        help="print YAML instead of the default JSON",
+    )
+    info_subcommands = info.add_subparsers(dest="info_command")
+
+    info_subcommands.add_parser(
+        "plugins",
+        help="list installed service plugins",
+    )
+    info_plugin = info_subcommands.add_parser(
+        "plugin",
+        help="describe one service plugin",
+    )
+    info_plugin.add_argument("plugin", help="plugin name, such as smtp")
+
+    info_accounts = info_subcommands.add_parser(
+        "accounts",
+        help="list accounts for one plugin",
+    )
+    info_accounts.add_argument("plugin", help="plugin name, such as smtp")
+
+    info_account = info_subcommands.add_parser(
+        "account",
+        help="show one account and its policy summary",
+    )
+    info_account.add_argument("plugin", help="plugin name, such as smtp")
+    info_account.add_argument("account", help="account name")
+
+    info_ops = info_subcommands.add_parser(
+        "ops",
+        help="list operations for one plugin",
+    )
+    info_ops.add_argument("plugin", help="plugin name, such as smtp")
+
+    info_op = info_subcommands.add_parser(
+        "op",
+        help="show one operation schema",
+    )
+    info_op.add_argument("plugin", help="plugin name, such as smtp")
+    info_op.add_argument("operation", help="operation name, such as send_email")
+
     mcp = subcommands.add_parser("mcp", help="inspect and call raw MCP tools")
     mcp_subcommands = mcp.add_subparsers(dest="mcp_command")
 
@@ -827,11 +879,53 @@ def _apply_capability_query(namespace: argparse.Namespace) -> None:
 
 
 def _print_short_usage() -> None:
-    print("usage: arbiter {cap,op,accounts} ...")
+    print("usage: arbiter {info,op,mcp} ...")
     print("Run 'arbiter --help' for full help.")
 
 
+def _info_arguments(namespace: argparse.Namespace) -> dict[str, str]:
+    command = namespace.info_command
+    if command is None:
+        return {"kind": "overview"}
+    if command == "plugins":
+        return {"kind": "plugins"}
+    if command == "plugin":
+        return {"kind": "plugin", "plugin": namespace.plugin}
+    if command == "accounts":
+        return {"kind": "accounts", "plugin": namespace.plugin}
+    if command == "account":
+        return {
+            "kind": "account",
+            "plugin": namespace.plugin,
+            "account": namespace.account,
+        }
+    if command == "ops":
+        return {"kind": "ops", "plugin": namespace.plugin}
+    if command == "op":
+        return {
+            "kind": "op",
+            "plugin": namespace.plugin,
+            "operation": namespace.operation,
+        }
+    raise RuntimeError(f"unhandled info command: {command}")
+
+
+def _with_server_url(payload: object, url: str) -> object:
+    if not isinstance(payload, Mapping):
+        return payload
+    return {"server_url": url, **payload}
+
+
 async def _run_async(namespace: argparse.Namespace) -> int:
+    if namespace.command == "info":
+        result = await call_tool(namespace.mcp_url, "info", _info_arguments(namespace))
+        payload = _with_server_url(_tool_result_payload(result), namespace.mcp_url)
+        if namespace.yaml:
+            _print_yaml(payload)
+        else:
+            _print_json(payload)
+        return 0
+
     if namespace.command in {"capabilities", "cap"} and (
         namespace.capabilities_command is None
         or namespace.capabilities_command == "list"

@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "arbiter-suite"
 version = "0.9.0.dev2"
 description = "Policy-controlled access to configured services for agents"
-readme = "README.md"
+readme = { text = "Arbiter suite meta package.", content-type = "text/markdown" }
 requires-python = ">=3.10,<3.15"
 license = { text = "MIT" }
 authors = [
@@ -35,38 +35,12 @@ dependencies = [
   "arbiter-imap==0.9.0.dev2",
 ]
 
-[project.optional-dependencies]
-dev = [
-  "nox[pbs]>=2024.10,<2026.0",
-  "aiosmtpd>=1.4.6,<2.0",
-  "black>=25.0,<26.0",
-  "mypy>=1.11,<2.0",
-  "pytest>=7.4,<9.0",
-  "tomli>=2.0,<3.0",
-  "towncrier>=24.8,<25.0",
-  "trustme>=1.2,<2.0",
-]
-
 [project.urls]
 Homepage = "https://github.com/omry/arbiter"
 Repository = "https://github.com/omry/arbiter"
 
 [tool.setuptools]
 py-modules = []
-
-[tool.pytest.ini_options]
-addopts = "--import-mode=importlib"
-testpaths = ["core/tests", "smtp/tests", "imap/tests"]
-pythonpath = ["core/src", "smtp/src", "imap/src"]
-
-[tool.mypy]
-python_version = "3.10"
-strict = true
-warn_unreachable = true
-mypy_path = "core/src:smtp/src:imap/src"
-
-[tool.black]
-target-version = ["py310"]
 
 [tool.towncrier]
 name = "Arbiter"

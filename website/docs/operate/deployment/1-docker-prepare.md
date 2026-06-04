@@ -163,14 +163,19 @@ endpoint:
 `up` prints the MCP URL for this staged directory. `test` calls `version_info`
 through that URL and waits through transient startup connection failures.
 
-You can also verify capability discovery and plugin versions through the normal
+You can also verify plugin discovery and plugin versions through the normal
 Arbiter client. Use the MCP URL printed by `up`:
 
 ```bash
-arbiter arbiter.mcp_url=http://127.0.0.1:18025/mcp cap format='{id}=={version}'
+arbiter arbiter.mcp_url=http://127.0.0.1:18025/mcp info --yaml plugins
 # Heads up: connected to staged Arbiter at http://127.0.0.1:18025/mcp.
-# imap==0.9.0
-# smtp==0.9.0
+# server_url: http://127.0.0.1:18025/mcp
+# kind: plugins
+# plugins:
+# - id: imap
+#   version: 0.9.0
+# - id: smtp
+#   version: 0.9.0
 ```
 
 Once the staged service works locally, promote it to a host service with the

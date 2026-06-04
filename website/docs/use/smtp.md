@@ -13,8 +13,8 @@ smtp:send_email
 ## Inspect
 
 ```bash
-arbiter cap desc smtp
-arbiter op desc smtp:send_email
+arbiter info plugin smtp
+arbiter info op smtp send_email
 ```
 
 The account summary includes:

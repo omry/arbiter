@@ -38,7 +38,11 @@ Create and use the repo-local virtualenv with:
 
 - `python3 -m venv .venv`
 - `.venv/bin/python -m pip install --upgrade pip`
-- `.venv/bin/python -m pip install -e ".[dev]" -e core -e smtp -e imap`
+- `.venv/bin/python -m pip install -r requirements-dev.txt`
+
+The repository root is a workspace, not an Arbiter runtime package. The dev
+requirements file installs `core`, `smtp`, and `imap` editably so the `arbiter`
+and `arbiter-server` commands come from this checkout.
 
 Run the test suite from the repo root with:
 
@@ -142,8 +146,8 @@ MCP endpoint:
 
 ```bash
 arbiter mcp tools arbiter.mcp_url=http://127.0.0.1:8025/mcp
-arbiter cap arbiter.mcp_url=http://127.0.0.1:8025/mcp
-arbiter accounts list arbiter.mcp_url=http://127.0.0.1:8025/mcp
+arbiter info arbiter.mcp_url=http://127.0.0.1:8025/mcp
+arbiter info plugins arbiter.mcp_url=http://127.0.0.1:8025/mcp
 ```
 
 The client can also read the endpoint from a small config file:

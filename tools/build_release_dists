@@ -20,7 +20,7 @@ PACKAGES = (
     Package(key="core", name="arbiter-core", path=Path("core")),
     Package(key="imap", name="arbiter-imap", path=Path("imap")),
     Package(key="smtp", name="arbiter-smtp", path=Path("smtp")),
-    Package(key="meta:all", name="arbiter-suite", path=Path(".")),
+    Package(key="meta:all", name="arbiter-suite", path=Path("meta/arbiter-suite")),
 )
 PACKAGE_BY_KEY = {package.key: package for package in PACKAGES}
 PACKAGE_KEYS = tuple(PACKAGE_BY_KEY)

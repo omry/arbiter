@@ -1,0 +1,12 @@
+-e ./core
+-e ./smtp
+-e ./imap
+
+nox[pbs]>=2024.10,<2026.0
+aiosmtpd>=1.4.6,<2.0
+black>=25.0,<26.0
+mypy>=1.11,<2.0
+pytest>=7.4,<9.0
+tomli>=2.0,<3.0
+towncrier>=24.8,<25.0
+trustme>=1.2,<2.0

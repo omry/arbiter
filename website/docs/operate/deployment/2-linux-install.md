@@ -40,9 +40,14 @@ By default, install starts or restarts the systemd service.
 Test the installed MCP endpoint with the Arbiter client:
 
 ```bash
-arbiter arbiter.mcp_url=http://127.0.0.1:8025/mcp cap format='{id}=={version}'
-# imap==0.9.0
-# smtp==0.9.0
+arbiter arbiter.mcp_url=http://127.0.0.1:8025/mcp info --yaml plugins
+# server_url: http://127.0.0.1:8025/mcp
+# kind: plugins
+# plugins:
+# - id: imap
+#   version: 0.9.0
+# - id: smtp
+#   version: 0.9.0
 ```
 
 Installed service operations use systemd:

@@ -22,13 +22,10 @@ through MCP and CLI surfaces.
 - describe capabilities and operations
 - validate service semantics and enforce service policy
 
-## Current MCP surface
+## Canonical MCP surface
 
+- `info`
 - `version_info`
-- `list_caps`
-- `describe_caps`
-- `describe_cap`
-- `describe_op`
 - `run_op`
 
 Service operations use ids such as `smtp:send_email` and

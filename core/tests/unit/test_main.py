@@ -3654,7 +3654,11 @@ def test_cli_deploy_docker_generated_helper_install_dry_run_plans_promotion(
     )
 
     assert result.returncode == 0
-    assert "ok: preinstall checks passed\n" in result.stdout
+    assert result.stdout.startswith(
+        "installing Arbiter to /opt/arbiter as arbiter:arbiter "
+        "(service: arbiter.service)\n"
+    )
+    assert "ok: preinstall checks passed\n" not in result.stdout
     assert f"would copy deployment: {deploy_dir} -> /opt/arbiter\n" in result.stdout
     assert "would create system group if missing: arbiter\n" in result.stdout
     assert "would create system user if missing: arbiter\n" in result.stdout
@@ -3881,7 +3885,11 @@ def test_cli_deploy_docker_generated_helper_install_aborts_on_bad_wheelhouse(
     )
 
     assert result.returncode == 1
-    assert "validating dependency wheelhouse" in result.stdout
+    assert result.stdout.startswith(
+        f"installing Arbiter to {install_dir} as arbiter:arbiter "
+        "(service: arbiter.service)\n"
+    )
+    assert "validating dependency wheelhouse" not in result.stdout
     assert (
         f"error: dependency wheelhouse validation failed: {install_dir / 'wheels'}\n"
         in (result.stderr)
@@ -5655,6 +5663,51 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
         commit=None,
         dirty=None,
     )
+    overview = cast(dict[str, Any], tools["info"]())
+    assert overview["kind"] == "overview"
+    assert overview["deployment_scope"] == "unknown"
+    assert overview["plugins"][0] == {
+        "id": "imap",
+        "description": "Read and manage mail through configured IMAP accounts.",
+        "version": IMAPServicePlugin.version,
+        "account_count": 1,
+        "operation_count": 6,
+        "accounts": [
+            {
+                "plugin": "imap",
+                "name": "primary",
+                "description": "",
+                "guidance": "",
+            }
+        ],
+    }
+    assert tools["info"](kind="plugins")["plugins"][1] == {
+        "id": "smtp",
+        "description": "Send email through configured SMTP accounts.",
+        "version": SMTPServicePlugin.version,
+        "account_count": 1,
+        "operation_count": 1,
+    }
+    smtp_account_info = cast(
+        dict[str, Any],
+        tools["info"](kind="account", plugin="smtp", account="primary"),
+    )
+    assert smtp_account_info["kind"] == "account"
+    assert smtp_account_info["description"] == (
+        "Bot-owned account for automated email tasks."
+    )
+    assert smtp_account_info["policy"] == "bot"
+    assert smtp_account_info["guidance"] == ""
+    smtp_operation_info = cast(
+        dict[str, Any],
+        tools["info"](kind="op", plugin="smtp", operation="send_email"),
+    )
+    assert smtp_operation_info["id"] == "smtp:send_email"
+    assert smtp_operation_info["input_schema"]["required"] == [
+        "account",
+        "to",
+        "subject",
+    ]
     assert tools["list_caps"]() == {"capabilities": ["imap", "smtp"]}
 
     capabilities = cast(dict[str, Any], tools["describe_caps"]())

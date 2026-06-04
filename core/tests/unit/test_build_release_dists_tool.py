@@ -55,7 +55,7 @@ def test_build_distributions_builds_all_packages_in_order(
         str(tmp_path / "core"),
         str(tmp_path / "imap"),
         str(tmp_path / "smtp"),
-        str(tmp_path),
+        str(tmp_path / "meta" / "arbiter-suite"),
     ]
     for command, text, capture_output in calls:
         assert command[:5] == [sys.executable, "-m", "build", "--sdist", "--wheel"]

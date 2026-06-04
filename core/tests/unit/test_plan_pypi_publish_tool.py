@@ -39,7 +39,7 @@ version = "{version}"
 
 
 def _write_fixture(root: Path, *, imap_version: str = "0.9.0.dev1") -> None:
-    _write_project(root, ".", "arbiter-suite", "0.9.0.dev1")
+    _write_project(root, "meta/arbiter-suite", "arbiter-suite", "0.9.0.dev1")
     _write_project(root, "core", "arbiter-core", "0.9.0.dev1")
     _write_project(root, "imap", "arbiter-imap", imap_version)
     _write_project(root, "smtp", "arbiter-smtp", "0.9.0.dev1")

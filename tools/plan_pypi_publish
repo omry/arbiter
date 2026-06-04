@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 try:
-    from tomllib import loads as load_toml
+    from tomllib import loads as load_toml  # type: ignore[import-not-found]
 except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10.
     from tomli import loads as load_toml
 
@@ -34,7 +34,7 @@ PACKAGES = (
     Package(kind="core", name="arbiter-core", path=Path("core")),
     Package(kind="plugin", name="arbiter-imap", path=Path("imap")),
     Package(kind="plugin", name="arbiter-smtp", path=Path("smtp")),
-    Package(kind="meta", name="arbiter-suite", path=Path(".")),
+    Package(kind="meta", name="arbiter-suite", path=Path("meta/arbiter-suite")),
 )
 PACKAGE_BY_KEY = {
     "core": "arbiter-core",

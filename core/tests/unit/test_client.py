@@ -41,7 +41,7 @@ def test_client_without_args_prints_short_usage(
     assert client.main([]) == 2
 
     assert capsys.readouterr().out == (
-        "usage: arbiter {cap,op,accounts} ...\n" "Run 'arbiter --help' for full help.\n"
+        "usage: arbiter {info,op,mcp} ...\n" "Run 'arbiter --help' for full help.\n"
     )
 
 
@@ -51,6 +51,134 @@ def test_client_version(capsys: pytest.CaptureFixture[str]) -> None:
 
     assert exc_info.value.code == 0
     assert capsys.readouterr().out.startswith("arbiter ")
+
+
+def test_client_info_summarizes_server_plugins_and_accounts(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, Mapping[str, Any]]] = []
+
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        assert url == "http://localhost:18025/mcp"
+        calls.append((name, arguments))
+        if name == "info":
+            assert arguments == {"kind": "overview"}
+            return SimpleNamespace(
+                structuredContent={
+                    "kind": "overview",
+                    "deployment_scope": "staged",
+                    "plugins": [
+                        {
+                            "id": "imap",
+                            "version": "0.9.0",
+                            "description": (
+                                "Read and manage mail through configured IMAP "
+                                "accounts."
+                            ),
+                            "account_count": 1,
+                            "operation_count": 6,
+                            "accounts": [
+                                {
+                                    "plugin": "imap",
+                                    "name": "bot",
+                                    "description": "",
+                                    "guidance": "",
+                                }
+                            ],
+                        }
+                    ],
+                },
+            )
+        raise AssertionError(f"unexpected tool call: {name}")
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert (
+        client.main(
+            [
+                "info",
+                "arbiter.mcp_url=http://localhost:18025/mcp",
+            ]
+        )
+        == 0
+    )
+
+    assert capsys.readouterr().out == (
+        '{"deployment_scope": "staged", "kind": "overview", "plugins": '
+        '[{"account_count": 1, "accounts": [{"description": "", "guidance": "", '
+        '"name": "bot", "plugin": "imap"}], "description": "Read and manage mail '
+        'through configured IMAP accounts.", "id": "imap", "operation_count": 6, '
+        '"version": "0.9.0"}], "server_url": "http://localhost:18025/mcp"}\n'
+    )
+    assert calls == [
+        ("info", {"kind": "overview"}),
+    ]
+
+
+def test_client_info_plugin_subcommand_calls_info_tool(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        assert url == "http://127.0.0.1:8000/mcp"
+        assert name == "info"
+        assert arguments == {"kind": "plugin", "plugin": "smtp"}
+        return SimpleNamespace(structuredContent={"kind": "plugin", "id": "smtp"})
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert client.main(["info", "plugin", "smtp"]) == 0
+
+    assert capsys.readouterr().out == (
+        '{"id": "smtp", "kind": "plugin", '
+        '"server_url": "http://127.0.0.1:8000/mcp"}\n'
+    )
+
+
+def test_client_info_account_subcommand_accepts_yaml(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        assert name == "info"
+        assert arguments == {
+            "kind": "account",
+            "plugin": "smtp",
+            "account": "bot",
+        }
+        return SimpleNamespace(
+            structuredContent={
+                "kind": "account",
+                "plugin": "smtp",
+                "account": "bot",
+                "description": "Support sender",
+            },
+        )
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert client.main(["info", "--yaml", "account", "smtp", "bot"]) == 0
+
+    assert capsys.readouterr().out == (
+        "server_url: http://127.0.0.1:8000/mcp\n"
+        "kind: account\n"
+        "plugin: smtp\n"
+        "account: bot\n"
+        "description: Support sender\n"
+    )
 
 
 def test_client_lists_tool_names(

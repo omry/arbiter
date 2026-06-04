@@ -3,21 +3,21 @@ title: Arbiter CLI Reference
 ---
 
 `arbiter` is the client-facing command for agents and humans. It talks to an
-Arbiter MCP server and exposes capability, account, operation, and raw
-MCP commands.
+Arbiter MCP server and exposes discovery, operation execution, and raw MCP
+commands.
 
-Most users should start with `cap`, `accounts`, and `op`. The raw `mcp`
-commands are available for inspection and debugging.
+Most users and agents should start with `info`. The raw `mcp` commands are
+available for inspection and debugging.
 
-Arbiter keeps MCP tool count small by exposing a hierarchical discovery
-surface. Start broad with capabilities, then drill into accounts and operation
-schemas before running an operation:
+Arbiter exposes a hierarchical discovery surface under `info`. Start with a
+server and account orientation summary, then drill into the plugin, account, or
+operation needed for the task:
 
 ```bash
-arbiter cap
-arbiter cap desc smtp
-arbiter accounts desc smtp bot
-arbiter op desc smtp:send_email
+arbiter info
+arbiter info plugin smtp
+arbiter info account smtp bot
+arbiter info op smtp send_email
 ```
 
 ## Global options
@@ -35,7 +35,7 @@ The client reads `arbiter.mcp_url` from its config. You can override it per
 command with a Hydra-style argument:
 
 ```bash
-arbiter cap arbiter.mcp_url=http://127.0.0.1:8000/mcp
+arbiter info arbiter.mcp_url=http://127.0.0.1:8000/mcp
 ```
 
 When the server reports `deployment_scope=staged`, the client prints a small
@@ -73,68 +73,63 @@ arbiter bootstrap client arbiter.mcp_url=http://127.0.0.1:8000/mcp
 ## Common flow
 
 ```bash
-arbiter cap
-arbiter cap desc smtp
-arbiter accounts
-arbiter accounts desc smtp bot
-arbiter op desc smtp:send_email
+arbiter info
+arbiter info plugins
+arbiter info plugin smtp
+arbiter info accounts smtp
+arbiter info account smtp bot
+arbiter info op smtp send_email
 arbiter op run smtp:send_email --args '{"account":"bot","to":["ops@example.com"],"subject":"Hello","text_body":"Hi"}'
 ```
 
-## cap
+## info
 
-Discover capability names and descriptions.
-
-```bash
-arbiter cap [list] [--json] [fields=desc,version,num_accts]
-arbiter cap 'format={id}=={version}: {desc}'
-arbiter cap desc [capability]
-```
-
-- `cap` and `cap list`: list capability names.
-- `cap fields=desc,version,num_accts`: list capability names with selected
-  tab-separated fields. Quote bracket syntax in shells that treat brackets as
-  globs, for example `'fields=[desc,version,num_accts]'`.
-- `cap 'format={id}=={version}: {desc}'`: render one line per capability with
-  a template.
-- `cap list --json`: print capability names as JSON.
-- `cap desc`: describe all capabilities with bounded summaries.
-- `cap desc <capability>`: describe one capability.
-- `capabilities` is an alias for `cap`.
-- `describe` is an alias for `desc`.
-
-Bounded summaries include capability descriptions, account counts, operation
-counts, and limited previews. Operators configure preview limits under
-`arbiter.discovery`.
-
-## accounts
-
-Inspect configured accounts exposed through capabilities.
+Discover server identity, installed plugins, configured accounts, account
+policy summaries, and operation schemas.
 
 ```bash
-arbiter accounts [list] [--json]
-arbiter accounts desc <capability> [account]
+arbiter info [--yaml]
+arbiter info plugins
+arbiter info plugin <plugin>
+arbiter info accounts <plugin>
+arbiter info account <plugin> <account>
+arbiter info ops <plugin>
+arbiter info op <plugin> <operation>
 ```
 
-- `accounts` and `accounts list`: list accounts grouped by capability.
-- `accounts list --json`: print account names as JSON.
-- `accounts desc <capability>`: describe accounts for one capability.
-- `accounts desc <capability> <account>`: describe one account.
-- `describe` is an alias for `desc`.
+`info` prints JSON by default so agents and scripts can consume it directly.
+For terminal reading, pipe it through `jq`:
+
+```bash
+arbiter info | jq
+```
+
+Use `--yaml` when you want readable YAML output instead:
+
+```bash
+arbiter info --yaml
+```
+
+- `info`: summarize the server URL, deployment scope, installed plugins, and
+  account descriptions/guidance.
+- `info plugins`: list installed plugins.
+- `info plugin <plugin>`: describe one plugin, its accounts, and its
+  operations.
+- `info accounts <plugin>`: list accounts for one plugin.
+- `info account <plugin> <account>`: show one account plus its policy summary.
+- `info ops <plugin>`: list operations for one plugin.
+- `info op <plugin> <operation>`: show one operation and its input schema.
 
 ## op
 
-Inspect and run operations.
+Run operations.
 
 ```bash
-arbiter op desc <operation-id>
 arbiter op run <operation-id> --args '<json-object>'
 ```
 
-- `op desc`: describe one operation, such as `smtp:send_email`.
 - `op run`: run one operation with JSON arguments.
 - `operation` is an alias for `op`.
-- `describe` is an alias for `desc`.
 
 Example:
 

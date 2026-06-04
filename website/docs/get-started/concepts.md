@@ -7,7 +7,7 @@ Arbiter uses a few terms deliberately.
 ## Capability
 
 A capability is a service area exposed by a plugin, such as `smtp` or `imap`.
-Agents discover capabilities first with `list_caps` or `describe_caps`.
+Agents discover available service plugins first with `info`.
 
 ## Operation
 

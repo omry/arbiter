@@ -10,19 +10,20 @@ from functools import total_ordering
 from pathlib import Path
 
 
+SUITE_PYPROJECT = Path("meta/arbiter-suite/pyproject.toml")
 PACKAGE_FILES = (
-    Path("pyproject.toml"),
+    SUITE_PYPROJECT,
     Path("core/pyproject.toml"),
     Path("smtp/pyproject.toml"),
     Path("imap/pyproject.toml"),
 )
 DOC_FILES = (
-    Path("website/docs/operate/deployment/packages.md"),
+    Path("website/docs/operate/deployment/3-bundle-deep-dive.md"),
     Path("website/docs/operate/server-reference.md"),
     Path("website/docs/extend/plugins.md"),
 )
 DOC_EXPECTATIONS = {
-    Path("website/docs/operate/deployment/packages.md"): (
+    Path("website/docs/operate/deployment/3-bundle-deep-dive.md"): (
         "arbiter-suite=={final_version}",
         "arbiter-core=={version}",
         "arbiter-smtp=={version}",
@@ -189,8 +190,8 @@ def _extract_core_dependency_range(text: str, path: Path) -> tuple[str, str]:
 
 
 def _validate_current_state(root: Path) -> ReleaseLine:
-    root_pyproject = _read(root, Path("pyproject.toml"))
-    current_version = _extract_version(root_pyproject, Path("pyproject.toml"))
+    suite_pyproject = _read(root, SUITE_PYPROJECT)
+    current_version = _extract_version(suite_pyproject, SUITE_PYPROJECT)
     current_line = _version_line(current_version)
     expected_next = current_line.next_version
 
@@ -209,8 +210,8 @@ def _validate_current_state(root: Path) -> ReleaseLine:
     for package_name in META_PACKAGE_DEPENDENCIES:
         package_version = versions[PACKAGE_FILE_BY_DISTRIBUTION[package_name]]
         dependency = f'"{package_name}=={package_version}"'
-        if dependency not in root_pyproject:
-            raise ValueError(f"root pyproject is missing dependency {dependency}")
+        if dependency not in suite_pyproject:
+            raise ValueError(f"{SUITE_PYPROJECT} is missing dependency {dependency}")
 
     for path in PLUGIN_PACKAGE_FILES:
         text = _read(root, path)
@@ -253,8 +254,8 @@ def check_release_state(root: Path, target: ReleaseLine) -> str:
             f"current line {current.text}"
         )
     current_version = _extract_version(
-        _read(root, Path("pyproject.toml")),
-        Path("pyproject.toml"),
+        _read(root, SUITE_PYPROJECT),
+        SUITE_PYPROJECT,
     )
     _validate_docs(root, target, current_version)
     return current_version
@@ -271,7 +272,7 @@ def _update_pyproject(
         f'version = "{target.version}"',
         path,
     )
-    if path == Path("pyproject.toml"):
+    if path == SUITE_PYPROJECT:
         for package_name in META_PACKAGE_DEPENDENCIES:
             updated = re.sub(
                 rf'"{re.escape(package_name)}==[0-9]+\.[0-9]+\.[0-9]+'
@@ -344,8 +345,8 @@ def _update_doc(
 def build_changes(root: Path, target: ReleaseLine) -> list[Change]:
     current = _validate_current_state(root)
     current_version_text = _extract_version(
-        _read(root, Path("pyproject.toml")),
-        Path("pyproject.toml"),
+        _read(root, SUITE_PYPROJECT),
+        SUITE_PYPROJECT,
     )
     current_version = PackageVersion.parse(current_version_text)
     target_version = PackageVersion.final_for_line(target)

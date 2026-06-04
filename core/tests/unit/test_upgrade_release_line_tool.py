@@ -7,10 +7,12 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "tools" / "upgrade_release_line"
+SUITE_PYPROJECT = Path("meta/arbiter-suite/pyproject.toml")
+SUITE_PYPROJECT_TEXT = str(SUITE_PYPROJECT)
 
 
 FIXTURE_FILES = {
-    "pyproject.toml": """[project]
+    SUITE_PYPROJECT_TEXT: """[project]
 name = "arbiter-suite"
 version = "0.8.0"
 dependencies = [
@@ -39,7 +41,7 @@ dependencies = [
 """,
     "smtp/src/arbiter_smtp/__init__.py": 'CORE_API_VERSION = "0.8"\n',
     "imap/src/arbiter_imap/__init__.py": 'CORE_API_VERSION = "0.8"\n',
-    "website/docs/operate/deployment/packages.md": (
+    "website/docs/operate/deployment/3-bundle-deep-dive.md": (
         "arbiter-suite==0.8.0\n"
         "arbiter-core==0.8.0\n"
         "arbiter-smtp==0.8.0\n"
@@ -67,7 +69,7 @@ def _write_fixture(root: Path) -> None:
 
 def _write_dev_fixture(root: Path) -> None:
     files = {
-        "pyproject.toml": """[project]
+        SUITE_PYPROJECT_TEXT: """[project]
 name = "arbiter-suite"
 version = "0.9.0.dev1"
 dependencies = [
@@ -96,7 +98,7 @@ dependencies = [
 """,
         "smtp/src/arbiter_smtp/__init__.py": 'CORE_API_VERSION = "0.9"\n',
         "imap/src/arbiter_imap/__init__.py": 'CORE_API_VERSION = "0.9"\n',
-        "website/docs/operate/deployment/packages.md": (
+        "website/docs/operate/deployment/3-bundle-deep-dive.md": (
             "arbiter-suite==0.9.0\n"
             "arbiter-core==0.9.0.dev1\n"
             "arbiter-smtp==0.9.0.dev1\n"
@@ -123,7 +125,7 @@ dependencies = [
 def _write_independent_plugin_patch_fixture(root: Path) -> None:
     files = {
         **FIXTURE_FILES,
-        "pyproject.toml": """[project]
+        SUITE_PYPROJECT_TEXT: """[project]
 name = "arbiter-suite"
 version = "0.8.0"
 dependencies = [
@@ -159,12 +161,12 @@ def test_upgrade_release_line_dry_run_prints_patch_without_writing(
     tmp_path: Path,
 ) -> None:
     _write_fixture(tmp_path)
-    before = (tmp_path / "pyproject.toml").read_text(encoding="utf-8")
+    before = (tmp_path / SUITE_PYPROJECT).read_text(encoding="utf-8")
 
     result = _run_tool(tmp_path, "--dry-run", "0.9")
 
     assert result.returncode == 0, result.stderr
-    assert (tmp_path / "pyproject.toml").read_text(encoding="utf-8") == before
+    assert (tmp_path / SUITE_PYPROJECT).read_text(encoding="utf-8") == before
     assert '+  "arbiter-core==0.9.0"' in result.stdout
     assert '+  "arbiter-core>=0.9.0,<0.10.0"' in result.stdout
     assert "\x1b[32m✓\x1b[0m would update 9 file(s)" in result.stdout
@@ -178,11 +180,11 @@ def test_upgrade_release_line_updates_packages_runtime_and_docs(
     result = _run_tool(tmp_path, "0.9")
 
     assert result.returncode == 0, result.stderr
-    assert 'version = "0.9.0"' in (tmp_path / "pyproject.toml").read_text(
-        encoding="utf-8"
+    assert 'version = "0.9.0"' in (tmp_path / SUITE_PYPROJECT).read_text(
+        encoding="utf-8",
     )
-    assert '"arbiter-imap==0.9.0"' in (tmp_path / "pyproject.toml").read_text(
-        encoding="utf-8"
+    assert '"arbiter-imap==0.9.0"' in (tmp_path / SUITE_PYPROJECT).read_text(
+        encoding="utf-8",
     )
     assert '"arbiter-core>=0.9.0,<0.10.0"' in (
         tmp_path / "smtp/pyproject.toml"
@@ -207,8 +209,8 @@ def test_upgrade_release_line_accepts_independently_patched_plugin(
     result = _run_tool(tmp_path, "0.9")
 
     assert result.returncode == 0, result.stderr
-    assert '"arbiter-smtp==0.9.0"' in (tmp_path / "pyproject.toml").read_text(
-        encoding="utf-8"
+    assert '"arbiter-smtp==0.9.0"' in (tmp_path / SUITE_PYPROJECT).read_text(
+        encoding="utf-8",
     )
     assert 'version = "0.9.0"' in (tmp_path / "smtp/pyproject.toml").read_text(
         encoding="utf-8"
@@ -223,17 +225,17 @@ def test_upgrade_release_line_promotes_dev_version_to_final_same_line(
     result = _run_tool(tmp_path, "0.9")
 
     assert result.returncode == 0, result.stderr
-    assert 'version = "0.9.0"' in (tmp_path / "pyproject.toml").read_text(
-        encoding="utf-8"
+    assert 'version = "0.9.0"' in (tmp_path / SUITE_PYPROJECT).read_text(
+        encoding="utf-8",
     )
-    assert '"arbiter-imap==0.9.0"' in (tmp_path / "pyproject.toml").read_text(
-        encoding="utf-8"
+    assert '"arbiter-imap==0.9.0"' in (tmp_path / SUITE_PYPROJECT).read_text(
+        encoding="utf-8",
     )
     assert '"arbiter-core>=0.9.0,<0.10.0"' in (
         tmp_path / "smtp/pyproject.toml"
     ).read_text(encoding="utf-8")
     deployment_docs = (
-        tmp_path / "website/docs/operate/deployment/packages.md"
+        tmp_path / "website/docs/operate/deployment/3-bundle-deep-dive.md"
     ).read_text(encoding="utf-8")
     plugin_docs = (tmp_path / "website/docs/extend/plugins.md").read_text(
         encoding="utf-8"
