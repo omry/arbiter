@@ -5549,6 +5549,11 @@ def test_cli_bootstrap_arbiter_writes_main_config(
         f"wrote {config_file}\n" f"wrote {server_file}\n"
     )
 
+    monkeypatch.setattr(
+        "arbiter_core.main.discover_service_plugins",
+        lambda: _test_service_plugins(),
+    )
+
     assert main(["--config-dir", str(config_dir), "config", "check"]) == 1
     assert capsys.readouterr().err == (
         "Arbiter config error: config must define at least one service "

@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "arbiter-echo-example"
+version = "0.9.0.dev0"
+description = "Example service plugin for Arbiter"
+readme = "README.md"
+requires-python = ">=3.10,<3.15"
+license = { text = "MIT" }
+dependencies = [
+  "arbiter-core>=0.9.0.dev1,<0.10.0",
+]
+
+[project.entry-points."arbiter.services"]
+echo = "arbiter_echo_example:plugin"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"arbiter_echo_example" = ["py.typed"]

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import nox  # type: ignore[import-not-found]
+import nox
 
 
 nox.options.sessions = ["tests", "lint"]
@@ -19,6 +19,12 @@ BLACK_TARGETS = [
     "tools/extract_release_notes",
     "tools/plan_pypi_publish",
     "tools/upgrade_release_line",
+]
+TEST_TARGETS = [
+    "core/tests",
+    "smtp/tests",
+    "imap/tests",
+    "examples/plugins/echo/tests",
 ]
 SUPPORTED_PYTHONS = nox.project.python_versions(CORE_PYPROJECT)
 STRICT_MYPY_TARGETS = ["core/src", "smtp/src", "imap/src"]
@@ -44,26 +50,22 @@ def install_project(session: nox.Session) -> None:
     session.install("-e", "imap")
 
 
-@nox.session  # type: ignore[untyped-decorator]
+@nox.session
 def tests(session: nox.Session) -> None:
     install_project(session)
-    session.run(
-        "pytest", *(session.posargs or ["core/tests", "smtp/tests", "imap/tests"])
-    )
+    session.run("pytest", *(session.posargs or TEST_TARGETS))
 
 
-@nox.session(  # type: ignore[untyped-decorator]
+@nox.session(
     python=SUPPORTED_PYTHONS,
     download_python="auto",
 )
 def compat(session: nox.Session) -> None:
     install_project(session)
-    session.run(
-        "pytest", *(session.posargs or ["core/tests", "smtp/tests", "imap/tests"])
-    )
+    session.run("pytest", *(session.posargs or TEST_TARGETS))
 
 
-@nox.session(name="deploy-test")  # type: ignore[untyped-decorator]
+@nox.session(name="deploy-test")
 def deploy_test(session: nox.Session) -> None:
     install_project(session)
     session.run(
@@ -73,7 +75,7 @@ def deploy_test(session: nox.Session) -> None:
     )
 
 
-@nox.session  # type: ignore[untyped-decorator]
+@nox.session
 def lint(session: nox.Session) -> None:
     install_project(session)
     session.run("black", "--check", "--target-version", "py310", *BLACK_TARGETS)

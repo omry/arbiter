@@ -5,6 +5,11 @@ title: Writing Plugins
 Service plugins own service-specific config, runtime behavior, and operation
 metadata.
 
+For a copyable starting point, see
+[`examples/plugins/echo`](https://github.com/omry/arbiter/tree/main/examples/plugins/echo).
+It includes config schemas, bootstrap examples, runtime behavior, operation
+metadata, entry-point wiring, and focused tests.
+
 ## Responsibilities
 
 A plugin provides:
@@ -24,8 +29,13 @@ Plugins are discovered through Python package entry points:
 
 ```toml
 [project.entry-points."arbiter.services"]
-smtp = "arbiter_smtp:plugin"
+echo = "arbiter_echo_example:plugin"
 ```
+
+Use the plugin capability name as the entry-point key. Arbiter loads every
+entry point in the `arbiter.services` group; it does not use the entry-point
+key as the plugin id. If two installed plugins expose the same capability name,
+server catalog construction fails with a duplicate capability error.
 
 ## Version contract
 
