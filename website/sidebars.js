@@ -35,7 +35,7 @@ const sidebars = {
     },
     {
       type: 'category',
-      label: 'Use',
+      label: 'Plugins',
       collapsed: false,
       items: [
         'use/smtp',

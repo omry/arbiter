@@ -4,13 +4,18 @@ title: What Is Arbiter?
 slug: /
 ---
 
-Arbiter provides policy-controlled access to configured services for
-agents. Today it exposes that access through MCP and a client CLI; additional
-interfaces may be added later.
+[![PyPI](https://img.shields.io/pypi/v/arbiter-core.svg?label=arbiter-core)](https://pypi.org/project/arbiter-core/) [![Python](https://img.shields.io/pypi/pyversions/arbiter-core.svg?label=python)](https://pypi.org/project/arbiter-core/) [![Downloads](https://pepy.tech/badge/arbiter-core/month)](https://pepy.tech/project/arbiter-core)
 
-It gives agents a small surface for discovering what they are allowed to do,
-choosing an authorized context, and running one operation with deployment-owned
-configuration and policy.
+Arbiter is a policy firewall for AI agents that need access to sensitive
+services. It runs in your trusted environment, keeps upstream account
+credentials inside the deployment, and exposes only the actions an operator has
+configured and approved.
+
+Arbiter is built as a small module system with one plugin per service. The SMTP
+and IMAP plugins can restrict who an agent may email, which messages it may read
+from configured folders, and other service-specific behavior. Agents get a
+narrow, discoverable surface through MCP or the `arbiter` CLI instead of raw
+service access.
 
 ## The shape
 
