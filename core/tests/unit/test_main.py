@@ -5662,6 +5662,7 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
         {
             "id": "imap",
             "description": "Read and manage mail through configured IMAP accounts.",
+            "version": IMAPServicePlugin.version,
             "account_count": 1,
             "accounts": ["primary"],
             "accounts_truncated": False,
@@ -5679,6 +5680,7 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
         {
             "id": "smtp",
             "description": "Send email through configured SMTP accounts.",
+            "version": SMTPServicePlugin.version,
             "account_count": 1,
             "accounts": ["primary"],
             "accounts_truncated": False,

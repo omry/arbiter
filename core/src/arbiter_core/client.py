@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import re
+import string
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -27,6 +28,17 @@ DEFAULT_CONFIG_DIR = "~/.arbiter"
 DEFAULT_CLIENT_CONFIG_NAME = "arbiter-client"
 BOOTSTRAP_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 _STAGED_DEPLOYMENT_WARNING_EMITTED = False
+_CAPABILITY_FIELD_ALIASES = {
+    "id": "id",
+    "name": "id",
+    "desc": "description",
+    "description": "description",
+    "version": "version",
+    "num_accts": "account_count",
+    "account_count": "account_count",
+    "num_ops": "operation_count",
+    "operation_count": "operation_count",
+}
 
 
 @dataclass(frozen=True)
@@ -38,6 +50,12 @@ class ClientConfig:
 class ResolvedMCPURL:
     url: str
     source: str
+
+
+@dataclass(frozen=True)
+class CapabilityQuery:
+    fields: tuple[str, ...] = ()
+    format: str | None = None
 
 
 class ToolCallError(RuntimeError):
@@ -63,6 +81,176 @@ def _print_account_summary(accounts: Mapping[str, object]) -> None:
         if isinstance(names, Sequence) and not isinstance(names, str):
             for name in names:
                 print(f"  {name}")
+
+
+def _parse_capability_field_list(value: str) -> tuple[str, ...]:
+    fields: list[str] = []
+    value = value.strip()
+    if value.startswith("[") and value.endswith("]"):
+        value = value[1:-1]
+    for raw_field in value.split(","):
+        field = raw_field.strip()
+        if not field:
+            raise ValueError("cap list fields must not contain empty names")
+        if field not in _CAPABILITY_FIELD_ALIASES:
+            supported = ", ".join(sorted(_CAPABILITY_FIELD_ALIASES))
+            raise ValueError(
+                f"unsupported cap list field: {field}; supported fields: "
+                f"{supported}"
+            )
+        if field not in fields:
+            fields.append(field)
+    return tuple(fields)
+
+
+def _validate_capability_format(template: str) -> None:
+    for _literal, field_name, _format_spec, _conversion in string.Formatter().parse(
+        template
+    ):
+        if field_name is None:
+            continue
+        root_field = field_name.split(".", 1)[0].split("[", 1)[0]
+        if root_field not in _CAPABILITY_FIELD_ALIASES:
+            supported = ", ".join(sorted(_CAPABILITY_FIELD_ALIASES))
+            raise ValueError(
+                f"unsupported cap format field: {field_name}; supported fields: "
+                f"{supported}"
+            )
+
+
+def _capability_format_fields(template: str) -> set[str]:
+    fields: set[str] = set()
+    for _literal, field_name, _format_spec, _conversion in string.Formatter().parse(
+        template
+    ):
+        if field_name is None:
+            continue
+        root_field = field_name.split(".", 1)[0].split("[", 1)[0]
+        fields.add(root_field)
+    return fields
+
+
+def _parse_capability_query(query: Sequence[str]) -> CapabilityQuery:
+    fields: tuple[str, ...] = ()
+    template: str | None = None
+    for item in query:
+        key, separator, value = item.partition("=")
+        if separator != "=" or key not in {"fields", "format"}:
+            raise ValueError(
+                "unsupported cap list query: "
+                f"{item}; expected fields=desc,version,num_accts or "
+                'format="{id}=={version}: {desc}"'
+            )
+        if key == "fields":
+            fields = _parse_capability_field_list(value)
+        elif key == "format":
+            if not value:
+                raise ValueError("cap list format must not be empty")
+            _validate_capability_format(value)
+            template = value
+    return CapabilityQuery(fields=fields, format=template)
+
+
+def _capability_query_uses_field(query: CapabilityQuery, field: str) -> bool:
+    if any(
+        _CAPABILITY_FIELD_ALIASES[query_field] == field for query_field in query.fields
+    ):
+        return True
+    if query.format is None:
+        return False
+    return any(
+        _CAPABILITY_FIELD_ALIASES[query_field] == field
+        for query_field in _capability_format_fields(query.format)
+    )
+
+
+def _capability_field_value(capability: Mapping[str, object], field: str) -> object:
+    canonical_field = _CAPABILITY_FIELD_ALIASES[field]
+    if canonical_field == "account_count" and canonical_field not in capability:
+        accounts = capability.get("accounts", [])
+        if isinstance(accounts, Mapping):
+            return len(accounts)
+        if isinstance(accounts, Sequence) and not isinstance(accounts, str):
+            return len(accounts)
+    return capability.get(canonical_field, "")
+
+
+def _capability_field_projection(
+    capability: Mapping[str, object],
+    fields: Sequence[str],
+) -> dict[str, object]:
+    projected = {"id": _capability_field_value(capability, "id")}
+    for field in fields:
+        if field == "id":
+            continue
+        projected[field] = _capability_field_value(capability, field)
+    return projected
+
+
+def _print_capability_field_rows(
+    capabilities: Sequence[object],
+    fields: Sequence[str],
+) -> None:
+    include_id = not any(_CAPABILITY_FIELD_ALIASES[field] == "id" for field in fields)
+    for capability in capabilities:
+        if not isinstance(capability, Mapping):
+            continue
+        values = []
+        if include_id:
+            values.append(_capability_field_value(capability, "id"))
+        values.extend(_capability_field_value(capability, field) for field in fields)
+        print("\t".join(str(value) for value in values))
+
+
+def _capability_format_values(capability: Mapping[str, object]) -> dict[str, object]:
+    return {
+        alias: _capability_field_value(capability, alias)
+        for alias in _CAPABILITY_FIELD_ALIASES
+    }
+
+
+def _format_capability(
+    capability: Mapping[str, object],
+    template: str,
+) -> str:
+    return template.format_map(_capability_format_values(capability))
+
+
+def _capabilities_with_plugin_versions(
+    capabilities: Sequence[object],
+    version_info: object,
+) -> list[object]:
+    if not isinstance(version_info, Mapping):
+        return list(capabilities)
+    raw_plugins = version_info.get("plugins", [])
+    if not isinstance(raw_plugins, list):
+        return list(capabilities)
+    plugin_versions: dict[str, str] = {}
+    for plugin in raw_plugins:
+        if not isinstance(plugin, Mapping):
+            continue
+        name = plugin.get("name")
+        version = plugin.get("version")
+        if isinstance(name, str) and isinstance(version, str):
+            plugin_versions[name] = version
+
+    enriched: list[object] = []
+    for capability in capabilities:
+        if not isinstance(capability, Mapping):
+            enriched.append(capability)
+            continue
+        capability_id = capability.get("id")
+        if not isinstance(capability_id, str):
+            enriched.append(capability)
+            continue
+        version = plugin_versions.get(capability_id)
+        if version is None or capability.get("version"):
+            enriched.append(capability)
+            continue
+        enriched_capability = dict(capability)
+        enriched_capability["version"] = version
+        enriched.append(enriched_capability)
+    return enriched
 
 
 def _mapping_or_attr(value: object, name: str, default: object = None) -> object:
@@ -471,6 +659,14 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="print capability names as JSON",
     )
+    capabilities_list.add_argument(
+        "query",
+        nargs="*",
+        help=(
+            "optional query such as fields=desc,version,num_accts or "
+            'format="{id}=={version}: {desc}"'
+        ),
+    )
     capabilities_describe = capabilities_subcommands.add_parser(
         "desc",
         help="describe all capabilities or one capability (alias: describe)",
@@ -619,6 +815,17 @@ def _normalize_command_aliases(args: Sequence[str]) -> list[str]:
     return normalized
 
 
+def _apply_capability_query(namespace: argparse.Namespace) -> None:
+    namespace.capability_query = CapabilityQuery()
+    if namespace.command not in {"capabilities", "cap"}:
+        return
+    if namespace.capabilities_command not in {None, "list"}:
+        return
+    namespace.capability_query = _parse_capability_query(
+        getattr(namespace, "query", []),
+    )
+
+
 def _print_short_usage() -> None:
     print("usage: arbiter {cap,op,accounts} ...")
     print("Run 'arbiter --help' for full help.")
@@ -629,6 +836,68 @@ async def _run_async(namespace: argparse.Namespace) -> int:
         namespace.capabilities_command is None
         or namespace.capabilities_command == "list"
     ):
+        capability_query = getattr(namespace, "capability_query", CapabilityQuery())
+        if capability_query.fields or capability_query.format is not None:
+            result = await call_tool(namespace.mcp_url, "describe_caps", {})
+            payload = _tool_result_payload(result)
+            capabilities = []
+            if isinstance(payload, Mapping):
+                raw_capabilities = payload.get("capabilities", [])
+                if isinstance(raw_capabilities, list):
+                    capabilities = raw_capabilities
+            needs_version_fallback = any(
+                isinstance(capability, Mapping) and not capability.get("version")
+                for capability in capabilities
+            )
+            if needs_version_fallback and _capability_query_uses_field(
+                capability_query, "version"
+            ):
+                version_result = await call_tool(namespace.mcp_url, "version_info", {})
+                capabilities = _capabilities_with_plugin_versions(
+                    capabilities,
+                    _tool_result_payload(version_result),
+                )
+            if namespace.json:
+                if capability_query.format is not None:
+                    _print_json(
+                        {
+                            "capabilities": [
+                                _format_capability(
+                                    capability,
+                                    capability_query.format,
+                                )
+                                for capability in capabilities
+                                if isinstance(capability, Mapping)
+                            ]
+                        }
+                    )
+                else:
+                    _print_json(
+                        {
+                            "capabilities": [
+                                _capability_field_projection(
+                                    capability,
+                                    capability_query.fields,
+                                )
+                                for capability in capabilities
+                                if isinstance(capability, Mapping)
+                            ]
+                        }
+                    )
+            else:
+                if capability_query.format is not None:
+                    for capability in capabilities:
+                        if isinstance(capability, Mapping):
+                            print(
+                                _format_capability(capability, capability_query.format)
+                            )
+                else:
+                    _print_capability_field_rows(
+                        capabilities,
+                        capability_query.fields,
+                    )
+            return 0
+
         result = await call_tool(namespace.mcp_url, "list_caps", {})
         payload = _tool_result_payload(result)
         if namespace.json:
@@ -762,6 +1031,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _normalize_command_aliases(args)
     namespace, overrides = parser.parse_known_args(args)
     namespace.overrides = [*extracted_overrides, *overrides]
+    try:
+        _apply_capability_query(namespace)
+    except ValueError as exc:
+        print_cli_error(str(exc), area="usage")
+        return 2
     if namespace.command == "bootstrap" and namespace.bootstrap_command == "client":
         return _run_bootstrap_client(namespace)
     try:

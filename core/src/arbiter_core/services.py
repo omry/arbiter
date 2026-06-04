@@ -318,6 +318,7 @@ class OperationCatalog:
         return {
             "id": descriptor.name,
             "description": descriptor.description,
+            "version": self._plugins[capability].version,
             "account_count": len(account_names),
             "accounts": account_names[:account_preview_limit],
             "accounts_truncated": len(account_names) > account_preview_limit,

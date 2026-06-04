@@ -86,11 +86,17 @@ arbiter op run smtp:send_email --args '{"account":"bot","to":["ops@example.com"]
 Discover capability names and descriptions.
 
 ```bash
-arbiter cap [list] [--json]
+arbiter cap [list] [--json] [fields=desc,version,num_accts]
+arbiter cap 'format={id}=={version}: {desc}'
 arbiter cap desc [capability]
 ```
 
 - `cap` and `cap list`: list capability names.
+- `cap fields=desc,version,num_accts`: list capability names with selected
+  tab-separated fields. Quote bracket syntax in shells that treat brackets as
+  globs, for example `'fields=[desc,version,num_accts]'`.
+- `cap 'format={id}=={version}: {desc}'`: render one line per capability with
+  a template.
 - `cap list --json`: print capability names as JSON.
 - `cap desc`: describe all capabilities with bounded summaries.
 - `cap desc <capability>`: describe one capability.

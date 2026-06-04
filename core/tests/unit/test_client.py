@@ -492,6 +492,172 @@ def test_client_cap_default_list_accepts_json_option(
     assert capsys.readouterr().out == '{"capabilities": ["smtp"]}\n'
 
 
+def test_client_cap_list_accepts_fields_query(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        assert name == "describe_caps"
+        assert arguments == {}
+        return SimpleNamespace(
+            structuredContent={
+                "capabilities": [
+                    {
+                        "id": "smtp",
+                        "description": "Send email.",
+                        "version": "0.9.0",
+                        "account_count": 2,
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert client.main(["cap", "fields=desc,version,num_accts"]) == 0
+
+    assert capsys.readouterr().out == "smtp\tSend email.\t0.9.0\t2\n"
+
+
+def test_client_cap_list_accepts_quoted_bracket_fields_query_as_json(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        assert name == "describe_caps"
+        assert arguments == {}
+        return SimpleNamespace(
+            structuredContent={
+                "capabilities": [
+                    {
+                        "id": "smtp",
+                        "description": "Send email.",
+                        "version": "0.9.0",
+                        "account_count": 2,
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert client.main(["cap", "--json", "fields=[desc,version,num_accts]"]) == 0
+
+    assert capsys.readouterr().out == (
+        '{"capabilities": [{"desc": "Send email.", "id": "smtp", '
+        '"num_accts": 2, "version": "0.9.0"}]}\n'
+    )
+
+
+def test_client_cap_list_accepts_format_query(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        assert name == "describe_caps"
+        assert arguments == {}
+        return SimpleNamespace(
+            structuredContent={
+                "capabilities": [
+                    {
+                        "id": "smtp",
+                        "description": "Send email.",
+                        "version": "0.9.0",
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert client.main(["cap", "format={id}=={version}: {desc}"]) == 0
+
+    assert capsys.readouterr().out == "smtp==0.9.0: Send email.\n"
+
+
+def test_client_cap_list_format_falls_back_to_version_info(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, Mapping[str, Any]]] = []
+
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        calls.append((name, arguments))
+        if name == "describe_caps":
+            assert arguments == {}
+            return SimpleNamespace(
+                structuredContent={
+                    "capabilities": [
+                        {
+                            "id": "smtp",
+                            "description": "Send email.",
+                        }
+                    ]
+                },
+            )
+        if name == "version_info":
+            assert arguments == {}
+            return SimpleNamespace(
+                structuredContent={
+                    "plugins": [
+                        {
+                            "name": "smtp",
+                            "version": "0.9.0",
+                        }
+                    ]
+                },
+            )
+        raise AssertionError(f"unexpected tool call: {name}")
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert client.main(["cap", "format={id}=={version}: {desc}"]) == 0
+
+    assert capsys.readouterr().out == "smtp==0.9.0: Send email.\n"
+    assert calls == [("describe_caps", {}), ("version_info", {})]
+
+
+def test_client_cap_list_rejects_unknown_format_field(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert client.main(["cap", "format={bogus}"]) == 2
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert (
+        "Arbiter usage error: unsupported cap format field: bogus; "
+        "supported fields: "
+    ) in captured.err
+
+
+def test_client_cap_list_rejects_unknown_fields_query(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert client.main(["cap", "fields=bogus"]) == 2
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert (
+        "Arbiter usage error: unsupported cap list field: bogus; " "supported fields: "
+    ) in captured.err
+
+
 def test_client_cap_desc_alias_describes_capability(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,

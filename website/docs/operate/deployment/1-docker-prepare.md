@@ -42,8 +42,7 @@ commands instead of editing generated deployment files directly.
 
 Prepared Docker directories are staged deployments. They use staging-specific
 Docker names and ports so they can run next to an installed Arbiter. During
-install, the copied directory is rewritten to the installed identity. For the
-networking details, see [Networking](./networking.md).
+install, the copied directory is rewritten to the installed identity.
 
 ## Prepare the bundle
 
@@ -164,13 +163,15 @@ endpoint:
 `up` prints the MCP URL for this staged directory. `test` calls `version_info`
 through that URL and waits through transient startup connection failures.
 
-You can also test through the normal Arbiter client. Use the MCP URL printed by
-`up`:
+You can also verify capability discovery and plugin versions through the normal
+Arbiter client. Use the MCP URL printed by `up`:
 
 ```bash
-arbiter mcp call version_info arbiter.mcp_url=http://127.0.0.1:18025/mcp
-arbiter cap arbiter.mcp_url=http://127.0.0.1:18025/mcp
+arbiter arbiter.mcp_url=http://127.0.0.1:18025/mcp cap format='{id}=={version}'
+# Heads up: connected to staged Arbiter at http://127.0.0.1:18025/mcp.
+# imap==0.9.0
+# smtp==0.9.0
 ```
 
 Once the staged service works locally, promote it to a host service with the
-[Linux install](./linux-install.md) runbook.
+[Linux install](./2-linux-install.md) runbook.
