@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from email.message import EmailMessage
 
 import pytest
@@ -37,6 +38,9 @@ class FakeSMTPClient:
         self.message = message
         self.sender = sender
         self.recipients = recipients
+
+    def test_connection(self) -> None:
+        return None
 
 
 class RecordingSMTPClientFactory:
@@ -78,6 +82,9 @@ class FakeIMAPClient:
     def list_messages(self, *, folder: str, limit: int) -> list[FetchedIMAPMessage]:
         self.list_calls.append({"folder": folder, "limit": limit})
         return self.messages[:limit]
+
+    def test_connection(self, *, folders: Sequence[str]) -> None:
+        return None
 
     def get_message(self, *, folder: str, uid: str) -> FetchedIMAPMessage:
         self.get_calls.append({"folder": folder, "uid": uid})

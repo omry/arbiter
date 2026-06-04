@@ -10,6 +10,7 @@ from .version import arbiter_core_version, compatibility_line, core_api_version
 RuntimeT = TypeVar("RuntimeT")
 CORE_VERSION = arbiter_core_version()
 CORE_API_VERSION = core_api_version()
+ACCOUNT_TEST_STATUSES = {"ok", "failed", "skipped"}
 
 
 class ToolServer(Protocol):
@@ -302,6 +303,22 @@ class OperationCatalog:
             if plugin is None or account is None:
                 raise ValueError("info account requires plugin and account")
             return self._info_account(plugin, account)
+        if kind == "tests":
+            return {
+                "kind": "tests",
+                "plugins": [
+                    self._info_plugin_tests(capability)
+                    for capability in sorted(self._capabilities)
+                ],
+            }
+        if kind == "test":
+            if plugin is None:
+                raise ValueError("info test requires plugin")
+            if account is not None:
+                return self._info_account_test(plugin, account)
+            plugin_tests = self._info_plugin_tests(plugin)
+            plugin_tests["kind"] = "test"
+            return plugin_tests
         if kind == "ops":
             if plugin is None:
                 raise ValueError("info ops requires plugin")
@@ -320,7 +337,7 @@ class OperationCatalog:
             operation_info = self.describe_operation(operation_id(plugin, operation))
             operation_info["kind"] = "op"
             return operation_info
-        supported = "account, accounts, op, ops, overview, plugin, plugins"
+        supported = "account, accounts, op, ops, overview, plugin, plugins, test, tests"
         raise ValueError(f"unknown info kind: {kind}; supported kinds: {supported}")
 
     def invoke_operation(
@@ -462,6 +479,86 @@ class OperationCatalog:
             details["details"] = account
         return details
 
+    def _info_plugin_tests(self, capability: str) -> dict[str, object]:
+        self._require_capability(capability)
+        account_summaries = self._account_summaries(capability)
+        account_tests = self._account_tests(capability)
+        account_names_set: set[str] = set()
+        for account_name in account_summaries:
+            if isinstance(account_name, str):
+                account_names_set.add(account_name)
+        for account_name in account_tests:
+            if isinstance(account_name, str):
+                account_names_set.add(account_name)
+        account_names = sorted(account_names_set)
+        return {
+            "plugin": capability,
+            "accounts": [
+                self._info_account_test_summary(
+                    capability,
+                    account_name,
+                    account_tests.get(
+                        account_name,
+                        {
+                            "status": "skipped",
+                            "reason": "account test did not return a result",
+                        },
+                    ),
+                )
+                for account_name in account_names
+            ],
+        }
+
+    def _info_account_test(
+        self,
+        capability: str,
+        account_name: str,
+    ) -> dict[str, object]:
+        self._require_capability(capability)
+        account_summaries = self._account_summaries(capability)
+        if account_name not in account_summaries:
+            raise ValueError(f"unknown account for {capability}: {account_name}")
+        account_tests = self._account_tests(capability)
+        return {
+            "kind": "test",
+            **self._info_account_test_summary(
+                capability,
+                account_name,
+                account_tests.get(
+                    account_name,
+                    {
+                        "status": "skipped",
+                        "reason": "account test did not return a result",
+                    },
+                ),
+            ),
+        }
+
+    def _info_account_test_summary(
+        self,
+        capability: str,
+        account_name: str,
+        account_test: object,
+    ) -> dict[str, object]:
+        summary: dict[str, object] = {
+            "plugin": capability,
+            "account": account_name,
+        }
+        if isinstance(account_test, Mapping):
+            summary.update(account_test)
+        else:
+            summary["status"] = "ok"
+            summary["details"] = account_test
+        status = summary.get("status", "ok")
+        if not isinstance(status, str) or status not in ACCOUNT_TEST_STATUSES:
+            raise RuntimeError(
+                "account test status must be one of "
+                f"{', '.join(sorted(ACCOUNT_TEST_STATUSES))}: "
+                f"{capability}:{account_name}"
+            )
+        summary["status"] = status
+        return summary
+
     def _capability_summary(
         self,
         capability: str,
@@ -506,6 +603,22 @@ class OperationCatalog:
             raise RuntimeError(
                 f"capability account summaries must be a mapping: {capability}"
             )
+        return result
+
+    def _account_tests(self, capability: str) -> Mapping[str, object]:
+        runtime = self._context.runtimes.require_object(capability)
+        test_accounts = getattr(runtime, "test_accounts", None)
+        if not callable(test_accounts):
+            return {
+                account_name: {
+                    "status": "skipped",
+                    "reason": "runtime does not implement account tests",
+                }
+                for account_name in self._account_summaries(capability)
+            }
+        result = test_accounts()
+        if not isinstance(result, Mapping):
+            raise RuntimeError(f"account tests must be a mapping: {capability}")
         return result
 
 

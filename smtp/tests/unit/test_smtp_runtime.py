@@ -21,6 +21,10 @@ class FakeSMTPClient:
         self.message: EmailMessage | None = None
         self.sender: str | None = None
         self.recipients: list[str] | None = None
+        self.tested = False
+
+    def test_connection(self) -> None:
+        self.tested = True
 
     def send(
         self,
@@ -45,6 +49,16 @@ class FailingSMTPClient(FakeSMTPClient):
         recipients: list[str],
     ) -> None:
         super().send(message, sender, recipients)
+        raise self._exc
+
+
+class FailingSMTPTestClient(FakeSMTPClient):
+    def __init__(self, exc: Exception) -> None:
+        super().__init__()
+        self._exc = exc
+
+    def test_connection(self) -> None:
+        super().test_connection()
         raise self._exc
 
 
@@ -77,6 +91,41 @@ def _runtime(
         },
         smtp_client_factory=factory or RecordingSMTPClientFactory(),
     )
+
+
+def test_runtime_tests_accounts_without_sending(tmp_path: Path) -> None:
+    factory = RecordingSMTPClientFactory()
+    runtime = _runtime(cache_dir=tmp_path, factory=factory)
+
+    assert runtime.test_accounts() == {
+        "primary": {
+            "status": "ok",
+            "stage": "connect_auth_noop",
+            "checks": ["connect", "ehlo", "noop", "tls"],
+            "delivery": "skipped",
+            "reason": "read-only SMTP account test does not send mail",
+        }
+    }
+
+    assert len(factory.clients) == 1
+    assert factory.clients[0].tested is True
+    assert factory.clients[0].message is None
+
+
+def test_runtime_reports_account_test_failure(tmp_path: Path) -> None:
+    factory = RecordingSMTPClientFactory(
+        lambda: FailingSMTPTestClient(RuntimeError("login failed"))
+    )
+    runtime = _runtime(cache_dir=tmp_path, factory=factory)
+
+    assert runtime.test_accounts() == {
+        "primary": {
+            "status": "failed",
+            "stage": "connect_auth_noop",
+            "error_type": "RuntimeError",
+            "message": "login failed",
+        }
+    }
 
 
 def test_send_email_replays_same_idempotency_key_from_persistent_cache(

@@ -102,6 +102,14 @@ def test_echo_plugin_describes_and_invokes_operation() -> None:
         "enabled": True,
         "max_message_length": 200,
     }
+    assert catalog.info(kind="test", plugin="echo", account="demo") == {
+        "kind": "test",
+        "plugin": "echo",
+        "account": "demo",
+        "status": "ok",
+        "stage": "config_validation",
+        "checks": ["policy_reference", "policy_limits"],
+    }
 
     result = catalog.invoke_operation(
         "echo:echo_message",

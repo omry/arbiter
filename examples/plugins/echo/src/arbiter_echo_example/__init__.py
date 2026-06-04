@@ -84,6 +84,16 @@ class EchoRuntime:
             for account_name, account in sorted(self._accounts.items())
         }
 
+    def test_accounts(self) -> dict[str, object]:
+        return {
+            account_name: {
+                "status": "ok",
+                "stage": "config_validation",
+                "checks": ["policy_reference", "policy_limits"],
+            }
+            for account_name in sorted(self._accounts)
+        }
+
     def echo_message(
         self,
         *,

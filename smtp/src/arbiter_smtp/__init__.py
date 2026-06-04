@@ -39,6 +39,8 @@ class SendEmailResult:
 
 
 class SMTPClientProtocol(Protocol):
+    def test_connection(self) -> None: ...
+
     def send(
         self,
         message: EmailMessage,
@@ -139,6 +141,33 @@ class SMTPRuntime:
             }
             for account_name, account in sorted(self._accounts.items())
         }
+
+    def test_accounts(self) -> dict[str, object]:
+        results: dict[str, object] = {}
+        for account_name, smtp_config in sorted(self._accounts.items()):
+            try:
+                self._smtp_client_factory(smtp_config).test_connection()
+            except Exception as exc:
+                results[account_name] = {
+                    "status": "failed",
+                    "stage": "connect_auth_noop",
+                    "error_type": type(exc).__name__,
+                    "message": str(exc),
+                }
+                continue
+            checks = ["connect", "ehlo", "noop"]
+            if smtp_config.tls.value != "none":
+                checks.append("tls")
+            if smtp_config.authenticate:
+                checks.append("authenticate")
+            results[account_name] = {
+                "status": "ok",
+                "stage": "connect_auth_noop",
+                "checks": checks,
+                "delivery": "skipped",
+                "reason": "read-only SMTP account test does not send mail",
+            }
+        return results
 
     def send_email(
         self,

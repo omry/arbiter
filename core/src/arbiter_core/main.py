@@ -450,7 +450,8 @@ def _register_core_tools(
     @server.tool(
         description=(
             "Discover Arbiter server identity, installed plugins, accounts, "
-            "account policy summaries, and operation schemas."
+            "account policy summaries, read-only account test results, and "
+            "operation schemas."
         )
     )
     def info(

@@ -181,6 +181,105 @@ def test_client_info_account_subcommand_accepts_yaml(
     )
 
 
+def test_client_info_tests_subcommand_calls_info_tool(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        assert name == "info"
+        assert arguments == {"kind": "tests"}
+        return SimpleNamespace(structuredContent={"kind": "tests", "plugins": []})
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert client.main(["info", "tests"]) == 0
+
+    assert capsys.readouterr().out == (
+        '{"kind": "tests", "plugins": [], '
+        '"server_url": "http://127.0.0.1:8000/mcp"}\n'
+    )
+
+
+def test_client_info_test_subcommand_accepts_account(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        assert name == "info"
+        assert arguments == {
+            "kind": "test",
+            "plugin": "smtp",
+            "account": "bot",
+        }
+        return SimpleNamespace(
+            structuredContent={
+                "kind": "test",
+                "plugin": "smtp",
+                "account": "bot",
+                "status": "ok",
+            },
+        )
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert client.main(["info", "test", "smtp", "bot"]) == 0
+
+    assert capsys.readouterr().out == (
+        '{"account": "bot", "kind": "test", "plugin": "smtp", '
+        '"server_url": "http://127.0.0.1:8000/mcp", "status": "ok"}\n'
+    )
+
+
+def test_client_info_tests_reports_stale_server_support(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        assert name == "info"
+        assert arguments == {"kind": "tests"}
+        return SimpleNamespace(
+            content=[
+                SimpleNamespace(
+                    text=(
+                        "Error executing tool info: unknown info kind: tests; "
+                        "supported kinds: account, accounts, op, ops, overview, "
+                        "plugin, plugins"
+                    )
+                )
+            ],
+            isError=True,
+            structuredContent=None,
+        )
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert client.main(["info", "tests"]) == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        "Arbiter tool error: unknown info kind: tests; supported kinds: account, "
+        "accounts, op, ops, overview, plugin, plugins\n"
+        "  The local Arbiter client understands 'info tests', but the server at "
+        "http://127.0.0.1:8000/mcp does not. This usually means the running "
+        "server is older than the client or was not restarted after updating "
+        "the wheelhouse. Rebuild/redeploy the server package and restart the "
+        "Arbiter service, then retry the command.\n"
+    )
+
+
 def test_client_info_op_subcommand_accepts_trailing_yaml(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,

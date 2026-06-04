@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Callable, Protocol, cast
 
 from hydra.core.config_store import ConfigStore
@@ -28,6 +28,8 @@ CORE_API_VERSION = "0.9"
 
 
 class IMAPClientProtocol(Protocol):
+    def test_connection(self, *, folders: Sequence[str]) -> None: ...
+
     def list_messages(self, *, folder: str, limit: int) -> list[FetchedIMAPMessage]: ...
 
     def get_message(self, *, folder: str, uid: str) -> FetchedIMAPMessage: ...
@@ -221,6 +223,37 @@ class IMAPRuntime:
                 "message": self._message_summary(imap_policy),
             }
         return summaries
+
+    def test_accounts(self) -> dict[str, object]:
+        results: dict[str, object] = {}
+        for account_name, imap_config in sorted(self._accounts.items()):
+            folders = self._test_folders(imap_config)
+            try:
+                self._make_client(imap_config).test_connection(folders=folders)
+            except Exception as exc:
+                results[account_name] = {
+                    "status": "failed",
+                    "stage": "connect_auth_noop_examine",
+                    "folders": folders,
+                    "error_type": type(exc).__name__,
+                    "message": str(exc),
+                }
+                continue
+            if not folders:
+                results[account_name] = {
+                    "status": "skipped",
+                    "stage": "connect_auth_noop",
+                    "checks": ["connect", "noop"],
+                    "reason": "no configured IMAP folders to examine read-only",
+                }
+                continue
+            results[account_name] = {
+                "status": "ok",
+                "stage": "connect_auth_noop_examine",
+                "checks": ["connect", "noop", "examine"],
+                "folders": folders,
+            }
+        return results
 
     def list_messages(
         self,
@@ -449,6 +482,12 @@ class IMAPRuntime:
         if self._imap_client_factory is None:
             raise RuntimeError("IMAP client factory is not configured")
         return self._imap_client_factory(imap_config)
+
+    def _test_folders(self, imap_config: IMAPConfig) -> list[str]:
+        folders = sorted(imap_config.folders)
+        if imap_config.default_folder and imap_config.default_folder not in folders:
+            folders.append(imap_config.default_folder)
+        return folders
 
     def _message_summary(
         self,

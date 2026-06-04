@@ -663,6 +663,17 @@ def _build_parser() -> argparse.ArgumentParser:
     info_account.add_argument("plugin", help="plugin name, such as smtp")
     info_account.add_argument("account", help="account name")
 
+    info_subcommands.add_parser(
+        "tests",
+        help="run read-only account tests for all plugins",
+    )
+    info_test = info_subcommands.add_parser(
+        "test",
+        help="run read-only account tests for one plugin or account",
+    )
+    info_test.add_argument("plugin", help="plugin name, such as smtp")
+    info_test.add_argument("account", nargs="?", help="optional account name")
+
     info_ops = info_subcommands.add_parser(
         "ops",
         help="list operations for one plugin",
@@ -931,6 +942,13 @@ def _info_arguments(namespace: argparse.Namespace) -> dict[str, str]:
             "plugin": namespace.plugin,
             "account": namespace.account,
         }
+    if command == "tests":
+        return {"kind": "tests"}
+    if command == "test":
+        arguments = {"kind": "test", "plugin": namespace.plugin}
+        if namespace.account is not None:
+            arguments["account"] = namespace.account
+        return arguments
     if command == "ops":
         return {"kind": "ops", "plugin": namespace.plugin}
     if command == "op":
@@ -946,6 +964,27 @@ def _with_server_url(payload: object, url: str) -> object:
     if not isinstance(payload, Mapping):
         return payload
     return {"server_url": url, **payload}
+
+
+def _tool_error_message_for_cli(
+    exc: ToolCallError,
+    namespace: argparse.Namespace,
+) -> str:
+    message = str(exc)
+    if (
+        namespace.command == "info"
+        and namespace.info_command in {"test", "tests"}
+        and message.startswith("unknown info kind:")
+    ):
+        return (
+            f"{message}\n"
+            f"The local Arbiter client understands 'info {namespace.info_command}', "
+            f"but the server at {namespace.mcp_url} does not. This usually means "
+            "the running server is older than the client or was not restarted after "
+            "updating the wheelhouse. Rebuild/redeploy the server package and "
+            "restart the Arbiter service, then retry the command."
+        )
+    return message
 
 
 async def _run_async(namespace: argparse.Namespace) -> int:
@@ -1176,7 +1215,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("Arbiter client stopped.", file=sys.stderr)
         return 130
     except ToolCallError as exc:
-        print_cli_error(str(exc), area="tool")
+        print_cli_error(_tool_error_message_for_cli(exc, namespace), area="tool")
         return 1
     except BaseException as exc:
         if _contains_exception(exc, httpx.TransportError):

@@ -6158,6 +6158,15 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     imap_policies = fake_cfg.arbiter.policy["imap"]
 
     class FakeSMTPRuntime(SMTPRuntime):
+        def test_accounts(self) -> dict[str, object]:
+            return {
+                "primary": {
+                    "status": "ok",
+                    "stage": "connect_auth_noop",
+                    "delivery": "skipped",
+                }
+            }
+
         def send_email(
             self,
             account: str,
@@ -6188,6 +6197,15 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
             )
 
     class FakeIMAPRuntime(IMAPRuntime):
+        def test_accounts(self) -> dict[str, object]:
+            return {
+                "primary": {
+                    "status": "skipped",
+                    "stage": "connect_auth_noop",
+                    "reason": "test disabled in fixture",
+                }
+            }
+
         def list_messages(
             self,
             account: str,
@@ -6540,6 +6558,48 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     assert smtp_account_info["policy"] == "bot"
     assert smtp_account_info["guidance"] == ""
+    tests_info = cast(dict[str, Any], tools["info"](kind="tests"))
+    assert tests_info == {
+        "kind": "tests",
+        "plugins": [
+            {
+                "plugin": "imap",
+                "accounts": [
+                    {
+                        "plugin": "imap",
+                        "account": "primary",
+                        "status": "skipped",
+                        "stage": "connect_auth_noop",
+                        "reason": "test disabled in fixture",
+                    }
+                ],
+            },
+            {
+                "plugin": "smtp",
+                "accounts": [
+                    {
+                        "plugin": "smtp",
+                        "account": "primary",
+                        "status": "ok",
+                        "stage": "connect_auth_noop",
+                        "delivery": "skipped",
+                    }
+                ],
+            },
+        ],
+    }
+    smtp_account_test = cast(
+        dict[str, Any],
+        tools["info"](kind="test", plugin="smtp", account="primary"),
+    )
+    assert smtp_account_test == {
+        "kind": "test",
+        "plugin": "smtp",
+        "account": "primary",
+        "status": "ok",
+        "stage": "connect_auth_noop",
+        "delivery": "skipped",
+    }
     smtp_operation_info = cast(
         dict[str, Any],
         tools["info"](kind="op", plugin="smtp", operation="send_email"),

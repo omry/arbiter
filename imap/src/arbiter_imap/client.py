@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Sequence
 from email import policy
 from email.message import EmailMessage
 from email.parser import BytesParser
@@ -35,6 +36,13 @@ class IMAPOperationError(RuntimeError):
 class IMAPClient:
     def __init__(self, config: IMAPConfig) -> None:
         self._config = config
+
+    def test_connection(self, *, folders: Sequence[str]) -> None:
+        with self._session() as server:
+            status, data = server.noop()
+            self._expect_ok(status, data, "NOOP")
+            for folder in folders:
+                self._select_folder(server, folder, readonly=True)
 
     def list_messages(self, *, folder: str, limit: int) -> list[FetchedIMAPMessage]:
         with self._session() as server:

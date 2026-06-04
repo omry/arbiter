@@ -2,12 +2,19 @@ from __future__ import annotations
 
 import ssl
 import imaplib
+from collections.abc import Sequence
 from typing import Any
 
 import pytest
 
-from arbiter_imap.client import IMAPClient, IMAPOperationError
-from arbiter_imap.config import IMAPConfig, MailTlsMode
+from arbiter_imap import IMAPRuntime
+from arbiter_imap.client import FetchedIMAPMessage, IMAPClient, IMAPOperationError
+from arbiter_imap.config import (
+    IMAPAccessPolicyConfig,
+    IMAPConfig,
+    IMAPFolderConfig,
+    MailTlsMode,
+)
 
 
 MESSAGE_BYTES = (
@@ -30,6 +37,7 @@ class FakeIMAPServer:
         self.login_args: tuple[str, str] | None = None
         self.starttls_context: ssl.SSLContext | None = None
         self.logged_out = False
+        self.noop_called = False
         self.raise_on_move = False
         self.move_response: tuple[str, list[Any]] | None = None
 
@@ -56,6 +64,10 @@ class FakeIMAPServer:
 
     def login(self, username: str, password: str) -> None:
         self.login_args = (username, password)
+
+    def noop(self) -> tuple[str, list[bytes]]:
+        self.noop_called = True
+        return "OK", [b"noop"]
 
     def logout(self) -> tuple[str, list[bytes]]:
         self.logged_out = True
@@ -133,6 +145,157 @@ def test_starttls_uses_configured_context(monkeypatch: pytest.MonkeyPatch) -> No
     assert fake_server.starttls_context is not None
     assert fake_server.starttls_context.check_hostname is False
     assert fake_server.starttls_context.verify_mode == ssl.CERT_NONE
+
+
+def test_connection_probe_uses_noop_and_readonly_folder_select(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_server = FakeIMAPServer()
+
+    def fake_imap4_ssl(
+        host: str,
+        port: int,
+        *,
+        ssl_context: ssl.SSLContext,
+        timeout: float,
+    ) -> FakeIMAPServer:
+        return fake_server
+
+    monkeypatch.setattr("arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+
+    client = IMAPClient(IMAPConfig(username="user", password="secret"))
+
+    client.test_connection(folders=["Archive", "INBOX"])
+
+    assert fake_server.login_args == ("user", "secret")
+    assert fake_server.noop_called is True
+    assert fake_server.selected == [
+        {"mailbox": "Archive", "readonly": True},
+        {"mailbox": "INBOX", "readonly": True},
+    ]
+    assert fake_server.logged_out is True
+
+
+def test_runtime_tests_configured_folders_read_only() -> None:
+    class RecordingIMAPClient:
+        def __init__(self) -> None:
+            self.tested_folders: list[str] | None = None
+
+        def test_connection(self, *, folders: Sequence[str]) -> None:
+            self.tested_folders = list(folders)
+
+        def list_messages(self, *, folder: str, limit: int) -> list[FetchedIMAPMessage]:
+            raise AssertionError("list_messages should not be called")
+
+        def get_message(self, *, folder: str, uid: str) -> FetchedIMAPMessage:
+            raise AssertionError("get_message should not be called")
+
+        def search_messages(
+            self,
+            *,
+            folder: str,
+            query: str,
+            limit: int,
+        ) -> list[FetchedIMAPMessage]:
+            raise AssertionError("search_messages should not be called")
+
+        def move_message(
+            self,
+            *,
+            source_folder: str,
+            uid: str,
+            destination_folder: str,
+        ) -> None:
+            raise AssertionError("move_message should not be called")
+
+        def mark_message_read(self, *, folder: str, uid: str, read: bool) -> None:
+            raise AssertionError("mark_message_read should not be called")
+
+        def delete_message(self, *, folder: str, uid: str) -> None:
+            raise AssertionError("delete_message should not be called")
+
+    clients: list[RecordingIMAPClient] = []
+
+    def client_factory(config: IMAPConfig) -> RecordingIMAPClient:
+        client = RecordingIMAPClient()
+        clients.append(client)
+        return client
+
+    runtime = IMAPRuntime(
+        accounts={
+            "primary": IMAPConfig(
+                policy="bot",
+                default_folder="INBOX",
+                folders={
+                    "Archive": IMAPFolderConfig(),
+                    "INBOX": IMAPFolderConfig(),
+                },
+            )
+        },
+        policies={"bot": IMAPAccessPolicyConfig()},
+        imap_client_factory=client_factory,
+    )
+
+    assert runtime.test_accounts() == {
+        "primary": {
+            "status": "ok",
+            "stage": "connect_auth_noop_examine",
+            "checks": ["connect", "noop", "examine"],
+            "folders": ["Archive", "INBOX"],
+        }
+    }
+    assert clients[0].tested_folders == ["Archive", "INBOX"]
+
+
+def test_runtime_skips_folder_probe_when_no_folders_are_configured() -> None:
+    class RecordingIMAPClient:
+        def test_connection(self, *, folders: Sequence[str]) -> None:
+            assert folders == []
+
+        def list_messages(self, *, folder: str, limit: int) -> list[FetchedIMAPMessage]:
+            raise AssertionError("list_messages should not be called")
+
+        def get_message(self, *, folder: str, uid: str) -> FetchedIMAPMessage:
+            raise AssertionError("get_message should not be called")
+
+        def search_messages(
+            self,
+            *,
+            folder: str,
+            query: str,
+            limit: int,
+        ) -> list[FetchedIMAPMessage]:
+            raise AssertionError("search_messages should not be called")
+
+        def move_message(
+            self,
+            *,
+            source_folder: str,
+            uid: str,
+            destination_folder: str,
+        ) -> None:
+            raise AssertionError("move_message should not be called")
+
+        def mark_message_read(self, *, folder: str, uid: str, read: bool) -> None:
+            raise AssertionError("mark_message_read should not be called")
+
+        def delete_message(self, *, folder: str, uid: str) -> None:
+            raise AssertionError("delete_message should not be called")
+
+    runtime = IMAPRuntime(
+        accounts={"primary": IMAPConfig(policy="bot")},
+        policies={"bot": IMAPAccessPolicyConfig()},
+        imap_client_factory=lambda config: RecordingIMAPClient(),
+    )
+
+    assert runtime.test_accounts() == {
+        "primary": {
+            "status": "skipped",
+            "stage": "connect_auth_noop",
+            "checks": ["connect", "noop"],
+            "reason": "no configured IMAP folders to examine read-only",
+        }
+    }
 
 
 def test_move_falls_back_to_copy_delete_and_uid_expunge(
