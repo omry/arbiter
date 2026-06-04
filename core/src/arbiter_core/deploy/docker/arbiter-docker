@@ -42,6 +42,7 @@ Install options:
   --group GROUP       Dedicated service config group, default USER
   --service NAME      systemd service name, default arbiter
   --no-start          Install and enable the service without starting it
+  --replace-config    Replace installed config and env from this staging dir
   --dry-run           Print the install plan without changing the host
 
 Environment:
@@ -599,6 +600,19 @@ bundle_write_root_versions() {
   )
 }
 
+bundle_root_summary() {
+  local root_versions
+
+  root_versions="$(mktemp "${TMPDIR:-/tmp}/arbiter-docker-roots.XXXXXX")"
+  bundle_write_root_versions "$root_versions"
+  awk -F '\t' '$1 == "root" { print $2 "==" $3 }' "$root_versions" | sort | paste -sd ' ' -
+  rm -f "$root_versions"
+}
+
+print_bundle_prepare_start() {
+  printf 'preparing bundle: %s\n' "$(bundle_root_summary)"
+}
+
 bundle_write_wheelhouse_versions() {
   local output_file="$1"
   local active_wheels_dir
@@ -747,10 +761,35 @@ repo_source_dir_for_package() {
     arbiter-smtp)
       printf 'smtp\n'
       ;;
+    arbiter-suite)
+      printf 'meta/arbiter-suite\n'
+      ;;
   esac
 }
 
-bundle_upgrade_refresh_repo_wheels() {
+bundle_add_repo_wheel_sources_for_package() {
+  local source_list="$1"
+  local repo_root="$2"
+  local package_name="$3"
+  local normalized_name
+  local source_dir
+
+  normalized_name="$(normalize_distribution_name "$package_name")"
+  if [[ "$normalized_name" == "arbiter-suite" ]]; then
+    for package_name in arbiter-core arbiter-imap arbiter-smtp arbiter-suite; do
+      source_dir="$(repo_source_dir_for_package "$package_name")"
+      [[ -n "$source_dir" && -d "$repo_root/$source_dir" ]] || continue
+      printf '%s\n' "$repo_root/$source_dir" >>"$source_list"
+    done
+    return
+  fi
+
+  source_dir="$(repo_source_dir_for_package "$normalized_name")"
+  [[ -n "$source_dir" && -d "$repo_root/$source_dir" ]] || return
+  printf '%s\n' "$repo_root/$source_dir" >>"$source_list"
+}
+
+bundle_refresh_repo_wheels() {
   local tmp_dir="$1"
   local repo_root
   local active_wheels_dir
@@ -760,7 +799,6 @@ bundle_upgrade_refresh_repo_wheels() {
   local source_list
   local line
   local name
-  local source_dir
   local wheel
   local built_count=0
 
@@ -792,9 +830,7 @@ bundle_upgrade_refresh_repo_wheels() {
     [[ "$line" != /* ]] || continue
     name="${line%%==*}"
     name="${name%%[*}"
-    source_dir="$(repo_source_dir_for_package "$name")"
-    [[ -n "$source_dir" && -d "$repo_root/$source_dir" ]] || continue
-    printf '%s\n' "$repo_root/$source_dir" >>"$source_list"
+    bundle_add_repo_wheel_sources_for_package "$source_list" "$repo_root" "$name"
   done < <(
     awk '
       {
@@ -818,7 +854,7 @@ bundle_upgrade_refresh_repo_wheels() {
     if ! "$python_bin" -m pip --disable-pip-version-check wheel --no-deps --no-build-isolation --wheel-dir "$build_dir" "$source_dir" >"$output_file" 2>&1; then
       cat "$output_file" >&2
       printf 'error: failed to build local repo wheel: %s\n' "$source_dir" >&2
-      printf '       use bundle upgrade --pypi-only to resolve only from the package index\n' >&2
+      printf '       use --pypi-only to resolve only from the package index\n' >&2
       return 1
     fi
     built_count=$((built_count + 1))
@@ -1147,8 +1183,7 @@ prepare_pypi_only() {
     cp "$staged_requirements_file" "$requirements_file"
     printf 'updated requirements file from package index: %s\n' "$requirements_file"
   fi
-  printf 'prepared dependency wheelhouse: %s\n' "$target_wheels_dir"
-  printf 'validated dependency wheelhouse: %s\n' "$target_wheels_dir"
+  printf 'bundle prepare complete: %s\n' "$target_wheels_dir"
   rm -rf "$tmp_dir"
 }
 
@@ -1204,7 +1239,7 @@ bundle_upgrade() {
   bundle_write_upgrade_snapshot "$before_file"
 
   if [[ "$pypi_only" -eq 0 ]]; then
-    if ! bundle_upgrade_refresh_repo_wheels "$tmp_dir"; then
+    if ! bundle_refresh_repo_wheels "$tmp_dir"; then
       rm -rf "$tmp_dir"
       return 1
     fi
@@ -1271,20 +1306,14 @@ env_file_value() {
   ' "$env_path"
 }
 
-compose_env_value() {
-  local key="$1"
-  local default="$2"
-
-  env_file_value "$compose_env_file" "$key" || printf '%s\n' "$default"
-}
-
-set_compose_env_value() {
-  local key="$1"
-  local value="$2"
+set_env_file_value() {
+  local env_path="$1"
+  local key="$2"
+  local value="$3"
   local tmp_path
 
-  require_file "$compose_env_file"
-  tmp_path="$(mktemp "${TMPDIR:-/tmp}/arbiter-docker-env.XXXXXX")"
+  require_file "$env_path"
+  tmp_path="$(mktemp "${TMPDIR:-/tmp}/arbiter-env.XXXXXX")"
   awk -v key="$key" -v value="$value" '
     index($0, key "=") == 1 {
       print key "=" value
@@ -1297,8 +1326,22 @@ set_compose_env_value() {
         print key "=" value
       }
     }
-  ' "$compose_env_file" >"$tmp_path"
-  mv "$tmp_path" "$compose_env_file"
+  ' "$env_path" >"$tmp_path"
+  mv "$tmp_path" "$env_path"
+}
+
+compose_env_value() {
+  local key="$1"
+  local default="$2"
+
+  env_file_value "$compose_env_file" "$key" || printf '%s\n' "$default"
+}
+
+set_compose_env_value() {
+  local key="$1"
+  local value="$2"
+
+  set_env_file_value "$compose_env_file" "$key" "$value"
 }
 
 container_name_value() {
@@ -2026,6 +2069,8 @@ doctor_check_install_deploy_path() {
   local description="$2"
   local env_name="$3"
   local path
+  local real_deploy_dir
+  local real_path
 
   if [[ "$value" = /* ]]; then
     doctor_fail "$description uses an absolute host path for install: $env_name=$value"
@@ -2034,12 +2079,19 @@ doctor_check_install_deploy_path() {
   fi
 
   path="$(deploy_path_from_compose_value "$value")"
-  if path_is_under_deploy_dir_allow_missing "$path"; then
-    doctor_ok "$description is inside deployment directory"
-  else
+  real_deploy_dir="$(normalize_path_allow_missing "$deploy_dir")"
+  real_path="$(normalize_path_allow_missing "$path")"
+  if [[ "$real_path" != "$real_deploy_dir" && "$real_path" != "$real_deploy_dir/"* ]]; then
     doctor_fail "$description is outside deployment directory: $path"
     printf '      edit docker.env to use a path inside the deployment directory\n'
+    return
   fi
+  if [[ "$real_path" == "$real_deploy_dir" ]]; then
+    doctor_fail "$description resolves to the deployment directory root: $env_name=$value"
+    printf '      edit docker.env to use a dedicated path inside the deployment directory\n'
+    return
+  fi
+  doctor_ok "$description is inside deployment directory"
 }
 
 doctor_check_dir() {
@@ -2139,6 +2191,28 @@ doctor_check_app_env_permissions() {
   else
     doctor_ok "app env file is only readable and writable by its owner"
   fi
+}
+
+doctor_check_container_user_config() {
+  local container_user
+
+  if ! grep -Eq '^[[:space:]]*user:[[:space:]]*\$\{ARBITER_CONTAINER_USER:-' "$compose_file"; then
+    doctor_fail "compose service does not use ARBITER_CONTAINER_USER"
+    return
+  fi
+  if ! container_user="$(env_file_value "$compose_env_file" ARBITER_CONTAINER_USER)"; then
+    doctor_fail "docker env is missing ARBITER_CONTAINER_USER"
+    return
+  fi
+  if [[ ! "$container_user" =~ ^[0-9]+:[0-9]+$ ]]; then
+    doctor_fail "ARBITER_CONTAINER_USER must be numeric uid:gid, got: $container_user"
+    return
+  fi
+  if [[ "$container_user" =~ ^0: || "$container_user" =~ :0$ ]]; then
+    doctor_fail "ARBITER_CONTAINER_USER must not be root: $container_user"
+    return
+  fi
+  doctor_ok "container user is non-root: $container_user"
 }
 
 doctor_check_requirements_file() {
@@ -2498,6 +2572,7 @@ doctor() {
   doctor_check_env_file "$compose_env_file" "docker env file"
   doctor_check_config_file_permissions "$active_config_dir" "$active_app_env"
   doctor_check_app_env_permissions "$active_app_env"
+  doctor_check_container_user_config
   doctor_check_requirements_file "$requirements_file"
 
   if [[ "$doctor_preinstall" -eq 1 ]]; then
@@ -2593,6 +2668,10 @@ install_target_path_from_compose_value() {
     printf 'error: install requires docker.env host paths inside --to, got: %s\n' "$value" >&2
     return 1
   fi
+  if [[ "$real_path" == "$real_install_target_dir" ]]; then
+    printf 'error: install requires docker.env host paths below --to, got deployment root: %s\n' "$value" >&2
+    return 1
+  fi
   printf '%s\n' "$real_path"
 }
 
@@ -2604,6 +2683,11 @@ install_target_requirements_file_path() {
 install_target_wheels_dir_path() {
   install_target_path_from_compose_value \
     "$(compose_env_value ARBITER_WHEELS_DIR ./wheels)"
+}
+
+install_target_app_env_path() {
+  install_target_path_from_compose_value \
+    "$(install_env_value ARBITER_APP_ENV_FILE ./conf/.env)"
 }
 
 install_env_value() {
@@ -2670,21 +2754,227 @@ install_ensure_identity() {
   fi
 }
 
+install_reject_symlinks() {
+  local path="$1"
+  local symlink
+
+  symlink="$(find "$path" -type l -print -quit)"
+  if [[ -n "$symlink" ]]; then
+    printf 'error: install does not support symlinks in deployment tree: %s\n' "$symlink" >&2
+    return 1
+  fi
+}
+
+install_copy_file_protected() {
+  local source_file="$1"
+  local target_file="$2"
+  local mode="$3"
+  local target_parent
+  local tmp_file
+
+  target_parent="$(dirname -- "$target_file")"
+  mkdir -p "$target_parent"
+  chmod 0750 "$target_parent"
+  chown "$install_user:$install_group" "$target_parent"
+  tmp_file="$(mktemp "$target_parent/.arbiter-install.XXXXXX")"
+  if ! cat "$source_file" >"$tmp_file"; then
+    rm -f "$tmp_file"
+    return 1
+  fi
+  chown "$install_user:$install_group" "$tmp_file"
+  chmod "$mode" "$tmp_file"
+  mv -f "$tmp_file" "$target_file"
+}
+
+install_file_mode_for_relative_path() {
+  local relative_path="$1"
+  local app_env_relative_path="${2:-}"
+
+  if [[ -n "$app_env_relative_path" && "$relative_path" == "$app_env_relative_path" ]]; then
+    printf '0600\n'
+    return
+  fi
+  if [[ "$relative_path" == "arbiter-docker" ]]; then
+    printf '0750\n'
+    return
+  fi
+  printf '0640\n'
+}
+
+install_copy_tree_protected() {
+  local source_root="$1"
+  local target_root="$2"
+  local app_env_relative_path="${3:-}"
+  local source_path
+  local relative_path
+  local target_path
+  local mode
+
+  install_reject_symlinks "$source_root"
+  mkdir -p "$target_root"
+  chmod 0750 "$target_root"
+  chown "$install_user:$install_group" "$target_root"
+
+  while IFS= read -r -d '' source_path; do
+    [[ "$source_path" == "$source_root" ]] && continue
+    relative_path="${source_path#"$source_root"/}"
+    mkdir -p "$target_root/$relative_path"
+    chmod 0750 "$target_root/$relative_path"
+    chown "$install_user:$install_group" "$target_root/$relative_path"
+  done < <(find "$source_root" -type d -print0)
+
+  while IFS= read -r -d '' source_path; do
+    relative_path="${source_path#"$source_root"/}"
+    target_path="$target_root/$relative_path"
+    mode="$(install_file_mode_for_relative_path "$relative_path" "$app_env_relative_path")"
+    install_copy_file_protected "$source_path" "$target_path" "$mode"
+  done < <(find "$source_root" -type f -print0)
+}
+
+install_backup_existing_path() {
+  local source_path="$1"
+  local backup_prefix="$2"
+  local app_env_relative_path="${3:-}"
+  local timestamp
+  local backup_parent
+  local backup_path
+  local attempt=0
+
+  [[ -e "$source_path" ]] || return 0
+
+  timestamp="$(date -u '+%Y%m%dT%H%M%SZ')"
+  backup_parent="$install_target_dir/backup"
+  mkdir -p "$backup_parent"
+  chmod 0750 "$backup_parent"
+  chown "$install_user:$install_group" "$backup_parent"
+
+  backup_path="$backup_parent/${backup_prefix}-${timestamp}"
+  while [[ -e "$backup_path" ]]; do
+    attempt=$((attempt + 1))
+    backup_path="$backup_parent/${backup_prefix}-${timestamp}-${attempt}"
+  done
+
+  mv "$source_path" "$backup_path"
+  chown -R "$install_user:$install_group" "$backup_path"
+  find "$backup_path" -type d -exec chmod 0750 {} +
+  find "$backup_path" -type f -exec chmod 0640 {} +
+  if [[ -n "$app_env_relative_path" && -f "$backup_path/$app_env_relative_path" ]]; then
+    chmod 0600 "$backup_path/$app_env_relative_path"
+  elif [[ -f "$backup_path/.env" ]]; then
+    chmod 0600 "$backup_path/.env"
+  fi
+}
+
 install_copy_deployment() {
   local source_dir
   local target_dir
+  local target_docker_env_file
+  local preserve_config_dir_value="./conf"
+  local preserve_app_env_value="./conf/.env"
+  local preserve_config_name_value="arbiter-server"
+  local preserve_config_dir
+  local preserve_app_env
+  local staging_config_dir
+  local staging_app_env
+  local preserve_tmp_dir=""
+  local preserve_config=0
+  local preserve_config_dir_real
+  local preserve_app_env_real
+  local preserve_app_env_config_rel=""
+  local staging_app_env_rel=""
 
   source_dir="$(readlink -f "$deploy_dir")"
   target_dir="$install_target_dir"
+  target_docker_env_file="$target_dir/docker.env"
 
   if [[ "${install_dry_run:-0}" -eq 1 ]]; then
     printf 'would copy deployment: %s -> %s\n' "$source_dir" "$target_dir"
+    if [[ "$install_replace_config" -eq 0 ]]; then
+      printf 'would preserve installed config and env if present: %s\n' "$target_dir"
+    else
+      printf 'would replace installed config and env from staging\n'
+    fi
     return
+  fi
+
+  if [[ "$(normalize_path_allow_missing "$target_dir")" != "$source_dir" ]]; then
+    install_reject_symlinks "$source_dir"
+  fi
+
+  if [[ "$install_replace_config" -eq 0 && -e "$target_dir" ]]; then
+    if [[ -f "$target_docker_env_file" ]]; then
+      preserve_config_dir_value="$(env_file_value "$target_docker_env_file" ARBITER_CONFIG_DIR || printf './conf\n')"
+      preserve_app_env_value="$(env_file_value "$target_docker_env_file" ARBITER_APP_ENV_FILE || printf './conf/.env\n')"
+      preserve_config_name_value="$(env_file_value "$target_docker_env_file" ARBITER_CONFIG_NAME || printf 'arbiter-server\n')"
+    fi
+    preserve_config_dir="$(install_target_path_from_compose_value "$preserve_config_dir_value")"
+    preserve_app_env="$(install_target_path_from_compose_value "$preserve_app_env_value")"
+    if [[ -e "$preserve_config_dir" || -L "$preserve_config_dir" ]]; then
+      install_reject_symlinks "$preserve_config_dir"
+    fi
+    if [[ -e "$preserve_app_env" || -L "$preserve_app_env" ]]; then
+      install_reject_symlinks "$preserve_app_env"
+    fi
+    if [[ -e "$preserve_config_dir" || -e "$preserve_app_env" ]]; then
+      preserve_config=1
+      preserve_tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/arbiter-install-config.XXXXXX")"
+      if [[ -e "$preserve_app_env" ]]; then
+        preserve_config_dir_real="$(normalize_path_allow_missing "$preserve_config_dir")"
+        preserve_app_env_real="$(normalize_path_allow_missing "$preserve_app_env")"
+        case "$preserve_app_env_real" in
+          "$preserve_config_dir_real"/*)
+            preserve_app_env_config_rel="${preserve_app_env_real#"$preserve_config_dir_real"/}"
+            ;;
+          *)
+            cp -a "$preserve_app_env" "$preserve_tmp_dir/app-env"
+            ;;
+        esac
+      fi
+      if [[ -e "$preserve_config_dir" ]]; then
+        cp -a "$preserve_config_dir" "$preserve_tmp_dir/config-dir"
+        install_backup_existing_path \
+          "$preserve_config_dir" \
+          conf \
+          "$preserve_app_env_config_rel"
+      fi
+    fi
   fi
 
   mkdir -p "$target_dir"
   if [[ "$(readlink -f "$target_dir")" != "$source_dir" ]]; then
-    cp -a "$source_dir/." "$target_dir/"
+    staging_app_env_rel="$(install_relative_path "$(app_env_path)")"
+    install_copy_tree_protected "$source_dir" "$target_dir" "$staging_app_env_rel"
+  fi
+
+  if [[ "$preserve_config" -eq 1 ]]; then
+    staging_config_dir="$(install_target_path_from_compose_value "$(compose_env_value ARBITER_CONFIG_DIR ./conf)")"
+    staging_app_env="$(install_target_path_from_compose_value "$(compose_env_value ARBITER_APP_ENV_FILE ./conf/.env)")"
+
+    rm -rf "$staging_config_dir"
+    case "$(normalize_path_allow_missing "$staging_app_env")" in
+      "$(normalize_path_allow_missing "$staging_config_dir")"/*)
+        ;;
+      *)
+        rm -f "$staging_app_env"
+        ;;
+    esac
+
+    if [[ -e "$preserve_tmp_dir/config-dir" ]]; then
+      mkdir -p "$(dirname -- "$preserve_config_dir")"
+      rm -rf "$preserve_config_dir"
+      install_copy_tree_protected \
+        "$preserve_tmp_dir/config-dir" \
+        "$preserve_config_dir" \
+        "$preserve_app_env_config_rel"
+    fi
+    if [[ -e "$preserve_tmp_dir/app-env" ]]; then
+      mkdir -p "$(dirname -- "$preserve_app_env")"
+      install_copy_file_protected "$preserve_tmp_dir/app-env" "$preserve_app_env" 0600
+    fi
+    set_env_file_value "$target_docker_env_file" ARBITER_CONFIG_DIR "$preserve_config_dir_value"
+    set_env_file_value "$target_docker_env_file" ARBITER_APP_ENV_FILE "$preserve_app_env_value"
+    set_env_file_value "$target_docker_env_file" ARBITER_CONFIG_NAME "$preserve_config_name_value"
+    rm -rf "$preserve_tmp_dir"
   fi
 }
 
@@ -2692,10 +2982,12 @@ install_mark_deployment_installed() {
   local target_compose_file="$install_target_dir/compose.yaml"
   local target_docker_env_file="$install_target_dir/docker.env"
   local tmp_path
+  local install_uid
+  local install_gid
 
   if [[ "${install_dry_run:-0}" -eq 1 ]]; then
     printf 'would set deployment scope in compose.yaml: %s\n' "arbiter.deployment_scope=installed"
-    printf 'would set installed Docker identity in docker.env\n'
+    printf 'would set installed Docker identity and container user in docker.env\n'
     return
   fi
 
@@ -2722,6 +3014,13 @@ install_mark_deployment_installed() {
     -e 's#^ARBITER_DOCKER_SUBNET=.*#ARBITER_DOCKER_SUBNET=172.31.250.0/24#' \
     "$target_docker_env_file" >"$tmp_path"
   mv "$tmp_path" "$target_docker_env_file"
+
+  install_uid="$(id -u "$install_user")"
+  install_gid="$(getent group "$install_group" | cut -d: -f3)"
+  if [[ -z "$install_gid" ]]; then
+    install_gid="$(id -g "$install_user")"
+  fi
+  set_env_file_value "$target_docker_env_file" ARBITER_CONTAINER_USER "$install_uid:$install_gid"
 }
 
 install_metadata_quote() {
@@ -2754,7 +3053,6 @@ EOF
 }
 
 install_apply_permissions() {
-  local app_env_rel
   local app_env_target
 
   if [[ "${install_dry_run:-0}" -eq 1 ]]; then
@@ -2767,9 +3065,11 @@ install_apply_permissions() {
   find "$install_target_dir" -type d -exec chmod 0750 {} +
   find "$install_target_dir" -type f -exec chmod 0640 {} +
   chmod 0750 "$install_target_dir/arbiter-docker"
+  if [[ -d "$install_target_dir/backup" ]]; then
+    find "$install_target_dir/backup" -type f -exec chmod 0600 {} +
+  fi
 
-  app_env_rel="$(install_relative_path "$(app_env_path)")"
-  app_env_target="$install_target_dir/$app_env_rel"
+  app_env_target="$(install_target_app_env_path)"
   if [[ -f "$app_env_target" ]]; then
     chmod 0600 "$app_env_target"
   fi
@@ -3125,6 +3425,7 @@ prepare() {
   local image
   local docker_user
   local pypi_only=0
+  local tmp_dir
 
   while (($#)); do
     case "$1" in
@@ -3145,13 +3446,22 @@ prepare() {
   image="$(compose_env_value ARBITER_IMAGE python:3.11-slim)"
   docker_user="$(id -u):$(id -g)"
   if [[ "$pypi_only" -eq 1 ]]; then
+    print_bundle_prepare_start
     if ! prepare_pypi_only "$target_wheels_dir" "$docker_user" "$image"; then
       return 1
     fi
     return
   fi
-  prepare_dependency_wheelhouse "$requirements_file" "$target_wheels_dir" "$docker_user" "$image" 0 "$pypi_only"
-  validate_dependency_wheelhouse "$requirements_file" "$target_wheels_dir" "$docker_user" "$image"
+  print_bundle_prepare_start
+  tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/arbiter-bundle-prepare.XXXXXX")"
+  if ! bundle_refresh_repo_wheels "$tmp_dir"; then
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+  rm -rf "$tmp_dir"
+  prepare_dependency_wheelhouse "$requirements_file" "$target_wheels_dir" "$docker_user" "$image" 1 "$pypi_only"
+  validate_dependency_wheelhouse "$requirements_file" "$target_wheels_dir" "$docker_user" "$image" 1
+  printf 'bundle prepare complete: %s\n' "$target_wheels_dir"
 }
 
 prepare_quiet() {
@@ -3342,6 +3652,7 @@ install_deployment() {
   install_service="arbiter"
   install_start=1
   install_dry_run=0
+  install_replace_config=0
 
   while (($#)); do
     case "$1" in
@@ -3383,6 +3694,10 @@ install_deployment() {
         ;;
       --start)
         install_start=1
+        shift
+        ;;
+      --replace-config)
+        install_replace_config=1
         shift
         ;;
       --dry-run)

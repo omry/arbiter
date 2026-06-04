@@ -212,6 +212,7 @@ class IMAPRuntime:
             imap_policy = self._policies[account.policy]
             summaries[account_name] = {
                 "description": account.description,
+                "guidance": account.guidance,
                 "policy": account.policy,
                 "enabled": True,
                 "confirmation_required": [
@@ -555,6 +556,9 @@ defaults:
 
 # Human-facing summary shown by account listing tools.
 description: IMAP account for (${{.username}})
+
+# Operator guidance shown to agents during discovery.
+guidance: ""
 
 # Matching policy generated alongside this account.
 policy: {policy_name}

@@ -84,6 +84,7 @@ def test_compose_config_applies_overrides() -> None:
     cfg = _compose_config(
         [
             "+arbiter/account/smtp@arbiter.account.smtp.primary=schema",
+            "+arbiter/account/imap@arbiter.account.imap.primary=schema",
             "+arbiter/policy/smtp@arbiter.policy.smtp.bot=schema",
             "+arbiter/policy/imap@arbiter.policy.imap.bot=schema",
             "arbiter.server.transport=stdio",
@@ -91,8 +92,10 @@ def test_compose_config_applies_overrides() -> None:
             "arbiter.account.smtp.primary.host=smtp.example.com",
             "arbiter.account.smtp.primary.port=2525",
             "arbiter.account.smtp.primary.from_name=Agent Team",
+            "arbiter.account.smtp.primary.guidance=Use for outbound notifications.",
             "arbiter.account.smtp.primary.tls=implicit",
             "arbiter.account.smtp.primary.verify_peer=false",
+            "arbiter.account.imap.primary.guidance=Use for inbox triage.",
             "arbiter.policy.smtp.bot.require_confirmation=true",
             "arbiter.policy.imap.bot.system_flags.seen=read_write",
         ]
@@ -103,8 +106,12 @@ def test_compose_config_applies_overrides() -> None:
     assert cfg.arbiter.account.smtp.primary.host == "smtp.example.com"
     assert cfg.arbiter.account.smtp.primary.port == 2525
     assert cfg.arbiter.account.smtp.primary.from_name == "Agent Team"
+    assert (
+        cfg.arbiter.account.smtp.primary.guidance == "Use for outbound notifications."
+    )
     assert cfg.arbiter.account.smtp.primary.tls == SMTPMailTlsMode.implicit
     assert cfg.arbiter.account.smtp.primary.verify_peer is False
+    assert cfg.arbiter.account.imap.primary.guidance == "Use for inbox triage."
     assert cfg.arbiter.policy.smtp.bot.require_confirmation is True
     assert cfg.arbiter.policy.imap.bot.system_flags.seen == IMAPFlagMode.read_write
 

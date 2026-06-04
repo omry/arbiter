@@ -129,6 +129,7 @@ class SMTPRuntime:
         return {
             account_name: {
                 "description": account.description,
+                "guidance": account.guidance,
                 "policy": account.policy,
                 "enabled": True,
                 "send": "allowed",
@@ -523,6 +524,9 @@ defaults:
 
 # Human-facing summary shown by account listing tools.
 description: SMTP account for (${{.from_email}})
+
+# Operator guidance shown to agents during discovery.
+guidance: ""
 
 # Matching policy generated alongside this account.
 policy: {policy_name}

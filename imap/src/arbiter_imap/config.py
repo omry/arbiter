@@ -36,6 +36,7 @@ class IMAPFolderConfig:
 class IMAPConfig(Policy):
     policy: str = "bot"
     description: str = ""
+    guidance: str = ""
     host: str = "localhost"
     port: int = 993
     username: str = ""

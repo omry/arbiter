@@ -2,6 +2,7 @@ services:
   arbiter:
     image: ${ARBITER_IMAGE:-python:3.11-slim}
     container_name: ${ARBITER_CONTAINER_NAME:-arbiter-staging}
+    user: ${ARBITER_CONTAINER_USER:-10001:10001}
     restart: ${ARBITER_RESTART:-unless-stopped}
     env_file:
       - ${ARBITER_APP_ENV_FILE:-./conf/.env}
@@ -12,6 +13,8 @@ services:
       ARBITER_SERVER_HOST: 0.0.0.0
       ARBITER_CONTAINER_PORT: ${ARBITER_CONTAINER_PORT:-8025}
       ARBITER_CONFIG_NAME: ${ARBITER_CONFIG_NAME:-arbiter-server}
+      ARBITER_RUNTIME_VENV: ${ARBITER_RUNTIME_VENV:-/tmp/arbiter-venv}
+      HOME: ${ARBITER_CONTAINER_HOME:-/tmp/arbiter-home}
     volumes:
       - ${ARBITER_CONFIG_DIR:-./conf}:/config:ro
       - ${ARBITER_REQUIREMENTS_FILE:-./requirements.txt}:/requirements.txt:ro
@@ -24,7 +27,16 @@ services:
       - arbiter
     command: >
       sh -lc
-      'if grep -q "/source/arbiter" /requirements.txt; then
+      'runtime_venv="$${ARBITER_RUNTIME_VENV:-/tmp/arbiter-venv}" &&
+      case "$$runtime_venv" in /tmp/arbiter-*) ;; *) echo "error: ARBITER_RUNTIME_VENV must be an Arbiter path under /tmp" >&2; exit 1;; esac &&
+      case "$$runtime_venv" in *..*) echo "error: ARBITER_RUNTIME_VENV must not contain .." >&2; exit 1;; esac &&
+      case "$$HOME" in /tmp/arbiter-*) ;; *) echo "error: HOME must be an Arbiter path under /tmp" >&2; exit 1;; esac &&
+      case "$$HOME" in *..*) echo "error: HOME must not contain .." >&2; exit 1;; esac &&
+      rm -rf "$$runtime_venv" &&
+      mkdir -p "$$HOME" &&
+      python -m venv "$$runtime_venv" &&
+      venv_python="$$runtime_venv/bin/python" &&
+      if grep -q "/source/arbiter" /requirements.txt; then
         rm -rf /tmp/arbiter-source &&
         rm -rf /tmp/arbiter-wheels &&
         mkdir -p /tmp/arbiter-source &&
@@ -34,19 +46,19 @@ services:
         sed "s#/source/arbiter#/tmp/arbiter-source#g" /requirements.txt > /tmp/requirements.txt &&
         awk "!/^[[:space:]]*(#|$)/ && !/^[[:space:]]*\\/tmp\\/arbiter-source\\// { print }" /tmp/requirements.txt > /tmp/requirements.pinned &&
         awk "/^[[:space:]]*\\/tmp\\/arbiter-source\\// { print }" /tmp/requirements.txt | while IFS= read -r requirement; do
-          python -m pip --disable-pip-version-check wheel --no-cache-dir --no-deps --wheel-dir /tmp/arbiter-wheels "$$requirement";
+          "$$venv_python" -m pip --disable-pip-version-check wheel --no-cache-dir --no-deps --wheel-dir /tmp/arbiter-wheels "$$requirement";
         done &&
         if [ -d /wheels ] && find /wheels -maxdepth 1 -name "*.whl" -print -quit | grep -q .; then
-          python -m pip --disable-pip-version-check install --no-cache-dir --no-index --find-links /wheels -r /tmp/requirements.pinned /tmp/arbiter-wheels/*.whl;
+          "$$venv_python" -m pip --disable-pip-version-check install --no-cache-dir --no-index --find-links /wheels -r /tmp/requirements.pinned /tmp/arbiter-wheels/*.whl;
         else
-          python -m pip --disable-pip-version-check install --no-cache-dir -r /tmp/requirements.pinned /tmp/arbiter-wheels/*.whl;
+          "$$venv_python" -m pip --disable-pip-version-check install --no-cache-dir -r /tmp/requirements.pinned /tmp/arbiter-wheels/*.whl;
         fi;
       elif [ -d /wheels ] && find /wheels -maxdepth 1 -name "*.whl" -print -quit | grep -q .; then
-        python -m pip --disable-pip-version-check install --no-cache-dir --no-index --find-links /wheels -r /requirements.txt;
+        "$$venv_python" -m pip --disable-pip-version-check install --no-cache-dir --no-index --find-links /wheels -r /requirements.txt;
       else
-        python -m pip --disable-pip-version-check install --no-cache-dir -r /requirements.txt;
+        "$$venv_python" -m pip --disable-pip-version-check install --no-cache-dir -r /requirements.txt;
       fi &&
-      exec arbiter-server --config-dir /config --config-name "$$ARBITER_CONFIG_NAME" serve "arbiter.server.host=$$ARBITER_SERVER_HOST" "arbiter.server.port=$$ARBITER_CONTAINER_PORT" "arbiter.deployment_scope=staged"'
+      exec "$$runtime_venv/bin/arbiter-server" --config-dir /config --config-name "$$ARBITER_CONFIG_NAME" serve "arbiter.server.host=$$ARBITER_SERVER_HOST" "arbiter.server.port=$$ARBITER_CONTAINER_PORT" "arbiter.deployment_scope=staged"'
 
 networks:
   arbiter:

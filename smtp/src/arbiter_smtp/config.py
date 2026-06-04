@@ -37,6 +37,7 @@ class SMTPRecipientPolicyConfig:
 class SMTPConfig(Policy):
     policy: str = "bot"
     description: str = ""
+    guidance: str = ""
     host: str = "localhost"
     port: int = 587
     authenticate: bool = False

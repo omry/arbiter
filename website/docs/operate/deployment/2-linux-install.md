@@ -35,6 +35,19 @@ sudo ./arbiter-docker install --to /opt/arbiter --user arbiter
 
 By default, install starts or restarts the systemd service.
 
+On the first install, the staging `conf/` directory seeds the installed
+configuration package. After that, the installed configuration and env file are
+authoritative: later installs update the bundle and service wrapper, but keep
+the installed `conf/` package by default. This lets operators edit credentials
+only in the protected installed directory. When an existing config directory is
+preserved, install keeps a protected timestamped copy under `backup/`.
+
+To intentionally replace the installed config and env from staging:
+
+```bash
+sudo ./arbiter-docker install --to /opt/arbiter --user arbiter --replace-config
+```
+
 ## Verify
 
 Test the installed MCP endpoint with the Arbiter client:
@@ -69,6 +82,8 @@ sudo systemctl restart arbiter.service
 
 - creates the `arbiter` system user/group if missing
 - copies the prepared deployment directory to `/opt/arbiter`
+- preserves an existing installed config package unless `--replace-config` is
+  passed
 - rewrites the copied Compose command to pass
   `arbiter.deployment_scope=installed`
 - sets ownership to `arbiter:arbiter`

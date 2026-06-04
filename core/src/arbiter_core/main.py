@@ -96,6 +96,7 @@ DOCKER_WHEELS_CONTAINER_ROOT = "/wheels"
 DOCKER_COMPOSE_ENV_DEFAULTS = [
     ("ARBITER_IMAGE", "python:3.11-slim"),
     ("ARBITER_CONTAINER_NAME", "arbiter-staging"),
+    ("ARBITER_CONTAINER_USER", f"{os.getuid()}:{os.getgid()}"),
     ("ARBITER_RESTART", "unless-stopped"),
     ("ARBITER_APP_ENV_FILE", "./conf/.env"),
     ("ARBITER_CONFIG_DIR", "./conf"),

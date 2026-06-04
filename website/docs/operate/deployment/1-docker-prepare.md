@@ -77,7 +77,9 @@ or recreate the container without reaching PyPI:
 from the configured package pins or wheel paths. Running it before config work
 catches package resolution, Docker image, and wheel compatibility problems
 early. Each run prunes stale wheels that are no longer part of the resolved
-runtime install set.
+runtime install set. When the staging directory is in an Arbiter repository
+checkout, normal prepare refreshes local Arbiter wheels from that checkout
+before resolving the wheelhouse.
 
 ### Upgrade package pins
 

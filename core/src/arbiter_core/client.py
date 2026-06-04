@@ -867,6 +867,38 @@ def _normalize_command_aliases(args: Sequence[str]) -> list[str]:
     return normalized
 
 
+def _normalize_info_output_flags(args: Sequence[str]) -> list[str]:
+    normalized = list(args)
+    index = 0
+    while index < len(normalized):
+        arg = normalized[index]
+        if arg in {"--config-dir", "--config-name"}:
+            index += 2
+            continue
+        if arg.startswith("--config-dir=") or arg.startswith("--config-name="):
+            index += 1
+            continue
+        break
+
+    if index >= len(normalized) or normalized[index] != "info":
+        return normalized
+
+    yaml_count = normalized[index + 1 :].count("--yaml")
+    if yaml_count == 0:
+        return normalized
+
+    without_yaml = [
+        arg
+        for arg_index, arg in enumerate(normalized)
+        if arg_index <= index or arg != "--yaml"
+    ]
+    return [
+        *without_yaml[: index + 1],
+        "--yaml",
+        *without_yaml[index + 1 :],
+    ]
+
+
 def _apply_capability_query(namespace: argparse.Namespace) -> None:
     namespace.capability_query = CapabilityQuery()
     if namespace.command not in {"capabilities", "cap"}:
@@ -1122,6 +1154,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     args = _extract_global_config_args(raw_args)
     args, extracted_overrides = _extract_client_overrides(args)
+    args = _normalize_info_output_flags(args)
     args = _normalize_command_aliases(args)
     namespace, overrides = parser.parse_known_args(args)
     namespace.overrides = [*extracted_overrides, *overrides]

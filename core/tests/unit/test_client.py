@@ -181,6 +181,42 @@ def test_client_info_account_subcommand_accepts_yaml(
     )
 
 
+def test_client_info_op_subcommand_accepts_trailing_yaml(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        assert url == "http://127.0.0.1:8000/mcp"
+        assert name == "info"
+        assert arguments == {
+            "kind": "op",
+            "plugin": "smtp",
+            "operation": "send_email",
+        }
+        return SimpleNamespace(
+            structuredContent={
+                "kind": "op",
+                "plugin": "smtp",
+                "operation": "send_email",
+            },
+        )
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert client.main(["info", "op", "smtp", "send_email", "--yaml"]) == 0
+
+    assert capsys.readouterr().out == (
+        "server_url: http://127.0.0.1:8000/mcp\n"
+        "kind: op\n"
+        "plugin: smtp\n"
+        "operation: send_email\n"
+    )
+
+
 def test_client_lists_tool_names(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,

@@ -51,6 +51,11 @@ install set with the configured runtime image, and writes all required wheels
 to `wheels/`. Each run expands the wheelhouse fully and prunes stale wheels
 that are no longer part of the resolved install set.
 
+When the staging directory is in an Arbiter repository checkout, normal
+`bundle prepare` first rebuilds local Arbiter wheels from that checkout. Use
+`bundle prepare --pypi-only` only when the selected Arbiter package names should
+come from the package index instead of the checkout.
+
 The generated Compose file mounts `./wheels` at `/wheels`. During container
 startup, the install command uses `/wheels`, so startup does not depend on
 package-index access.

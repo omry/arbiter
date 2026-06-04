@@ -25,6 +25,13 @@ the helper.
 | `doctor --agent-user USER` | Also check common permission mistakes for an agent identity. |
 | `doctor --preinstall` | Check that the prepared directory is ready to promote. |
 
+## Install
+
+| Command | Purpose |
+| --- | --- |
+| `install --to DIR --user USER` | Promote the staging directory to an installed systemd service. First install seeds config from staging; later installs preserve installed config and env. |
+| `install --replace-config --to DIR --user USER` | Promote and explicitly replace the installed config package from staging. |
+
 ## Edit
 
 | Command | Purpose |

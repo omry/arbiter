@@ -225,6 +225,7 @@ def test_list_accounts_returns_service_grouped_summaries() -> None:
         "imap": {
             "personal": {
                 "description": "Personal IMAP account",
+                "guidance": "",
                 "policy": "personal",
                 "enabled": True,
                 "confirmation_required": [],
@@ -249,6 +250,7 @@ def test_list_accounts_returns_service_grouped_summaries() -> None:
         "smtp": {
             "primary": {
                 "description": "Primary SMTP account",
+                "guidance": "",
                 "policy": "bot",
                 "enabled": True,
                 "send": "allowed",
