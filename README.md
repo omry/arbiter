@@ -49,7 +49,7 @@ Run the test suite from the repo root with:
 - `.venv/bin/python -m nox -s tests`
 - `.venv/bin/python -m nox -s lint`
 
-The `lint` session runs both `black --check` and the Arbiter `mypy` passes.
+The `lint` session runs both `black --check` and `pyrefly check`.
 
 For focused local runs without `nox`, use the same environment directly, for example:
 

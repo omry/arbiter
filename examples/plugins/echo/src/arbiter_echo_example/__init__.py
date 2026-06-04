@@ -79,9 +79,7 @@ class EchoRuntime:
                 "guidance": account.guidance,
                 "policy": account.policy,
                 "enabled": True,
-                "max_message_length": self._policies[
-                    account.policy
-                ].max_message_length,
+                "max_message_length": self._policies[account.policy].max_message_length,
             }
             for account_name, account in sorted(self._accounts.items())
         }
@@ -242,10 +240,9 @@ def _is_repo_example_plugin(package_file: str) -> bool:
         return False
 
     for parent in package_dir.parents:
-        if (
-            (parent / "core/src/arbiter_core").is_dir()
-            and (parent / "examples/plugins/echo/pyproject.toml").is_file()
-        ):
+        if (parent / "core/src/arbiter_core").is_dir() and (
+            parent / "examples/plugins/echo/pyproject.toml"
+        ).is_file():
             return True
     return False
 

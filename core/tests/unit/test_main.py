@@ -1332,6 +1332,7 @@ def test_build_local_source_wheel_returns_wheel_from_current_build(
 
     wheel = _build_local_source_wheel(source_root, wheel_dir)
 
+    assert wheel is not None
     assert wheel == wheel_dir / "current-1.2.3-py3-none-any.whl"
     assert wheel.read_text(encoding="utf-8") == "current\n"
     assert (wheel_dir / "stale-9.9.9-py3-none-any.whl").exists()
@@ -3746,8 +3747,9 @@ def test_cli_deploy_docker_generated_helper_preinstall_rejects_deploy_root_runti
         "fail: config directory resolves to the deployment directory root: "
         "ARBITER_CONFIG_DIR=.\n"
     ) in result.stdout
-    assert "edit docker.env to use a dedicated path inside the deployment directory\n" in (
-        result.stdout
+    assert (
+        "edit docker.env to use a dedicated path inside the deployment directory\n"
+        in (result.stdout)
     )
     assert "ok: preinstall checks passed\n" not in result.stdout
 

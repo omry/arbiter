@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, ItemsView, KeysView, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, NoReturn, Protocol, TypeVar
+from typing import Any, NoReturn, Protocol, TypeVar, cast
 
 from .version import arbiter_core_version, compatibility_line, core_api_version
 
@@ -556,11 +556,12 @@ def _validate_argument_value(
     if expected_type == "integer":
         if not isinstance(value, int) or isinstance(value, bool):
             _raise_argument_type_error(operation_ref, name, "integer")
+        integer_value = cast(int, value)
         minimum = schema.get("minimum")
         maximum = schema.get("maximum")
-        if isinstance(minimum, int) and value < minimum:
+        if isinstance(minimum, int) and integer_value < minimum:
             raise ValueError(f"{operation_ref} argument {name} must be >= {minimum}")
-        if isinstance(maximum, int) and value > maximum:
+        if isinstance(maximum, int) and integer_value > maximum:
             raise ValueError(f"{operation_ref} argument {name} must be <= {maximum}")
         return
     if expected_type == "boolean":
@@ -570,9 +571,10 @@ def _validate_argument_value(
     if expected_type == "array":
         if not isinstance(value, list):
             _raise_argument_type_error(operation_ref, name, "array")
+        list_value = cast(list[object], value)
         items = schema.get("items")
         if isinstance(items, Mapping) and items.get("type") == "string":
-            for index, item in enumerate(value):
+            for index, item in enumerate(list_value):
                 if not isinstance(item, str):
                     raise ValueError(
                         f"{operation_ref} argument {name}[{index}] must be string"

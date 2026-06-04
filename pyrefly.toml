@@ -1,0 +1,8 @@
+search-path = [
+    "core/src",
+    "smtp/src",
+    "imap/src",
+    "examples/plugins/echo/src",
+]
+python-version = "3.10.0"
+untyped-def-behavior = "check-and-infer-return-type"

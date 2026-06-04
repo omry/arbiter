@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import nox
 
 
@@ -14,6 +16,8 @@ BLACK_TARGETS = [
     "smtp/tests",
     "imap/src",
     "imap/tests",
+    "examples/plugins/echo/src",
+    "examples/plugins/echo/tests",
     "noxfile.py",
     "tools/build_release_dists",
     "tools/extract_release_notes",
@@ -27,11 +31,15 @@ TEST_TARGETS = [
     "examples/plugins/echo/tests",
 ]
 SUPPORTED_PYTHONS = nox.project.python_versions(CORE_PYPROJECT)
-STRICT_MYPY_TARGETS = ["core/src", "smtp/src", "imap/src"]
-SUPPLEMENTAL_MYPY_TARGETS = [
+PYREFLY_TARGETS = [
+    "core/src",
     "core/tests",
+    "smtp/src",
     "smtp/tests",
+    "imap/src",
     "imap/tests",
+    "examples/plugins/echo/src",
+    "examples/plugins/echo/tests",
     "noxfile.py",
 ]
 
@@ -40,7 +48,8 @@ def install_project(session: nox.Session) -> None:
     session.install(
         "aiosmtpd>=1.4.6,<2.0",
         "black>=25.0,<26.0",
-        "mypy>=1.11,<2.0",
+        "nox>=2024.10,<2026.0",
+        "pyrefly>=0.39,<0.40",
         "pytest>=7.4,<9.0",
         "tomli>=2.0,<3.0",
         "trustme>=1.2,<2.0",
@@ -48,6 +57,17 @@ def install_project(session: nox.Session) -> None:
     session.install("-e", "core")
     session.install("-e", "smtp")
     session.install("-e", "imap")
+
+
+def iter_black_targets() -> list[str]:
+    paths: list[str] = []
+    for target in BLACK_TARGETS:
+        path = Path(target)
+        if path.is_dir():
+            paths.extend(str(file_path) for file_path in sorted(path.rglob("*.py")))
+        else:
+            paths.append(target)
+    return paths
 
 
 @nox.session
@@ -78,12 +98,14 @@ def deploy_test(session: nox.Session) -> None:
 @nox.session
 def lint(session: nox.Session) -> None:
     install_project(session)
-    session.run("black", "--check", "--target-version", "py310", *BLACK_TARGETS)
-    session.run("mypy", *STRICT_MYPY_TARGETS)
-    session.run(
-        "mypy",
-        "--allow-untyped-defs",
-        "--allow-incomplete-defs",
-        "--check-untyped-defs",
-        *SUPPLEMENTAL_MYPY_TARGETS,
-    )
+    for black_target in iter_black_targets():
+        session.run(
+            "black",
+            "--check",
+            "--target-version",
+            "py310",
+            "--workers",
+            "1",
+            black_target,
+        )
+    session.run("pyrefly", "check", "--config", "pyrefly.toml", *PYREFLY_TARGETS)
