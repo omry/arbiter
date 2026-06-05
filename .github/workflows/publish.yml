@@ -53,9 +53,9 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           RELEASE_LINE_INPUT: ${{ inputs.release_line }}
         run: |
-          project_version="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' pyproject.toml | head -n 1)"
+          project_version="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' core/pyproject.toml | head -n 1)"
           if [[ -z "$project_version" ]]; then
-            echo "Could not read project version from pyproject.toml" >&2
+            echo "Could not read project version from core/pyproject.toml" >&2
             exit 1
           fi
           if [[ "${{ github.event_name }}" == "release" ]]; then
@@ -112,7 +112,7 @@ jobs:
         run: python -m build --sdist --wheel --outdir dist smtp
 
       - name: Build meta distribution
-        run: python -m build --sdist --wheel --outdir dist .
+        run: python -m build --sdist --wheel --outdir dist meta/arbiter-suite
 
       - name: Build Arbiter skill distributions
         run: |

@@ -22,9 +22,9 @@ runtime container without reaching PyPI.
 roots are exact pins:
 
 ```text title="./requirements.txt"
-arbiter-core==0.9.0
-arbiter-imap==0.9.0
-arbiter-smtp==0.9.0
+arbiter-core==0.9.0.dev2
+arbiter-imap==0.9.0.dev2
+arbiter-smtp==0.9.0.dev2
 ```
 
 Unpinned names and version ranges are rejected for runtime deployment state.
@@ -81,6 +81,8 @@ directory first, then run `install` again.
 Common upgrade targets are: no argument for all selected packages, a release
 line such as `0.9`, a package such as `arbiter-smtp`, or an exact pin such as
 `arbiter-smtp==0.9.4`.
+Prerelease pins such as `0.9.0.dev1` are useful for validating a release line
+before the final package release.
 
 Skip upgrade when you want to keep the versions already recorded in
 `requirements.txt`.
@@ -93,8 +95,8 @@ init, pass repeated `docker.requirement=...` values:
 
 ```bash
 arbiter-server deploy docker \
-  docker.requirement=arbiter-core==0.9.0 \
-  docker.requirement=arbiter-smtp==0.9.0 \
+  docker.requirement=arbiter-core==0.9.0.dev2 \
+  docker.requirement=arbiter-smtp==0.9.0.dev2 \
   init
 ```
 
@@ -120,8 +122,8 @@ For explicit local artifact bundles, `requirements.txt` can also name
 container wheel paths directly:
 
 ```text title="./requirements.txt"
-/wheels/arbiter_core-0.9.0-py3-none-any.whl
-/wheels/arbiter_smtp-0.9.0-py3-none-any.whl
+/wheels/arbiter_core-0.9.0.dev2-py3-none-any.whl
+/wheels/arbiter_smtp-0.9.0.dev2-py3-none-any.whl
 ```
 
 </details>

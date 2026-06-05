@@ -107,6 +107,8 @@ arbiter-server version [--json]
 Create or update Docker deployment files from the installed `arbiter-server`
 command. See [Deployment](./deployment.md) for the Docker deployment workflow,
 generated helper commands, package bundle management, and Linux install.
+For this release line, explicit deployment package pins use versions such as
+`arbiter-core==0.9.0.dev2`.
 
 ## plugins
 
