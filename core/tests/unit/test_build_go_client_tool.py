@@ -100,6 +100,110 @@ def test_main_reports_subprocess_failure(tmp_path, monkeypatch, capsys) -> None:
     assert "build_go_client:" in capsys.readouterr().err
 
 
+def test_main_links_current_platform_binary_into_skill_bin(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    tool = _load_tool(repo_root)
+    client_dir = tmp_path / "client-go"
+    (client_dir / "cmd" / "arbiter").mkdir(parents=True)
+    (client_dir / "internal" / "cli").mkdir(parents=True)
+    (client_dir / "go.mod").write_text(
+        "module github.com/omry/arbiter/client-go\n",
+        encoding="utf-8",
+    )
+    skill_bin = tmp_path / "skill" / "bin"
+    skill_bin.mkdir(parents=True)
+    (skill_bin / "arbiter").write_text("old", encoding="utf-8")
+
+    def fake_run(command, *, cwd, env=None, verbose=False):
+        output_index = command.index("-o") + 1 if "-o" in command else None
+        if output_index is not None:
+            output = Path(command[output_index])
+            output.write_text("new", encoding="utf-8")
+
+    monkeypatch.setattr(tool, "run", fake_run)
+    monkeypatch.setattr(
+        tool,
+        "current_target",
+        lambda: tool.Target("linux", "amd64"),
+    )
+
+    result = tool.main(
+        [
+            "--root",
+            str(tmp_path),
+            "--target",
+            "linux-amd64",
+            "--skip-generate",
+        ]
+    )
+
+    binary = tmp_path / "client-go" / "dist" / "linux-amd64" / "arbiter"
+    link = tmp_path / "skill" / "bin" / "arbiter"
+    assert result == 0
+    assert link.read_text(encoding="utf-8") == "new"
+    assert link.stat().st_ino == binary.stat().st_ino
+    assert not (skill_bin / ".arbiter.tmp-link").exists()
+
+    result = tool.main(
+        [
+            "--root",
+            str(tmp_path),
+            "--target",
+            "linux-amd64",
+            "--skip-generate",
+        ]
+    )
+
+    assert result == 0
+    assert link.stat().st_ino == binary.stat().st_ino
+    assert not (skill_bin / ".arbiter.tmp-link").exists()
+
+
+def test_main_does_not_link_custom_output_dir(tmp_path, monkeypatch) -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    tool = _load_tool(repo_root)
+    client_dir = tmp_path / "client-go"
+    (client_dir / "cmd" / "arbiter").mkdir(parents=True)
+    (client_dir / "internal" / "cli").mkdir(parents=True)
+    (client_dir / "go.mod").write_text(
+        "module github.com/omry/arbiter/client-go\n",
+        encoding="utf-8",
+    )
+    skill_bin = tmp_path / "skill" / "bin"
+    skill_bin.mkdir(parents=True)
+    (skill_bin / "arbiter").write_text("old", encoding="utf-8")
+
+    def fake_run(command, *, cwd, env=None, verbose=False):
+        output_index = command.index("-o") + 1 if "-o" in command else None
+        if output_index is not None:
+            Path(command[output_index]).write_text("new", encoding="utf-8")
+
+    monkeypatch.setattr(tool, "run", fake_run)
+    monkeypatch.setattr(
+        tool,
+        "current_target",
+        lambda: tool.Target("linux", "amd64"),
+    )
+
+    result = tool.main(
+        [
+            "--root",
+            str(tmp_path),
+            "--outdir",
+            str(tmp_path / ".ci" / "go-client-smoke"),
+            "--target",
+            "linux-amd64",
+            "--skip-generate",
+        ]
+    )
+
+    assert result == 0
+    assert (skill_bin / "arbiter").read_text(encoding="utf-8") == "old"
+
+
 def test_display_path_handles_paths_outside_repo(tmp_path) -> None:
     repo_root = Path(__file__).resolve().parents[3]
     tool = _load_tool(repo_root)

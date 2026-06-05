@@ -3942,8 +3942,9 @@ def test_cli_deploy_docker_generated_helper_install_omits_missing_docker_unit(
         "exit 0\n",
         encoding="utf-8",
     )
+    (fake_bin / "arbiter").write_text("#!/usr/bin/env sh\nexit 0\n", encoding="utf-8")
     (fake_bin / "chown").write_text("#!/usr/bin/env sh\nexit 0\n", encoding="utf-8")
-    for fake_command in ("id", "getent", "docker", "systemctl", "chown"):
+    for fake_command in ("id", "getent", "docker", "systemctl", "arbiter", "chown"):
         (fake_bin / fake_command).chmod(0o755)
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"

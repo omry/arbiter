@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -34,6 +35,25 @@ DEFAULT_TARGETS = (
     Target("windows", "amd64"),
     Target("windows", "arm64"),
 )
+
+
+def current_target() -> Target | None:
+    goos_by_platform = {
+        "darwin": "darwin",
+        "linux": "linux",
+        "win32": "windows",
+    }
+    goarch_by_machine = {
+        "amd64": "amd64",
+        "x86_64": "amd64",
+        "aarch64": "arm64",
+        "arm64": "arm64",
+    }
+    goos = goos_by_platform.get(sys.platform)
+    goarch = goarch_by_machine.get(platform.machine().lower())
+    if goos is None or goarch is None:
+        return None
+    return Target(goos, goarch)
 
 
 def parse_target(value: str) -> Target:
@@ -70,6 +90,26 @@ def display_path(path: Path, root: Path) -> str:
         return str(path.relative_to(root))
     except ValueError:
         return str(path)
+
+
+def update_skill_bin_link(*, root: Path, binary: Path, target: Target) -> Path:
+    skill_bin_dir = root / "skill" / "bin"
+    skill_bin_dir.mkdir(parents=True, exist_ok=True)
+    output = skill_bin_dir / target.binary_name
+    temporary = skill_bin_dir / f".{target.binary_name}.tmp-link"
+    if temporary.exists() or temporary.is_symlink():
+        temporary.unlink()
+    try:
+        os.link(binary, temporary)
+        if output.exists() and output.samefile(temporary):
+            temporary.unlink()
+        else:
+            os.replace(temporary, output)
+    except OSError:
+        if temporary.exists() or temporary.is_symlink():
+            temporary.unlink()
+        raise
+    return output
 
 
 def build_targets(
@@ -182,7 +222,7 @@ def main(argv: list[str] | None = None) -> int:
     targets = tuple(namespace.target or DEFAULT_TARGETS)
 
     try:
-        build_targets(
+        built = build_targets(
             root=root,
             outdir=outdir,
             targets=targets,
@@ -191,6 +231,21 @@ def main(argv: list[str] | None = None) -> int:
             strip=not namespace.debug,
             verbose=namespace.verbose,
         )
+        local_dist = root / "client-go" / "dist"
+        host_target = current_target()
+        if host_target is not None and outdir == local_dist:
+            built_by_target = dict(zip(targets, built, strict=True))
+            if host_target in built_by_target:
+                link = update_skill_bin_link(
+                    root=root,
+                    binary=built_by_target[host_target],
+                    target=host_target,
+                )
+                print(
+                    "linked "
+                    f"{display_path(link, root)} -> "
+                    f"{display_path(built_by_target[host_target], root)}"
+                )
     except (OSError, subprocess.CalledProcessError) as exc:
         print(f"build_go_client: {exc}", file=sys.stderr)
         return 1

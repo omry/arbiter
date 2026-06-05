@@ -7,15 +7,26 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Mapping
+from typing import Mapping, Protocol
 
 import pytest
 
-if TYPE_CHECKING:
-    from conftest import LocalArbiterServerFactory
-
 _GO_CLIENT_SMOKE_OUTDIR_ENV = "ARBITER_GO_CLIENT_SMOKE_OUTDIR"
 _GO_CLIENT_SMOKE_REUSE_ENV = "ARBITER_GO_CLIENT_SMOKE_REUSE"
+
+
+class RunningArbiterServer(Protocol):
+    def run_client(
+        self,
+        *args: str,
+        command: Path,
+        env: Mapping[str, str] | None = None,
+        timeout: float = 10,
+    ) -> subprocess.CompletedProcess[str]: ...
+
+
+class LocalArbiterServerFactory(Protocol):
+    def start(self) -> RunningArbiterServer: ...
 
 
 def _arbiter_server_command() -> Path:

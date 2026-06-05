@@ -162,7 +162,7 @@ class LocalArbiterServerFactory:
     def _wait_until_ready(self, server: RunningArbiterServer) -> None:
         deadline = time.monotonic() + 15
         last_result: subprocess.CompletedProcess[str] | None = None
-        last_timeout: subprocess.TimeoutExpired[str] | None = None
+        last_timeout: subprocess.TimeoutExpired | None = None
         while time.monotonic() < deadline:
             if server.process.poll() is not None:
                 server.stop()
