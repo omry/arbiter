@@ -37,61 +37,65 @@ jobs:
         run: nox -s lint
 
   tests:
-    name: Python ${{ matrix.python-version }}
-    runs-on: ubuntu-latest
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
 
     strategy:
       fail-fast: false
       matrix:
-        python-version:
-          - "3.10"
-          - "3.11"
-          - "3.12"
-          - "3.13"
-          - "3.14"
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: pip
-
-      - name: Install nox
-        run: python -m pip install "nox[pbs]>=2024.10,<2026.0"
-
-      - name: Run compatibility tests
-        run: nox -s compat-${{ matrix.python-version }}
-
-  platform-tests:
-    name: Platform ${{ matrix.platform.name }}
-    runs-on: ${{ matrix.platform.runner }}
-
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - name: Linux x64
-            id: linux-x64
+        include:
+          - name: Python 3.10
+            runner: ubuntu-latest
+            python_version: "3.10"
+            nox_session: compat-3.10
+          - name: Python 3.11
+            runner: ubuntu-latest
+            python_version: "3.11"
+            nox_session: compat-3.11
+          - name: Python 3.12
+            runner: ubuntu-latest
+            python_version: "3.12"
+            nox_session: compat-3.12
+          - name: Python 3.14
+            runner: ubuntu-latest
+            python_version: "3.14"
+            nox_session: compat-3.14
+          - name: Platform Linux x64
             runner: ubuntu-24.04
-          - name: Linux arm64
-            id: linux-arm64
+            python_version: "3.13"
+            nox_session: tests
+            platform_id: linux-x64
+            go_tests: true
+          - name: Platform Linux arm64
             runner: ubuntu-24.04-arm
-          - name: macOS x64
-            id: macos-x64
+            python_version: "3.13"
+            nox_session: tests
+            platform_id: linux-arm64
+            go_tests: true
+          - name: Platform macOS x64
             runner: macos-15-intel
-          - name: macOS arm64
-            id: macos-arm64
+            python_version: "3.13"
+            nox_session: tests
+            platform_id: macos-x64
+            go_tests: true
+          - name: Platform macOS arm64
             runner: macos-15
-          - name: Windows x64
-            id: windows-x64
+            python_version: "3.13"
+            nox_session: tests
+            platform_id: macos-arm64
+            go_tests: true
+          - name: Platform Windows x64
             runner: windows-2025
-          - name: Windows arm64
-            id: windows-arm64
+            python_version: "3.13"
+            nox_session: tests
+            platform_id: windows-x64
+            go_tests: true
+          - name: Platform Windows arm64
             runner: windows-11-arm
+            python_version: "3.13"
+            nox_session: tests
+            platform_id: windows-arm64
+            go_tests: true
 
     steps:
       - name: Check out repository
@@ -100,25 +104,27 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: ${{ matrix.python_version }}
           cache: pip
 
       - name: Set up Go
+        if: ${{ matrix.go_tests == true }}
         uses: actions/setup-go@v5
         with:
           go-version-file: client-go/go.mod
 
       - name: Cache Go client smoke binary
+        if: ${{ matrix.go_tests == true }}
         uses: actions/cache@v4
         with:
           path: .ci/go-client-smoke
-          key: go-client-smoke-${{ matrix.platform.id }}-${{ hashFiles('client-go/**', 'tools/build_go_client') }}
+          key: go-client-smoke-${{ matrix.platform_id }}-${{ hashFiles('client-go/**', 'tools/build_go_client') }}
 
       - name: Install nox
         run: python -m pip install "nox[pbs]>=2024.10,<2026.0"
 
       - name: Set up OpenSSL for Windows arm64 Python dependencies
-        if: ${{ matrix.platform.id == 'windows-arm64' }}
+        if: ${{ matrix.platform_id == 'windows-arm64' }}
         shell: pwsh
         run: |
           $vcpkgRoot = Join-Path $env:RUNNER_TEMP "vcpkg"
@@ -130,17 +136,23 @@ jobs:
           "OPENSSL_DIR=$opensslRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Run Go client tests
+        if: ${{ matrix.go_tests == true }}
         working-directory: client-go
         env:
           GOCACHE: ${{ runner.temp }}/go-build
         run: go test ./...
 
-      - name: Run full test suite
+      - name: Run Python compatibility suite
+        if: ${{ matrix.go_tests != true }}
+        run: nox -s ${{ matrix.nox_session }}
+
+      - name: Run platform full test suite
+        if: ${{ matrix.go_tests == true }}
         env:
           ARBITER_GO_CLIENT_SMOKE_OUTDIR: .ci/go-client-smoke
           ARBITER_GO_CLIENT_SMOKE_REUSE: "1"
           GOCACHE: ${{ runner.temp }}/go-build
-        run: nox -s tests
+        run: nox -s ${{ matrix.nox_session }}
 
   website:
     name: Website
@@ -177,7 +189,6 @@ jobs:
     needs:
       - lint
       - tests
-      - platform-tests
       - website
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
