@@ -112,6 +112,7 @@ def _build_current_go_client(tmp_path: Path) -> Path:
     env = os.environ.copy()
     result = subprocess.run(
         [
+            sys.executable,
             str(_repo_root() / "tools" / "build_go_client"),
             "--root",
             str(_repo_root()),
