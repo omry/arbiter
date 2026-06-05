@@ -27,7 +27,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: >-
+    ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.release_line || github.run_id }}-${{ github.event_name == 'workflow_dispatch' && inputs.publish_packages || github.run_id }}
   cancel-in-progress: false
 
 jobs:
