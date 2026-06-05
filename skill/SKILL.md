@@ -11,6 +11,7 @@ description: >-
 
 Use incremental discovery. Start with `info` for orientation, then inspect only
 the plugin, account, or operation needed for the task.
+Note: client binary is inside bin/arbiter[.exe] near this skill file.
 
 ## First Discovery Step
 

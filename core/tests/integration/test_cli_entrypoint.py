@@ -1,11 +1,21 @@
 from __future__ import annotations
 
+import json
+import os
+import platform
+import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Mapping
+from typing import TYPE_CHECKING, Mapping
 
 import pytest
+
+if TYPE_CHECKING:
+    from conftest import LocalArbiterServerFactory
+
+_GO_CLIENT_SMOKE_OUTDIR_ENV = "ARBITER_GO_CLIENT_SMOKE_OUTDIR"
+_GO_CLIENT_SMOKE_REUSE_ENV = "ARBITER_GO_CLIENT_SMOKE_REUSE"
 
 
 def _arbiter_server_command() -> Path:
@@ -44,6 +54,75 @@ def _run_arbiter(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def _current_go_target() -> tuple[str, str, str]:
+    goos_by_platform = {
+        "darwin": "darwin",
+        "linux": "linux",
+        "win32": "windows",
+    }
+    goarch_by_machine = {
+        "amd64": "amd64",
+        "x86_64": "amd64",
+        "aarch64": "arm64",
+        "arm64": "arm64",
+    }
+    try:
+        goos = goos_by_platform[sys.platform]
+        goarch = goarch_by_machine[platform.machine().lower()]
+    except KeyError:
+        pytest.skip(
+            f"unsupported Go client smoke platform: "
+            f"{sys.platform}/{platform.machine()}"
+        )
+    binary_name = "arbiter.exe" if goos == "windows" else "arbiter"
+    return goos, goarch, binary_name
+
+
+def _build_current_go_client(tmp_path: Path) -> Path:
+    if shutil.which("go") is None:
+        pytest.skip("go is not installed")
+    goos, goarch, binary_name = _current_go_target()
+    configured_outdir = os.environ.get(_GO_CLIENT_SMOKE_OUTDIR_ENV)
+    if os.environ.get("CI") == "true" and not configured_outdir:
+        pytest.skip(f"{_GO_CLIENT_SMOKE_OUTDIR_ENV} is required in CI")
+    outdir = Path(configured_outdir) if configured_outdir else tmp_path / "go-client"
+    if not outdir.is_absolute():
+        outdir = _repo_root() / outdir
+    binary = outdir / f"{goos}-{goarch}" / binary_name
+    if os.environ.get(_GO_CLIENT_SMOKE_REUSE_ENV) == "1" and binary.exists():
+        return binary
+
+    env = os.environ.copy()
+    result = subprocess.run(
+        [
+            str(_repo_root() / "tools" / "build_go_client"),
+            "--root",
+            str(_repo_root()),
+            "--outdir",
+            str(outdir),
+            "--target",
+            f"{goos}-{goarch}",
+            "--skip-generate",
+        ],
+        check=False,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert result.returncode == 0, (
+        f"go client build failed with exit code {result.returncode}\n"
+        f"stdout:\n{result.stdout}\n"
+        f"stderr:\n{result.stderr}"
+    )
+    assert binary.exists()
+    return binary
 
 
 @pytest.mark.parametrize(
@@ -446,3 +525,41 @@ def test_arbiter_client_console_script_bootstrap_client(
     assert (tmp_path / "arbiter-client.yaml").read_text(encoding="utf-8") == (
         "arbiter:\n  mcp_url: http://127.0.0.1:8025/mcp\n"
     )
+
+
+def test_local_arbiter_server_fixture_serves_version_info(
+    local_arbiter_server_factory: LocalArbiterServerFactory,
+) -> None:
+    server = local_arbiter_server_factory.start()
+
+    result = server.run_client(
+        "mcp",
+        "call",
+        "version_info",
+        command=_arbiter_command(),
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    payload = json.loads(result.stdout)
+    assert "structuredContent" in payload
+
+
+def test_current_platform_go_client_calls_local_arbiter_server(
+    tmp_path: Path,
+    local_arbiter_server_factory: LocalArbiterServerFactory,
+) -> None:
+    binary = _build_current_go_client(tmp_path)
+    server = local_arbiter_server_factory.start()
+
+    result = server.run_client(
+        "mcp",
+        "call",
+        "version_info",
+        command=binary,
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    payload = json.loads(result.stdout)
+    assert "structuredContent" in payload

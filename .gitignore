@@ -1,5 +1,7 @@
 __pycache__/
+.ci/
 .venv/
+.nox/
 .pytest_cache/
 *.py[cod]
 *.egg
