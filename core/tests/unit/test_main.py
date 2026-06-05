@@ -19,6 +19,7 @@ from arbiter_core.app import CORE_TOOL_NAMES
 from arbiter_core.main import (
     ENV_FILE_MODE,
     _build_local_source_wheel,
+    _default_container_user,
     _run_server,
     _write_text_with_mode,
     build_app,
@@ -918,7 +919,7 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
     docker_env = (deploy_dir / "docker.env").read_text(encoding="utf-8")
     assert "ARBITER_DEPLOYMENT_SCOPE" not in docker_env
     assert "ARBITER_CONTAINER_NAME=arbiter-staging\n" in docker_env
-    assert f"ARBITER_CONTAINER_USER={os.getuid()}:{os.getgid()}\n" in docker_env
+    assert f"ARBITER_CONTAINER_USER={_default_container_user()}\n" in docker_env
     assert "ARBITER_HOST_BIND=127.0.0.1\n" in docker_env
     assert "ARBITER_HOST_PORT=18025\n" in docker_env
     assert "ARBITER_WHEELS_DIR=./wheels\n" in docker_env
@@ -2183,7 +2184,7 @@ def test_cli_deploy_docker_generated_helper_bundle_check_validates_without_prepa
     )
 
     assert result.returncode == 0
-    docker_user = f"{os.getuid()}:{os.getgid()}"
+    docker_user = _default_container_user()
     assert docker_calls.read_text(encoding="utf-8") == (
         "info\n"
         f"run --rm --user {docker_user} "
@@ -2259,7 +2260,7 @@ def test_cli_deploy_docker_generated_helper_bundle_prepare_builds_wheelhouse(
     )
 
     assert result.returncode == 0
-    docker_user = f"{os.getuid()}:{os.getgid()}"
+    docker_user = _default_container_user()
     docker_call_lines = [
         line
         for line in docker_calls.read_text(encoding="utf-8").splitlines()
@@ -2456,7 +2457,7 @@ def test_cli_deploy_docker_generated_helper_prepare_pypi_only_resolves_index_pin
     )
 
     assert result.returncode == 0
-    docker_user = f"{os.getuid()}:{os.getgid()}"
+    docker_user = _default_container_user()
     assert resolve_input.read_text(encoding="utf-8") == (
         "arbiter-core\n" "arbiter-smtp\n"
     )
@@ -3449,7 +3450,7 @@ def test_cli_deploy_docker_generated_helper_preinstall_skips_docker_checks(
 
     assert result.returncode == 0
     assert "Docker Compose" not in result.stdout
-    assert f"ok: container user is non-root: {os.getuid()}:{os.getgid()}\n" in (
+    assert f"ok: container user is non-root: {_default_container_user()}\n" in (
         result.stdout
     )
     assert "ok: preinstall checks passed\n" in result.stdout
@@ -3481,7 +3482,7 @@ def test_cli_deploy_docker_generated_helper_preinstall_rejects_root_container_us
     docker_env = deploy_dir / "docker.env"
     docker_env.write_text(
         docker_env.read_text(encoding="utf-8").replace(
-            f"ARBITER_CONTAINER_USER={os.getuid()}:{os.getgid()}\n",
+            f"ARBITER_CONTAINER_USER={_default_container_user()}\n",
             "ARBITER_CONTAINER_USER=0:0\n",
         ),
         encoding="utf-8",
@@ -5000,7 +5001,7 @@ def test_cli_deploy_docker_update_preserves_local_config_and_env_values(
         "\n"
         "ARBITER_IMAGE=python:3.11-slim\n"
         "ARBITER_CONTAINER_NAME=arbiter-staging\n"
-        f"ARBITER_CONTAINER_USER={os.getuid()}:{os.getgid()}\n"
+        f"ARBITER_CONTAINER_USER={_default_container_user()}\n"
         "ARBITER_RESTART=unless-stopped\n"
         "ARBITER_APP_ENV_FILE=./conf/.env\n"
         "ARBITER_CONFIG_DIR=./conf\n"

@@ -93,10 +93,20 @@ DOCKER_META_PACKAGE_GROUPS = {
 }
 DOCKER_LOCAL_SOURCE_CONTAINER_ROOT = "/source/arbiter"
 DOCKER_WHEELS_CONTAINER_ROOT = "/wheels"
+
+
+def _default_container_user() -> str:
+    getuid = getattr(os, "getuid", None)
+    getgid = getattr(os, "getgid", None)
+    if getuid is None or getgid is None:
+        return "10001:10001"
+    return f"{getuid()}:{getgid()}"
+
+
 DOCKER_COMPOSE_ENV_DEFAULTS = [
     ("ARBITER_IMAGE", "python:3.11-slim"),
     ("ARBITER_CONTAINER_NAME", "arbiter-staging"),
-    ("ARBITER_CONTAINER_USER", f"{os.getuid()}:{os.getgid()}"),
+    ("ARBITER_CONTAINER_USER", _default_container_user()),
     ("ARBITER_RESTART", "unless-stopped"),
     ("ARBITER_APP_ENV_FILE", "./conf/.env"),
     ("ARBITER_CONFIG_DIR", "./conf"),

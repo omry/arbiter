@@ -53,7 +53,6 @@ def install_project(session: nox.Session) -> None:
         "pyrefly>=0.39,<0.40",
         "pytest>=7.4,<9.0",
         "tomli>=2.0,<3.0",
-        "trustme>=1.2,<2.0",
     )
     session.install("-e", "core")
     session.install("-e", "smtp")

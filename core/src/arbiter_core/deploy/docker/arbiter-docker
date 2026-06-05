@@ -1873,6 +1873,16 @@ manifest_compose_hash() {
   ' "$manifest_file"
 }
 
+file_sha256() {
+  local path="$1"
+
+  if command -v sha256sum >/dev/null; then
+    sha256sum "$path" | awk '{print $1}'
+  else
+    shasum -a 256 "$path" | awk '{print $1}'
+  fi
+}
+
 compose_file_matches_manifest() {
   local expected_hash
   local current_hash
@@ -1880,10 +1890,10 @@ compose_file_matches_manifest() {
   require_file "$compose_file"
   expected_hash="$(manifest_compose_hash)" || return 1
   [[ -n "$expected_hash" ]] || return 1
-  if ! command -v sha256sum >/dev/null; then
+  if ! command -v sha256sum >/dev/null && ! command -v shasum >/dev/null; then
     return 1
   fi
-  current_hash="$(sha256sum "$compose_file" | awk "{print \$1}")"
+  current_hash="$(file_sha256 "$compose_file")"
   [[ "$current_hash" == "$expected_hash" ]]
 }
 
@@ -1901,11 +1911,11 @@ compose_manifest_mismatch_reason() {
     printf 'compose.yaml is not recorded in the deployment manifest'
     return
   fi
-  if ! command -v sha256sum >/dev/null; then
-    printf 'sha256sum is not available'
+  if ! command -v sha256sum >/dev/null && ! command -v shasum >/dev/null; then
+    printf 'sha256sum or shasum is not available'
     return
   fi
-  current_hash="$(sha256sum "$compose_file" | awk "{print \$1}")"
+  current_hash="$(file_sha256 "$compose_file")"
   if [[ "$current_hash" != "$expected_hash" ]]; then
     printf 'compose.yaml has local edits'
     return
@@ -1924,13 +1934,23 @@ args_include() {
   return 1
 }
 
+args_array_include() {
+  local expected="$1"
+  shift
+
+  if [[ "$#" -eq 0 ]]; then
+    return 1
+  fi
+  args_include "$expected" "$@"
+}
+
 compose_down() {
   local -a args=("$@")
   local reason
 
-  if compose_file_matches_manifest && ! args_include --remove-orphans "${args[@]}"; then
+  if compose_file_matches_manifest && ! args_array_include --remove-orphans "${args[@]}"; then
     args=(--remove-orphans "${args[@]}")
-  elif ! args_include --remove-orphans "${args[@]}"; then
+  elif ! args_array_include --remove-orphans "${args[@]}"; then
     reason="$(compose_manifest_mismatch_reason)"
     printf 'not removing orphan containers automatically: %s\n' "$reason" >&2
     printf 'pass --remove-orphans to down if you want to remove stale services\n' >&2
@@ -2027,18 +2047,32 @@ path_is_under_deploy_dir() {
   local real_deploy_dir
   local real_path
 
-  real_deploy_dir="$(readlink -f "$deploy_dir")"
-  real_path="$(readlink -f "$path")"
+  real_deploy_dir="$(normalize_existing_path "$deploy_dir")"
+  real_path="$(normalize_existing_path "$path")"
   [[ "$real_path" == "$real_deploy_dir" || "$real_path" == "$real_deploy_dir/"* ]]
+}
+
+normalize_existing_path() {
+  local path="$1"
+
+  if command -v readlink >/dev/null && readlink -f "$path" >/dev/null 2>&1; then
+    readlink -f "$path"
+  elif command -v realpath >/dev/null; then
+    realpath "$path"
+  else
+    python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$path"
+  fi
 }
 
 normalize_path_allow_missing() {
   local path="$1"
 
-  if command -v realpath >/dev/null; then
+  if command -v realpath >/dev/null && realpath -m / >/dev/null 2>&1; then
     realpath -m -- "$path"
-  else
+  elif command -v readlink >/dev/null && readlink -m / >/dev/null 2>&1; then
     readlink -m -- "$path"
+  else
+    python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$path"
   fi
 }
 
@@ -2133,7 +2167,7 @@ doctor_file_other_perm_digit() {
   local mode
   local perms
 
-  mode="$(stat -c '%a' "$path")"
+  mode="$(stat_mode "$path")"
   perms="${mode: -3}"
   printf '%s\n' "${perms:2:1}"
 }
@@ -2143,9 +2177,29 @@ doctor_file_group_perm_digit() {
   local mode
   local perms
 
-  mode="$(stat -c '%a' "$path")"
+  mode="$(stat_mode "$path")"
   perms="${mode: -3}"
   printf '%s\n' "${perms:1:1}"
+}
+
+stat_mode() {
+  local path="$1"
+
+  if stat -c '%a' "$path" >/dev/null 2>&1; then
+    stat -c '%a' "$path"
+  else
+    stat -f '%Lp' "$path"
+  fi
+}
+
+stat_owner_group_mode() {
+  local path="$1"
+
+  if stat -c '%u %g %a' "$path" >/dev/null 2>&1; then
+    stat -c '%u %g %a' "$path"
+  else
+    stat -f '%u %g %Lp' "$path"
+  fi
 }
 
 doctor_check_config_file_permissions() {
@@ -2246,7 +2300,7 @@ doctor_agent_perm_digit() {
   local mode
   local perms
 
-  read -r owner_uid owner_gid mode < <(stat -c '%u %g %a' "$path")
+  read -r owner_uid owner_gid mode < <(stat_owner_group_mode "$path")
   perms="${mode: -3}"
 
   if [[ "$doctor_agent_uid" == "$owner_uid" ]]; then
@@ -2309,7 +2363,7 @@ doctor_dir_has_sticky_bit() {
   local mode
   local special
 
-  mode="$(stat -c '%a' "$path")"
+  mode="$(stat_mode "$path")"
   special=$((10#$mode / 1000 % 10))
   (( (special & 1) != 0 ))
 }
@@ -2646,8 +2700,8 @@ install_relative_path() {
   local real_deploy_dir
   local real_path
 
-  real_deploy_dir="$(readlink -f "$deploy_dir")"
-  real_path="$(readlink -f "$path")"
+  real_deploy_dir="$(normalize_existing_path "$deploy_dir")"
+  real_path="$(normalize_existing_path "$path")"
   printf '%s\n' "${real_path#"$real_deploy_dir"/}"
 }
 
@@ -2883,7 +2937,7 @@ install_copy_deployment() {
   local preserve_app_env_config_rel=""
   local staging_app_env_rel=""
 
-  source_dir="$(readlink -f "$deploy_dir")"
+  source_dir="$(normalize_existing_path "$deploy_dir")"
   target_dir="$install_target_dir"
   target_docker_env_file="$target_dir/docker.env"
 
@@ -2941,7 +2995,7 @@ install_copy_deployment() {
   fi
 
   mkdir -p "$target_dir"
-  if [[ "$(readlink -f "$target_dir")" != "$source_dir" ]]; then
+  if [[ "$(normalize_existing_path "$target_dir")" != "$source_dir" ]]; then
     staging_app_env_rel="$(install_relative_path "$(app_env_path)")"
     install_copy_tree_protected "$source_dir" "$target_dir" "$staging_app_env_rel"
   fi
@@ -3038,7 +3092,7 @@ install_write_target_metadata() {
   fi
 
   installed_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-  source_dir="$(readlink -f "$deploy_dir")"
+  source_dir="$(normalize_existing_path "$deploy_dir")"
   rm -f "$install_target_dir/.arbiter-installations"
   cat >"$metadata_file" <<EOF
 ARBITER_INSTALL_PATH=$(install_metadata_quote "$install_target_dir")
