@@ -26,6 +26,17 @@ This file is the day-to-day queue for design and implementation gaps.
 
 ## Now
 
+- [ ] `P1` Fix SMTP idempotency cache readiness in deployed runtimes.
+      Keyed sends can fail before delivery when the configured idempotency
+      cache directory cannot be created or written, as seen with the relative
+      `.arbiter/smtp-idempotency` path in the live MCP mail connector.
+      Acceptance checks: deployed SMTP policies use or resolve to a writable
+      durable cache path; startup or account checks validate idempotency
+      storage when keyed sends are advertised; keyed send failures caused by
+      cache setup return an operator-useful configuration error before any SMTP
+      submission attempt; and SMTP docs describe cache path and permission
+      expectations.
+
 - [ ] `P1` Prepare release packaging and version readiness.
       The service plugin/config reroute is in place, so the package/release
       surface needs one explicit readiness pass before initial release.
