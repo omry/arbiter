@@ -584,14 +584,14 @@ async def call_arbiter_operation(
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="arbiter",
+        prog="arbiter-py",
         description="Client CLI for an Arbiter MCP server.",
         epilog=(
             f"Uses {DEFAULT_CONFIG_DIR}/{DEFAULT_CLIENT_CONFIG_NAME}.yaml by "
             "default. "
             "Override client config values with Hydra-style KEY=VALUE "
             "arguments after the command, for example: "
-            "arbiter cap arbiter.mcp_url=http://127.0.0.1:8000/mcp"
+            "arbiter-py cap arbiter.mcp_url=http://127.0.0.1:8000/mcp"
         ),
     )
     parser.add_argument(
@@ -922,8 +922,8 @@ def _apply_capability_query(namespace: argparse.Namespace) -> None:
 
 
 def _print_short_usage() -> None:
-    print("usage: arbiter {info,op,mcp} ...")
-    print("Run 'arbiter --help' for full help.")
+    print("usage: arbiter-py {info,op,mcp} ...")
+    print("Run 'arbiter-py --help' for full help.")
 
 
 def _info_arguments(namespace: argparse.Namespace) -> dict[str, str]:

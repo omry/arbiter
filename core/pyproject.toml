@@ -38,7 +38,7 @@ Homepage = "https://github.com/omry/arbiter"
 Repository = "https://github.com/omry/arbiter"
 
 [project.scripts]
-arbiter = "arbiter_core.client:main"
+arbiter-py = "arbiter_core.client:main"
 arbiter-server = "arbiter_core.main:main"
 
 [tool.setuptools]

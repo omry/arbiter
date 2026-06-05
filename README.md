@@ -20,7 +20,7 @@ Current implementation status:
 - IMAP list/get/search/move/mark-read/delete tools scoped to configured accounts and folders
 - `arbiter.account.<service>` and reusable `arbiter.policy.<service>` objects
   for per-service account policy
-- `arbiter` client CLI and `arbiter-server` server/operator CLI
+- `arbiter-py` Python client CLI and `arbiter-server` server/operator CLI
 - Docker deployment files for a standard SMTP gateway and a hardened read-only IMAP variant
 
 Known open gaps:
@@ -41,8 +41,8 @@ Create and use the repo-local virtualenv with:
 - `.venv/bin/python -m pip install -r requirements-dev.txt`
 
 The repository root is a workspace, not an Arbiter runtime package. The dev
-requirements file installs `core`, `smtp`, and `imap` editably so the `arbiter`
-and `arbiter-server` commands come from this checkout.
+requirements file installs `core`, `smtp`, and `imap` editably so the
+`arbiter-py` and `arbiter-server` commands come from this checkout.
 
 Run the test suite from the repo root with:
 
@@ -163,9 +163,9 @@ validating a config. Once the server is running, use the client CLI against the
 MCP endpoint:
 
 ```bash
-arbiter mcp tools arbiter.mcp_url=http://127.0.0.1:8025/mcp
-arbiter info arbiter.mcp_url=http://127.0.0.1:8025/mcp
-arbiter info plugins arbiter.mcp_url=http://127.0.0.1:8025/mcp
+arbiter-py mcp tools arbiter.mcp_url=http://127.0.0.1:8025/mcp
+arbiter-py info arbiter.mcp_url=http://127.0.0.1:8025/mcp
+arbiter-py info plugins arbiter.mcp_url=http://127.0.0.1:8025/mcp
 ```
 
 The client can also read the endpoint from a small config file:
@@ -180,7 +180,7 @@ Override config values with Hydra-style `key=value` arguments after the
 command, or bootstrap the client config:
 
 ```bash
-arbiter bootstrap client arbiter.mcp_url=http://127.0.0.1:8025/mcp
+arbiter-py bootstrap client arbiter.mcp_url=http://127.0.0.1:8025/mcp
 ```
 
 IMAP operations use folder-scoped UIDs returned by `imap:list_messages` and

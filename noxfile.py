@@ -22,6 +22,7 @@ BLACK_TARGETS = [
     "tools/build_release_dists",
     "tools/extract_release_notes",
     "tools/plan_pypi_publish",
+    "tools/sl_precommit_lint",
     "tools/upgrade_release_line",
 ]
 TEST_TARGETS = [

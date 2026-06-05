@@ -37,9 +37,9 @@ def _arbiter_server_command() -> Path:
 
 
 def _arbiter_command() -> Path:
-    command = Path(sys.executable).with_name("arbiter")
+    command = Path(sys.executable).with_name("arbiter-py")
     if not command.exists():
-        raise AssertionError(f"arbiter console script not found: {command}")
+        raise AssertionError(f"arbiter-py console script not found: {command}")
     return command
 
 
@@ -211,26 +211,26 @@ def test_arbiter_console_script_help(
 @pytest.mark.parametrize(
     ("args", "expected"),
     [
-        (("--help",), "usage: arbiter "),
-        (("mcp", "--help"), "usage: arbiter mcp "),
-        (("mcp", "tools", "--help"), "usage: arbiter mcp tools "),
-        (("mcp", "call", "--help"), "usage: arbiter mcp call "),
-        (("cap", "--help"), "usage: arbiter cap "),
-        (("capabilities", "--help"), "usage: arbiter cap "),
-        (("cap", "desc", "--help"), "usage: arbiter cap desc "),
-        (("cap", "describe", "--help"), "usage: arbiter cap desc "),
-        (("op", "--help"), "usage: arbiter op "),
-        (("operation", "--help"), "usage: arbiter op "),
-        (("op", "desc", "--help"), "usage: arbiter op desc "),
-        (("op", "describe", "--help"), "usage: arbiter op desc "),
-        (("op", "run", "--help"), "usage: arbiter op run "),
-        (("accounts", "--help"), "usage: arbiter accounts "),
-        (("accounts", "list", "--help"), "usage: arbiter accounts list "),
-        (("accounts", "desc", "--help"), "usage: arbiter accounts desc "),
-        (("accounts", "describe", "--help"), "usage: arbiter accounts desc "),
-        (("bootstrap", "--help"), "usage: arbiter bootstrap "),
-        (("bootstrap", "client", "--help"), "usage: arbiter bootstrap client "),
-        (("--version",), "arbiter "),
+        (("--help",), "usage: arbiter-py "),
+        (("mcp", "--help"), "usage: arbiter-py mcp "),
+        (("mcp", "tools", "--help"), "usage: arbiter-py mcp tools "),
+        (("mcp", "call", "--help"), "usage: arbiter-py mcp call "),
+        (("cap", "--help"), "usage: arbiter-py cap "),
+        (("capabilities", "--help"), "usage: arbiter-py cap "),
+        (("cap", "desc", "--help"), "usage: arbiter-py cap desc "),
+        (("cap", "describe", "--help"), "usage: arbiter-py cap desc "),
+        (("op", "--help"), "usage: arbiter-py op "),
+        (("operation", "--help"), "usage: arbiter-py op "),
+        (("op", "desc", "--help"), "usage: arbiter-py op desc "),
+        (("op", "describe", "--help"), "usage: arbiter-py op desc "),
+        (("op", "run", "--help"), "usage: arbiter-py op run "),
+        (("accounts", "--help"), "usage: arbiter-py accounts "),
+        (("accounts", "list", "--help"), "usage: arbiter-py accounts list "),
+        (("accounts", "desc", "--help"), "usage: arbiter-py accounts desc "),
+        (("accounts", "describe", "--help"), "usage: arbiter-py accounts desc "),
+        (("bootstrap", "--help"), "usage: arbiter-py bootstrap "),
+        (("bootstrap", "client", "--help"), "usage: arbiter-py bootstrap client "),
+        (("--version",), "arbiter-py "),
     ],
 )
 def test_arbiter_client_console_script_help(

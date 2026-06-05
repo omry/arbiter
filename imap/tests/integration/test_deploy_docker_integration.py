@@ -237,7 +237,7 @@ def _wait_for_imap_operation(
     while time.monotonic() < deadline:
         last_result = _run(
             [
-                _command("arbiter"),
+                _command("arbiter-py"),
                 "op",
                 "run",
                 "imap:list_messages",
@@ -271,7 +271,7 @@ def _run_delete_message(
 ) -> subprocess.CompletedProcess[str]:
     return _run(
         [
-            _command("arbiter"),
+            _command("arbiter-py"),
             "op",
             "run",
             "imap:delete_message",

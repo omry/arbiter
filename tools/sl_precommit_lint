@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+PYREFLY_TARGETS = [
+    "core/src",
+    "core/tests",
+    "smtp/src",
+    "smtp/tests",
+    "imap/src",
+    "imap/tests",
+    "examples/plugins/echo/src",
+    "examples/plugins/echo/tests",
+    "noxfile.py",
+]
+
+
+def run(command: list[str], *, root: Path) -> int:
+    print(f"+ {' '.join(command)}", flush=True)
+    return subprocess.run(command, cwd=root, check=False).returncode
+
+
+def changed_paths(root: Path) -> list[Path]:
+    env = os.environ.copy()
+    env["CHGDISABLE"] = "1"
+    result = subprocess.run(
+        ["sl", "status"],
+        cwd=root,
+        env=env,
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if result.returncode != 0:
+        sys.stderr.write(result.stderr)
+        raise SystemExit(result.returncode)
+
+    paths: list[Path] = []
+    for line in result.stdout.splitlines():
+        if len(line) < 3 or line[0] not in {"A", "M"}:
+            continue
+        path = root / line[2:]
+        if path.exists() and path.is_file():
+            paths.append(path)
+    return paths
+
+
+def is_python_like(path: Path) -> bool:
+    if path.suffix == ".py":
+        return True
+    try:
+        first_line = path.open("rb").readline(256)
+    except OSError:
+        return False
+    return first_line.startswith(b"#!") and b"python" in first_line.lower()
+
+
+def display_paths(paths: list[Path], *, root: Path) -> list[str]:
+    return [str(path.relative_to(root)) for path in paths]
+
+
+def require_tool(path: Path) -> str:
+    if not path.exists():
+        raise SystemExit(
+            f"missing local lint tool: {path}\n"
+            "run `.venv/bin/python -m pip install -r requirements-dev.txt`"
+        )
+    return str(path)
+
+
+def main() -> int:
+    root = Path(__file__).resolve().parents[1]
+    venv_bin = root / ".venv" / "bin"
+    python = require_tool(venv_bin / "python")
+    pyrefly = require_tool(venv_bin / "pyrefly")
+
+    paths = changed_paths(root)
+    python_paths = [path for path in paths if is_python_like(path)]
+    if not python_paths:
+        print("sl_precommit_lint: no changed Python files; skipping cheap lints")
+        return 0
+
+    relative_python_paths = display_paths(python_paths, root=root)
+    checks = [
+        [python, "-m", "py_compile", *relative_python_paths],
+        [pyrefly, "check", "--config", "pyrefly.toml", *PYREFLY_TARGETS],
+    ]
+    for command in checks:
+        returncode = run(command, root=root)
+        if returncode != 0:
+            return returncode
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -225,9 +225,9 @@ def _arbiter_command() -> Path:
     command = os.environ.get("ARBITER_COMMAND")
     if command:
         return Path(command)
-    command_path = Path(sys.executable).with_name("arbiter")
+    command_path = Path(sys.executable).with_name("arbiter-py")
     if not command_path.exists():
-        raise AssertionError(f"arbiter console script not found: {command_path}")
+        raise AssertionError(f"arbiter-py console script not found: {command_path}")
     return command_path
 
 

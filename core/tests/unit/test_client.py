@@ -21,7 +21,7 @@ def isolate_client_config(
     monkeypatch.setattr(client, "_STAGED_DEPLOYMENT_WARNING_EMITTED", False)
 
 
-def test_client_help_uses_arbiter_program_name(
+def test_client_help_uses_arbiter_py_program_name(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     with pytest.raises(SystemExit) as exc_info:
@@ -29,7 +29,7 @@ def test_client_help_uses_arbiter_program_name(
 
     assert exc_info.value.code == 0
     output = capsys.readouterr().out
-    assert output.startswith("usage: arbiter ")
+    assert output.startswith("usage: arbiter-py ")
     assert "--config-name" in output
     assert "--version" in output
     assert "bootstrap" in output
@@ -41,7 +41,8 @@ def test_client_without_args_prints_short_usage(
     assert client.main([]) == 2
 
     assert capsys.readouterr().out == (
-        "usage: arbiter {info,op,mcp} ...\n" "Run 'arbiter --help' for full help.\n"
+        "usage: arbiter-py {info,op,mcp} ...\n"
+        "Run 'arbiter-py --help' for full help.\n"
     )
 
 
@@ -50,7 +51,7 @@ def test_client_version(capsys: pytest.CaptureFixture[str]) -> None:
         client.main(["--version"])
 
     assert exc_info.value.code == 0
-    assert capsys.readouterr().out.startswith("arbiter ")
+    assert capsys.readouterr().out.startswith("arbiter-py ")
 
 
 def test_client_info_summarizes_server_plugins_and_accounts(
