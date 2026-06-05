@@ -24,10 +24,16 @@ class Package:
     kind: str
     name: str
     path: Path
+    project_name: str | None = None
+    artifacts: tuple[str, ...] = ("sdist", "wheel")
 
     @property
     def normalized_name(self) -> str:
         return self.name.replace("-", "_")
+
+    @property
+    def expected_project_name(self) -> str:
+        return self.project_name or self.name
 
 
 PACKAGES = (
@@ -35,12 +41,68 @@ PACKAGES = (
     Package(kind="plugin", name="arbiter-imap", path=Path("imap")),
     Package(kind="plugin", name="arbiter-smtp", path=Path("smtp")),
     Package(kind="meta", name="arbiter-suite", path=Path("meta/arbiter-suite")),
+    Package(
+        kind="skill",
+        name="arbiter-skill",
+        path=Path("core"),
+        project_name="arbiter-core",
+        artifacts=("wheel",),
+    ),
+    Package(
+        kind="skill",
+        name="arbiter-skill-linux-amd64",
+        path=Path("core"),
+        project_name="arbiter-core",
+        artifacts=("wheel",),
+    ),
+    Package(
+        kind="skill",
+        name="arbiter-skill-linux-arm64",
+        path=Path("core"),
+        project_name="arbiter-core",
+        artifacts=("wheel",),
+    ),
+    Package(
+        kind="skill",
+        name="arbiter-skill-darwin-amd64",
+        path=Path("core"),
+        project_name="arbiter-core",
+        artifacts=("wheel",),
+    ),
+    Package(
+        kind="skill",
+        name="arbiter-skill-darwin-arm64",
+        path=Path("core"),
+        project_name="arbiter-core",
+        artifacts=("wheel",),
+    ),
+    Package(
+        kind="skill",
+        name="arbiter-skill-windows-amd64",
+        path=Path("core"),
+        project_name="arbiter-core",
+        artifacts=("wheel",),
+    ),
+    Package(
+        kind="skill",
+        name="arbiter-skill-windows-arm64",
+        path=Path("core"),
+        project_name="arbiter-core",
+        artifacts=("wheel",),
+    ),
 )
 PACKAGE_BY_KEY = {
     "core": "arbiter-core",
     "imap": "arbiter-imap",
     "smtp": "arbiter-smtp",
     "meta:all": "arbiter-suite",
+    "skill": "arbiter-skill",
+    "skill:linux-amd64": "arbiter-skill-linux-amd64",
+    "skill:linux-arm64": "arbiter-skill-linux-arm64",
+    "skill:darwin-amd64": "arbiter-skill-darwin-amd64",
+    "skill:darwin-arm64": "arbiter-skill-darwin-arm64",
+    "skill:windows-amd64": "arbiter-skill-windows-amd64",
+    "skill:windows-arm64": "arbiter-skill-windows-arm64",
 }
 PACKAGE_KEY_BY_NAME = {name: key for key, name in PACKAGE_BY_KEY.items()}
 PACKAGE_KEYS = tuple(PACKAGE_BY_KEY)
@@ -117,9 +179,10 @@ def _read_project(root: Path, package: Package) -> dict[str, object]:
     if not isinstance(project, dict):
         raise ValueError(f"{pyproject} is missing [project]")
     name = project.get("name")
-    if name != package.name:
+    if name != package.expected_project_name:
         raise ValueError(
-            f"{pyproject} project name is {name!r}, expected {package.name!r}"
+            f"{pyproject} project name is {name!r}, "
+            f"expected {package.expected_project_name!r}"
         )
     return project
 
@@ -180,9 +243,14 @@ def _validate_versions(root: Path) -> dict[str, Version]:
     return versions
 
 
-def _distribution_patterns(package: Package, version: Version) -> tuple[str, str]:
+def _distribution_patterns(package: Package, version: Version) -> tuple[str, ...]:
     base = f"{package.normalized_name}-{version.text}"
-    return (f"{base}.tar.gz", f"{base}-py3-none-any.whl")
+    filenames: list[str] = []
+    if "sdist" in package.artifacts:
+        filenames.append(f"{base}.tar.gz")
+    if "wheel" in package.artifacts:
+        filenames.append(f"{base}-py3-none-any.whl")
+    return tuple(filenames)
 
 
 def _copy_distributions(

@@ -1,0 +1,3 @@
+platform_specific:
+  wheel: arbiter-skill-{platform}
+  local_path: ../arbiter-skill-{platform}

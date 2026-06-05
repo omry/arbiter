@@ -64,6 +64,10 @@ def _copy_distributions(tool: ModuleType) -> Callable[..., list[Path]]:
     return cast(Callable[..., list[Path]], getattr(tool, "_copy_distributions"))
 
 
+def _distribution_patterns(tool: ModuleType) -> Callable[..., tuple[str, ...]]:
+    return cast(Callable[..., tuple[str, ...]], getattr(tool, "_distribution_patterns"))
+
+
 def test_parse_package_keys_accepts_all_and_comma_separated_keys() -> None:
     parse_package_keys = _parse_package_keys(_load_tool())
 
@@ -115,7 +119,7 @@ def test_build_plan_only_queries_selected_packages(
     assert [
         item.package.name
         for item in plan
-        if item.reason == "not selected by --packages"
+        if item.reason == "not selected by --packages" and item.package.kind != "skill"
     ] == ["arbiter-imap", "arbiter-smtp"]
 
 
@@ -147,6 +151,31 @@ def test_build_plan_allows_selected_packages_with_different_patch_versions(
     )
 
     assert [item.package.name for item in plan if item.publish] == ["arbiter-imap"]
+
+
+def test_skill_publish_key_uses_core_version_and_wheel_only_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tool = _load_tool()
+    _write_fixture(tmp_path)
+    monkeypatch.setattr(tool, "_pypi_version", lambda package_name: None)
+
+    plan = _build_plan(tool)(
+        tmp_path,
+        package_keys=_parse_package_keys(tool)("skill:linux-amd64"),
+    )
+    publish_items = [item for item in plan if item.publish]
+
+    assert [
+        getattr(tool, "PACKAGE_KEY_BY_NAME")[item.package.name]
+        for item in publish_items
+    ] == ["skill:linux-amd64"]
+    item = publish_items[0]
+    assert item.package.name == "arbiter-skill-linux-amd64"
+    assert item.local_version.text == "0.9.0.dev1"
+    assert _distribution_patterns(tool)(item.package, item.local_version) == (
+        "arbiter_skill_linux_amd64-0.9.0.dev1-py3-none-any.whl",
+    )
 
 
 def test_write_github_output_includes_publish_keys(tmp_path: Path) -> None:

@@ -9,9 +9,25 @@ Arbiter publishes several Python distributions from one repository:
 - `smtp`: `arbiter-smtp`, the SMTP plugin
 - `meta:all`: `arbiter-suite`, a zero-code dependency bundle for all real
   packages
+- `skill`: `arbiter-skill`, the agent-skill selector package
+- `skill:linux-amd64`: `arbiter-skill-linux-amd64`, the Linux amd64 native
+  skill target
+- `skill:linux-arm64`: `arbiter-skill-linux-arm64`, the Linux arm64 native
+  skill target
+- `skill:darwin-amd64`: `arbiter-skill-darwin-amd64`, the macOS amd64 native
+  skill target
+- `skill:darwin-arm64`: `arbiter-skill-darwin-arm64`, the macOS arm64 native
+  skill target
+- `skill:windows-amd64`: `arbiter-skill-windows-amd64`, the Windows amd64
+  native skill target
+- `skill:windows-arm64`: `arbiter-skill-windows-arm64`, the Windows arm64
+  native skill target
 
 Meta package keys do not expand to their dependencies. Selecting `meta:all`
 publishes only the `arbiter-suite` package.
+
+Skill package versions come from `arbiter-core`. They are generated wheel-only
+artifacts and do not have separate towncrier release notes.
 
 This page describes publishing mechanics only.
 
@@ -70,6 +86,7 @@ Limit the publish set with package keys:
 tools/plan_pypi_publish --packages core --prepare-output-dir
 tools/plan_pypi_publish --packages core,imap --prepare-output-dir
 tools/plan_pypi_publish --packages smtp --prepare-output-dir
+tools/plan_pypi_publish --packages skill:linux-amd64 --prepare-output-dir
 ```
 
 The planner reads each selected package's local version independently. Use
@@ -90,6 +107,13 @@ before each run:
 2. `imap` (`arbiter-imap`)
 3. `smtp` (`arbiter-smtp`)
 4. `meta:all` (`arbiter-suite`)
+5. `skill` (`arbiter-skill`)
+6. `skill:linux-amd64` (`arbiter-skill-linux-amd64`)
+7. `skill:linux-arm64` (`arbiter-skill-linux-arm64`)
+8. `skill:darwin-amd64` (`arbiter-skill-darwin-amd64`)
+9. `skill:darwin-arm64` (`arbiter-skill-darwin-arm64`)
+10. `skill:windows-amd64` (`arbiter-skill-windows-amd64`)
+11. `skill:windows-arm64` (`arbiter-skill-windows-arm64`)
 
 ## Dev releases
 

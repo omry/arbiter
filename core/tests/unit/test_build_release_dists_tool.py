@@ -47,7 +47,7 @@ def test_build_distributions_builds_all_packages_in_order(
         root=tmp_path,
         outdir=tmp_path / "dist",
         clean=False,
-        packages=tool.PACKAGES,
+        packages=tool._parse_package_keys("core,imap,smtp,meta:all"),
         verbose=False,
     )
 
@@ -98,6 +98,45 @@ def test_build_distributions_selects_packages_and_supports_verbose(
     for _, stdout, stderr in calls:
         assert stdout is None
         assert stderr is None
+
+
+def test_build_distributions_copies_only_selected_skill_wheels(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    tool = _load_tool()
+    calls: list[list[str]] = []
+
+    def fake_run(command: list[str], *, verbose: bool) -> None:
+        calls.append(command)
+        if command[0].endswith("package_arbiter_skill"):
+            skill_outdir = Path(command[command.index("--outdir") + 1])
+            wheels = skill_outdir / "wheels"
+            wheels.mkdir(parents=True)
+            for name in (
+                "arbiter_skill-1.2.3-py3-none-any.whl",
+                "arbiter_skill_linux_amd64-1.2.3-py3-none-any.whl",
+                "arbiter_skill_windows_arm64-1.2.3-py3-none-any.whl",
+            ):
+                (wheels / name).write_text("wheel\n", encoding="utf-8")
+
+    monkeypatch.setattr(tool, "_run", fake_run)
+
+    tool.build_distributions(
+        root=tmp_path,
+        outdir=tmp_path / "dist",
+        clean=False,
+        packages=tool._parse_package_keys("skill:windows-arm64"),
+        verbose=False,
+    )
+
+    assert [Path(call[0]).name for call in calls] == [
+        "build_go_client",
+        "package_arbiter_skill",
+    ]
+    assert sorted(path.name for path in (tmp_path / "dist").iterdir()) == [
+        "arbiter_skill_windows_arm64-1.2.3-py3-none-any.whl",
+    ]
 
 
 def test_parse_package_keys_deduplicates_while_preserving_order() -> None:

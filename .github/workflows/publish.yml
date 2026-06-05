@@ -18,7 +18,7 @@ on:
         default: false
         type: boolean
       publish_packages:
-        description: "Publish keys: all or comma-separated keys like core,imap,meta:all; meta:all is only the zero-code all-in-one meta package"
+        description: "Publish keys: all or comma-separated keys like core,imap,meta:all,skill:linux-amd64; meta:all is only the zero-code all-in-one meta package"
         required: true
         default: all
         type: string
@@ -85,6 +85,11 @@ jobs:
           python-version: "3.11"
           cache: pip
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: client-go/go.mod
+
       - name: Install build tools
         run: python -m pip install "nox[pbs]>=2024.10,<2026.0" build
 
@@ -108,6 +113,12 @@ jobs:
 
       - name: Build meta distribution
         run: python -m build --sdist --wheel --outdir dist .
+
+      - name: Build Arbiter skill distributions
+        run: |
+          tools/build_go_client --clean
+          tools/package_arbiter_skill --clean --format wheel
+          cp dist/arbiter-skill/wheels/*.whl dist/
 
       - name: Plan selective PyPI publish
         id: pypi-plan
@@ -142,6 +153,9 @@ jobs:
             if [[ "$package_version" == *".dev"* ]]; then
               continue
             fi
+            if [[ "$package_key" == skill* ]]; then
+              continue
+            fi
             tools/extract_release_notes \
               "$package_version" \
               --package-key "$package_key" \
@@ -174,7 +188,19 @@ jobs:
           .release-smoke/bin/python -m pip install --upgrade pip
           IFS=',' read -ra publish_specs <<< "$PUBLISH_SPECS"
           .release-smoke/bin/python -m pip install --find-links dist "${publish_specs[@]}"
-          .release-smoke/bin/arbiter-server version --json
+          run_server_smoke=false
+          for spec in "${publish_specs[@]}"; do
+            package_name="${spec%%==*}"
+            if [[ "$package_name" == arbiter-skill* ]]; then
+              module_name="${package_name//-/_}"
+              .release-smoke/bin/python -c "__import__('$module_name')"
+            else
+              run_server_smoke=true
+            fi
+          done
+          if [[ "$run_server_smoke" == true ]]; then
+            .release-smoke/bin/arbiter-server version --json
+          fi
 
       - name: Upload distributions
         uses: actions/upload-artifact@v4
@@ -252,6 +278,9 @@ jobs:
           for index in "${!package_keys[@]}"; do
             package_key="${package_keys[$index]}"
             package_version="${publish_specs[$index]##*==}"
+            if [[ "$package_key" == skill* ]]; then
+              continue
+            fi
             if [[ "$package_version" == *".dev"* ]]; then
               continue
             fi

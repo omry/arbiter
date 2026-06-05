@@ -62,6 +62,24 @@ The Docusaurus website lives in [website/](website/):
 - `cd website && npm run start`
 - `cd website && npm run build`
 
+The experimental native Go client lives in [client-go/](client-go/). Build all
+default release targets from the repo root with:
+
+- `tools/build_go_client --clean`
+
+This writes stripped Linux, macOS, and Windows binaries for `amd64` and `arm64`
+under `client-go/dist/`. Limit the matrix with one or more `--target
+GOOS-GOARCH` arguments, for example `tools/build_go_client --target
+linux-arm64`; pass `--debug` to keep debug symbols.
+
+Package the native client as platform-specific skill artifacts with:
+
+- `tools/package_arbiter_skill --clean`
+
+This writes a selector skill artifact plus one `arbiter-skill-{os}-{arch}`
+target artifact per built binary under `dist/arbiter-skill/`, with local
+directories and wheels generated side by side.
+
 The user-facing documentation lives in [website/docs/](website/docs/). The
 root [docs/](docs/) directory is reserved for internal planning and future
 design notes:

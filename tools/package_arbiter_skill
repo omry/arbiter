@@ -1,0 +1,371 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import base64
+import csv
+import hashlib
+import io
+import shutil
+import stat
+import sys
+import zipfile
+from dataclasses import dataclass
+from pathlib import Path
+
+
+SELECTOR_PACKAGE = "arbiter-skill"
+CONFIG_FILE_NAME = "agent-skill-installer.yaml"
+SELECTOR_FILE_NAME = "agent-skill-selector.yaml"
+PACKAGING_ROOT = Path("packaging") / "arbiter-skill"
+WHEEL_TAG = "py3-none-any"
+
+
+@dataclass(frozen=True)
+class Target:
+    goos: str
+    goarch: str
+
+    @property
+    def label(self) -> str:
+        return f"{self.goos}-{self.goarch}"
+
+    @property
+    def package_name(self) -> str:
+        return f"{SELECTOR_PACKAGE}-{self.label}"
+
+    @property
+    def binary_name(self) -> str:
+        if self.goos == "windows":
+            return "arbiter.exe"
+        return "arbiter"
+
+
+DEFAULT_TARGETS = (
+    Target("linux", "amd64"),
+    Target("linux", "arm64"),
+    Target("darwin", "amd64"),
+    Target("darwin", "arm64"),
+    Target("windows", "amd64"),
+    Target("windows", "arm64"),
+)
+
+
+def parse_target(value: str) -> Target:
+    parts = value.split("-")
+    if len(parts) != 2 or not all(parts):
+        raise argparse.ArgumentTypeError(
+            f"invalid target {value!r}; expected GOOS-GOARCH, such as linux-amd64"
+        )
+    return Target(parts[0], parts[1])
+
+
+def distribution_name(package_name: str) -> str:
+    return package_name.replace("-", "_")
+
+
+def import_name(package_name: str) -> str:
+    return distribution_name(package_name)
+
+
+def display_path(path: Path, root: Path) -> str:
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
+
+
+def core_version(root: Path) -> str:
+    in_project = False
+    for line in (root / "core" / "pyproject.toml").read_text().splitlines():
+        stripped = line.strip()
+        if stripped == "[project]":
+            in_project = True
+            continue
+        if in_project and stripped.startswith("["):
+            break
+        if in_project and stripped.startswith("version"):
+            _name, _separator, value = stripped.partition("=")
+            version = value.strip().strip('"')
+            if version:
+                return version
+    raise ValueError("missing project.version in core/pyproject.toml")
+
+
+def selector_config(root: Path) -> bytes:
+    return (root / PACKAGING_ROOT / "selector" / SELECTOR_FILE_NAME).read_bytes()
+
+
+def target_installer_config(root: Path) -> bytes:
+    return (root / PACKAGING_ROOT / "target" / CONFIG_FILE_NAME).read_bytes()
+
+
+def target_binary(root: Path, target: Target) -> Path:
+    return root / "client-go" / "dist" / target.label / target.binary_name
+
+
+def ensure_target_binary(root: Path, target: Target) -> Path:
+    binary = target_binary(root, target)
+    if not binary.is_file():
+        raise FileNotFoundError(
+            f"missing binary for {target.label}: {display_path(binary, root)}; "
+            "run tools/build_go_client first"
+        )
+    return binary
+
+
+def stage_selector_local(*, root: Path, local_root: Path) -> Path:
+    selector = local_root / SELECTOR_PACKAGE
+    selector.mkdir(parents=True, exist_ok=True)
+    (selector / SELECTOR_FILE_NAME).write_bytes(selector_config(root))
+    return selector
+
+
+def stage_target_local(
+    *,
+    root: Path,
+    local_root: Path,
+    target: Target,
+    binary: Path,
+) -> Path:
+    target_dir = local_root / target.package_name
+    bin_dir = target_dir / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(root / "skill" / "SKILL.md", target_dir / "SKILL.md")
+    (target_dir / CONFIG_FILE_NAME).write_bytes(target_installer_config(root))
+    output = bin_dir / target.binary_name
+    shutil.copy2(binary, output)
+    if target.goos != "windows":
+        output.chmod(output.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return target_dir
+
+
+def metadata(package_name: str, version: str, summary: str) -> bytes:
+    return (
+        "Metadata-Version: 2.1\n"
+        f"Name: {package_name}\n"
+        f"Version: {version}\n"
+        f"Summary: {summary}\n"
+        "Requires-Python: >=3.10\n"
+    ).encode("utf-8")
+
+
+def wheel_file() -> bytes:
+    return (
+        "Wheel-Version: 1.0\n"
+        "Generator: arbiter package_arbiter_skill\n"
+        "Root-Is-Purelib: true\n"
+        f"Tag: {WHEEL_TAG}\n"
+    ).encode("utf-8")
+
+
+def record_hash(data: bytes) -> str:
+    digest = hashlib.sha256(data).digest()
+    encoded = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    return f"sha256={encoded}"
+
+
+def zip_info(name: str, mode: int) -> zipfile.ZipInfo:
+    info = zipfile.ZipInfo(name)
+    info.compress_type = zipfile.ZIP_DEFLATED
+    info.external_attr = (mode & 0xFFFF) << 16
+    return info
+
+
+def write_wheel(
+    *,
+    output: Path,
+    package_name: str,
+    version: str,
+    files: dict[str, tuple[bytes, int]],
+) -> Path:
+    dist_name = distribution_name(package_name)
+    dist_info = f"{dist_name}-{version}.dist-info"
+    wheel_files = dict(files)
+    wheel_files[f"{dist_info}/WHEEL"] = (wheel_file(), 0o644)
+    wheel_files[f"{dist_info}/METADATA"] = (
+        metadata(package_name, version, f"Arbiter agent skill package {package_name}."),
+        0o644,
+    )
+
+    rows: list[list[str]] = []
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(output, "w") as archive:
+        for name in sorted(wheel_files):
+            data, mode = wheel_files[name]
+            archive.writestr(zip_info(name, mode), data)
+            rows.append([name, record_hash(data), str(len(data))])
+
+        record_name = f"{dist_info}/RECORD"
+        rows.append([record_name, "", ""])
+        record_text = io.StringIO()
+        writer = csv.writer(record_text, lineterminator="\n")
+        writer.writerows(rows)
+        archive.writestr(zip_info(record_name, 0o644), record_text.getvalue())
+    return output
+
+
+def selector_wheel(*, root: Path, wheels_root: Path, version: str) -> Path:
+    package_name = SELECTOR_PACKAGE
+    module = import_name(package_name)
+    return write_wheel(
+        output=wheels_root
+        / f"{distribution_name(package_name)}-{version}-{WHEEL_TAG}.whl",
+        package_name=package_name,
+        version=version,
+        files={
+            f"{module}/__init__.py": (f'__version__ = "{version}"\n'.encode(), 0o644),
+            f"{module}/_skill/{SELECTOR_FILE_NAME}": (
+                selector_config(root),
+                0o644,
+            ),
+        },
+    )
+
+
+def target_wheel(
+    *,
+    root: Path,
+    wheels_root: Path,
+    target: Target,
+    binary: Path,
+    version: str,
+) -> Path:
+    package_name = target.package_name
+    module = import_name(package_name)
+    binary_mode = 0o644 if target.goos == "windows" else 0o755
+    return write_wheel(
+        output=wheels_root
+        / f"{distribution_name(package_name)}-{version}-{WHEEL_TAG}.whl",
+        package_name=package_name,
+        version=version,
+        files={
+            f"{module}/__init__.py": (f'__version__ = "{version}"\n'.encode(), 0o644),
+            f"{module}/_skill/SKILL.md": (
+                (root / "skill" / "SKILL.md").read_bytes(),
+                0o644,
+            ),
+            f"{module}/_skill/{CONFIG_FILE_NAME}": (
+                target_installer_config(root),
+                0o644,
+            ),
+            f"{module}/_skill/bin/{target.binary_name}": (
+                binary.read_bytes(),
+                binary_mode,
+            ),
+        },
+    )
+
+
+def package_skill(
+    *,
+    root: Path,
+    outdir: Path,
+    targets: tuple[Target, ...],
+    formats: set[str],
+    clean: bool,
+) -> list[Path]:
+    if clean and outdir.exists():
+        shutil.rmtree(outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    version = core_version(root)
+    binaries = {target: ensure_target_binary(root, target) for target in targets}
+    written: list[Path] = []
+
+    if "local" in formats:
+        local_root = outdir / "local"
+        selector = stage_selector_local(root=root, local_root=local_root)
+        written.append(selector)
+        for target, binary in binaries.items():
+            written.append(
+                stage_target_local(
+                    root=root,
+                    local_root=local_root,
+                    target=target,
+                    binary=binary,
+                )
+            )
+
+    if "wheel" in formats:
+        wheels_root = outdir / "wheels"
+        written.append(
+            selector_wheel(root=root, wheels_root=wheels_root, version=version)
+        )
+        for target, binary in binaries.items():
+            written.append(
+                target_wheel(
+                    root=root,
+                    wheels_root=wheels_root,
+                    target=target,
+                    binary=binary,
+                    version=version,
+                )
+            )
+
+    for path in written:
+        print(f"packaged {display_path(path, root)}")
+    return written
+
+
+def parse_formats(value: str) -> set[str]:
+    if value == "all":
+        return {"local", "wheel"}
+    return {value}
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Package Arbiter skill selector and platform-specific targets."
+    )
+    parser.add_argument("--root", default=".", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--outdir",
+        default="dist/arbiter-skill",
+        help="output directory, default: dist/arbiter-skill",
+    )
+    parser.add_argument(
+        "--target",
+        action="append",
+        type=parse_target,
+        metavar="GOOS-GOARCH",
+        help=(
+            "package one target, such as linux-amd64; may be passed more than once. "
+            "Defaults to linux/darwin/windows for amd64 and arm64."
+        ),
+    )
+    parser.add_argument(
+        "--format",
+        choices=("all", "local", "wheel"),
+        default="all",
+        help="artifact format to emit, default: all",
+    )
+    parser.add_argument(
+        "--clean",
+        action="store_true",
+        help="remove the output directory before packaging",
+    )
+    namespace = parser.parse_args(argv)
+
+    root = Path(namespace.root).resolve()
+    outdir = Path(namespace.outdir)
+    if not outdir.is_absolute():
+        outdir = root / outdir
+    targets = tuple(namespace.target or DEFAULT_TARGETS)
+
+    try:
+        package_skill(
+            root=root,
+            outdir=outdir,
+            targets=targets,
+            formats=parse_formats(namespace.format),
+            clean=namespace.clean,
+        )
+    except (OSError, ValueError) as exc:
+        print(f"package_arbiter_skill: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

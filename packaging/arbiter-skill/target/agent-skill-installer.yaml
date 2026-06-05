@@ -1,0 +1,12 @@
+installer:
+  version: 1
+  shared:
+    instructions:
+      discoverability:
+        title: Arbiter
+        body: Use this skill when you need to access external services via a secured and authorized access interface.
+  agents:
+    codex:
+      instructions: ${installer.shared.instructions.discoverability}
+    claude:
+      instructions: ${installer.shared.instructions.discoverability}

@@ -15,11 +15,19 @@ Current scope:
 - minimal MCP Streamable HTTP transport
 - `info`, `op`, and raw `mcp` commands
 
-Not implemented yet:
-
-- release builds for all target platforms
-
 ## Build
+
+From the repository root, build the default cross-platform binary matrix with:
+
+```bash
+tools/build_go_client --clean
+```
+
+This writes stripped binaries under `client-go/dist/<goos>-<goarch>/` for
+Linux, macOS, and Windows on `amd64` and `arm64`. Limit the matrix with one or
+more `--target GOOS-GOARCH` arguments; pass `--debug` to keep debug symbols.
+
+For a local single-platform build from this directory:
 
 ```bash
 go generate ./internal/cli
@@ -45,16 +53,37 @@ GOCACHE=/tmp/arbiter-go-cache go build -buildvcs=false ./cmd/arbiter
 
 ## Intended Distribution Shape
 
-The skill can eventually carry prebuilt binaries by platform:
+The skill distribution uses two layers:
 
 ```text
-skills/arbiter/bin/
-  linux-amd64/arbiter
-  linux-arm64/arbiter
-  darwin-amd64/arbiter
-  darwin-arm64/arbiter
-  windows-amd64/arbiter.exe
+arbiter-skill
+  agent-skill-selector.yaml
+
+arbiter-skill-linux-amd64
+  SKILL.md
+  agent-skill-installer.yaml
+  bin/arbiter
+
+arbiter-skill-windows-amd64
+  SKILL.md
+  agent-skill-installer.yaml
+  bin/arbiter.exe
 ```
 
-The skill can choose the matching binary at runtime and fall back to the Python
-client when no native binary is available.
+The selector artifact contains only `agent-skill-selector.yaml` and resolves to
+the matching target artifact with `platform_specific`. Each target artifact
+contains the Arbiter skill, a simple discoverability config for the installer,
+and exactly one native client binary. The selector config lives in
+`packaging/arbiter-skill/selector/agent-skill-selector.yaml`; the target
+discoverability config lives in
+`packaging/arbiter-skill/target/agent-skill-installer.yaml`, keeping selector
+routing details such as local relative paths out of target metadata.
+
+After building binaries, package local directories and wheels from the repo root:
+
+```bash
+tools/package_arbiter_skill --clean
+```
+
+This writes local install directories under `dist/arbiter-skill/local/` and
+wheels under `dist/arbiter-skill/wheels/`.

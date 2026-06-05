@@ -6,6 +6,7 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+skill/bin/
 outputs/
 docs/arbiter_design_docs.md
 website/.docusaurus/

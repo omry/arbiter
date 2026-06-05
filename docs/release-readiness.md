@@ -30,7 +30,8 @@ tools/upgrade_release_line 0.9 --check
 tools/plan_pypi_publish --packages all
 ```
 
-Use `--packages` when validating a fine-grained plugin or meta-package release.
+Use `--packages` when validating a fine-grained plugin, skill, or meta-package
+release.
 
 ### 2. Local release rehearsal
 
@@ -40,7 +41,8 @@ Build all distributions into a temporary wheelhouse:
 tools/build_release_dists --clean --outdir /tmp/arbiter-release/dist
 ```
 
-Use `--packages core,smtp` or `--packages meta:all` for narrower package sets.
+Use `--packages core,smtp`, `--packages meta:all`, or a skill key such as
+`--packages skill:linux-amd64` for narrower package sets.
 Add `--verbose` when build logs are needed.
 
 Prepare the publish artifact set from the built wheelhouse:
@@ -132,6 +134,11 @@ the GitHub `pypi` environment is ready.
 For the initial bootstrap, publish one package at a time because PyPI pending
 trusted publishers currently allow only one pending project for the same
 repository, workflow, and environment.
+
+The skill publishing set is the selector package `skill` plus the six native
+target packages: `skill:linux-amd64`, `skill:linux-arm64`,
+`skill:darwin-amd64`, `skill:darwin-arm64`, `skill:windows-amd64`, and
+`skill:windows-arm64`.
 
 ### 8. Post-release verification
 
