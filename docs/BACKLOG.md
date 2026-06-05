@@ -215,6 +215,19 @@ This file is the day-to-day queue for design and implementation gaps.
       schema-driven CLI generation from optional task-specific wrapper
       behavior.
 
+- [ ] `P2` Add skill-local discovery caching.
+      The skill client should be able to cache Arbiter discovery responses
+      under a skill subdirectory and reuse them to speed up time to first
+      request. Cache validity should be keyed by a server-returned config hash
+      available on all requests, so the client can detect config changes and
+      re-fetch the discovery surface when needed. Acceptance checks: the server
+      exposes a stable config/discovery hash on all relevant responses; the
+      skill client stores discovery cache files under the installed skill tree;
+      cache entries are invalidated when the hash changes; cache layout mirrors
+      the server's request/response discovery layers on disk; and the first
+      request can shortcut discovery when a valid cache is present without
+      hiding config-change detection failures.
+
 ## Done Recently
 
 - [x] Split SMTP and IMAP into independently installable service-plugin
