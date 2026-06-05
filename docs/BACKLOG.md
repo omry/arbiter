@@ -44,6 +44,18 @@ This file is the day-to-day queue for design and implementation gaps.
       metadata and deployment requirements docs agree; release notes and status notes
       are current; and a build/install smoke path is verified.
 
+- [ ] `P1` Add CI smoke tests for all platform-specific Arbiter skill binaries.
+      The `arbiter-skill` selector routes to six native Go client target
+      packages, so release CI should prove each target binary starts and can
+      talk to an Arbiter-compatible local test server before publishing.
+      Acceptance checks: CI builds or downloads all six target wheels; extracts
+      or installs each target artifact; runs the packaged `bin/arbiter` or
+      `bin/arbiter.exe` for `linux-amd64`, `linux-arm64`, `darwin-amd64`,
+      `darwin-arm64`, `windows-amd64`, and `windows-arm64`; each binary passes
+      at least `--version` and one smoke request against a local test MCP server;
+      and failures identify the target package, OS, architecture, command, and
+      server log excerpt.
+
 - [ ] `P1` Run an Arbiter security analysis before initial release.
       Do one focused threat-model and implementation review pass over the
       current architecture before publishing packages. Cover the MCP boundary,
@@ -152,6 +164,17 @@ This file is the day-to-day queue for design and implementation gaps.
       limits; decide whether startup should run the evaluator by default, warn,
       or refuse to run on failure; and document intentional overrides for local
       development.
+
+- [ ] `P2` Add a plugin surface for filtering incoming and outgoing data.
+      Arbiter should eventually let security plugins inspect or transform data
+      crossing trust boundaries, including prompt-injection detection on
+      inbound content and data-exfiltration detection on outbound content.
+      Acceptance checks: define the filter hook contract and ordering; identify
+      which MCP requests, tool arguments, tool results, logs, and service
+      payloads are in scope; support allow, block, redact, and warn outcomes;
+      specify how findings are reported to callers and operators; and document
+      the trust, privacy, latency, and failure-mode expectations for filter
+      plugins.
 
 - [ ] `P2` Add Docker deployment uninstall support.
       Operators who use `arbiter-docker install` need a matching cleanup path.
