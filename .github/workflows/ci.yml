@@ -92,6 +92,7 @@ jobs:
           - name: Windows arm64
             id: windows-arm64
             runner: windows-11-arm
+            python-tests: false
 
     steps:
       - name: Check out repository
@@ -124,11 +125,18 @@ jobs:
         run: go test ./...
 
       - name: Run full test suite
+        if: ${{ matrix.platform.python-tests != false }}
         env:
           ARBITER_GO_CLIENT_SMOKE_OUTDIR: .ci/go-client-smoke
           ARBITER_GO_CLIENT_SMOKE_REUSE: "1"
           GOCACHE: ${{ runner.temp }}/go-build
         run: nox -s tests
+
+      - name: Skip Python suite on Windows arm64
+        if: ${{ matrix.platform.python-tests == false }}
+        run: |
+          echo "Skipping Python suite on Windows arm64."
+          echo "mcp depends on pyjwt[crypto], which pulls cryptography; the Windows arm64 runner currently has no usable wheel/toolchain path for that dependency."
 
   website:
     name: Website

@@ -8,6 +8,7 @@ import sys
 from dataclasses import dataclass
 from functools import total_ordering
 from pathlib import Path
+from typing import TextIO
 
 
 SUITE_PYPROJECT = Path("meta/arbiter-suite/pyproject.toml")
@@ -394,16 +395,23 @@ def _write_changes(root: Path, changes: list[Change]) -> None:
         (root / change.path).write_text(change.after, encoding="utf-8")
 
 
-def _colored(symbol: str, color: str) -> str:
-    return f"{color}{symbol}{RESET}"
+def _can_encode(text: str, stream: TextIO) -> bool:
+    encoding = stream.encoding or "utf-8"
+    try:
+        text.encode(encoding)
+    except UnicodeEncodeError:
+        return False
+    return True
 
 
 def _success(message: str) -> str:
-    return f"{_colored('✓', GREEN)} {message}"
+    symbol = "✓" if _can_encode("✓", sys.stdout) else "OK"
+    return f"{GREEN}{symbol}{RESET} {message}"
 
 
 def _failure(message: str) -> str:
-    return f"{_colored('✗', RED)} {message}"
+    symbol = "✗" if _can_encode("✗", sys.stderr) else "ERROR"
+    return f"{RED}{symbol}{RESET} {message}"
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from importlib.machinery import SourceFileLoader
 import stat
 import sys
@@ -104,7 +105,8 @@ def test_packages_selector_and_platform_target_local_dirs_and_wheels(
     )
     assert (target / "SKILL.md").read_text(encoding="utf-8") == "arbiter skill\n"
     assert (target / "bin" / "arbiter").read_text(encoding="utf-8") == "binary\n"
-    assert (target / "bin" / "arbiter").stat().st_mode & stat.S_IXUSR
+    if os.name != "nt":
+        assert (target / "bin" / "arbiter").stat().st_mode & stat.S_IXUSR
 
     selector_wheel = (
         root
@@ -131,5 +133,6 @@ def test_packages_selector_and_platform_target_local_dirs_and_wheels(
         names = wheel.namelist()
         assert "arbiter_skill_linux_arm64/_skill/SKILL.md" in names
         assert "arbiter_skill_linux_arm64/_skill/agent-skill-installer.yaml" in names
-        info = wheel.getinfo("arbiter_skill_linux_arm64/_skill/bin/arbiter")
-        assert (info.external_attr >> 16) & stat.S_IXUSR
+        if os.name != "nt":
+            info = wheel.getinfo("arbiter_skill_linux_arm64/_skill/bin/arbiter")
+            assert (info.external_attr >> 16) & stat.S_IXUSR

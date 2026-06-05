@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -148,10 +149,18 @@ dependencies = [
         path.write_text(content, encoding="utf-8")
 
 
-def _run_tool(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+def _run_tool(
+    root: Path,
+    *args: str,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    process_env = os.environ.copy()
+    if env is not None:
+        process_env.update(env)
     return subprocess.run(
         [sys.executable, str(SCRIPT), "--root", str(root), *args],
         check=False,
+        env=process_env,
         text=True,
         capture_output=True,
     )
@@ -286,6 +295,17 @@ def test_upgrade_release_line_check_accepts_matching_release_line(
 
     assert result.returncode == 0, result.stderr
     assert "\x1b[32m✓\x1b[0m release line check passed: 0.8 (0.8.0)" in (result.stdout)
+
+
+def test_upgrade_release_line_check_uses_ascii_status_for_limited_stream_encoding(
+    tmp_path: Path,
+) -> None:
+    _write_fixture(tmp_path)
+
+    result = _run_tool(tmp_path, "--check", "0.8", env={"PYTHONIOENCODING": "cp1252"})
+
+    assert result.returncode == 0, result.stderr
+    assert "\x1b[32mOK\x1b[0m release line check passed: 0.8 (0.8.0)" in (result.stdout)
 
 
 def test_upgrade_release_line_check_accepts_matching_dev_release_line(

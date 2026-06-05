@@ -31,6 +31,8 @@ class LocalArbiterServerFactory(Protocol):
 
 def _arbiter_server_command() -> Path:
     command = Path(sys.executable).with_name("arbiter-server")
+    if os.name == "nt" and not command.exists():
+        command = command.with_suffix(".exe")
     if not command.exists():
         raise AssertionError(f"arbiter-server console script not found: {command}")
     return command
@@ -38,6 +40,8 @@ def _arbiter_server_command() -> Path:
 
 def _arbiter_command() -> Path:
     command = Path(sys.executable).with_name("arbiter-py")
+    if os.name == "nt" and not command.exists():
+        command = command.with_suffix(".exe")
     if not command.exists():
         raise AssertionError(f"arbiter-py console script not found: {command}")
     return command

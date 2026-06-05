@@ -220,7 +220,7 @@ def smtp_server_factory(
         active_handler = handler or CapturingHandler()
         controller = Controller(
             active_handler,
-            hostname="127.0.0.1",
+            hostname="localhost",
             port=free_tcp_port_factory(),
             tls_context=(
                 _build_server_ssl_context(cert_path, key_path) if starttls else None

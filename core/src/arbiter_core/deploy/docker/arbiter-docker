@@ -421,7 +421,10 @@ bundle_add_plugin() {
     { printf '       '; bundle_supported_items_message; } >&2
     return 2
   fi
-  mapfile -t plugins <<<"$plugins_text"
+  while IFS= read -r plugin; do
+    [[ -n "$plugin" ]] || continue
+    plugins+=("$plugin")
+  done <<<"$plugins_text"
 
   require_file "$requirements_file"
   validate_requirements_file "$requirements_file"
@@ -488,7 +491,10 @@ bundle_remove_plugin() {
     { printf '       '; bundle_supported_items_message; } >&2
     return 2
   fi
-  mapfile -t plugins <<<"$plugins_text"
+  while IFS= read -r plugin; do
+    [[ -n "$plugin" ]] || continue
+    plugins+=("$plugin")
+  done <<<"$plugins_text"
   for plugin in "${plugins[@]}"; do
     remove_plugins+=" $plugin "
     packages+=("$(bundle_plugin_package "$plugin")")
@@ -1066,12 +1072,22 @@ bundle_upgrade_resolve() {
     docker run --rm
     --user "$docker_user"
     -v "$tmp_dir:/work"
-    "${wheel_mount_args[@]}"
+  )
+  if [[ "${#wheel_mount_args[@]}" -gt 0 ]]; then
+    resolve_command+=("${wheel_mount_args[@]}")
+  fi
+  resolve_command+=(
     "$image"
     python -m pip --disable-pip-version-check install
     --dry-run --ignore-installed
-    "${pre_args[@]}"
-    "${find_links_args[@]}"
+  )
+  if [[ "${#pre_args[@]}" -gt 0 ]]; then
+    resolve_command+=("${pre_args[@]}")
+  fi
+  if [[ "${#find_links_args[@]}" -gt 0 ]]; then
+    resolve_command+=("${find_links_args[@]}")
+  fi
+  resolve_command+=(
     --report /work/report.json
     -r /work/requirements.in
   )
@@ -1946,16 +1962,25 @@ args_array_include() {
 
 compose_down() {
   local -a args=("$@")
+  local has_remove_orphans=0
   local reason
 
-  if compose_file_matches_manifest && ! args_array_include --remove-orphans "${args[@]}"; then
+  if [[ "${#args[@]}" -gt 0 ]] && args_array_include --remove-orphans "${args[@]}"; then
+    has_remove_orphans=1
+  fi
+
+  if compose_file_matches_manifest && [[ "$has_remove_orphans" -eq 0 ]]; then
     args=(--remove-orphans "${args[@]}")
-  elif ! args_array_include --remove-orphans "${args[@]}"; then
+  elif [[ "$has_remove_orphans" -eq 0 ]]; then
     reason="$(compose_manifest_mismatch_reason)"
     printf 'not removing orphan containers automatically: %s\n' "$reason" >&2
     printf 'pass --remove-orphans to down if you want to remove stale services\n' >&2
   fi
-  compose down "${args[@]}"
+  if [[ "${#args[@]}" -gt 0 ]]; then
+    compose down "${args[@]}"
+  else
+    compose down
+  fi
 }
 
 info() {
@@ -3326,12 +3351,20 @@ prepare_dependency_wheelhouse() {
       docker run --rm
       --user "$docker_user"
       -v "$target_requirements_file:/requirements.txt:ro"
-      "${wheel_input_mount_args[@]}"
+    )
+    if [[ "${#wheel_input_mount_args[@]}" -gt 0 ]]; then
+      docker_command+=("${wheel_input_mount_args[@]}")
+    fi
+    docker_command+=(
       -v "$target_wheels_dir:/wheelhouse"
       "$image"
       python -m pip --disable-pip-version-check wheel
       --no-cache-dir
-      "${find_links_args[@]}"
+    )
+    if [[ "${#find_links_args[@]}" -gt 0 ]]; then
+      docker_command+=("${find_links_args[@]}")
+    fi
+    docker_command+=(
       --wheel-dir /wheelhouse
       -r /requirements.txt
     )
@@ -3352,12 +3385,20 @@ prepare_dependency_wheelhouse() {
     docker run --rm
     --user "$docker_user"
     -v "$target_requirements_file:/requirements.txt:ro"
-    "${wheel_input_mount_args[@]}"
+  )
+  if [[ "${#wheel_input_mount_args[@]}" -gt 0 ]]; then
+    docker_command+=("${wheel_input_mount_args[@]}")
+  fi
+  docker_command+=(
     -v "$tmp_wheels_dir:/wheelhouse"
     "$image"
     python -m pip --disable-pip-version-check wheel
     --no-cache-dir
-    "${find_links_args[@]}"
+  )
+  if [[ "${#find_links_args[@]}" -gt 0 ]]; then
+    docker_command+=("${find_links_args[@]}")
+  fi
+  docker_command+=(
     --wheel-dir /wheelhouse
     -r /requirements.txt
   )

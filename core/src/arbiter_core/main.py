@@ -1545,6 +1545,8 @@ def _read_deploy_requirements(path: Path) -> tuple[str, ...]:
 def _ensure_deploy_file_mode(path: Path, *, executable: bool) -> bool:
     if not executable:
         return False
+    if os.name == "nt":
+        return False
     current_mode = path.stat().st_mode
     if current_mode & 0o111:
         return False

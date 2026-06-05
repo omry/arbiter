@@ -53,6 +53,93 @@ from arbiter_core.services import (
 )
 
 
+_SUPPORTS_POSIX_FILE_MODES = os.name != "nt"
+
+
+def _assert_posix_mode(path: Path, mode: int) -> None:
+    if _SUPPORTS_POSIX_FILE_MODES:
+        assert (path.stat().st_mode & 0o777) == mode
+
+
+def _assert_posix_executable(path: Path) -> None:
+    if _SUPPORTS_POSIX_FILE_MODES:
+        assert path.stat().st_mode & 0o111
+
+
+def _run_with_pty(
+    command: Sequence[str | os.PathLike[str]],
+    *,
+    cwd: Path,
+    env: Mapping[str, str],
+) -> subprocess.CompletedProcess[str]:
+    if os.name == "nt":
+        pytest.skip("PTY checks require a POSIX platform")
+    helper = r"""
+import errno
+import os
+import pty
+import select
+import subprocess
+import sys
+
+master_fd, slave_fd = pty.openpty()
+try:
+    process = subprocess.Popen(
+        sys.argv[1:],
+        stdin=subprocess.DEVNULL,
+        stdout=slave_fd,
+        stderr=subprocess.PIPE,
+        close_fds=True,
+    )
+    os.close(slave_fd)
+    slave_fd = -1
+    stdout_chunks = []
+    while True:
+        ready, _, _ = select.select([master_fd], [], [], 0.1)
+        if master_fd in ready:
+            try:
+                chunk = os.read(master_fd, 4096)
+            except OSError as exc:
+                if exc.errno != errno.EIO:
+                    raise
+                break
+            if not chunk:
+                break
+            stdout_chunks.append(chunk)
+        if process.poll() is not None:
+            while True:
+                ready, _, _ = select.select([master_fd], [], [], 0)
+                if master_fd not in ready:
+                    break
+                try:
+                    chunk = os.read(master_fd, 4096)
+                except OSError as exc:
+                    if exc.errno != errno.EIO:
+                        raise
+                    break
+                if not chunk:
+                    break
+                stdout_chunks.append(chunk)
+            break
+    stderr = process.stderr.read() if process.stderr is not None else b""
+    sys.stdout.buffer.write(b"".join(stdout_chunks))
+    sys.stderr.buffer.write(stderr)
+    raise SystemExit(process.wait())
+finally:
+    os.close(master_fd)
+    if slave_fd >= 0:
+        os.close(slave_fd)
+"""
+    return subprocess.run(
+        [sys.executable, "-c", helper, *[str(part) for part in command]],
+        check=False,
+        cwd=cwd,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+
 def _patch_installed_deploy_environment(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -604,6 +691,8 @@ def test_write_text_with_mode_replaces_from_restricted_temp(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    if not _SUPPORTS_POSIX_FILE_MODES:
+        pytest.skip("POSIX file mode replacement semantics are not available")
     env_file = tmp_path / "local.env"
     env_file.write_text("OLD_SECRET=value\n", encoding="utf-8")
     env_file.chmod(0o644)
@@ -634,7 +723,7 @@ def test_write_text_with_mode_replaces_from_restricted_temp(
         "destination_mode_before": 0o644,
     }
     assert env_file.read_text(encoding="utf-8") == "NEW_SECRET=value\n"
-    assert (env_file.stat().st_mode & 0o777) == 0o600
+    _assert_posix_mode(env_file, 0o600)
 
 
 def test_cli_serve_rejects_world_readable_config_file(
@@ -642,6 +731,8 @@ def test_cli_serve_rejects_world_readable_config_file(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    if not _SUPPORTS_POSIX_FILE_MODES:
+        pytest.skip("POSIX permission checks are not available")
     config_file = tmp_path / "arbiter-server.yaml"
     config_file.write_text(
         "arbiter:\n  server:\n    transport: stdio\n", encoding="utf-8"
@@ -662,6 +753,8 @@ def test_cli_serve_rejects_group_readable_env_file(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    if not _SUPPORTS_POSIX_FILE_MODES:
+        pytest.skip("POSIX permission checks are not available")
     config_file = tmp_path / "arbiter-server.yaml"
     config_file.write_text(
         "arbiter:\n" "  env_file: local.env\n" "  server:\n" "    transport: stdio\n",
@@ -813,7 +906,7 @@ def test_cli_env_bootstrap_reports_noop_when_env_file_is_current(
 
     assert main(["--config-dir", str(tmp_path), "env", "bootstrap"]) == 0
 
-    assert (env_file.stat().st_mode & 0o777) == 0o600
+    _assert_posix_mode(env_file, 0o600)
     assert capsys.readouterr().out == f"env file already up to date: {env_file}\n"
 
 
@@ -849,8 +942,8 @@ def test_cli_env_bootstrap_configures_default_env_file(
         "SMTP_PRIMARY_ACCOUNT_USERNAME=\n"
         "SMTP_PRIMARY_ACCOUNT_PASSWORD=\n"
     )
-    assert ((tmp_path / "arbiter-server.yaml").stat().st_mode & 0o777) == 0o640
-    assert ((tmp_path / ".env").stat().st_mode & 0o777) == 0o600
+    _assert_posix_mode(tmp_path / "arbiter-server.yaml", 0o640)
+    _assert_posix_mode(tmp_path / ".env", 0o600)
     assert capsys.readouterr().out == f"wrote {tmp_path / '.env'}\n"
 
 
@@ -935,7 +1028,7 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
     assert not (deploy_dir / "compose.override.yaml").exists()
     helper = deploy_dir / "arbiter-docker"
     assert helper.exists()
-    assert helper.stat().st_mode & 0o111
+    _assert_posix_executable(helper)
     manifest = json.loads(
         (deploy_dir / ".arbiter-deploy.json").read_text(encoding="utf-8")
     )
@@ -4421,7 +4514,7 @@ def test_cli_deploy_docker_generated_helper_install_protects_custom_installed_en
 
     assert result.returncode == 0
     assert installed_env.read_text(encoding="utf-8") == "SECRET=installed\n"
-    assert (installed_env.stat().st_mode & 0o777) == 0o600
+    _assert_posix_mode(installed_env, 0o600)
     installed_docker_env = (install_dir / "docker.env").read_text(encoding="utf-8")
     assert "ARBITER_APP_ENV_FILE=./secrets/arbiter.env\n" in installed_docker_env
 
@@ -4521,7 +4614,7 @@ def test_cli_deploy_docker_generated_helper_install_preserves_custom_config_dir(
     assert not (installed_config_dir / "arbiter-server.yaml").exists()
     assert not (installed_config_dir / "config-dir").exists()
     assert installed_env.read_text(encoding="utf-8") == "SECRET=installed\n"
-    assert (installed_env.stat().st_mode & 0o777) == 0o600
+    _assert_posix_mode(installed_env, 0o600)
     config_backups = sorted((install_dir / "backup").glob("conf-*"))
     assert len(config_backups) == 1
     assert (config_backups[0] / "installed-server.yaml").read_text(
@@ -4530,7 +4623,7 @@ def test_cli_deploy_docker_generated_helper_install_preserves_custom_config_dir(
     assert (config_backups[0] / ".env").read_text(encoding="utf-8") == (
         "SECRET=installed\n"
     )
-    assert ((config_backups[0] / ".env").stat().st_mode & 0o777) == 0o600
+    _assert_posix_mode(config_backups[0] / ".env", 0o600)
     installed_docker_env = (install_dir / "docker.env").read_text(encoding="utf-8")
     assert "ARBITER_CONFIG_DIR=./prod-conf\n" in installed_docker_env
     assert "ARBITER_APP_ENV_FILE=./prod-conf/.env\n" in installed_docker_env
@@ -4741,8 +4834,6 @@ def test_cli_deploy_docker_generated_helper_doctor_colors_tty_by_default(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    if not shutil.which("script"):
-        pytest.skip("script command is not available")
     deploy_dir = tmp_path / "docker"
     assert (
         main(
@@ -4782,13 +4873,8 @@ def test_cli_deploy_docker_generated_helper_doctor_colors_tty_by_default(
     env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
     env.pop("ARBITER_COLOR", None)
 
-    result = subprocess.run(
-        ["script", "-q", "-c", f"{deploy_dir / 'arbiter-docker'} doctor", "/dev/null"],
-        check=False,
-        cwd=tmp_path,
-        env=env,
-        text=True,
-        capture_output=True,
+    result = _run_with_pty(
+        [deploy_dir / "arbiter-docker", "doctor"], cwd=tmp_path, env=env
     )
 
     assert result.returncode == 0
@@ -5172,7 +5258,7 @@ def test_cli_deploy_docker_update_force_overwrites_modified_manifest_owned_files
 
     assert compose_file.read_text(encoding="utf-8") == expected_compose
     assert helper_file.read_text(encoding="utf-8") == expected_helper
-    assert helper_file.stat().st_mode & 0o111
+    _assert_posix_executable(helper_file)
     output = capsys.readouterr().out
     assert f"force updating managed file with local edits: {compose_file}\n" in output
     assert f"force updating managed file with local edits: {helper_file}\n" in output
@@ -5191,6 +5277,8 @@ def test_cli_deploy_docker_update_repairs_helper_executable_bit(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    if not _SUPPORTS_POSIX_FILE_MODES:
+        pytest.skip("POSIX executable-bit repair is not available")
     deploy_dir = tmp_path / "docker"
     assert (
         main(
@@ -5210,7 +5298,7 @@ def test_cli_deploy_docker_update_repairs_helper_executable_bit(
 
     assert main(["deploy", "docker", f"docker.dir={deploy_dir}", "update"]) == 0
 
-    assert helper_file.stat().st_mode & 0o111
+    _assert_posix_executable(helper_file)
     assert "Files already up to date:" not in capsys.readouterr().out
 
 
@@ -5495,6 +5583,7 @@ def test_cli_bootstrap_arbiter_uses_default_config_dir(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
 
     assert main(["bootstrap", "arbiter"]) == 0
 
@@ -5547,8 +5636,8 @@ def test_cli_bootstrap_arbiter_writes_main_config(
         "  max_account_preview_limit: 25\n"
         "  max_operation_preview_limit: 25\n"
     )
-    assert (config_file.stat().st_mode & 0o777) == 0o640
-    assert (server_file.stat().st_mode & 0o777) == 0o640
+    _assert_posix_mode(config_file, 0o640)
+    _assert_posix_mode(server_file, 0o640)
     assert capsys.readouterr().out == (
         f"wrote {config_file}\n" f"wrote {server_file}\n"
     )
