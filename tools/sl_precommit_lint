@@ -8,12 +8,14 @@ from pathlib import Path
 
 
 PYREFLY_TARGETS = [
-    "core/src",
-    "core/tests",
-    "smtp/src",
-    "smtp/tests",
-    "imap/src",
-    "imap/tests",
+    "client/python-cli/src",
+    "client/python-cli/tests",
+    "server/src",
+    "server/tests",
+    "plugins/smtp/src",
+    "plugins/smtp/tests",
+    "plugins/imap/src",
+    "plugins/imap/tests",
     "examples/plugins/echo/src",
     "examples/plugins/echo/tests",
     "noxfile.py",
@@ -89,7 +91,15 @@ def main() -> int:
     relative_python_paths = display_paths(python_paths, root=root)
     checks = [
         [python, "-m", "py_compile", *relative_python_paths],
-        [pyrefly, "check", "--config", "pyrefly.toml", *PYREFLY_TARGETS],
+        [
+            pyrefly,
+            "check",
+            "--python-interpreter-path",
+            python,
+            "--config",
+            "pyrefly.toml",
+            *PYREFLY_TARGETS,
+        ],
     ]
     for command in checks:
         returncode = run(command, root=root)

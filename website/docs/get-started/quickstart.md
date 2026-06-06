@@ -20,7 +20,7 @@ python3 -m venv .venv
 
 The PyPI package `arbiter` is unrelated to Arbiter. Install
 `arbiter-suite` for the default Arbiter bundle, or install packages such
-as `arbiter-core`, `arbiter-smtp`, and `arbiter-imap` explicitly.
+as `arbiter-server`, `arbiter-smtp`, and `arbiter-imap` explicitly.
 
 :::
 

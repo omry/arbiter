@@ -5,7 +5,7 @@ title: Testing
 Use the repo-local virtualenv when running checks:
 
 ```bash
-.venv/bin/python -m pytest core/tests smtp/tests imap/tests
+.venv/bin/python -m pytest server/tests plugins/smtp/tests plugins/imap/tests
 .venv/bin/python -m nox -s lint
 ```
 
@@ -23,8 +23,8 @@ are already installed locally.
 ## Useful focused checks
 
 ```bash
-.venv/bin/python -m pytest core/tests/integration/test_cli_entrypoint.py
-.venv/bin/python -m pytest core/tests/unit/test_config.py
+.venv/bin/python -m pytest server/tests/integration/test_cli_entrypoint.py
+.venv/bin/python -m pytest server/tests/unit/test_config.py
 ```
 
 ## User-initiated Docker deployment check

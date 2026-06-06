@@ -21,7 +21,7 @@ echo = "arbiter_echo_example:plugin"
 ```
 
 The entry point should point to a factory function that returns a plugin object
-implementing the `ServicePlugin` protocol from `arbiter_core.services`.
+implementing the `ServicePlugin` protocol from `arbiter_server.services`.
 
 ## Files
 
@@ -30,4 +30,4 @@ implementing the `ServicePlugin` protocol from `arbiter_core.services`.
 - `src/arbiter_echo_example/__init__.py`: runtime, operation metadata,
   bootstrap examples, and plugin object.
 - `tests/test_echo_example.py`: a focused test showing direct runtime use and
-  core catalog dispatch.
+  server catalog dispatch.

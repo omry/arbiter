@@ -8,7 +8,7 @@ import pytest
 EXAMPLE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(EXAMPLE_ROOT / "src"))
 
-from arbiter_core.services import (  # noqa: E402
+from arbiter_server.services import (  # noqa: E402
     OperationCatalog,
     RuntimeRegistry,
     ServicePluginContext,

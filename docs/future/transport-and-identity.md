@@ -32,7 +32,7 @@ identity.
 ## Non-goals
 
 - Do not run SSH inside the Arbiter container.
-- Do not make public ACME certificate management a core Arbiter server
+- Do not make public ACME certificate management a server Arbiter server
   responsibility initially.
 - Do not treat request signatures as a replacement for transport encryption
   when secrets or sensitive responses cross a network.

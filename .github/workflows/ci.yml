@@ -111,14 +111,14 @@ jobs:
         if: ${{ matrix.go_tests == true }}
         uses: actions/setup-go@v5
         with:
-          go-version-file: client-go/go.mod
+          go-version-file: client/go-cli/go.mod
 
       - name: Cache Go client smoke binary
         if: ${{ matrix.go_tests == true }}
         uses: actions/cache@v4
         with:
           path: .ci/go-client-smoke
-          key: go-client-smoke-${{ matrix.platform_id }}-${{ hashFiles('client-go/**', 'tools/build_go_client') }}
+          key: go-client-smoke-${{ matrix.platform_id }}-${{ hashFiles('client/go-cli/**', 'tools/build_go_client') }}
 
       - name: Install nox
         run: python -m pip install "nox[pbs]>=2024.10,<2026.0"
@@ -137,7 +137,7 @@ jobs:
 
       - name: Run Go client tests
         if: ${{ matrix.go_tests == true }}
-        working-directory: client-go
+        working-directory: client/go-cli
         env:
           GOCACHE: ${{ runner.temp }}/go-build
         run: go test ./...
@@ -153,6 +153,31 @@ jobs:
           ARBITER_GO_CLIENT_SMOKE_REUSE: "1"
           GOCACHE: ${{ runner.temp }}/go-build
         run: nox -s ${{ matrix.nox_session }}
+
+  docker-deploy-test:
+    name: Docker deploy integration
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install nox
+        run: python -m pip install "nox[pbs]>=2024.10,<2026.0"
+
+      - name: Show Docker environment
+        run: |
+          docker info
+          docker compose version
+
+      - name: Run Docker deploy integration
+        run: nox -s deploy-test
 
   website:
     name: Website
@@ -189,6 +214,7 @@ jobs:
     needs:
       - lint
       - tests
+      - docker-deploy-test
       - website
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 

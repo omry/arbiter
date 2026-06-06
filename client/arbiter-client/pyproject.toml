@@ -1,0 +1,44 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "arbiter-client"
+dynamic = ["version"]
+description = "Native Arbiter client binary"
+readme = "README.md"
+requires-python = ">=3.10,<3.15"
+license = { text = "MIT" }
+authors = [
+  { name = "Omry Yadan", email = "omry@yadan.net" },
+]
+maintainers = [
+  { name = "Omry Yadan", email = "omry@yadan.net" },
+]
+keywords = ["agent", "policy", "mcp", "access-control", "binary"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[project.urls]
+Homepage = "https://github.com/omry/arbiter"
+Repository = "https://github.com/omry/arbiter"
+
+[tool.hatch.version]
+source = "env"
+variable = "ARBITER_CLIENT_VERSION"
+
+[tool.hatch.build.targets.wheel]
+bypass-selection = true
+
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "hatch_build.py"

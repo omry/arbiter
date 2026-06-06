@@ -39,39 +39,39 @@ server catalog construction fails with a duplicate capability error.
 
 ## Version contract
 
-Plugins use compatibility-line versions. A plugin for Arbiter core
+Plugins use compatibility-line versions. A plugin for Arbiter server
 `0.9.x` should use a package version on the `0.9` line, such as
-`0.9.0` or `0.9.1`, and declare the same core API line at runtime.
+`0.9.0` or `0.9.1`, and declare the same server API line at runtime.
 Prerelease versions such as `0.9.0.dev1` are useful for release validation but
 are not the normal documentation target. The plugin runtime should derive
 `version` from installed package metadata rather than duplicating the version
 literal:
 
 ```python
-from arbiter_core.version import distribution_version
+from arbiter_server.version import distribution_version
 
 
 class ExampleServicePlugin:
     name = "example"
     version = distribution_version("arbiter-example", package_file=__file__)
-    core_api_version = "0.9"
+    server_api_version = "0.9"
 ```
 
 At plugin discovery and config registration time, Arbiter rejects plugins
-whose `core_api_version` does not match the loaded core API line. It also
+whose `server_api_version` does not match the loaded server API line. It also
 rejects plugin package versions that are not on that same `major.minor` line.
 
 Package dependencies should express the same compatibility line:
 
 ```toml
 dependencies = [
-  "arbiter-core>=0.9.0,<0.10.0",
+  "arbiter-server>=0.9.0,<0.10.0",
 ]
 ```
 
 ## Runtime boundary
 
-Core passes only service-owned config to the plugin:
+Server passes only service-owned config to the plugin:
 
 - `arbiter.account.<service>`
 - `arbiter.policy.<service>`
@@ -80,7 +80,7 @@ The plugin should not need the full application config for ordinary operation.
 
 ## Operation ids
 
-Operation ids are formed by the core from capability and operation names:
+Operation ids are formed by the server from capability and operation names:
 
 ```text
 <capability>:<operation>
@@ -93,5 +93,5 @@ smtp:send_email
 imap:list_messages
 ```
 
-Plugins name operations within their capability; the core validates common
+Plugins name operations within their capability; the server validates common
 operation-id syntax and dispatches to the selected plugin.

@@ -22,7 +22,7 @@ runtime container without reaching PyPI.
 roots are exact pins:
 
 ```text title="./requirements.txt"
-arbiter-core==0.9.0.dev2
+arbiter-server==0.9.0.dev2
 arbiter-imap==0.9.0.dev2
 arbiter-smtp==0.9.0.dev2
 ```
@@ -32,16 +32,16 @@ Use the bundle commands in the prepare runbook to select plugins or upgrade
 versions.
 
 By default, `arbiter-server deploy docker init` seeds these roots from the
-Arbiter core package and service plugins loaded in the current Python
+Arbiter server package and service plugins loaded in the current Python
 environment. Check those versions with `arbiter-server version`.
 
 `bundle add` and `bundle remove` update `requirements.txt`. Adding
 `arbiter-suite` selects all plugins in the suite meta package. When the suite
 must be represented as concrete runtime roots, Arbiter expands it into
-`arbiter-core` plus the selected plugin packages.
+`arbiter-server` plus the selected plugin packages.
 
 The package named `arbiter` on PyPI is unrelated to this project. Use
-`arbiter-suite` or concrete packages such as `arbiter-core`, `arbiter-smtp`,
+`arbiter-suite` or concrete packages such as `arbiter-server`, `arbiter-smtp`,
 and `arbiter-imap`.
 
 ## Wheelhouse
@@ -95,7 +95,7 @@ init, pass repeated `docker.requirement=...` values:
 
 ```bash
 arbiter-server deploy docker \
-  docker.requirement=arbiter-core==0.9.0.dev2 \
+  docker.requirement=arbiter-server==0.9.0.dev2 \
   docker.requirement=arbiter-smtp==0.9.0.dev2 \
   init
 ```
@@ -113,7 +113,7 @@ Arbiter expands that selection to concrete package pins so pip does not see
 conflicting meta-package dependencies:
 
 ```text title="./requirements.txt"
-arbiter-core==0.9.0
+arbiter-server==0.9.0
 arbiter-smtp==0.9.1
 arbiter-imap==0.9.0
 ```
@@ -122,7 +122,7 @@ For explicit local artifact bundles, `requirements.txt` can also name
 container wheel paths directly:
 
 ```text title="./requirements.txt"
-/wheels/arbiter_core-0.9.0.dev2-py3-none-any.whl
+/wheels/arbiter_server-0.9.0.dev2-py3-none-any.whl
 /wheels/arbiter_smtp-0.9.0.dev2-py3-none-any.whl
 ```
 
@@ -135,8 +135,8 @@ Local checkout requirements are testing state. The only non-pinned entries
 allowed in `requirements.txt` are absolute container source paths:
 
 ```text title="./requirements.txt"
-/source/arbiter/core
-/source/arbiter/smtp
+/source/arbiter/server
+/source/arbiter/plugins/smtp
 ```
 
 Mount the checkout explicitly with a local Compose override:

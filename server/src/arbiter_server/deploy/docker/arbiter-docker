@@ -1,0 +1,3936 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+deploy_dir="${ARBITER_DOCKER_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)}"
+systemd_unit_dir="${ARBITER_SYSTEMD_DIR:-/etc/systemd/system}"
+compose_file="$deploy_dir/compose.yaml"
+compose_env_file="$deploy_dir/docker.env"
+requirements_file="$deploy_dir/requirements.txt"
+compose_override_file="$deploy_dir/compose.override.yaml"
+
+usage() {
+  cat <<'EOF'
+Usage: arbiter-docker COMMAND
+
+Commands:
+  prepare       Shortcut for bundle prepare
+  bundle        Manage the root requirements and prepared wheelhouse
+  sync-env      Run arbiter-server env bootstrap for the configured config
+  edit-config   Edit the main config file with $ARBITER_EDITOR, $EDITOR, or vi
+  edit-requirements
+                Edit Python requirements installed inside the container
+  edit-env      Edit the configured env file with $ARBITER_EDITOR, $EDITOR, or vi
+  edit-docker   Edit docker.env with $ARBITER_EDITOR, $EDITOR, or vi
+  up            Start or update the Docker Compose service
+  restart       Recreate the Docker Compose service
+  test          Call version_info through the computed MCP URL
+  down          Stop and remove the Docker Compose service
+  ps            Show Docker Compose service status
+  logs          Follow Docker Compose logs
+  info          Show deployment paths and Docker Compose version
+  doctor        Check generated files, Docker Compose, and optional agent access
+  install       Promote this prepared deployment directory to a Linux host
+
+Doctor options:
+  --preinstall       Check this directory before sudo install; skip Docker daemon checks
+  --agent-user USER   Check that USER cannot read/write deployment state
+  --agent-uid UID     Check that UID cannot read/write deployment state
+
+Install options:
+  --to DIR            Install target directory, default /opt/arbiter
+  --user USER         Dedicated service config owner, default arbiter
+  --group GROUP       Dedicated service config group, default USER
+  --service NAME      systemd service name, default arbiter
+  --no-start          Install and enable the service without starting it
+  --replace-config    Replace installed config and env from this staging dir
+  --dry-run           Print the install plan without changing the host
+
+Environment:
+  ARBITER_DOCKER_DIR   Deployment directory, default script directory
+  ARBITER_CLIENT_COMMAND
+                      Arbiter client command for test, default arbiter
+  ARBITER_EDITOR       Editor for edit-config/edit-env
+EOF
+}
+
+require_file() {
+  local path="$1"
+  [[ -f "$path" ]] || {
+    printf 'error: missing file: %s\n' "$path" >&2
+    exit 1
+  }
+}
+
+require_dir() {
+  local path="$1"
+  [[ -d "$path" ]] || {
+    printf 'error: missing directory: %s\n' "$path" >&2
+    exit 1
+  }
+}
+
+validate_requirements_file() {
+  local path="$1"
+
+  awk '
+    {
+      line = $0
+      sub(/^[[:space:]]+/, "", line)
+      sub(/[[:space:]]+$/, "", line)
+      if (line == "" || line ~ /^#/) {
+        next
+      }
+      sub(/[[:space:]]+#.*$/, "", line)
+      sub(/[[:space:]]+$/, "", line)
+      if (line ~ /^\//) {
+        next
+      }
+      if (line ~ /^[A-Za-z0-9][A-Za-z0-9_.-]*(\[[A-Za-z0-9_.-]+(,[A-Za-z0-9_.-]+)*\])?==[^<>=!~[:space:]#]+$/) {
+        name = line
+        sub(/==.*/, "", name)
+        sub(/\[.*/, "", name)
+        version = line
+        sub(/^[^=]*==/, "", version)
+        if ((name in pins) && pins[name] != version) {
+          printf "%s:%d: conflicting package pins for %s: %s and %s\n", FILENAME, FNR, name, pins[name], version
+          invalid = 1
+        }
+        pins[name] = version
+        if (name == "arbiter-suite") {
+          meta_all = 1
+        }
+        if (name == "arbiter-server" || name == "arbiter-smtp" || name == "arbiter-imap") {
+          all_component = 1
+        }
+        next
+      }
+      printf "%s:%d: requirement must be an exact package pin (name==version) or an absolute container path: %s\n", FILENAME, FNR, $0
+      invalid = 1
+    }
+    END {
+      if (meta_all && all_component) {
+        printf "%s: arbiter-suite meta package cannot be combined directly with arbiter-server, arbiter-smtp, or arbiter-imap pins; generate expanded real package pins with arbiter-server deploy docker docker.requirement=...\n", FILENAME
+        invalid = 1
+      }
+      exit invalid
+    }
+  ' "$path"
+}
+
+requirements_has_absolute_paths() {
+  local path="$1"
+
+  awk '
+    {
+      line = $0
+      sub(/^[[:space:]]+/, "", line)
+      sub(/[[:space:]]+$/, "", line)
+      if (line == "" || line ~ /^#/) {
+        next
+      }
+      sub(/[[:space:]]+#.*$/, "", line)
+      sub(/[[:space:]]+$/, "", line)
+      if (line ~ /^\//) {
+        found = 1
+      }
+    }
+    END {
+      exit found ? 0 : 1
+    }
+  ' "$path"
+}
+
+edit_requirements() {
+  local edited_requirements
+
+  require_file "$requirements_file"
+  edited_requirements="$(mktemp "${TMPDIR:-/tmp}/arbiter-docker-requirements.XXXXXX")"
+  cp "$requirements_file" "$edited_requirements"
+
+  if ! run_editor "$edited_requirements"; then
+    rm -f "$edited_requirements"
+    return 1
+  fi
+
+  if ! validate_requirements_file "$edited_requirements"; then
+    printf 'error: requirements unchanged: %s\n' "$requirements_file" >&2
+    rm -f "$edited_requirements"
+    return 1
+  fi
+
+  cp "$edited_requirements" "$requirements_file"
+  rm -f "$edited_requirements"
+  printf 'updated requirements file: %s\n' "$requirements_file"
+}
+
+bundle_list_roots() {
+  require_file "$requirements_file"
+  validate_requirements_file "$requirements_file"
+  awk '
+    {
+      line = $0
+      sub(/^[[:space:]]+/, "", line)
+      sub(/[[:space:]]+#.*$/, "", line)
+      sub(/[[:space:]]+$/, "", line)
+      if (line == "") {
+        next
+      }
+      printf "root\t%s\n", line
+    }
+  ' "$requirements_file"
+}
+
+bundle_list_all() {
+  local active_wheels_dir
+  local root_requirements
+  local resolved_requirements
+  local wheel
+  local filename
+  local base
+  local distribution
+  local version
+  local normalized_name
+  local requirement
+  local label
+
+  require_file "$requirements_file"
+  validate_requirements_file "$requirements_file"
+  active_wheels_dir="$(wheels_dir_path)"
+  require_dir "$active_wheels_dir"
+
+  root_requirements="$(mktemp "${TMPDIR:-/tmp}/arbiter-docker-roots.XXXXXX")"
+  resolved_requirements="$(mktemp "${TMPDIR:-/tmp}/arbiter-docker-resolved.XXXXXX")"
+
+  awk '
+    function normalize(name) {
+      name = tolower(name)
+      gsub(/[-_.]+/, "-", name)
+      return name
+    }
+    function wheel_requirement(path, base, parts) {
+      base = path
+      sub(/^.*\//, "", base)
+      sub(/\.whl$/, "", base)
+      split(base, parts, "-")
+      if (parts[1] != "" && parts[2] != "") {
+        print normalize(parts[1]) "==" parts[2]
+      }
+    }
+    {
+      line = $0
+      sub(/^[[:space:]]+/, "", line)
+      sub(/[[:space:]]+#.*$/, "", line)
+      sub(/[[:space:]]+$/, "", line)
+      if (line == "") {
+        next
+      }
+      if (line ~ /^\/wheels\/.*\.whl$/) {
+        wheel_requirement(line)
+        next
+      }
+      name = line
+      sub(/==.*/, "", name)
+      sub(/\[.*/, "", name)
+      version = line
+      sub(/^[^=]*==/, "", version)
+      print normalize(name) "==" version
+    }
+  ' "$requirements_file" | sort -u >"$root_requirements"
+
+  shopt -s nullglob
+  for wheel in "$active_wheels_dir"/*.whl; do
+    filename="${wheel##*/}"
+    base="${filename%.whl}"
+    distribution="${base%%-*}"
+    base="${base#*-}"
+    version="${base%%-*}"
+    if [[ -z "$distribution" || -z "$version" ]]; then
+      continue
+    fi
+    normalized_name="$(printf '%s\n' "$distribution" | tr '[:upper:]' '[:lower:]' | sed 's/[-_.][-_\.]*/-/g')"
+    requirement="$normalized_name==$version"
+    if grep -Fxq "$requirement" "$root_requirements"; then
+      label="root"
+    else
+      label="transitive"
+    fi
+    printf '%s\t%s\n' "$label" "$requirement"
+  done | sort -u >"$resolved_requirements"
+  shopt -u nullglob
+
+  if [[ ! -s "$resolved_requirements" ]]; then
+    printf 'error: wheelhouse is empty: %s\n' "$active_wheels_dir" >&2
+    printf '       run %s bundle prepare to build the dependency wheelhouse\n' "$deploy_dir/arbiter-docker" >&2
+    rm -f "$root_requirements" "$resolved_requirements"
+    return 1
+  fi
+
+  cat "$resolved_requirements"
+  rm -f "$root_requirements" "$resolved_requirements"
+}
+
+bundle_list_plugins() {
+  printf 'imap\n'
+  printf 'smtp\n'
+}
+
+bundle_plugin_package() {
+  case "$1" in
+    imap)
+      printf 'arbiter-imap\n'
+      ;;
+    smtp)
+      printf 'arbiter-smtp\n'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+bundle_meta_plugins() {
+  case "$1" in
+    arbiter-suite)
+      bundle_list_plugins
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+bundle_item_plugins() {
+  if bundle_plugin_package "$1" >/dev/null; then
+    printf '%s\n' "$1"
+    return
+  fi
+  bundle_meta_plugins "$1"
+}
+
+bundle_supported_items_message() {
+  printf 'supported plugins: imap, smtp; supported meta packages: arbiter-suite\n'
+}
+
+normalize_distribution_name() {
+  printf '%s\n' "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[-_.][-_\.]*/-/g'
+}
+
+bundle_requirement_version() {
+  local package="$1"
+
+  awk -v package="$package" '
+    function normalize(name) {
+      name = tolower(name)
+      gsub(/[-_.]+/, "-", name)
+      return name
+    }
+    BEGIN {
+      wanted = normalize(package)
+    }
+    {
+      line = $0
+      sub(/^[[:space:]]+/, "", line)
+      sub(/[[:space:]]+#.*$/, "", line)
+      sub(/[[:space:]]+$/, "", line)
+      if (line == "" || line ~ /^\//) {
+        next
+      }
+      name = line
+      sub(/==.*/, "", name)
+      sub(/\[.*/, "", name)
+      version = line
+      sub(/^[^=]*==/, "", version)
+      if (normalize(name) == wanted) {
+        print version
+        found = 1
+        exit
+      }
+    }
+    END {
+      exit found ? 0 : 1
+    }
+  ' "$requirements_file"
+}
+
+bundle_write_without_packages() {
+  local output_file="$1"
+  shift
+  local packages="$*"
+
+  awk -v packages="$packages" '
+    function normalize(name) {
+      name = tolower(name)
+      gsub(/[-_.]+/, "-", name)
+      return name
+    }
+    BEGIN {
+      split(packages, package_list, " ")
+      for (i in package_list) {
+        skip[normalize(package_list[i])] = 1
+      }
+    }
+    {
+      line = $0
+      sub(/^[[:space:]]+/, "", line)
+      sub(/[[:space:]]+#.*$/, "", line)
+      sub(/[[:space:]]+$/, "", line)
+      if (line != "" && line !~ /^\//) {
+        name = line
+        sub(/==.*/, "", name)
+        sub(/\[.*/, "", name)
+        if (normalize(name) in skip) {
+          next
+        }
+      }
+      print $0
+    }
+  ' "$requirements_file" >"$output_file"
+}
+
+bundle_update_requirements_file() {
+  local updated_file="$1"
+
+  if ! validate_requirements_file "$updated_file"; then
+    printf 'error: generated requirements are invalid; requirements unchanged: %s\n' "$requirements_file" >&2
+    rm -f "$updated_file"
+    return 1
+  fi
+  mv "$updated_file" "$requirements_file"
+  printf 'updated requirements file: %s\n' "$requirements_file"
+}
+
+bundle_add_plugin() {
+  local item="${1:-}"
+  local plugin
+  local package
+  local version
+  local tmp_file
+  local last_char
+  local plugins_text
+  local selected_count=0
+  local added_count=0
+  local -a plugins=()
+
+  if [[ -z "$item" || $# -ne 1 ]]; then
+    printf 'error: bundle add requires exactly one plugin or meta package name\n' >&2
+    { printf '       '; bundle_supported_items_message; } >&2
+    return 2
+  fi
+  if ! plugins_text="$(bundle_item_plugins "$item")"; then
+    printf 'error: unsupported bundle item: %s\n' "$item" >&2
+    { printf '       '; bundle_supported_items_message; } >&2
+    return 2
+  fi
+  while IFS= read -r plugin; do
+    [[ -n "$plugin" ]] || continue
+    plugins+=("$plugin")
+  done <<<"$plugins_text"
+
+  require_file "$requirements_file"
+  validate_requirements_file "$requirements_file"
+  if bundle_requirement_version arbiter-suite >/dev/null; then
+    printf 'bundle item already selected by arbiter-suite: %s\n' "$item"
+    return 0
+  fi
+  if ! version="$(bundle_requirement_version arbiter-server)"; then
+    printf 'error: cannot add bundle item without an arbiter-server package pin: %s\n' "$item" >&2
+    printf '       add arbiter-server==VERSION to requirements.txt first\n' >&2
+    return 1
+  fi
+
+  tmp_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-docker-requirements.XXXXXX")"
+  cp "$requirements_file" "$tmp_file"
+  last_char=""
+  if [[ -s "$tmp_file" ]]; then
+    last_char="$(tail -c 1 "$tmp_file")"
+  fi
+  if [[ -n "$last_char" ]]; then
+    printf '\n' >>"$tmp_file"
+  fi
+  for plugin in "${plugins[@]}"; do
+    package="$(bundle_plugin_package "$plugin")"
+    if bundle_requirement_version "$package" >/dev/null; then
+      selected_count=$((selected_count + 1))
+      continue
+    fi
+    printf '%s==%s\n' "$package" "$version" >>"$tmp_file"
+    added_count=$((added_count + 1))
+  done
+  if [[ "$added_count" -eq 0 ]]; then
+    rm -f "$tmp_file"
+    if [[ "$selected_count" -eq "${#plugins[@]}" ]]; then
+      printf 'bundle item already selected: %s\n' "$item"
+    fi
+    return 0
+  fi
+  bundle_update_requirements_file "$tmp_file"
+}
+
+bundle_remove_plugin() {
+  local item="${1:-}"
+  local plugin
+  local package
+  local suite_version
+  local tmp_file
+  local other_requirements_file
+  local supported_plugin
+  local supported_package
+  local plugins_text
+  local remove_plugins=""
+  local selected_count=0
+  local -a plugins=()
+  local -a packages=()
+
+  if [[ -z "$item" || $# -ne 1 ]]; then
+    printf 'error: bundle remove requires exactly one plugin or meta package name\n' >&2
+    { printf '       '; bundle_supported_items_message; } >&2
+    return 2
+  fi
+  if ! plugins_text="$(bundle_item_plugins "$item")"; then
+    printf 'error: unsupported bundle item: %s\n' "$item" >&2
+    { printf '       '; bundle_supported_items_message; } >&2
+    return 2
+  fi
+  while IFS= read -r plugin; do
+    [[ -n "$plugin" ]] || continue
+    plugins+=("$plugin")
+  done <<<"$plugins_text"
+  for plugin in "${plugins[@]}"; do
+    remove_plugins+=" $plugin "
+    packages+=("$(bundle_plugin_package "$plugin")")
+  done
+
+  require_file "$requirements_file"
+  validate_requirements_file "$requirements_file"
+  tmp_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-docker-requirements.XXXXXX")"
+
+  if suite_version="$(bundle_requirement_version arbiter-suite)"; then
+    other_requirements_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-docker-requirements.XXXXXX")"
+    bundle_write_without_packages \
+      "$other_requirements_file" \
+      arbiter-suite \
+      arbiter-server \
+      arbiter-imap \
+      arbiter-smtp
+    {
+      printf 'arbiter-server==%s\n' "$suite_version"
+      while IFS= read -r supported_plugin; do
+        [[ "$remove_plugins" != *" $supported_plugin "* ]] || continue
+        supported_package="$(bundle_plugin_package "$supported_plugin")"
+        printf '%s==%s\n' "$supported_package" "$suite_version"
+      done < <(bundle_list_plugins)
+      awk '
+        {
+          line = $0
+          sub(/^[[:space:]]+/, "", line)
+          sub(/[[:space:]]+$/, "", line)
+          if (line != "") {
+            print $0
+          }
+        }
+      ' "$other_requirements_file"
+    } >"$tmp_file"
+    rm -f "$other_requirements_file"
+    bundle_update_requirements_file "$tmp_file"
+    return
+  fi
+
+  for package in "${packages[@]}"; do
+    if bundle_requirement_version "$package" >/dev/null; then
+      selected_count=$((selected_count + 1))
+    fi
+  done
+  if [[ "$selected_count" -eq 0 ]]; then
+    rm -f "$tmp_file"
+    printf 'bundle item not selected: %s\n' "$item"
+    return 0
+  fi
+
+  bundle_write_without_packages "$tmp_file" "${packages[@]}"
+  bundle_update_requirements_file "$tmp_file"
+}
+
+wheel_name_version() {
+  local wheel_path="$1"
+  local filename
+  local base
+  local distribution
+  local version
+
+  filename="${wheel_path##*/}"
+  base="${filename%.whl}"
+  distribution="${base%%-*}"
+  base="${base#*-}"
+  version="${base%%-*}"
+  if [[ -n "$distribution" && -n "$version" ]]; then
+    printf '%s\t%s\n' "$(normalize_distribution_name "$distribution")" "$version"
+  fi
+}
+
+bundle_write_root_versions() {
+  local output_file="$1"
+  local line
+  local name
+  local base_name
+  local version
+  local wheel_info
+
+  : >"$output_file"
+  require_file "$requirements_file"
+  validate_requirements_file "$requirements_file"
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    if [[ "$line" == /wheels/*.whl ]]; then
+      wheel_info="$(wheel_name_version "$line")"
+      if [[ -n "$wheel_info" ]]; then
+        printf 'root\t%s\n' "$wheel_info" >>"$output_file"
+      fi
+      continue
+    fi
+    name="${line%%==*}"
+    base_name="${name%%[*}"
+    version="${line#*==}"
+    printf 'root\t%s\t%s\n' "$(normalize_distribution_name "$base_name")" "$version" >>"$output_file"
+  done < <(
+    awk '
+      {
+        line = $0
+        sub(/^[[:space:]]+/, "", line)
+        sub(/[[:space:]]+#.*$/, "", line)
+        sub(/[[:space:]]+$/, "", line)
+        if (line != "") {
+          print line
+        }
+      }
+    ' "$requirements_file"
+  )
+}
+
+bundle_root_summary() {
+  local root_versions
+
+  root_versions="$(mktemp "${TMPDIR:-/tmp}/arbiter-docker-roots.XXXXXX")"
+  bundle_write_root_versions "$root_versions"
+  awk -F '\t' '$1 == "root" { print $2 "==" $3 }' "$root_versions" | sort | paste -sd ' ' -
+  rm -f "$root_versions"
+}
+
+print_bundle_prepare_start() {
+  printf 'preparing bundle: %s\n' "$(bundle_root_summary)"
+}
+
+bundle_write_wheelhouse_versions() {
+  local output_file="$1"
+  local active_wheels_dir
+  local root_versions
+  local wheel
+  local wheel_info
+  local normalized_name
+  local version
+  local label
+
+  : >"$output_file"
+  active_wheels_dir="$(wheels_dir_path)"
+  [[ -d "$active_wheels_dir" ]] || return 0
+  root_versions="$(mktemp "${TMPDIR:-/tmp}/arbiter-docker-roots.XXXXXX")"
+  bundle_write_root_versions "$root_versions"
+
+  shopt -s nullglob
+  for wheel in "$active_wheels_dir"/*.whl; do
+    wheel_info="$(wheel_name_version "$wheel")"
+    [[ -n "$wheel_info" ]] || continue
+    normalized_name="${wheel_info%%$'\t'*}"
+    version="${wheel_info#*$'\t'}"
+    if grep -Fxq "root	$normalized_name	$version" "$root_versions"; then
+      label="root"
+    else
+      label="transitive"
+    fi
+    printf '%s\t%s\t%s\n' "$label" "$normalized_name" "$version" >>"$output_file"
+  done
+  shopt -u nullglob
+  sort -u "$output_file" -o "$output_file"
+  rm -f "$root_versions"
+}
+
+bundle_write_upgrade_snapshot() {
+  local output_file="$1"
+  local root_versions
+  local wheel_versions
+
+  root_versions="$(mktemp "${TMPDIR:-/tmp}/arbiter-docker-upgrade-roots.XXXXXX")"
+  wheel_versions="$(mktemp "${TMPDIR:-/tmp}/arbiter-docker-upgrade-wheels.XXXXXX")"
+  bundle_write_root_versions "$root_versions"
+  bundle_write_wheelhouse_versions "$wheel_versions"
+  {
+    cat "$root_versions"
+    awk -F '\t' '$1 == "transitive" { print }' "$wheel_versions"
+  } | sort -u >"$output_file"
+  rm -f "$root_versions" "$wheel_versions"
+}
+
+bundle_print_upgrade_section() {
+  local title="$1"
+  local label="$2"
+  local before_file="$3"
+  local after_file="$4"
+
+  printf '%s:\n' "$title"
+  awk -F '\t' -v label="$label" '
+    FILENAME == ARGV[1] && $1 == label {
+      before[$2] = $3
+      names[$2] = 1
+      next
+    }
+    FILENAME == ARGV[2] && $1 == label {
+      after[$2] = $3
+      names[$2] = 1
+      next
+    }
+    END {
+      for (name in names) {
+        old = before[name]
+        new = after[name]
+        if (old == new) {
+          continue
+        }
+        if (old == "") {
+          old = "not present"
+        }
+        if (new == "") {
+          new = "removed"
+        }
+        printf "  %s %s -> %s\n", name, old, new
+        changed = 1
+      }
+      if (!changed) {
+        print "  no changes"
+      }
+    }
+  ' "$before_file" "$after_file" | sort
+}
+
+bundle_print_upgrade_summary() {
+  local before_file="$1"
+  local after_file="$2"
+
+  printf 'bundle upgrade complete: %s\n' "$deploy_dir"
+  bundle_print_upgrade_section root root "$before_file" "$after_file"
+  bundle_print_upgrade_section transitive transitive "$before_file" "$after_file"
+}
+
+release_line_upper_bound() {
+  local release_line="$1"
+  local prefix
+  local last
+
+  prefix="${release_line%.*}"
+  last="${release_line##*.}"
+  if [[ "$prefix" == "$release_line" ]]; then
+    printf '%s\n' "$((10#$last + 1))"
+  else
+    printf '%s.%s\n' "$prefix" "$((10#$last + 1))"
+  fi
+}
+
+repo_root_from_start() {
+  local start="$1"
+
+  [[ -n "$start" ]] || return 1
+  if [[ ! -d "$start" ]]; then
+    start="$(dirname -- "$start")"
+  fi
+  start="$(cd -- "$start" 2>/dev/null && pwd -P)" || return 1
+
+  while [[ "$start" != "/" ]]; do
+    if [[ -f "$start/server/pyproject.toml" && -f "$start/plugins/imap/pyproject.toml" && -f "$start/plugins/smtp/pyproject.toml" ]]; then
+      printf '%s\n' "$start"
+      return 0
+    fi
+    start="$(dirname -- "$start")"
+  done
+  return 1
+}
+
+find_repo_root() {
+  repo_root_from_start "$PWD" || repo_root_from_start "$deploy_dir"
+}
+
+repo_source_dir_for_package() {
+  case "$(normalize_distribution_name "$1")" in
+    arbiter-server)
+      printf 'server\n'
+      ;;
+    arbiter-imap)
+      printf 'plugins/imap\n'
+      ;;
+    arbiter-smtp)
+      printf 'plugins/smtp\n'
+      ;;
+    arbiter-suite)
+      printf 'meta/arbiter-suite\n'
+      ;;
+  esac
+}
+
+bundle_add_repo_wheel_sources_for_package() {
+  local source_list="$1"
+  local repo_root="$2"
+  local package_name="$3"
+  local normalized_name
+  local source_dir
+
+  normalized_name="$(normalize_distribution_name "$package_name")"
+  if [[ "$normalized_name" == "arbiter-suite" ]]; then
+    for package_name in arbiter-server arbiter-imap arbiter-smtp arbiter-suite; do
+      source_dir="$(repo_source_dir_for_package "$package_name")"
+      [[ -n "$source_dir" && -d "$repo_root/$source_dir" ]] || continue
+      printf '%s\n' "$repo_root/$source_dir" >>"$source_list"
+    done
+    return
+  fi
+
+  source_dir="$(repo_source_dir_for_package "$normalized_name")"
+  [[ -n "$source_dir" && -d "$repo_root/$source_dir" ]] || return
+  printf '%s\n' "$repo_root/$source_dir" >>"$source_list"
+}
+
+bundle_refresh_repo_wheels() {
+  local tmp_dir="$1"
+  local repo_root
+  local active_wheels_dir
+  local python_bin="${ARBITER_PYTHON:-}"
+  local build_dir
+  local output_file
+  local source_list
+  local line
+  local name
+  local wheel
+  local built_count=0
+
+  repo_root="$(find_repo_root)" || return 0
+  active_wheels_dir="$(wheels_dir_path)"
+  build_dir="$tmp_dir/repo-wheels"
+  output_file="$tmp_dir/repo-wheel-build.out"
+  source_list="$tmp_dir/repo-wheel-sources"
+
+  if [[ -z "$python_bin" ]]; then
+    if [[ -x "$repo_root/.venv/bin/python" ]]; then
+      python_bin="$repo_root/.venv/bin/python"
+    elif command -v python >/dev/null; then
+      python_bin="python"
+    elif command -v python3 >/dev/null; then
+      python_bin="python3"
+    else
+      printf 'error: cannot build local repo wheels: python command not found\n' >&2
+      printf '       set ARBITER_PYTHON or use bundle upgrade --pypi-only\n' >&2
+      return 1
+    fi
+  fi
+
+  mkdir -p "$active_wheels_dir" "$build_dir"
+  : >"$source_list"
+
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    [[ "$line" != /* ]] || continue
+    name="${line%%==*}"
+    name="${name%%[*}"
+    bundle_add_repo_wheel_sources_for_package "$source_list" "$repo_root" "$name"
+  done < <(
+    awk '
+      {
+        line = $0
+        sub(/^[[:space:]]+/, "", line)
+        sub(/[[:space:]]+#.*$/, "", line)
+        sub(/[[:space:]]+$/, "", line)
+        if (line != "") {
+          print line
+        }
+      }
+    ' "$requirements_file"
+  )
+
+  if [[ ! -s "$source_list" ]]; then
+    return 0
+  fi
+  sort -u "$source_list" -o "$source_list"
+
+  while IFS= read -r source_dir; do
+    if ! "$python_bin" -m pip --disable-pip-version-check wheel --no-deps --no-build-isolation --wheel-dir "$build_dir" "$source_dir" >"$output_file" 2>&1; then
+      cat "$output_file" >&2
+      printf 'error: failed to build local repo wheel: %s\n' "$source_dir" >&2
+      printf '       use --pypi-only to resolve only from the package index\n' >&2
+      return 1
+    fi
+    built_count=$((built_count + 1))
+  done <"$source_list"
+
+  if [[ "$built_count" -eq 0 ]]; then
+    return 0
+  fi
+
+  shopt -s nullglob
+  for wheel in "$build_dir"/*.whl; do
+    cp "$wheel" "$active_wheels_dir/${wheel##*/}"
+  done
+  shopt -u nullglob
+}
+
+bundle_upgrade_build_input() {
+  local target="$1"
+  local input_file="$2"
+  local roots_file="$3"
+  local mode="all"
+  local target_name=""
+  local target_base=""
+  local target_normalized=""
+  local release_upper=""
+  local found_target=0
+  local root_count=0
+  local line
+  local name
+  local base_name
+  local version
+  local normalized_name
+  local display_name
+  local spec
+  local has_wheel_root=0
+
+  require_file "$requirements_file"
+  validate_requirements_file "$requirements_file"
+
+  if [[ -n "$target" ]]; then
+    if [[ "$target" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+      mode="release"
+      release_upper="$(release_line_upper_bound "$target")"
+    elif [[ "$target" == *"=="* ]]; then
+      mode="exact"
+      target_name="${target%%==*}"
+      target_base="${target_name%%[*}"
+      target_normalized="$(normalize_distribution_name "$target_base")"
+    else
+      mode="package"
+      target_normalized="$(normalize_distribution_name "$target")"
+    fi
+  fi
+
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    if [[ "$line" == /wheels/*.whl ]]; then
+      has_wheel_root=1
+      printf '%s\n' "$line" >>"$input_file"
+      root_count=$((root_count + 1))
+      continue
+    fi
+
+    name="${line%%==*}"
+    base_name="${name%%[*}"
+    version="${line#*==}"
+    normalized_name="$(normalize_distribution_name "$base_name")"
+    display_name="$name"
+    spec="$line"
+
+    case "$mode" in
+      all)
+        spec="$name>=$version"
+        ;;
+      release)
+        spec="$name>=$version,>=$target,<$release_upper"
+        ;;
+      package)
+        if [[ "$normalized_name" == "$target_normalized" ]]; then
+          spec="$name>=$version"
+          found_target=1
+        fi
+        ;;
+      exact)
+        if [[ "$normalized_name" == "$target_normalized" ]]; then
+          spec="$target"
+          display_name="$target_name"
+          found_target=1
+        fi
+        ;;
+    esac
+
+    printf '%s\n' "$spec" >>"$input_file"
+    printf '%s\t%s\n' "$normalized_name" "$display_name" >>"$roots_file"
+    root_count=$((root_count + 1))
+  done < <(
+    awk '
+      {
+        line = $0
+        sub(/^[[:space:]]+/, "", line)
+        sub(/[[:space:]]+#.*$/, "", line)
+        sub(/[[:space:]]+$/, "", line)
+        if (line != "") {
+          print line
+        }
+      }
+    ' "$requirements_file"
+  )
+
+  if [[ "$root_count" -eq 0 ]]; then
+    printf 'error: requirements file has no root requirements: %s\n' "$requirements_file" >&2
+    return 1
+  fi
+  if [[ "$has_wheel_root" -eq 1 ]]; then
+    if [[ "$mode" != all ]]; then
+      printf 'error: targeted bundle upgrade requires package root requirements, but this bundle has wheel roots\n' >&2
+      printf '       use package pins for index-managed upgrades, or run bundle upgrade with no arguments to refresh the wheelhouse\n' >&2
+      return 1
+    fi
+    if [[ ! -s "$roots_file" ]]; then
+      return 3
+    fi
+    printf 'error: cannot mix wheel roots and package roots for bundle upgrade\n' >&2
+    printf '       use either package pins for index-managed upgrades or wheel paths for local artifact bundles\n' >&2
+    return 1
+  fi
+  if [[ "$mode" == package || "$mode" == exact ]] && [[ "$found_target" -eq 0 ]]; then
+    printf 'error: package is not a root requirement: %s\n' "$target" >&2
+    printf '       use bundle add first, or run bundle list to see root requirements\n' >&2
+    return 1
+  fi
+}
+
+bundle_pypi_prepare_build_input() {
+  local input_file="$1"
+  local roots_file="$2"
+  local root_count=0
+  local line
+  local name
+  local base_name
+
+  require_file "$requirements_file"
+  validate_requirements_file "$requirements_file"
+  if requirements_has_absolute_paths "$requirements_file"; then
+    printf 'error: prepare --pypi-only requires package pins, but requirements.txt contains absolute paths\n' >&2
+    printf '       replace /wheels/*.whl or source paths with package==version pins\n' >&2
+    return 1
+  fi
+
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    name="${line%%==*}"
+    base_name="${name%%[*}"
+    printf '%s\n' "$name" >>"$input_file"
+    printf '%s\t%s\n' "$(normalize_distribution_name "$base_name")" "$name" >>"$roots_file"
+    root_count=$((root_count + 1))
+  done < <(
+    awk '
+      {
+        line = $0
+        sub(/^[[:space:]]+/, "", line)
+        sub(/[[:space:]]+#.*$/, "", line)
+        sub(/[[:space:]]+$/, "", line)
+        if (line != "") {
+          print line
+        }
+      }
+    ' "$requirements_file"
+  )
+
+  if [[ "$root_count" -eq 0 ]]; then
+    printf 'error: requirements file has no root requirements: %s\n' "$requirements_file" >&2
+    return 1
+  fi
+}
+
+bundle_upgrade_resolve() {
+  local input_file="$1"
+  local roots_file="$2"
+  local output_file="$3"
+  local pypi_only="$4"
+  local allow_pre="${5:-0}"
+  local action_label="${6:-bundle upgrade}"
+  local tmp_dir
+  local image
+  local docker_user
+  local active_wheels_dir
+  local parse_script
+  local -a resolve_command
+  local -a parse_command
+  local -a wheel_mount_args=()
+  local -a find_links_args=()
+  local -a pre_args=()
+
+  tmp_dir="$(dirname "$input_file")"
+  image="$(compose_env_value ARBITER_IMAGE python:3.11-slim)"
+  docker_user="$(id -u):$(id -g)"
+  active_wheels_dir="$(wheels_dir_path)"
+  if [[ "$pypi_only" -eq 0 && -d "$active_wheels_dir" ]]; then
+    wheel_mount_args=(-v "$active_wheels_dir:/wheels:ro")
+    find_links_args=(--find-links /wheels)
+  fi
+  if [[ "$allow_pre" -eq 1 ]]; then
+    pre_args=(--pre)
+  fi
+  require_docker_access
+
+  resolve_command=(
+    docker run --rm
+    --user "$docker_user"
+    -v "$tmp_dir:/work"
+  )
+  if [[ "${#wheel_mount_args[@]}" -gt 0 ]]; then
+    resolve_command+=("${wheel_mount_args[@]}")
+  fi
+  resolve_command+=(
+    "$image"
+    python -m pip --disable-pip-version-check install
+    --dry-run --ignore-installed
+  )
+  if [[ "${#pre_args[@]}" -gt 0 ]]; then
+    resolve_command+=("${pre_args[@]}")
+  fi
+  if [[ "${#find_links_args[@]}" -gt 0 ]]; then
+    resolve_command+=("${find_links_args[@]}")
+  fi
+  resolve_command+=(
+    --report /work/report.json
+    -r /work/requirements.in
+  )
+
+  if ! "${resolve_command[@]}" >"$tmp_dir/pip-resolve.out" 2>&1; then
+    cat "$tmp_dir/pip-resolve.out" >&2
+    printf 'error: failed to resolve %s\n' "$action_label" >&2
+    return 1
+  fi
+
+  parse_script='import json
+import re
+import sys
+
+def normalize(name):
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+with open("/work/roots.tsv", encoding="utf-8") as handle:
+    roots = [line.rstrip("\n").split("\t", 1) for line in handle if line.strip()]
+with open("/work/report.json", encoding="utf-8") as handle:
+    report = json.load(handle)
+
+versions = {}
+for entry in report.get("install", []):
+    metadata = entry.get("metadata", {})
+    name = metadata.get("name")
+    version = metadata.get("version")
+    if name and version:
+        versions[normalize(name)] = version
+
+missing = [display for normalized, display in roots if normalized not in versions]
+if missing:
+    print("missing resolved root package versions: " + ", ".join(missing), file=sys.stderr)
+    sys.exit(1)
+
+with open("/work/requirements.out", "w", encoding="utf-8") as handle:
+    for normalized, display in roots:
+        handle.write(f"{display}=={versions[normalized]}\n")
+'
+  parse_command=(
+    docker run --rm
+    --user "$docker_user"
+    -v "$tmp_dir:/work"
+    "$image"
+    python -c "$parse_script"
+  )
+  "${parse_command[@]}"
+  cp "$tmp_dir/requirements.out" "$output_file"
+}
+
+prepare_pypi_only_requirements() {
+  local target_requirements_file="$1"
+  local tmp_dir
+  local input_file
+  local roots_file
+  local output_file
+
+  tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/arbiter-pypi-prepare.XXXXXX")"
+  input_file="$tmp_dir/requirements.in"
+  roots_file="$tmp_dir/roots.tsv"
+  output_file="$tmp_dir/requirements.resolved"
+
+  if ! bundle_pypi_prepare_build_input "$input_file" "$roots_file"; then
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+  if ! bundle_upgrade_resolve "$input_file" "$roots_file" "$output_file" 1 1 "package-index preparation"; then
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+  if ! validate_requirements_file "$output_file"; then
+    printf 'error: resolved requirements are invalid; requirements unchanged: %s\n' "$requirements_file" >&2
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+
+  cp "$output_file" "$target_requirements_file"
+  rm -rf "$tmp_dir"
+}
+
+prepare_pypi_only() {
+  local target_wheels_dir="$1"
+  local docker_user="$2"
+  local image="$3"
+  local tmp_dir
+  local staged_requirements_file
+  local staged_wheels_dir
+
+  tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/arbiter-pypi-prepare-transaction.XXXXXX")"
+  staged_requirements_file="$tmp_dir/requirements.txt"
+  staged_wheels_dir="$tmp_dir/wheels"
+  mkdir -p "$staged_wheels_dir"
+
+  if ! prepare_pypi_only_requirements "$staged_requirements_file"; then
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+  if ! prepare_dependency_wheelhouse "$staged_requirements_file" "$staged_wheels_dir" "$docker_user" "$image" 1 1; then
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+  if ! validate_dependency_wheelhouse "$staged_requirements_file" "$staged_wheels_dir" "$docker_user" "$image" 1; then
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+
+  replace_dependency_wheelhouse "$staged_wheels_dir" "$target_wheels_dir"
+  if ! cmp -s "$requirements_file" "$staged_requirements_file"; then
+    cp "$staged_requirements_file" "$requirements_file"
+    printf 'updated requirements file from package index: %s\n' "$requirements_file"
+  fi
+  printf 'bundle prepare complete: %s\n' "$target_wheels_dir"
+  rm -rf "$tmp_dir"
+}
+
+bundle_upgrade() {
+  local target=""
+  local pypi_only=0
+  local tmp_dir
+  local input_file
+  local roots_file
+  local output_file
+  local before_file
+  local after_file
+  local build_status
+
+  while (($#)); do
+    case "$1" in
+      --pypi-only)
+        pypi_only=1
+        ;;
+      --)
+        shift
+        while (($#)); do
+          if [[ -n "$target" ]]; then
+            printf 'error: bundle upgrade accepts at most one package or release-line argument\n' >&2
+            return 2
+          fi
+          target="$1"
+          shift
+        done
+        break
+        ;;
+      -*)
+        printf 'error: unknown bundle upgrade option: %s\n' "$1" >&2
+        return 2
+        ;;
+      *)
+        if [[ -n "$target" ]]; then
+          printf 'error: bundle upgrade accepts at most one package or release-line argument\n' >&2
+          return 2
+        fi
+        target="$1"
+        ;;
+    esac
+    shift
+  done
+
+  tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/arbiter-bundle-upgrade.XXXXXX")"
+  input_file="$tmp_dir/requirements.in"
+  roots_file="$tmp_dir/roots.tsv"
+  output_file="$tmp_dir/requirements.resolved"
+  before_file="$tmp_dir/before.tsv"
+  after_file="$tmp_dir/after.tsv"
+  bundle_write_upgrade_snapshot "$before_file"
+
+  if [[ "$pypi_only" -eq 0 ]]; then
+    if ! bundle_refresh_repo_wheels "$tmp_dir"; then
+      rm -rf "$tmp_dir"
+      return 1
+    fi
+  fi
+
+  if bundle_upgrade_build_input "$target" "$input_file" "$roots_file"; then
+    build_status=0
+  else
+    build_status="$?"
+    if [[ "$build_status" -eq 3 ]]; then
+      if ! prepare_quiet; then
+        rm -rf "$tmp_dir"
+        return 1
+      fi
+      bundle_write_upgrade_snapshot "$after_file"
+      bundle_print_upgrade_summary "$before_file" "$after_file"
+      rm -rf "$tmp_dir"
+      return
+    fi
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+  if ! bundle_upgrade_resolve "$input_file" "$roots_file" "$output_file" "$pypi_only"; then
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+  if ! validate_requirements_file "$output_file"; then
+    printf 'error: resolved requirements are invalid; requirements unchanged: %s\n' "$requirements_file" >&2
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+
+  if cmp -s "$requirements_file" "$output_file"; then
+    :
+  else
+    cp "$output_file" "$requirements_file"
+  fi
+  if ! prepare_quiet; then
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+  bundle_write_upgrade_snapshot "$after_file"
+  bundle_print_upgrade_summary "$before_file" "$after_file"
+  rm -rf "$tmp_dir"
+}
+
+env_file_value() {
+  local env_path="$1"
+  local key="$2"
+  [[ -f "$env_path" ]] || return 1
+
+  awk -v key="$key" '
+    $0 ~ "^[[:space:]]*#" { next }
+    index($0, key "=") == 1 {
+      print substr($0, length(key) + 2)
+      found = 1
+      exit
+    }
+    END {
+      if (!found) {
+        exit 1
+      }
+    }
+  ' "$env_path"
+}
+
+set_env_file_value() {
+  local env_path="$1"
+  local key="$2"
+  local value="$3"
+  local tmp_path
+
+  require_file "$env_path"
+  tmp_path="$(mktemp "${TMPDIR:-/tmp}/arbiter-env.XXXXXX")"
+  awk -v key="$key" -v value="$value" '
+    index($0, key "=") == 1 {
+      print key "=" value
+      found = 1
+      next
+    }
+    { print }
+    END {
+      if (!found) {
+        print key "=" value
+      }
+    }
+  ' "$env_path" >"$tmp_path"
+  mv "$tmp_path" "$env_path"
+}
+
+compose_env_value() {
+  local key="$1"
+  local default="$2"
+
+  env_file_value "$compose_env_file" "$key" || printf '%s\n' "$default"
+}
+
+set_compose_env_value() {
+  local key="$1"
+  local value="$2"
+
+  set_env_file_value "$compose_env_file" "$key" "$value"
+}
+
+container_name_value() {
+  compose_env_value ARBITER_CONTAINER_NAME arbiter-staging
+}
+
+compose_project_name() {
+  local name="${COMPOSE_PROJECT_NAME:-}"
+
+  if [[ -z "$name" ]]; then
+    name="$(basename -- "$deploy_dir")"
+  fi
+  printf '%s\n' "$name" | tr '[:upper:]' '[:lower:]'
+}
+
+deploy_path_from_compose_value() {
+  local value="$1"
+
+  if [[ "$value" = /* ]]; then
+    printf '%s\n' "$value"
+  else
+    printf '%s/%s\n' "$deploy_dir" "${value#./}"
+  fi
+}
+
+config_dir_path() {
+  deploy_path_from_compose_value "$(compose_env_value ARBITER_CONFIG_DIR ./conf)"
+}
+
+wheels_dir_path() {
+  deploy_path_from_compose_value "$(compose_env_value ARBITER_WHEELS_DIR ./wheels)"
+}
+
+config_name_value() {
+  compose_env_value ARBITER_CONFIG_NAME arbiter-server
+}
+
+app_env_path() {
+  deploy_path_from_compose_value "$(compose_env_value ARBITER_APP_ENV_FILE ./conf/.env)"
+}
+
+server_host_url_value() {
+  local host
+
+  host="$(compose_env_value ARBITER_HOST_BIND 127.0.0.1)"
+  case "$host" in
+    0.0.0.0)
+      printf '127.0.0.1\n'
+      ;;
+    *:*)
+      printf '[%s]\n' "$host"
+      ;;
+    *)
+      printf '%s\n' "$host"
+      ;;
+  esac
+}
+
+mcp_url_value() {
+  printf 'http://%s:%s/mcp\n' \
+    "$(server_host_url_value)" \
+    "$(compose_env_value ARBITER_HOST_PORT 18025)"
+}
+
+print_mcp_url_value() {
+  local url="$1"
+
+  printf ' '
+  doctor_prefix 32 "✔"
+  printf ' MCP URL: '
+  doctor_prefix 94 "$url"
+  printf '\n'
+}
+
+print_mcp_url() {
+  print_mcp_url_value "$(mcp_url_value)"
+}
+
+print_staging_port_note() {
+  local host_port
+
+  deployment_is_staged || return 0
+  host_port="$(compose_env_value ARBITER_HOST_PORT 18025)"
+  [[ "$host_port" != 8025 ]] || return 0
+  printf ' '
+  doctor_prefix 32 "✔"
+  printf ' Staging MCP port: 8025 -> %s to prevent collision\n' "$host_port"
+}
+
+test_server_url() {
+  local url="$1"
+  local client_command
+  local output_file
+  local timeout
+  local start_time
+
+  client_command="${ARBITER_CLIENT_COMMAND:-arbiter}"
+  if ! command -v "$client_command" >/dev/null; then
+    printf 'error: Arbiter client command not found: %s\n' "$client_command" >&2
+    printf '       activate the environment that provides arbiter, or set ARBITER_CLIENT_COMMAND\n' >&2
+    return 1
+  fi
+
+  output_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-docker-test.XXXXXX")"
+  timeout="${ARBITER_TEST_TIMEOUT:-60}"
+  start_time="$SECONDS"
+  while true; do
+    if "$client_command" mcp call version_info "arbiter.mcp_url=$url" >"$output_file" 2>&1; then
+      rm -f "$output_file"
+      printf ' '
+      doctor_prefix 32 "✔"
+      printf ' MCP test: '
+      doctor_prefix 94 "$url"
+      printf '\n'
+      return 0
+    fi
+    if ! grep -Eiq 'connection error|could not connect|connection refused|all connection attempts failed' "$output_file"; then
+      break
+    fi
+    if ((SECONDS - start_time >= timeout)); then
+      break
+    fi
+    sleep 1
+  done
+  rm -f "$output_file"
+  printf ' '
+  doctor_prefix 31 "✘"
+  printf ' MCP test: '
+  doctor_prefix 94 "$url"
+  printf '\n'
+  return 1
+}
+
+test_server() {
+  test_server_url "$(mcp_url_value)"
+}
+
+config_main_file() {
+  printf '%s/%s.yaml\n' "$(config_dir_path)" "$(config_name_value)"
+}
+
+sync_env() {
+  local active_config_dir
+  local active_config_name
+
+  active_config_dir="$(config_dir_path)"
+  active_config_name="$(config_name_value)"
+  require_dir "$active_config_dir"
+  require_file "$(config_main_file)"
+  arbiter-server --config-dir "$active_config_dir" --config-name "$active_config_name" env bootstrap
+}
+
+run_editor() {
+  local path="$1"
+  local -a editor=()
+
+  if [[ -n "${ARBITER_EDITOR:-}" ]]; then
+    read -r -a editor <<<"$ARBITER_EDITOR"
+  elif [[ -n "${EDITOR:-}" ]]; then
+    read -r -a editor <<<"$EDITOR"
+  else
+    editor=(vi)
+  fi
+
+  "${editor[@]}" "$path"
+}
+
+inspect_existing_container() {
+  local container_name="$1"
+  local output_file="$2"
+
+  docker inspect "$container_name" --format \
+    'name={{.Name}}
+project={{index .Config.Labels "com.docker.compose.project"}}
+service={{index .Config.Labels "com.docker.compose.service"}}
+config_files={{index .Config.Labels "com.docker.compose.project.config_files"}}
+working_dir={{index .Config.Labels "com.docker.compose.project.working_dir"}}
+oneoff={{index .Config.Labels "com.docker.compose.oneoff"}}
+image={{.Config.Image}}
+created={{.Created}}
+status={{.State.Status}}
+restart={{.HostConfig.RestartPolicy.Name}}' >"$output_file" 2>/dev/null
+}
+
+container_info_value() {
+  local info_file="$1"
+  local key="$2"
+
+  awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; exit }' "$info_file"
+}
+
+print_container_owner_details() {
+  local info_file="$1"
+  local prefix="$2"
+  local project
+  local service
+  local config_files
+  local working_dir
+  local image
+  local status
+  local restart
+
+  project="$(container_info_value "$info_file" project)"
+  service="$(container_info_value "$info_file" service)"
+  config_files="$(container_info_value "$info_file" config_files)"
+  working_dir="$(container_info_value "$info_file" working_dir)"
+  image="$(container_info_value "$info_file" image)"
+  status="$(container_info_value "$info_file" status)"
+  restart="$(container_info_value "$info_file" restart)"
+
+  if [[ -n "$project" ]]; then
+    printf '%sowner compose project: %s\n' "$prefix" "$project"
+    [[ -n "$service" ]] && printf '%sowner compose service: %s\n' "$prefix" "$service"
+    [[ -n "$working_dir" ]] && printf '%sowner deployment dir: %s\n' "$prefix" "$working_dir"
+    [[ -n "$config_files" ]] && printf '%sowner compose file: %s\n' "$prefix" "$config_files"
+  else
+    printf '%sowner: not labeled as a Docker Compose container\n' "$prefix"
+  fi
+  [[ -n "$image" ]] && printf '%simage: %s\n' "$prefix" "$image"
+  [[ -n "$status" ]] && printf '%sstatus: %s\n' "$prefix" "$status"
+  [[ -n "$restart" ]] && printf '%srestart policy: %s\n' "$prefix" "$restart"
+}
+
+check_container_name_owner() {
+  local mode="$1"
+  local container_name
+  local expected_project
+  local info_file
+  local actual_project
+  local actual_config_files
+  local actual_working_dir
+
+  container_name="$(container_name_value)"
+  expected_project="$(compose_project_name)"
+  info_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-container-owner.XXXXXX")"
+
+  if ! inspect_existing_container "$container_name" "$info_file"; then
+    rm -f "$info_file"
+    return 0
+  fi
+
+  actual_project="$(container_info_value "$info_file" project)"
+  actual_config_files="$(container_info_value "$info_file" config_files)"
+  actual_working_dir="$(container_info_value "$info_file" working_dir)"
+
+  if [[ "$actual_project" == "$expected_project" && "$actual_working_dir" == "$deploy_dir" ]]; then
+    rm -f "$info_file"
+    return 0
+  fi
+  if [[ "$actual_project" == "$expected_project" && "$actual_config_files" == "$compose_file" ]]; then
+    rm -f "$info_file"
+    return 0
+  fi
+
+  case "$mode" in
+    error)
+      printf 'error: container name is already owned by another deployment: %s\n' "$container_name" >&2
+      printf '       this deployment dir: %s\n' "$deploy_dir" >&2
+      printf '       this compose project: %s\n' "$expected_project" >&2
+      print_container_owner_details "$info_file" '       ' >&2
+      printf '       note: docker ps shows only running containers; use docker ps -a --filter name=^/%s$ to see stopped containers\n' "$container_name" >&2
+      printf '       stop it with the owning deployment helper, or set ARBITER_CONTAINER_NAME in %s\n' "$compose_env_file" >&2
+      ;;
+    warn)
+      printf 'container name in use by another deployment: %s\n' "$container_name"
+      printf '  this deployment dir: %s\n' "$deploy_dir"
+      printf '  this compose project: %s\n' "$expected_project"
+      print_container_owner_details "$info_file" '  '
+      ;;
+  esac
+
+  rm -f "$info_file"
+  return 1
+}
+
+deployment_is_staged() {
+  grep -q 'arbiter\.deployment_scope=staged' "$compose_file"
+}
+
+cidr_range() {
+  local cidr="$1"
+  local ip
+  local prefix
+  local a
+  local b
+  local c
+  local d
+  local ip_int
+  local host_count
+  local mask
+  local start
+  local end
+
+  [[ "$cidr" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)\.([0-9]+)/([0-9]+)$ ]] || return 1
+  ip="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}.${BASH_REMATCH[4]}"
+  prefix="${BASH_REMATCH[5]}"
+  IFS=. read -r a b c d <<<"$ip"
+  ((a >= 0 && a <= 255 && b >= 0 && b <= 255 && c >= 0 && c <= 255 && d >= 0 && d <= 255)) || return 1
+  ((prefix >= 0 && prefix <= 32)) || return 1
+
+  ip_int=$(((a << 24) + (b << 16) + (c << 8) + d))
+  host_count=$((1 << (32 - prefix)))
+  mask=$((0xFFFFFFFF ^ (host_count - 1)))
+  start=$((ip_int & mask))
+  end=$((start + host_count - 1))
+  printf '%s %s\n' "$start" "$end"
+}
+
+cidr_overlaps() {
+  local left="$1"
+  local right="$2"
+  local left_range
+  local right_range
+  local left_start
+  local left_end
+  local right_start
+  local right_end
+
+  left_range="$(cidr_range "$left")" || return 1
+  right_range="$(cidr_range "$right")" || return 1
+  read -r left_start left_end <<<"$left_range"
+  read -r right_start right_end <<<"$right_range"
+  ((left_start <= right_end && right_start <= left_end))
+}
+
+docker_network_subnet_lines() {
+  local network_ids
+
+  network_ids="$(docker network ls -q)" || return 1
+  [[ -n "$network_ids" ]] || return 0
+  docker network inspect $network_ids --format '{{.Name}} {{range .IPAM.Config}}{{.Subnet}} {{end}}' 2>/dev/null
+}
+
+docker_subnet_conflict() {
+  local candidate_subnet="$1"
+  local configured_network="$2"
+  local network_line
+  local network_name
+  local network_subnets
+  local network_subnet
+
+  while IFS= read -r network_line; do
+    [[ -n "$network_line" ]] || continue
+    network_name="${network_line%% *}"
+    network_subnets="${network_line#* }"
+    [[ "$network_subnets" != "$network_line" ]] || continue
+    [[ "$network_name" != "$configured_network" ]] || continue
+    for network_subnet in $network_subnets; do
+      [[ "$network_subnet" == */* ]] || continue
+      if cidr_overlaps "$candidate_subnet" "$network_subnet"; then
+        return 0
+      fi
+    done
+  done < <(docker_network_subnet_lines)
+
+  return 1
+}
+
+staging_subnet_candidates() {
+  local third_octet
+
+  printf '172.31.251.0/24\n'
+  for third_octet in {200..239}; do
+    printf '10.213.%s.0/24\n' "$third_octet"
+  done
+  for third_octet in {200..239}; do
+    printf '192.168.%s.0/24\n' "$third_octet"
+  done
+  for third_octet in {240..249}; do
+    printf '172.31.%s.0/24\n' "$third_octet"
+  done
+}
+
+ensure_staging_subnet_available() {
+  local configured_network
+  local configured_subnet
+  local candidate_subnet
+
+  deployment_is_staged || return 0
+  configured_network="$(compose_env_value ARBITER_DOCKER_NETWORK_NAME arbiter-staging)"
+  configured_subnet="$(compose_env_value ARBITER_DOCKER_SUBNET 172.31.251.0/24)"
+  [[ -n "$configured_subnet" ]] || return 0
+
+  if ! docker_subnet_conflict "$configured_subnet" "$configured_network"; then
+    return 0
+  fi
+
+  while IFS= read -r candidate_subnet; do
+    [[ -n "$candidate_subnet" ]] || continue
+    if ! docker_subnet_conflict "$candidate_subnet" "$configured_network"; then
+      set_compose_env_value ARBITER_DOCKER_SUBNET "$candidate_subnet"
+      printf 'updated staging Docker subnet: %s -> %s\n' "$configured_subnet" "$candidate_subnet"
+      return 0
+    fi
+  done < <(staging_subnet_candidates)
+
+  printf 'error: could not find an unused staging Docker subnet\n' >&2
+  return 1
+}
+
+compose() {
+  local active_config_dir
+
+  require_file "$compose_file"
+  active_config_dir="$(config_dir_path)"
+  require_dir "$active_config_dir"
+  require_file "$(config_main_file)"
+  require_file "$(app_env_path)"
+  require_file "$compose_env_file"
+  require_file "$requirements_file"
+  validate_requirements_file "$requirements_file"
+  require_docker_access
+  if [[ "${1:-}" == up ]]; then
+    ensure_staging_subnet_available
+    check_container_name_owner error
+  fi
+
+  cd "$deploy_dir"
+  if [[ -f "$compose_override_file" ]]; then
+    docker compose --env-file "$compose_env_file" -f "$compose_file" -f "$compose_override_file" "$@"
+  else
+    docker compose --env-file "$compose_env_file" -f "$compose_file" "$@"
+  fi
+}
+
+docker_access_error_matches_permission() {
+  grep -Eiq 'permission denied|permission.*docker|docker.*permission' "$1"
+}
+
+print_docker_access_error() {
+  local output_file="$1"
+  local user_name
+  local groups_line
+
+  user_name="$(id -un 2>/dev/null || printf '%s' "${USER:-unknown}")"
+  groups_line="$(id -nG 2>/dev/null || true)"
+
+  printf 'error: Docker daemon is not accessible by user %s\n' "$user_name" >&2
+  if [[ -n "$groups_line" ]]; then
+    printf '       current groups: %s\n' "$groups_line" >&2
+  fi
+  printf '       run as a user with Docker access, for example:\n' >&2
+  printf '         sudo usermod -aG docker %s\n' "$user_name" >&2
+  printf '       then log out and back in so group membership is refreshed\n' >&2
+  printf '       alternatively run this command with sudo or use the installed systemd service\n' >&2
+  if [[ -s "$output_file" ]]; then
+    printf '       docker said: %s\n' "$(tr '\n' ' ' <"$output_file" | sed 's/[[:space:]]*$//')" >&2
+  fi
+}
+
+require_docker_access() {
+  local output_file
+
+  if ! command -v docker >/dev/null; then
+    printf 'error: docker command not found\n' >&2
+    return 1
+  fi
+
+  output_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-docker-access.XXXXXX")"
+  if docker info >/dev/null 2>"$output_file"; then
+    rm -f "$output_file"
+    return 0
+  fi
+
+  if docker_access_error_matches_permission "$output_file"; then
+    print_docker_access_error "$output_file"
+  else
+    cat "$output_file" >&2
+    printf 'error: Docker daemon is not available\n' >&2
+  fi
+  rm -f "$output_file"
+  return 1
+}
+
+doctor_check_docker_access() {
+  local output_file
+
+  if ! command -v docker >/dev/null; then
+    doctor_fail "docker command not found"
+    return
+  fi
+
+  output_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-docker-access.XXXXXX")"
+  if docker info >/dev/null 2>"$output_file"; then
+    doctor_ok "Docker daemon is accessible"
+  elif docker_access_error_matches_permission "$output_file"; then
+    doctor_fail "Docker daemon is not accessible by this user"
+    doctor_detail "run as a user with Docker access, or add this user to the docker group and log out/back in"
+  else
+    doctor_fail "Docker daemon is not available"
+    if [[ -s "$output_file" ]]; then
+      doctor_detail "$(tr '\n' ' ' <"$output_file" | sed 's/[[:space:]]*$//')"
+    fi
+  fi
+  rm -f "$output_file"
+}
+
+doctor_check_container_name_owner() {
+  local container_name
+
+  if ! command -v docker >/dev/null || ! docker info >/dev/null 2>&1; then
+    return
+  fi
+
+  container_name="$(container_name_value)"
+  if check_container_name_owner quiet; then
+    doctor_ok "container name is not owned by another deployment: $container_name"
+  else
+    doctor_warn "container name is in use by another deployment: $container_name"
+    check_container_name_owner warn || true
+  fi
+}
+
+manifest_compose_hash() {
+  local manifest_file="$deploy_dir/.arbiter-deploy.json"
+
+  [[ -f "$manifest_file" ]] || return 1
+  awk '
+    /"compose.yaml"/ { in_compose = 1 }
+    in_compose && /"sha256"/ {
+      line = $0
+      sub(/^.*"sha256"[[:space:]]*:[[:space:]]*"/, "", line)
+      sub(/".*$/, "", line)
+      print line
+      found = 1
+      exit
+    }
+    END { exit found ? 0 : 1 }
+  ' "$manifest_file"
+}
+
+file_sha256() {
+  local path="$1"
+
+  if command -v sha256sum >/dev/null; then
+    sha256sum "$path" | awk '{print $1}'
+  else
+    shasum -a 256 "$path" | awk '{print $1}'
+  fi
+}
+
+compose_file_matches_manifest() {
+  local expected_hash
+  local current_hash
+
+  require_file "$compose_file"
+  expected_hash="$(manifest_compose_hash)" || return 1
+  [[ -n "$expected_hash" ]] || return 1
+  if ! command -v sha256sum >/dev/null && ! command -v shasum >/dev/null; then
+    return 1
+  fi
+  current_hash="$(file_sha256 "$compose_file")"
+  [[ "$current_hash" == "$expected_hash" ]]
+}
+
+compose_manifest_mismatch_reason() {
+  local manifest_file="$deploy_dir/.arbiter-deploy.json"
+  local expected_hash
+  local current_hash
+
+  if [[ ! -f "$manifest_file" ]]; then
+    printf 'deployment manifest is missing'
+    return
+  fi
+  expected_hash="$(manifest_compose_hash || true)"
+  if [[ -z "$expected_hash" ]]; then
+    printf 'compose.yaml is not recorded in the deployment manifest'
+    return
+  fi
+  if ! command -v sha256sum >/dev/null && ! command -v shasum >/dev/null; then
+    printf 'sha256sum or shasum is not available'
+    return
+  fi
+  current_hash="$(file_sha256 "$compose_file")"
+  if [[ "$current_hash" != "$expected_hash" ]]; then
+    printf 'compose.yaml has local edits'
+    return
+  fi
+  printf 'compose.yaml manifest ownership could not be verified'
+}
+
+args_include() {
+  local expected="$1"
+  shift
+  local arg
+
+  for arg in "$@"; do
+    [[ "$arg" == "$expected" ]] && return 0
+  done
+  return 1
+}
+
+args_array_include() {
+  local expected="$1"
+  shift
+
+  if [[ "$#" -eq 0 ]]; then
+    return 1
+  fi
+  args_include "$expected" "$@"
+}
+
+compose_down() {
+  local -a args=("$@")
+  local has_remove_orphans=0
+  local reason
+
+  if [[ "${#args[@]}" -gt 0 ]] && args_array_include --remove-orphans "${args[@]}"; then
+    has_remove_orphans=1
+  fi
+
+  if compose_file_matches_manifest && [[ "$has_remove_orphans" -eq 0 ]]; then
+    args=(--remove-orphans "${args[@]}")
+  elif [[ "$has_remove_orphans" -eq 0 ]]; then
+    reason="$(compose_manifest_mismatch_reason)"
+    printf 'not removing orphan containers automatically: %s\n' "$reason" >&2
+    printf 'pass --remove-orphans to down if you want to remove stale services\n' >&2
+  fi
+  if [[ "${#args[@]}" -gt 0 ]]; then
+    compose down "${args[@]}"
+  else
+    compose down
+  fi
+}
+
+info() {
+  printf 'deploy dir: %s\n' "$deploy_dir"
+  printf 'compose file: %s\n' "$compose_file"
+  if [[ -f "$compose_override_file" ]]; then
+    printf 'compose override file: %s\n' "$compose_override_file"
+  fi
+  printf 'compose project: %s\n' "$(compose_project_name)"
+  printf 'container name: %s\n' "$(container_name_value)"
+  printf 'config dir: %s\n' "$(config_dir_path)"
+  printf 'config name: %s\n' "$(config_name_value)"
+  printf 'app env file: %s\n' "$(app_env_path)"
+  printf 'docker env file: %s\n' "$compose_env_file"
+  printf 'requirements file: %s\n' "$requirements_file"
+  printf 'wheels dir: %s\n' "$(wheels_dir_path)"
+  print_mcp_url
+  if command -v docker >/dev/null && docker info >/dev/null 2>&1; then
+    check_container_name_owner warn || true
+  fi
+  docker compose version || true
+}
+
+doctor_status=0
+doctor_agent_uid=""
+doctor_agent_user=""
+doctor_agent_groups=""
+doctor_agent_group_names=""
+doctor_preinstall=0
+doctor_quiet=0
+
+color_enabled() {
+  [[ "${ARBITER_COLOR:-}" == always ]] && return 0
+  [[ "${ARBITER_COLOR:-}" == never ]] && return 1
+  [[ -t 1 ]]
+}
+
+doctor_prefix() {
+  local color="$1"
+  local label="$2"
+
+  if color_enabled; then
+    printf '\033[%sm%s\033[0m' "$color" "$label"
+  else
+    printf '%s' "$label"
+  fi
+}
+
+doctor_line() {
+  local color="$1"
+  local label="$2"
+  local message="$3"
+
+  doctor_prefix "$color" "$label"
+  printf ': %s\n' "$message"
+}
+
+doctor_ok() {
+  [[ "${doctor_quiet:-0}" -eq 1 ]] && return
+  doctor_line 32 ok "$1"
+}
+
+doctor_warn() {
+  doctor_line 33 warn "$1"
+}
+
+doctor_detail() {
+  printf '      %s\n' "$1"
+}
+
+doctor_fail() {
+  doctor_line 31 fail "$1"
+  doctor_status=1
+}
+
+doctor_check_file() {
+  local path="$1"
+  local description="$2"
+
+  if [[ -f "$path" ]]; then
+    doctor_ok "$description exists: $path"
+  else
+    doctor_fail "$description is missing: $path"
+  fi
+}
+
+path_is_under_deploy_dir() {
+  local path="$1"
+  local real_deploy_dir
+  local real_path
+
+  real_deploy_dir="$(normalize_existing_path "$deploy_dir")"
+  real_path="$(normalize_existing_path "$path")"
+  [[ "$real_path" == "$real_deploy_dir" || "$real_path" == "$real_deploy_dir/"* ]]
+}
+
+normalize_existing_path() {
+  local path="$1"
+
+  if command -v readlink >/dev/null && readlink -f "$path" >/dev/null 2>&1; then
+    readlink -f "$path"
+  elif command -v realpath >/dev/null; then
+    realpath "$path"
+  else
+    python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$path"
+  fi
+}
+
+normalize_path_allow_missing() {
+  local path="$1"
+
+  if command -v realpath >/dev/null && realpath -m / >/dev/null 2>&1; then
+    realpath -m -- "$path"
+  elif command -v readlink >/dev/null && readlink -m / >/dev/null 2>&1; then
+    readlink -m -- "$path"
+  else
+    python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$path"
+  fi
+}
+
+path_is_under_deploy_dir_allow_missing() {
+  local path="$1"
+  local real_deploy_dir
+  local real_path
+
+  real_deploy_dir="$(normalize_path_allow_missing "$deploy_dir")"
+  real_path="$(normalize_path_allow_missing "$path")"
+  [[ "$real_path" == "$real_deploy_dir" || "$real_path" == "$real_deploy_dir/"* ]]
+}
+
+doctor_check_path_under_deploy_dir() {
+  local path="$1"
+  local description="$2"
+
+  [[ -e "$path" ]] || return
+  if path_is_under_deploy_dir "$path"; then
+    doctor_ok "$description is inside deployment directory"
+  else
+    doctor_fail "$description is outside deployment directory: $path"
+  fi
+}
+
+doctor_check_install_deploy_path() {
+  local value="$1"
+  local description="$2"
+  local env_name="$3"
+  local path
+  local real_deploy_dir
+  local real_path
+
+  if [[ "$value" = /* ]]; then
+    doctor_fail "$description uses an absolute host path for install: $env_name=$value"
+    printf '      edit docker.env to use a path relative to the deployment directory\n'
+    return
+  fi
+
+  path="$(deploy_path_from_compose_value "$value")"
+  real_deploy_dir="$(normalize_path_allow_missing "$deploy_dir")"
+  real_path="$(normalize_path_allow_missing "$path")"
+  if [[ "$real_path" != "$real_deploy_dir" && "$real_path" != "$real_deploy_dir/"* ]]; then
+    doctor_fail "$description is outside deployment directory: $path"
+    printf '      edit docker.env to use a path inside the deployment directory\n'
+    return
+  fi
+  if [[ "$real_path" == "$real_deploy_dir" ]]; then
+    doctor_fail "$description resolves to the deployment directory root: $env_name=$value"
+    printf '      edit docker.env to use a dedicated path inside the deployment directory\n'
+    return
+  fi
+  doctor_ok "$description is inside deployment directory"
+}
+
+doctor_check_dir() {
+  local path="$1"
+  local description="$2"
+
+  if [[ -d "$path" ]]; then
+    doctor_ok "$description exists: $path"
+  else
+    doctor_fail "$description is missing: $path"
+  fi
+}
+
+doctor_check_env_file() {
+  local path="$1"
+  local description="$2"
+
+  if [[ ! -f "$path" ]]; then
+    return
+  fi
+
+  if awk '
+    /^[[:space:]]*($|#)/ { next }
+    /^[A-Za-z_][A-Za-z0-9_]*=/ { next }
+    {
+      printf "%s:%d: invalid env assignment: %s\n", FILENAME, FNR, $0
+      invalid = 1
+    }
+    END { exit invalid }
+  ' "$path"; then
+    doctor_ok "$description has valid KEY=VALUE lines"
+  else
+    doctor_fail "$description contains invalid env lines"
+  fi
+}
+
+doctor_file_other_perm_digit() {
+  local path="$1"
+  local mode
+  local perms
+
+  mode="$(stat_mode "$path")"
+  perms="${mode: -3}"
+  printf '%s\n' "${perms:2:1}"
+}
+
+doctor_file_group_perm_digit() {
+  local path="$1"
+  local mode
+  local perms
+
+  mode="$(stat_mode "$path")"
+  perms="${mode: -3}"
+  printf '%s\n' "${perms:1:1}"
+}
+
+stat_mode() {
+  local path="$1"
+
+  if stat -c '%a' "$path" >/dev/null 2>&1; then
+    stat -c '%a' "$path"
+  else
+    stat -f '%Lp' "$path"
+  fi
+}
+
+stat_owner_group_mode() {
+  local path="$1"
+
+  if stat -c '%u %g %a' "$path" >/dev/null 2>&1; then
+    stat -c '%u %g %a' "$path"
+  else
+    stat -f '%u %g %Lp' "$path"
+  fi
+}
+
+doctor_check_config_file_permissions() {
+  local config_dir="$1"
+  local app_env="$2"
+  local app_env_real
+  local file
+  local file_real
+  local other_digit
+  local checked=0
+  local failed=0
+
+  [[ -d "$config_dir" ]] || return
+  app_env_real="$(normalize_path_allow_missing "$app_env")"
+
+  while IFS= read -r -d '' file; do
+    file_real="$(normalize_path_allow_missing "$file")"
+    [[ "$file_real" == "$app_env_real" ]] && continue
+    checked=1
+    other_digit="$(doctor_file_other_perm_digit "$file")"
+    if (( (10#$other_digit & 6) != 0 )); then
+      doctor_fail "config file is world-readable or world-writable: $file"
+      failed=1
+    fi
+  done < <(find "$config_dir" -type f -print0)
+
+  [[ "$checked" -eq 1 ]] || return
+  if [[ "$failed" -eq 0 ]]; then
+    doctor_ok "config files are not world-readable or world-writable"
+  fi
+}
+
+doctor_check_app_env_permissions() {
+  local path="$1"
+  local group_digit
+  local other_digit
+
+  [[ -f "$path" ]] || return
+  group_digit="$(doctor_file_group_perm_digit "$path")"
+  other_digit="$(doctor_file_other_perm_digit "$path")"
+  if (( (10#$group_digit & 6) != 0 || (10#$other_digit & 6) != 0 )); then
+    doctor_fail "app env file is readable or writable outside its owner: $path"
+  else
+    doctor_ok "app env file is only readable and writable by its owner"
+  fi
+}
+
+doctor_check_container_user_config() {
+  local container_user
+
+  if ! grep -Eq '^[[:space:]]*user:[[:space:]]*\$\{ARBITER_CONTAINER_USER:-' "$compose_file"; then
+    doctor_fail "compose service does not use ARBITER_CONTAINER_USER"
+    return
+  fi
+  if ! container_user="$(env_file_value "$compose_env_file" ARBITER_CONTAINER_USER)"; then
+    doctor_fail "docker env is missing ARBITER_CONTAINER_USER"
+    return
+  fi
+  if [[ ! "$container_user" =~ ^[0-9]+:[0-9]+$ ]]; then
+    doctor_fail "ARBITER_CONTAINER_USER must be numeric uid:gid, got: $container_user"
+    return
+  fi
+  if [[ "$container_user" =~ ^0: || "$container_user" =~ :0$ ]]; then
+    doctor_fail "ARBITER_CONTAINER_USER must not be root: $container_user"
+    return
+  fi
+  doctor_ok "container user is non-root: $container_user"
+}
+
+doctor_check_requirements_file() {
+  local path="$1"
+
+  if [[ ! -f "$path" ]]; then
+    return
+  fi
+
+  if validate_requirements_file "$path"; then
+    doctor_ok "requirements file uses exact pins or absolute container paths"
+  else
+    doctor_fail "requirements file contains unpinned package requirements"
+  fi
+}
+
+doctor_group_contains() {
+  local gid="$1"
+  local group
+
+  for group in $doctor_agent_groups; do
+    [[ "$group" == "$gid" ]] && return 0
+  done
+  return 1
+}
+
+doctor_agent_perm_digit() {
+  local path="$1"
+  local owner_uid
+  local owner_gid
+  local mode
+  local perms
+
+  read -r owner_uid owner_gid mode < <(stat_owner_group_mode "$path")
+  perms="${mode: -3}"
+
+  if [[ "$doctor_agent_uid" == "$owner_uid" ]]; then
+    printf '%s\n' "${perms:0:1}"
+  elif doctor_group_contains "$owner_gid"; then
+    printf '%s\n' "${perms:1:1}"
+  else
+    printf '%s\n' "${perms:2:1}"
+  fi
+}
+
+doctor_agent_has_perm() {
+  local path="$1"
+  local bit="$2"
+  local digit
+
+  [[ -e "$path" ]] || return 1
+  digit="$(doctor_agent_perm_digit "$path")"
+  (( (10#$digit & bit) != 0 ))
+}
+
+doctor_check_agent_cannot_read() {
+  local path="$1"
+  local description="$2"
+
+  [[ -e "$path" ]] || return
+  if doctor_agent_has_perm "$path" 4; then
+    doctor_fail "$description is readable by agent identity: $path"
+  else
+    doctor_ok "$description is not readable by agent identity"
+  fi
+}
+
+doctor_check_agent_cannot_write_file() {
+  local path="$1"
+  local description="$2"
+
+  [[ -e "$path" ]] || return
+  if doctor_agent_has_perm "$path" 2; then
+    doctor_fail "$description is writable by agent identity: $path"
+  else
+    doctor_ok "$description is not writable by agent identity"
+  fi
+}
+
+doctor_check_agent_cannot_write_dir() {
+  local path="$1"
+  local description="$2"
+
+  [[ -d "$path" ]] || return
+  if doctor_agent_has_perm "$path" 2 && doctor_agent_has_perm "$path" 1; then
+    doctor_fail "$description is writable by agent identity: $path"
+  else
+    doctor_ok "$description is not writable by agent identity"
+  fi
+}
+
+doctor_dir_has_sticky_bit() {
+  local path="$1"
+  local mode
+  local special
+
+  mode="$(stat_mode "$path")"
+  special=$((10#$mode / 1000 % 10))
+  (( (special & 1) != 0 ))
+}
+
+doctor_check_agent_cannot_replace_deploy_dir() {
+  local deploy_parent
+
+  deploy_parent="$(dirname "$deploy_dir")"
+  [[ -d "$deploy_parent" ]] || return
+
+  if ! doctor_agent_has_perm "$deploy_parent" 2 || ! doctor_agent_has_perm "$deploy_parent" 1; then
+    doctor_ok "deployment parent directory does not allow agent replacement"
+    return
+  fi
+
+  if doctor_dir_has_sticky_bit "$deploy_parent"; then
+    doctor_warn "deployment parent directory is writable but sticky: $deploy_parent"
+    return
+  fi
+
+  doctor_fail "deployment parent directory allows agent replacement: $deploy_parent"
+}
+
+doctor_check_docker_socket() {
+  local socket="/var/run/docker.sock"
+
+  if [[ ! -e "$socket" ]]; then
+    doctor_warn "Docker socket not found at $socket"
+    return
+  fi
+
+  if doctor_agent_has_perm "$socket" 2; then
+    doctor_fail "Docker socket is writable by agent identity: $socket"
+  else
+    doctor_ok "Docker socket is not writable by agent identity"
+  fi
+}
+
+doctor_check_preinstall_ready() {
+  local active_config_dir
+  local active_app_env
+  local active_requirements_file
+  local active_wheels_dir
+  local wheel_requirement
+  local wheel_path
+
+  active_config_dir="$(config_dir_path)"
+  active_app_env="$(app_env_path)"
+  active_requirements_file="$(deploy_path_from_compose_value "$(compose_env_value ARBITER_REQUIREMENTS_FILE ./requirements.txt)")"
+  active_wheels_dir="$(wheels_dir_path)"
+
+  doctor_check_install_deploy_path "$(compose_env_value ARBITER_CONFIG_DIR ./conf)" "config directory" "ARBITER_CONFIG_DIR"
+  doctor_check_install_deploy_path "$(compose_env_value ARBITER_APP_ENV_FILE ./conf/.env)" "app env file" "ARBITER_APP_ENV_FILE"
+  doctor_check_install_deploy_path "$(compose_env_value ARBITER_REQUIREMENTS_FILE ./requirements.txt)" "runtime requirements file" "ARBITER_REQUIREMENTS_FILE"
+  doctor_check_install_deploy_path "$(compose_env_value ARBITER_WHEELS_DIR ./wheels)" "wheels directory" "ARBITER_WHEELS_DIR"
+  doctor_check_file "$active_requirements_file" "runtime requirements file"
+  doctor_check_requirements_file "$active_requirements_file"
+
+  if [[ -f "$active_requirements_file" ]] && grep -Eq '^[[:space:]]*/source/arbiter(/|$)' "$active_requirements_file"; then
+    doctor_fail "install requires package or wheel requirements, but this file uses the local checkout: $active_requirements_file"
+    printf '      edit requirements.txt to use exact package pins such as arbiter-server==VERSION, arbiter-smtp==VERSION, and arbiter-imap==VERSION\n'
+    printf '      alternatively, use absolute container wheel paths such as /wheels/arbiter_server-VERSION-py3-none-any.whl\n'
+  fi
+
+  while IFS= read -r wheel_requirement; do
+    [[ -n "$wheel_requirement" ]] || continue
+    wheel_path="$active_wheels_dir/${wheel_requirement#/wheels/}"
+    if [[ -f "$wheel_path" ]]; then
+      doctor_ok "wheel requirement exists: $wheel_path"
+    else
+      doctor_fail "wheel requirement is missing from deployment wheelhouse: $wheel_path"
+      printf '      run %s bundle prepare to rebuild the deployment wheelhouse\n' "$deploy_dir/arbiter-docker"
+    fi
+  done < <(
+    awk '
+      {
+        line = $0
+        sub(/^[[:space:]]+/, "", line)
+        sub(/[[:space:]]+#.*$/, "", line)
+        sub(/[[:space:]]+$/, "", line)
+        if (line ~ /^\/wheels\/.*\.whl$/) {
+          print line
+        }
+      }
+    ' "$active_requirements_file"
+  )
+
+  if [[ -f "$compose_override_file" ]] && grep -q '/source/arbiter' "$compose_override_file"; then
+    doctor_fail "install cannot keep the local checkout mounted into the container: $compose_override_file"
+    printf '      after switching requirements away from /source/arbiter, remove compose.override.yaml or delete the /source/arbiter volume from it\n'
+  fi
+
+  if [[ "$doctor_status" -eq 0 ]]; then
+    doctor_ok "preinstall checks passed"
+  fi
+}
+
+doctor_check_docker_network_subnet() {
+  local configured_network
+  local configured_subnet
+  local network_line
+  local network_name
+  local network_subnets
+  local network_subnet
+
+  configured_network="$(compose_env_value ARBITER_DOCKER_NETWORK_NAME arbiter-staging)"
+  configured_subnet="$(compose_env_value ARBITER_DOCKER_SUBNET 172.31.251.0/24)"
+  [[ -n "$configured_subnet" ]] || return
+
+  if ! docker network ls >/dev/null 2>&1; then
+    return
+  fi
+
+  while read -r network_line; do
+    [[ -n "$network_line" ]] || continue
+    network_name="${network_line%% *}"
+    network_subnets="${network_line#* }"
+    [[ "$network_subnets" != "$network_line" ]] || continue
+    [[ "$network_name" != "$configured_network" ]] || continue
+    for network_subnet in $network_subnets; do
+      [[ "$network_subnet" == */* ]] || continue
+      if cidr_overlaps "$configured_subnet" "$network_subnet"; then
+        doctor_fail "Docker subnet $configured_subnet overlaps network $network_name ($network_subnet)"
+        return
+      fi
+    done
+  done < <(docker_network_subnet_lines)
+
+  doctor_ok "Docker subnet is not already used by another network"
+}
+
+doctor_resolve_agent() {
+  if [[ -n "$doctor_agent_user" ]]; then
+    if ! doctor_agent_uid="$(id -u "$doctor_agent_user" 2>/dev/null)"; then
+      doctor_fail "agent user does not exist: $doctor_agent_user"
+      return 1
+    fi
+    doctor_agent_groups="$(id -G "$doctor_agent_user")"
+    doctor_agent_group_names="$(id -nG "$doctor_agent_user")"
+    return 0
+  fi
+
+  if [[ -n "$doctor_agent_uid" ]]; then
+    doctor_agent_user="$(getent passwd "$doctor_agent_uid" | cut -d: -f1 || true)"
+    if [[ -z "$doctor_agent_user" ]]; then
+      doctor_fail "agent uid does not resolve to a local user: $doctor_agent_uid"
+      return 1
+    fi
+    doctor_agent_groups="$(id -G "$doctor_agent_user")"
+    doctor_agent_group_names="$(id -nG "$doctor_agent_user")"
+    return 0
+  fi
+
+  return 1
+}
+
+doctor_check_agent_access() {
+  local active_config_dir
+  local active_config_file
+  local active_app_env
+
+  if ! doctor_resolve_agent; then
+    doctor_warn "skipping agent permission checks; pass --agent-user USER or --agent-uid UID"
+    return
+  fi
+
+  doctor_ok "checking agent identity: ${doctor_agent_user:-uid $doctor_agent_uid} (uid $doctor_agent_uid)"
+
+  if [[ " $doctor_agent_group_names " == *" docker "* ]]; then
+    doctor_fail "agent identity is in the docker group"
+  else
+    doctor_ok "agent identity is not in the docker group"
+  fi
+
+  active_config_dir="$(config_dir_path)"
+  active_config_file="$(config_main_file)"
+  active_app_env="$(app_env_path)"
+  doctor_check_agent_cannot_replace_deploy_dir
+  doctor_check_agent_cannot_write_dir "$deploy_dir" "deployment directory"
+  doctor_check_agent_cannot_write_file "$compose_file" "compose file"
+  doctor_check_agent_cannot_write_dir "$active_config_dir" "config directory"
+  doctor_check_agent_cannot_write_file "$active_config_file" "main config file"
+  doctor_check_agent_cannot_write_file "$compose_env_file" "docker env file"
+  doctor_check_agent_cannot_write_file "$active_app_env" "app env file"
+  doctor_check_agent_cannot_write_file "$requirements_file" "requirements file"
+  doctor_check_agent_cannot_write_file "$deploy_dir/arbiter-docker" "helper script"
+  doctor_check_agent_cannot_read "$active_app_env" "app env file"
+  doctor_check_docker_socket
+  doctor_warn "permission checks do not inspect ACLs, sudo rules, or other direct service paths"
+}
+
+doctor() {
+  local active_config_dir
+  local active_config_file
+  local active_app_env
+
+  doctor_status=0
+  doctor_agent_uid=""
+  doctor_agent_user=""
+  doctor_agent_groups=""
+  doctor_agent_group_names=""
+  doctor_preinstall=0
+  doctor_quiet=0
+
+  while (($#)); do
+    case "$1" in
+      --preinstall)
+        doctor_preinstall=1
+        shift
+        ;;
+      --quiet)
+        doctor_quiet=1
+        shift
+        ;;
+      --agent-user)
+        [[ $# -ge 2 ]] || {
+          printf 'error: --agent-user requires a value\n' >&2
+          exit 2
+        }
+        doctor_agent_user="$2"
+        shift 2
+        ;;
+      --agent-uid)
+        [[ $# -ge 2 ]] || {
+          printf 'error: --agent-uid requires a value\n' >&2
+          exit 2
+        }
+        doctor_agent_uid="$2"
+        shift 2
+        ;;
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      *)
+        printf 'error: unknown doctor option: %s\n\n' "$1" >&2
+        usage >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  if [[ -n "$doctor_agent_user" && -n "$doctor_agent_uid" ]]; then
+    printf 'error: use either --agent-user or --agent-uid, not both\n' >&2
+    exit 2
+  fi
+
+  active_config_dir="$(config_dir_path)"
+  active_config_file="$(config_main_file)"
+  active_app_env="$(app_env_path)"
+  doctor_check_dir "$deploy_dir" "deployment directory"
+  doctor_check_file "$compose_file" "compose file"
+  doctor_check_dir "$active_config_dir" "config directory"
+  doctor_check_file "$active_config_file" "main config file"
+  doctor_check_file "$active_app_env" "app env file"
+  doctor_check_file "$compose_env_file" "docker env file"
+  doctor_check_file "$requirements_file" "requirements file"
+  doctor_check_file "$deploy_dir/arbiter-docker" "helper script"
+  doctor_check_env_file "$active_app_env" "app env file"
+  doctor_check_env_file "$compose_env_file" "docker env file"
+  doctor_check_config_file_permissions "$active_config_dir" "$active_app_env"
+  doctor_check_app_env_permissions "$active_app_env"
+  doctor_check_container_user_config
+  doctor_check_requirements_file "$requirements_file"
+
+  if [[ "$doctor_preinstall" -eq 1 ]]; then
+    doctor_check_preinstall_ready
+    return "$doctor_status"
+  fi
+
+  doctor_check_docker_access
+  doctor_check_container_name_owner
+  if docker compose version >/dev/null 2>&1; then
+    doctor_ok "$(docker compose version)"
+  else
+    doctor_fail "Docker Compose is not available"
+  fi
+  doctor_check_docker_network_subnet
+
+  doctor_check_agent_access
+  return "$doctor_status"
+}
+
+shell_quote() {
+  printf '%q' "$1"
+}
+
+print_command() {
+  local arg
+
+  printf 'would run:'
+  for arg in "$@"; do
+    printf ' '
+    shell_quote "$arg"
+  done
+  printf '\n'
+}
+
+run_install_command() {
+  if [[ "${install_dry_run:-0}" -eq 1 ]]; then
+    print_command "$@"
+  else
+    "$@"
+  fi
+}
+
+install_report_success() {
+  local unit_file="$systemd_unit_dir/${install_service}.service"
+
+  if [[ "$install_dry_run" -ne 0 ]]; then
+    return 0
+  fi
+
+  printf 'success: installed Arbiter Docker deployment\n'
+  printf 'installed to: %s\n' "$install_target_dir"
+  printf 'systemd unit: %s\n' "$unit_file"
+  print_mcp_url_value "$(install_mcp_url_value)"
+  if [[ "$install_start" -eq 1 ]]; then
+    printf 'service: %s.service enabled and restarted\n' "$install_service"
+  else
+    printf 'service: %s.service enabled but not started\n' "$install_service"
+  fi
+}
+
+install_require_root() {
+  if [[ "$(id -u)" != 0 ]]; then
+    printf 'error: install requires root; rerun with sudo\n' >&2
+    exit 1
+  fi
+}
+
+install_relative_path() {
+  local path="$1"
+  local real_deploy_dir
+  local real_path
+
+  real_deploy_dir="$(normalize_existing_path "$deploy_dir")"
+  real_path="$(normalize_existing_path "$path")"
+  printf '%s\n' "${real_path#"$real_deploy_dir"/}"
+}
+
+install_target_path_from_compose_value() {
+  local value="$1"
+  local path
+  local real_install_target_dir
+  local real_path
+
+  if [[ "$value" = /* ]]; then
+    printf 'error: install requires relative docker.env host paths, got: %s\n' "$value" >&2
+    return 1
+  fi
+  path="$install_target_dir/${value#./}"
+  real_install_target_dir="$(normalize_path_allow_missing "$install_target_dir")"
+  real_path="$(normalize_path_allow_missing "$path")"
+  if [[ "$real_path" != "$real_install_target_dir" && "$real_path" != "$real_install_target_dir/"* ]]; then
+    printf 'error: install requires docker.env host paths inside --to, got: %s\n' "$value" >&2
+    return 1
+  fi
+  if [[ "$real_path" == "$real_install_target_dir" ]]; then
+    printf 'error: install requires docker.env host paths below --to, got deployment root: %s\n' "$value" >&2
+    return 1
+  fi
+  printf '%s\n' "$real_path"
+}
+
+install_target_requirements_file_path() {
+  install_target_path_from_compose_value \
+    "$(compose_env_value ARBITER_REQUIREMENTS_FILE ./requirements.txt)"
+}
+
+install_target_wheels_dir_path() {
+  install_target_path_from_compose_value \
+    "$(compose_env_value ARBITER_WHEELS_DIR ./wheels)"
+}
+
+install_target_app_env_path() {
+  install_target_path_from_compose_value \
+    "$(install_env_value ARBITER_APP_ENV_FILE ./conf/.env)"
+}
+
+install_env_value() {
+  local key="$1"
+  local default="$2"
+
+  if [[ "${install_dry_run:-0}" -eq 1 ]]; then
+    case "$key" in
+      ARBITER_HOST_BIND)
+        printf '127.0.0.1\n'
+        return
+        ;;
+      ARBITER_HOST_PORT)
+        printf '8025\n'
+        return
+        ;;
+    esac
+  fi
+  env_file_value "$install_target_dir/docker.env" "$key" || printf '%s\n' "$default"
+}
+
+install_server_host_url_value() {
+  local host
+
+  host="$(install_env_value ARBITER_HOST_BIND 127.0.0.1)"
+  case "$host" in
+    0.0.0.0)
+      printf '127.0.0.1\n'
+      ;;
+    *:*)
+      printf '[%s]\n' "$host"
+      ;;
+    *)
+      printf '%s\n' "$host"
+      ;;
+  esac
+}
+
+install_mcp_url_value() {
+  printf 'http://%s:%s/mcp\n' \
+    "$(install_server_host_url_value)" \
+    "$(install_env_value ARBITER_HOST_PORT 8025)"
+}
+
+install_ensure_identity() {
+  if [[ "${install_dry_run:-0}" -eq 1 ]]; then
+    printf 'would create system group if missing: %s\n' "$install_group"
+    printf 'would create system user if missing: %s\n' "$install_user"
+    return
+  fi
+
+  if ! getent group "$install_group" >/dev/null; then
+    groupadd --system "$install_group"
+  fi
+
+  if ! id -u "$install_user" >/dev/null 2>&1; then
+    useradd \
+      --system \
+      --gid "$install_group" \
+      --home-dir "$install_target_dir" \
+      --shell /usr/sbin/nologin \
+      --comment "Arbiter service user" \
+      "$install_user"
+  fi
+}
+
+install_reject_symlinks() {
+  local path="$1"
+  local symlink
+
+  symlink="$(find "$path" -type l -print -quit)"
+  if [[ -n "$symlink" ]]; then
+    printf 'error: install does not support symlinks in deployment tree: %s\n' "$symlink" >&2
+    return 1
+  fi
+}
+
+install_copy_file_protected() {
+  local source_file="$1"
+  local target_file="$2"
+  local mode="$3"
+  local target_parent
+  local tmp_file
+
+  target_parent="$(dirname -- "$target_file")"
+  mkdir -p "$target_parent"
+  chmod 0750 "$target_parent"
+  chown "$install_user:$install_group" "$target_parent"
+  tmp_file="$(mktemp "$target_parent/.arbiter-install.XXXXXX")"
+  if ! cat "$source_file" >"$tmp_file"; then
+    rm -f "$tmp_file"
+    return 1
+  fi
+  chown "$install_user:$install_group" "$tmp_file"
+  chmod "$mode" "$tmp_file"
+  mv -f "$tmp_file" "$target_file"
+}
+
+install_file_mode_for_relative_path() {
+  local relative_path="$1"
+  local app_env_relative_path="${2:-}"
+
+  if [[ -n "$app_env_relative_path" && "$relative_path" == "$app_env_relative_path" ]]; then
+    printf '0600\n'
+    return
+  fi
+  if [[ "$relative_path" == "arbiter-docker" ]]; then
+    printf '0750\n'
+    return
+  fi
+  printf '0640\n'
+}
+
+install_copy_tree_protected() {
+  local source_root="$1"
+  local target_root="$2"
+  local app_env_relative_path="${3:-}"
+  local source_path
+  local relative_path
+  local target_path
+  local mode
+
+  install_reject_symlinks "$source_root"
+  mkdir -p "$target_root"
+  chmod 0750 "$target_root"
+  chown "$install_user:$install_group" "$target_root"
+
+  while IFS= read -r -d '' source_path; do
+    [[ "$source_path" == "$source_root" ]] && continue
+    relative_path="${source_path#"$source_root"/}"
+    mkdir -p "$target_root/$relative_path"
+    chmod 0750 "$target_root/$relative_path"
+    chown "$install_user:$install_group" "$target_root/$relative_path"
+  done < <(find "$source_root" -type d -print0)
+
+  while IFS= read -r -d '' source_path; do
+    relative_path="${source_path#"$source_root"/}"
+    target_path="$target_root/$relative_path"
+    mode="$(install_file_mode_for_relative_path "$relative_path" "$app_env_relative_path")"
+    install_copy_file_protected "$source_path" "$target_path" "$mode"
+  done < <(find "$source_root" -type f -print0)
+}
+
+install_backup_existing_path() {
+  local source_path="$1"
+  local backup_prefix="$2"
+  local app_env_relative_path="${3:-}"
+  local timestamp
+  local backup_parent
+  local backup_path
+  local attempt=0
+
+  [[ -e "$source_path" ]] || return 0
+
+  timestamp="$(date -u '+%Y%m%dT%H%M%SZ')"
+  backup_parent="$install_target_dir/backup"
+  mkdir -p "$backup_parent"
+  chmod 0750 "$backup_parent"
+  chown "$install_user:$install_group" "$backup_parent"
+
+  backup_path="$backup_parent/${backup_prefix}-${timestamp}"
+  while [[ -e "$backup_path" ]]; do
+    attempt=$((attempt + 1))
+    backup_path="$backup_parent/${backup_prefix}-${timestamp}-${attempt}"
+  done
+
+  mv "$source_path" "$backup_path"
+  chown -R "$install_user:$install_group" "$backup_path"
+  find "$backup_path" -type d -exec chmod 0750 {} +
+  find "$backup_path" -type f -exec chmod 0640 {} +
+  if [[ -n "$app_env_relative_path" && -f "$backup_path/$app_env_relative_path" ]]; then
+    chmod 0600 "$backup_path/$app_env_relative_path"
+  elif [[ -f "$backup_path/.env" ]]; then
+    chmod 0600 "$backup_path/.env"
+  fi
+}
+
+install_copy_deployment() {
+  local source_dir
+  local target_dir
+  local target_docker_env_file
+  local preserve_config_dir_value="./conf"
+  local preserve_app_env_value="./conf/.env"
+  local preserve_config_name_value="arbiter-server"
+  local preserve_config_dir
+  local preserve_app_env
+  local staging_config_dir
+  local staging_app_env
+  local preserve_tmp_dir=""
+  local preserve_config=0
+  local preserve_config_dir_real
+  local preserve_app_env_real
+  local preserve_app_env_config_rel=""
+  local staging_app_env_rel=""
+
+  source_dir="$(normalize_existing_path "$deploy_dir")"
+  target_dir="$install_target_dir"
+  target_docker_env_file="$target_dir/docker.env"
+
+  if [[ "${install_dry_run:-0}" -eq 1 ]]; then
+    printf 'would copy deployment: %s -> %s\n' "$source_dir" "$target_dir"
+    if [[ "$install_replace_config" -eq 0 ]]; then
+      printf 'would preserve installed config and env if present: %s\n' "$target_dir"
+    else
+      printf 'would replace installed config and env from staging\n'
+    fi
+    return
+  fi
+
+  if [[ "$(normalize_path_allow_missing "$target_dir")" != "$source_dir" ]]; then
+    install_reject_symlinks "$source_dir"
+  fi
+
+  if [[ "$install_replace_config" -eq 0 && -e "$target_dir" ]]; then
+    if [[ -f "$target_docker_env_file" ]]; then
+      preserve_config_dir_value="$(env_file_value "$target_docker_env_file" ARBITER_CONFIG_DIR || printf './conf\n')"
+      preserve_app_env_value="$(env_file_value "$target_docker_env_file" ARBITER_APP_ENV_FILE || printf './conf/.env\n')"
+      preserve_config_name_value="$(env_file_value "$target_docker_env_file" ARBITER_CONFIG_NAME || printf 'arbiter-server\n')"
+    fi
+    preserve_config_dir="$(install_target_path_from_compose_value "$preserve_config_dir_value")"
+    preserve_app_env="$(install_target_path_from_compose_value "$preserve_app_env_value")"
+    if [[ -e "$preserve_config_dir" || -L "$preserve_config_dir" ]]; then
+      install_reject_symlinks "$preserve_config_dir"
+    fi
+    if [[ -e "$preserve_app_env" || -L "$preserve_app_env" ]]; then
+      install_reject_symlinks "$preserve_app_env"
+    fi
+    if [[ -e "$preserve_config_dir" || -e "$preserve_app_env" ]]; then
+      preserve_config=1
+      preserve_tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/arbiter-install-config.XXXXXX")"
+      if [[ -e "$preserve_app_env" ]]; then
+        preserve_config_dir_real="$(normalize_path_allow_missing "$preserve_config_dir")"
+        preserve_app_env_real="$(normalize_path_allow_missing "$preserve_app_env")"
+        case "$preserve_app_env_real" in
+          "$preserve_config_dir_real"/*)
+            preserve_app_env_config_rel="${preserve_app_env_real#"$preserve_config_dir_real"/}"
+            ;;
+          *)
+            cp -a "$preserve_app_env" "$preserve_tmp_dir/app-env"
+            ;;
+        esac
+      fi
+      if [[ -e "$preserve_config_dir" ]]; then
+        cp -a "$preserve_config_dir" "$preserve_tmp_dir/config-dir"
+        install_backup_existing_path \
+          "$preserve_config_dir" \
+          conf \
+          "$preserve_app_env_config_rel"
+      fi
+    fi
+  fi
+
+  mkdir -p "$target_dir"
+  if [[ "$(normalize_existing_path "$target_dir")" != "$source_dir" ]]; then
+    staging_app_env_rel="$(install_relative_path "$(app_env_path)")"
+    install_copy_tree_protected "$source_dir" "$target_dir" "$staging_app_env_rel"
+  fi
+
+  if [[ "$preserve_config" -eq 1 ]]; then
+    staging_config_dir="$(install_target_path_from_compose_value "$(compose_env_value ARBITER_CONFIG_DIR ./conf)")"
+    staging_app_env="$(install_target_path_from_compose_value "$(compose_env_value ARBITER_APP_ENV_FILE ./conf/.env)")"
+
+    rm -rf "$staging_config_dir"
+    case "$(normalize_path_allow_missing "$staging_app_env")" in
+      "$(normalize_path_allow_missing "$staging_config_dir")"/*)
+        ;;
+      *)
+        rm -f "$staging_app_env"
+        ;;
+    esac
+
+    if [[ -e "$preserve_tmp_dir/config-dir" ]]; then
+      mkdir -p "$(dirname -- "$preserve_config_dir")"
+      rm -rf "$preserve_config_dir"
+      install_copy_tree_protected \
+        "$preserve_tmp_dir/config-dir" \
+        "$preserve_config_dir" \
+        "$preserve_app_env_config_rel"
+    fi
+    if [[ -e "$preserve_tmp_dir/app-env" ]]; then
+      mkdir -p "$(dirname -- "$preserve_app_env")"
+      install_copy_file_protected "$preserve_tmp_dir/app-env" "$preserve_app_env" 0600
+    fi
+    set_env_file_value "$target_docker_env_file" ARBITER_CONFIG_DIR "$preserve_config_dir_value"
+    set_env_file_value "$target_docker_env_file" ARBITER_APP_ENV_FILE "$preserve_app_env_value"
+    set_env_file_value "$target_docker_env_file" ARBITER_CONFIG_NAME "$preserve_config_name_value"
+    rm -rf "$preserve_tmp_dir"
+  fi
+}
+
+install_mark_deployment_installed() {
+  local target_compose_file="$install_target_dir/compose.yaml"
+  local target_docker_env_file="$install_target_dir/docker.env"
+  local tmp_path
+  local install_uid
+  local install_gid
+
+  if [[ "${install_dry_run:-0}" -eq 1 ]]; then
+    printf 'would set deployment scope in compose.yaml: %s\n' "arbiter.deployment_scope=installed"
+    printf 'would set installed Docker identity and container user in docker.env\n'
+    return
+  fi
+
+  require_file "$target_compose_file"
+  tmp_path="$(mktemp "${TMPDIR:-/tmp}/arbiter-compose.XXXXXX")"
+  sed \
+    -e 's/arbiter\.deployment_scope=staged/arbiter.deployment_scope=installed/g' \
+    -e 's/ARBITER_CONTAINER_NAME:-arbiter-staging/ARBITER_CONTAINER_NAME:-arbiter/g' \
+    -e 's/ARBITER_HOST_PORT:-18025/ARBITER_HOST_PORT:-8025/g' \
+    -e 's/ARBITER_DOCKER_NETWORK_NAME:-arbiter-staging/ARBITER_DOCKER_NETWORK_NAME:-arbiter/g' \
+    -e 's/ARBITER_DOCKER_BRIDGE_NAME:-arbiter-stg0/ARBITER_DOCKER_BRIDGE_NAME:-arbiter0/g' \
+    -e 's#ARBITER_DOCKER_SUBNET:-172\.31\.251\.0/24#ARBITER_DOCKER_SUBNET:-172.31.250.0/24#g' \
+    "$target_compose_file" >"$tmp_path"
+  mv "$tmp_path" "$target_compose_file"
+
+  require_file "$target_docker_env_file"
+  tmp_path="$(mktemp "${TMPDIR:-/tmp}/arbiter-docker-env.XXXXXX")"
+  sed \
+    -e 's/^ARBITER_CONTAINER_NAME=.*/ARBITER_CONTAINER_NAME=arbiter/' \
+    -e 's/^ARBITER_HOST_BIND=.*/ARBITER_HOST_BIND=127.0.0.1/' \
+    -e 's/^ARBITER_HOST_PORT=.*/ARBITER_HOST_PORT=8025/' \
+    -e 's/^ARBITER_DOCKER_NETWORK_NAME=.*/ARBITER_DOCKER_NETWORK_NAME=arbiter/' \
+    -e 's/^ARBITER_DOCKER_BRIDGE_NAME=.*/ARBITER_DOCKER_BRIDGE_NAME=arbiter0/' \
+    -e 's#^ARBITER_DOCKER_SUBNET=.*#ARBITER_DOCKER_SUBNET=172.31.250.0/24#' \
+    "$target_docker_env_file" >"$tmp_path"
+  mv "$tmp_path" "$target_docker_env_file"
+
+  install_uid="$(id -u "$install_user")"
+  install_gid="$(getent group "$install_group" | cut -d: -f3)"
+  if [[ -z "$install_gid" ]]; then
+    install_gid="$(id -g "$install_user")"
+  fi
+  set_env_file_value "$target_docker_env_file" ARBITER_CONTAINER_USER "$install_uid:$install_gid"
+}
+
+install_metadata_quote() {
+  printf '%q' "$1"
+}
+
+install_write_target_metadata() {
+  local metadata_file="$install_target_dir/.arbiter-install.env"
+  local installed_at
+  local source_dir
+
+  if [[ "${install_dry_run:-0}" -eq 1 ]]; then
+    printf 'would write install metadata: %s\n' "$metadata_file"
+    return
+  fi
+
+  installed_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  source_dir="$(normalize_existing_path "$deploy_dir")"
+  rm -f "$install_target_dir/.arbiter-installations"
+  cat >"$metadata_file" <<EOF
+ARBITER_INSTALL_PATH=$(install_metadata_quote "$install_target_dir")
+ARBITER_INSTALL_SERVICE=$(install_metadata_quote "$install_service")
+ARBITER_INSTALL_SYSTEMD_UNIT=$(install_metadata_quote "$systemd_unit_dir/${install_service}.service")
+ARBITER_INSTALL_USER=$(install_metadata_quote "$install_user")
+ARBITER_INSTALL_GROUP=$(install_metadata_quote "$install_group")
+ARBITER_INSTALL_MCP_URL=$(install_metadata_quote "$(install_mcp_url_value)")
+ARBITER_INSTALLED_AT=$(install_metadata_quote "$installed_at")
+ARBITER_INSTALLED_FROM=$(install_metadata_quote "$source_dir")
+EOF
+}
+
+install_apply_permissions() {
+  local app_env_target
+
+  if [[ "${install_dry_run:-0}" -eq 1 ]]; then
+    printf 'would chown/chmod deployment for %s:%s: %s\n' \
+      "$install_user" "$install_group" "$install_target_dir"
+    return
+  fi
+
+  chown -R "$install_user:$install_group" "$install_target_dir"
+  find "$install_target_dir" -type d -exec chmod 0750 {} +
+  find "$install_target_dir" -type f -exec chmod 0640 {} +
+  chmod 0750 "$install_target_dir/arbiter-docker"
+  if [[ -d "$install_target_dir/backup" ]]; then
+    find "$install_target_dir/backup" -type f -exec chmod 0600 {} +
+  fi
+
+  app_env_target="$(install_target_app_env_path)"
+  if [[ -f "$app_env_target" ]]; then
+    chmod 0600 "$app_env_target"
+  fi
+}
+
+install_record_location() {
+  local registry_file="$deploy_dir/.arbiter-installations"
+
+  if [[ "${install_dry_run:-0}" -eq 1 ]]; then
+    printf 'would record install location: %s in %s\n' \
+      "$install_target_dir" "$registry_file"
+    return
+  fi
+
+  touch "$registry_file"
+  if ! grep -Fx -- "$install_target_dir" "$registry_file" >/dev/null; then
+    printf '%s\n' "$install_target_dir" >>"$registry_file"
+  fi
+  chmod 0644 "$registry_file"
+  if [[ -n "${SUDO_UID:-}" && -n "${SUDO_GID:-}" ]]; then
+    chown "$SUDO_UID:$SUDO_GID" "$registry_file"
+  fi
+}
+
+install_test_server() {
+  local url
+  local client_command
+
+  url="$(install_mcp_url_value)"
+  if [[ "${install_dry_run:-0}" -eq 1 ]]; then
+    printf 'would test MCP URL: %s\n' "$url"
+    return 0
+  fi
+
+  client_command="${ARBITER_CLIENT_COMMAND:-arbiter}"
+  if ! command -v "$client_command" >/dev/null; then
+    doctor_warn "skipping MCP test; Arbiter client command not found: $client_command"
+    return 0
+  fi
+  test_server_url "$url"
+}
+
+copy_existing_wheelhouse() {
+  local source_wheels_dir="$1"
+  local target_wheels_dir="$2"
+  local wheel
+
+  [[ -d "$source_wheels_dir" ]] || return 0
+  mkdir -p "$target_wheels_dir"
+  shopt -s nullglob
+  for wheel in "$source_wheels_dir"/*.whl; do
+    cp -p "$wheel" "$target_wheels_dir/"
+  done
+  shopt -u nullglob
+}
+
+replace_dependency_wheelhouse() {
+  local source_wheels_dir="$1"
+  local target_wheels_dir="$2"
+
+  mkdir -p "$target_wheels_dir"
+  find "$target_wheels_dir" -maxdepth 1 -type f -name '*.whl' -delete
+  find "$source_wheels_dir" -maxdepth 1 -type f -name '*.whl' -exec cp -p {} "$target_wheels_dir/" \;
+}
+
+prune_dependency_wheelhouse() {
+  local target_requirements_file
+  local target_wheels_dir
+  local docker_user
+  local image
+  local quiet
+  local tmp_dir
+  local output_file=""
+  local prune_script
+  local -a report_command
+  local -a prune_command
+
+  target_requirements_file="$1"
+  target_wheels_dir="$2"
+  docker_user="$3"
+  image="$4"
+  quiet="${5:-0}"
+
+  require_file "$target_requirements_file"
+  require_dir "$target_wheels_dir"
+  require_docker_access
+
+  tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/arbiter-wheelhouse-prune.XXXXXX")"
+  report_command=(
+    docker run --rm
+    --user "$docker_user"
+    -v "$target_requirements_file:/requirements.txt:ro"
+    -v "$target_wheels_dir:/wheels:ro"
+    -v "$tmp_dir:/work"
+    "$image"
+    python -m pip --disable-pip-version-check install
+    --dry-run --ignore-installed
+    --no-index --find-links /wheels
+    --report /work/report.json
+    -r /requirements.txt
+  )
+
+  prune_script='import json
+import re
+from pathlib import Path
+
+def normalize(name):
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+with open("/work/report.json", encoding="utf-8") as handle:
+    report = json.load(handle)
+
+referenced = set()
+for entry in report.get("install", []):
+    metadata = entry.get("metadata", {})
+    name = metadata.get("name")
+    version = metadata.get("version")
+    if name and version:
+        referenced.add((normalize(name), str(version)))
+
+for wheel in Path("/wheels").glob("*.whl"):
+    parts = wheel.name[:-4].split("-", 2)
+    if len(parts) < 2 or (normalize(parts[0]), parts[1]) not in referenced:
+        wheel.unlink()
+'
+  prune_command=(
+    docker run --rm
+    --user "$docker_user"
+    -v "$tmp_dir:/work:ro"
+    -v "$target_wheels_dir:/wheels"
+    "$image"
+    python -c "$prune_script"
+  )
+
+  if [[ "$quiet" -eq 1 ]]; then
+    output_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-wheelhouse-prune.XXXXXX")"
+  fi
+
+  if [[ "$quiet" -eq 1 ]]; then
+    if ! "${report_command[@]}" >"$output_file" 2>&1; then
+      cat "$output_file" >&2
+      rm -f "$output_file"
+      rm -rf "$tmp_dir"
+      printf 'error: failed to resolve prepared wheelhouse contents: %s\n' "$target_wheels_dir" >&2
+      return 1
+    fi
+    if ! "${prune_command[@]}" >"$output_file" 2>&1; then
+      cat "$output_file" >&2
+      rm -f "$output_file"
+      rm -rf "$tmp_dir"
+      printf 'error: failed to prune dependency wheelhouse: %s\n' "$target_wheels_dir" >&2
+      return 1
+    fi
+  else
+    if ! "${report_command[@]}"; then
+      rm -rf "$tmp_dir"
+      printf 'error: failed to resolve prepared wheelhouse contents: %s\n' "$target_wheels_dir" >&2
+      return 1
+    fi
+    if ! "${prune_command[@]}"; then
+      rm -rf "$tmp_dir"
+      printf 'error: failed to prune dependency wheelhouse: %s\n' "$target_wheels_dir" >&2
+      return 1
+    fi
+  fi
+
+  if [[ -n "$output_file" ]]; then
+    rm -f "$output_file"
+  fi
+  rm -rf "$tmp_dir"
+}
+
+prepare_dependency_wheelhouse() {
+  local target_requirements_file
+  local target_wheels_dir
+  local image
+  local docker_user
+  local quiet
+  local pypi_only
+  local tmp_wheels_dir
+  local output_file=""
+  local -a docker_command
+  local -a wheel_input_mount_args=()
+  local -a find_links_args=()
+
+  target_requirements_file="$1"
+  target_wheels_dir="$2"
+  docker_user="$3"
+  image="$4"
+  quiet="${5:-0}"
+  pypi_only="${6:-0}"
+
+  if [[ "$pypi_only" -eq 0 ]]; then
+    wheel_input_mount_args=(-v "$target_wheels_dir:/wheels:ro")
+    find_links_args=(--find-links /wheels)
+  fi
+
+  if [[ "${install_dry_run:-0}" -eq 1 ]]; then
+    docker_command=(
+      docker run --rm
+      --user "$docker_user"
+      -v "$target_requirements_file:/requirements.txt:ro"
+    )
+    if [[ "${#wheel_input_mount_args[@]}" -gt 0 ]]; then
+      docker_command+=("${wheel_input_mount_args[@]}")
+    fi
+    docker_command+=(
+      -v "$target_wheels_dir:/wheelhouse"
+      "$image"
+      python -m pip --disable-pip-version-check wheel
+      --no-cache-dir
+    )
+    if [[ "${#find_links_args[@]}" -gt 0 ]]; then
+      docker_command+=("${find_links_args[@]}")
+    fi
+    docker_command+=(
+      --wheel-dir /wheelhouse
+      -r /requirements.txt
+    )
+    printf 'would prepare dependency wheelhouse: %s\n' "$target_wheels_dir"
+    print_command "${docker_command[@]}"
+    return 0
+  fi
+
+  require_file "$target_requirements_file"
+  require_docker_access
+
+  mkdir -p "$target_wheels_dir"
+  tmp_wheels_dir="$(mktemp -d "${TMPDIR:-/tmp}/arbiter-wheelhouse.XXXXXX")"
+  if [[ "$pypi_only" -eq 0 ]]; then
+    copy_existing_wheelhouse "$target_wheels_dir" "$tmp_wheels_dir"
+  fi
+  docker_command=(
+    docker run --rm
+    --user "$docker_user"
+    -v "$target_requirements_file:/requirements.txt:ro"
+  )
+  if [[ "${#wheel_input_mount_args[@]}" -gt 0 ]]; then
+    docker_command+=("${wheel_input_mount_args[@]}")
+  fi
+  docker_command+=(
+    -v "$tmp_wheels_dir:/wheelhouse"
+    "$image"
+    python -m pip --disable-pip-version-check wheel
+    --no-cache-dir
+  )
+  if [[ "${#find_links_args[@]}" -gt 0 ]]; then
+    docker_command+=("${find_links_args[@]}")
+  fi
+  docker_command+=(
+    --wheel-dir /wheelhouse
+    -r /requirements.txt
+  )
+
+  if [[ "$quiet" -eq 1 ]]; then
+    output_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-wheelhouse-build.XXXXXX")"
+  else
+    printf 'preparing dependency wheelhouse with %s: %s\n' "$image" "$target_wheels_dir"
+  fi
+
+  if [[ "$quiet" -eq 1 ]]; then
+    if ! "${docker_command[@]}" >"$output_file" 2>&1; then
+      cat "$output_file" >&2
+      rm -f "$output_file"
+      printf 'error: failed to prepare dependency wheelhouse: %s\n' "$target_wheels_dir" >&2
+      printf '       check network access during install prep, package pins, and Docker image compatibility\n' >&2
+      rm -rf "$tmp_wheels_dir"
+      return 1
+    fi
+  elif ! "${docker_command[@]}"; then
+    printf 'error: failed to prepare dependency wheelhouse: %s\n' "$target_wheels_dir" >&2
+    printf '       check network access during install prep, package pins, and Docker image compatibility\n' >&2
+    rm -rf "$tmp_wheels_dir"
+    return 1
+  fi
+  if ! prune_dependency_wheelhouse "$target_requirements_file" "$tmp_wheels_dir" "$docker_user" "$image" "$quiet"; then
+    rm -rf "$tmp_wheels_dir"
+    return 1
+  fi
+  replace_dependency_wheelhouse "$tmp_wheels_dir" "$target_wheels_dir"
+  rm -rf "$tmp_wheels_dir"
+  if [[ -n "$output_file" ]]; then
+    rm -f "$output_file"
+  else
+    printf 'prepared dependency wheelhouse: %s\n' "$target_wheels_dir"
+  fi
+}
+
+validate_dependency_wheelhouse() {
+  local target_requirements_file
+  local target_wheels_dir
+  local image
+  local docker_user
+  local quiet
+  local output_file=""
+  local -a docker_command
+
+  target_requirements_file="$1"
+  target_wheels_dir="$2"
+  docker_user="$3"
+  image="$4"
+  quiet="${5:-0}"
+
+  if [[ "${install_dry_run:-0}" -eq 1 ]]; then
+    docker_command=(
+      docker run --rm
+      --user "$docker_user"
+      -v "$target_requirements_file:/requirements.txt:ro"
+      -v "$target_wheels_dir:/wheels:ro"
+      "$image"
+      python -m pip --disable-pip-version-check install --no-cache-dir
+      --target /tmp/arbiter-wheelhouse-check
+      --no-index --find-links /wheels
+      -r /requirements.txt
+    )
+    printf 'would validate dependency wheelhouse: %s\n' "$target_wheels_dir"
+    print_command "${docker_command[@]}"
+    return 0
+  fi
+
+  require_file "$target_requirements_file"
+  require_dir "$target_wheels_dir"
+  require_docker_access
+
+  docker_command=(
+    docker run --rm
+    --user "$docker_user"
+    -v "$target_requirements_file:/requirements.txt:ro"
+    -v "$target_wheels_dir:/wheels:ro"
+    "$image"
+    python -m pip --disable-pip-version-check install --no-cache-dir
+    --target /tmp/arbiter-wheelhouse-check
+    --no-index --find-links /wheels
+    -r /requirements.txt
+  )
+
+  if [[ "$quiet" -eq 1 ]]; then
+    output_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-wheelhouse-check.XXXXXX")"
+  else
+    printf 'validating dependency wheelhouse with %s: %s\n' "$image" "$target_wheels_dir"
+  fi
+
+  if [[ "$quiet" -eq 1 ]]; then
+    if ! "${docker_command[@]}" >"$output_file" 2>&1; then
+      cat "$output_file" >&2
+      rm -f "$output_file"
+      printf 'error: dependency wheelhouse validation failed: %s\n' "$target_wheels_dir" >&2
+      printf '       check requirements.txt pins, Docker image compatibility, and network access during install prep\n' >&2
+      return 1
+    fi
+  elif ! "${docker_command[@]}"; then
+    if [[ -n "$output_file" ]]; then
+      cat "$output_file" >&2
+      rm -f "$output_file"
+    fi
+    printf 'error: dependency wheelhouse validation failed: %s\n' "$target_wheels_dir" >&2
+    printf '       check requirements.txt pins, Docker image compatibility, and network access during install prep\n' >&2
+    return 1
+  fi
+  if [[ -n "$output_file" ]]; then
+    rm -f "$output_file"
+  else
+    printf 'validated dependency wheelhouse: %s\n' "$target_wheels_dir"
+  fi
+}
+
+prepare() {
+  local target_wheels_dir
+  local image
+  local docker_user
+  local pypi_only=0
+  local tmp_dir
+
+  while (($#)); do
+    case "$1" in
+      --pypi-only)
+        pypi_only=1
+        ;;
+      *)
+        printf 'error: unknown prepare option: %s\n' "$1" >&2
+        return 2
+        ;;
+    esac
+    shift
+  done
+
+  require_file "$requirements_file"
+  validate_requirements_file "$requirements_file"
+  target_wheels_dir="$(wheels_dir_path)"
+  image="$(compose_env_value ARBITER_IMAGE python:3.11-slim)"
+  docker_user="$(id -u):$(id -g)"
+  if [[ "$pypi_only" -eq 1 ]]; then
+    print_bundle_prepare_start
+    if ! prepare_pypi_only "$target_wheels_dir" "$docker_user" "$image"; then
+      return 1
+    fi
+    return
+  fi
+  print_bundle_prepare_start
+  tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/arbiter-bundle-prepare.XXXXXX")"
+  if ! bundle_refresh_repo_wheels "$tmp_dir"; then
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+  rm -rf "$tmp_dir"
+  prepare_dependency_wheelhouse "$requirements_file" "$target_wheels_dir" "$docker_user" "$image" 1 "$pypi_only"
+  validate_dependency_wheelhouse "$requirements_file" "$target_wheels_dir" "$docker_user" "$image" 1
+  printf 'bundle prepare complete: %s\n' "$target_wheels_dir"
+}
+
+prepare_quiet() {
+  local target_wheels_dir
+  local image
+  local docker_user
+
+  require_file "$requirements_file"
+  validate_requirements_file "$requirements_file"
+  target_wheels_dir="$(wheels_dir_path)"
+  image="$(compose_env_value ARBITER_IMAGE python:3.11-slim)"
+  docker_user="$(id -u):$(id -g)"
+  prepare_dependency_wheelhouse "$requirements_file" "$target_wheels_dir" "$docker_user" "$image" 1 0
+  validate_dependency_wheelhouse "$requirements_file" "$target_wheels_dir" "$docker_user" "$image" 1
+}
+
+check() {
+  local target_wheels_dir
+  local image
+  local docker_user
+
+  if (($#)); then
+    printf 'error: check does not accept options yet; run bundle check with no arguments\n' >&2
+    return 2
+  fi
+  require_file "$requirements_file"
+  validate_requirements_file "$requirements_file"
+  target_wheels_dir="$(wheels_dir_path)"
+  image="$(compose_env_value ARBITER_IMAGE python:3.11-slim)"
+  docker_user="$(id -u):$(id -g)"
+  validate_dependency_wheelhouse "$requirements_file" "$target_wheels_dir" "$docker_user" "$image" 1
+  printf 'bundle check passed: %s\n' "$deploy_dir"
+}
+
+bundle() {
+  local subcommand="${1:-}"
+  if (($#)); then
+    shift
+  fi
+
+  case "$subcommand" in
+    prepare)
+      prepare "$@"
+      ;;
+    check)
+      check "$@"
+      ;;
+    list)
+      case "${1:-}" in
+        "")
+          bundle_list_roots
+          ;;
+        all)
+          bundle_list_all
+          ;;
+        *)
+          printf 'error: unknown bundle list argument: %s\n' "$1" >&2
+          return 2
+          ;;
+      esac
+      ;;
+    list-plugins)
+      if (($#)); then
+        printf 'error: list-plugins does not accept arguments\n' >&2
+        return 2
+      fi
+      bundle_list_plugins
+      ;;
+    upgrade)
+      bundle_upgrade "$@"
+      ;;
+    add)
+      bundle_add_plugin "$@"
+      ;;
+    remove)
+      bundle_remove_plugin "$@"
+      ;;
+    "" | -h | --help | help)
+      cat <<'EOF'
+Usage: arbiter-docker bundle COMMAND
+
+Commands:
+  prepare       Build and validate the dependency wheelhouse
+  check         Validate the prepared wheelhouse without downloading packages
+  list          Show root requirements
+  list all      Show root and transitive wheelhouse packages
+  list-plugins  Show service plugins supported by add/remove
+  add ITEM      Add a service plugin, or all plugins in a meta package
+  remove ITEM   Remove a service plugin, or all plugins in a meta package
+  upgrade       Upgrade package root requirements and rebuild the wheelhouse
+
+Upgrade options:
+  --pypi-only   Resolve from the package index only; skip local repo wheels
+
+Prepare options:
+  --pypi-only   Resolve selected packages from the index instead of the checked-out repo, rewrite requirements.txt after success, and build without the existing wheelhouse
+EOF
+      ;;
+    *)
+      printf 'error: unknown bundle command: %s\n' "$subcommand" >&2
+      return 2
+      ;;
+  esac
+}
+
+install_validate_wheelhouse() {
+  local target_requirements_file
+  local target_wheels_dir
+  local image
+  local uid
+  local gid
+
+  target_requirements_file="$(install_target_requirements_file_path)"
+  target_wheels_dir="$(install_target_wheels_dir_path)"
+  image="$(compose_env_value ARBITER_IMAGE python:3.11-slim)"
+
+  if [[ "$install_dry_run" -eq 1 ]]; then
+    validate_dependency_wheelhouse "$target_requirements_file" "$target_wheels_dir" "$install_user:$install_group" "$image"
+    return
+  fi
+
+  uid="$(id -u "$install_user")"
+  gid="$(id -g "$install_user")"
+  if ! validate_dependency_wheelhouse "$target_requirements_file" "$target_wheels_dir" "$uid:$gid" "$image" 1; then
+    printf '       install aborted before writing/restarting the systemd service\n' >&2
+    printf '       run %s prepare, then rerun: sudo %s install\n' "$deploy_dir/arbiter-docker" "$deploy_dir/arbiter-docker" >&2
+    return 1
+  fi
+}
+
+install_write_systemd_unit() {
+  local unit_file
+  local docker_bin
+  local compose_files
+  local docker_unit_lines
+
+  unit_file="$systemd_unit_dir/${install_service}.service"
+
+  if [[ "$install_dry_run" -eq 1 ]]; then
+    printf 'would write systemd unit: %s\n' "$unit_file"
+    return
+  fi
+
+  docker_bin="$(command -v docker || true)"
+  if [[ -z "$docker_bin" ]]; then
+    printf 'error: docker command not found\n' >&2
+    exit 1
+  fi
+  if ! command -v systemctl >/dev/null; then
+    printf 'error: systemctl command not found\n' >&2
+    exit 1
+  fi
+  compose_files="-f $install_target_dir/compose.yaml"
+  if [[ -f "$compose_override_file" || -f "$install_target_dir/compose.override.yaml" ]]; then
+    compose_files="$compose_files -f $install_target_dir/compose.override.yaml"
+  fi
+  mkdir -p "$systemd_unit_dir"
+  docker_unit_lines=""
+  if systemctl cat docker.service >/dev/null 2>&1; then
+    docker_unit_lines="Requires=docker.service
+After=docker.service"
+  else
+    doctor_warn "docker.service not found; generated unit will rely on Docker socket availability"
+  fi
+
+  cat >"$unit_file" <<EOF
+[Unit]
+Description=Arbiter Docker service
+$docker_unit_lines
+
+[Service]
+Type=simple
+WorkingDirectory=$install_target_dir
+ExecStart=$docker_bin compose --env-file $install_target_dir/docker.env $compose_files up
+ExecStop=$docker_bin compose --env-file $install_target_dir/docker.env $compose_files down
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  chmod 0644 "$unit_file"
+}
+
+install_deployment() {
+  install_target_dir="/opt/arbiter"
+  install_user="arbiter"
+  install_group=""
+  install_service="arbiter"
+  install_start=1
+  install_dry_run=0
+  install_replace_config=0
+
+  while (($#)); do
+    case "$1" in
+      --to)
+        [[ $# -ge 2 ]] || {
+          printf 'error: --to requires a value\n' >&2
+          exit 2
+        }
+        install_target_dir="$2"
+        shift 2
+        ;;
+      --user)
+        [[ $# -ge 2 ]] || {
+          printf 'error: --user requires a value\n' >&2
+          exit 2
+        }
+        install_user="$2"
+        shift 2
+        ;;
+      --group)
+        [[ $# -ge 2 ]] || {
+          printf 'error: --group requires a value\n' >&2
+          exit 2
+        }
+        install_group="$2"
+        shift 2
+        ;;
+      --service)
+        [[ $# -ge 2 ]] || {
+          printf 'error: --service requires a value\n' >&2
+          exit 2
+        }
+        install_service="$2"
+        shift 2
+        ;;
+      --no-start)
+        install_start=0
+        shift
+        ;;
+      --start)
+        install_start=1
+        shift
+        ;;
+      --replace-config)
+        install_replace_config=1
+        shift
+        ;;
+      --dry-run)
+        install_dry_run=1
+        shift
+        ;;
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      *)
+        printf 'error: unknown install option: %s\n\n' "$1" >&2
+        usage >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  if [[ "$install_target_dir" != /* ]]; then
+    printf 'error: --to must be an absolute path: %s\n' "$install_target_dir" >&2
+    exit 2
+  fi
+  if [[ "$install_target_dir" =~ [[:space:]] ]]; then
+    printf 'error: --to must not contain whitespace: %s\n' "$install_target_dir" >&2
+    exit 2
+  fi
+  if [[ ! "$install_service" =~ ^[A-Za-z0-9_.@-]+$ ]]; then
+    printf 'error: --service contains unsupported characters: %s\n' "$install_service" >&2
+    exit 2
+  fi
+  if [[ ! "$install_user" =~ ^[A-Za-z_][A-Za-z0-9_.-]*[$]?$ ]]; then
+    printf 'error: --user contains unsupported characters: %s\n' "$install_user" >&2
+    exit 2
+  fi
+  if [[ -z "$install_group" ]]; then
+    install_group="$install_user"
+  fi
+  if [[ ! "$install_group" =~ ^[A-Za-z_][A-Za-z0-9_.-]*[$]?$ ]]; then
+    printf 'error: --group contains unsupported characters: %s\n' "$install_group" >&2
+    exit 2
+  fi
+
+  printf 'installing Arbiter to %s as %s:%s (service: %s.service)\n' \
+    "$install_target_dir" "$install_user" "$install_group" "$install_service"
+
+  doctor --preinstall --quiet
+
+  if [[ "$install_dry_run" -ne 1 ]]; then
+    install_require_root
+  fi
+
+  install_ensure_identity
+  install_copy_deployment
+  install_mark_deployment_installed
+  install_write_target_metadata
+  install_apply_permissions
+  install_validate_wheelhouse
+  install_apply_permissions
+  install_write_systemd_unit
+  install_record_location
+  run_install_command systemctl daemon-reload
+  run_install_command systemctl enable "${install_service}.service"
+  if [[ "$install_start" -eq 1 ]]; then
+    run_install_command systemctl restart "${install_service}.service"
+  fi
+  if [[ "$install_start" -eq 1 ]]; then
+    install_test_server
+  fi
+  install_report_success
+}
+
+command="${1:-}"
+if (($#)); then
+  shift
+fi
+
+case "$command" in
+  prepare)
+    prepare "$@"
+    ;;
+  bundle)
+    bundle "$@"
+    ;;
+  sync-env)
+    sync_env
+    ;;
+  edit-config)
+    require_file "$(config_main_file)"
+    run_editor "$(config_main_file)"
+    ;;
+  edit-requirements)
+    edit_requirements
+    ;;
+  edit-env)
+    require_file "$(app_env_path)"
+    run_editor "$(app_env_path)"
+    ;;
+  edit-docker)
+    require_file "$compose_env_file"
+    run_editor "$compose_env_file"
+    ;;
+  up)
+    compose up -d
+    print_staging_port_note
+    print_mcp_url
+    ;;
+  restart)
+    compose up -d --force-recreate
+    print_staging_port_note
+    print_mcp_url
+    ;;
+  test)
+    test_server
+    ;;
+  down)
+    compose_down "$@"
+    ;;
+  ps)
+    compose ps
+    ;;
+  logs)
+    compose logs -f
+    ;;
+  info)
+    info
+    ;;
+  doctor)
+    doctor "$@"
+    ;;
+  install)
+    install_deployment "$@"
+    ;;
+  "" | -h | --help | help)
+    usage
+    ;;
+  *)
+    printf 'error: unknown command: %s\n\n' "$command" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

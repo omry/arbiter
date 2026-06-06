@@ -8,10 +8,11 @@ preferences that should not be committed to the repository.
 
 For user-facing changes, add towncrier news fragments for the affected
 published package unless the change is explicitly not release-note-worthy.
-Use `core/newsfragments/` for `arbiter-core`, `imap/newsfragments/` for
-`arbiter-imap`, `smtp/newsfragments/` for `arbiter-smtp`, and
+Use `server/newsfragments/` for `arbiter-server`,
+`plugins/imap/newsfragments/` for `arbiter-imap`,
+`plugins/smtp/newsfragments/` for `arbiter-smtp`, and
 `meta/arbiter-suite/newsfragments/` for the `arbiter-suite` all-in-one meta
 package. `meta:all` means only the zero-code dependency bundle that installs
-all real packages; it does not mean publishing core or plugin packages. Use a
+all real packages; it does not mean publishing server or plugin packages. Use a
 GitHub issue or PR number when one exists, or the `+` orphan prefix for
 untracked changes, such as `+short-description.feature.md`.

@@ -7,13 +7,13 @@ from typing import cast
 
 from hydra.core.config_store import ConfigStore
 
-from arbiter_core.services import (
+from arbiter_server.services import (
     CapabilityDescriptor,
     OperationDescriptor,
     ServicePluginContext,
     ServiceRuntimeContext,
 )
-from arbiter_core.version import distribution_version
+from arbiter_server.version import distribution_version
 
 from .config import (
     EchoConfig,
@@ -21,7 +21,7 @@ from .config import (
     register_configs as register_echo_configs,
 )
 
-CORE_API_VERSION = "0.9"
+SERVER_API_VERSION = "0.9"
 _RENAME_TEMPLATE_ERROR = (
     "arbiter-echo-example is a copyable template, not a production plugin name. "
     "Rename the distribution, import package, entry point, and service capability "
@@ -182,7 +182,7 @@ allowed_prefixes: []
 class EchoServicePlugin:
     name = "echo"
     version = distribution_version("arbiter-echo-example", package_file=__file__)
-    core_api_version = CORE_API_VERSION
+    server_api_version = SERVER_API_VERSION
 
     def register_configs(self, config_store: ConfigStore) -> None:
         register_echo_configs(config_store)
@@ -250,7 +250,7 @@ def _is_repo_example_plugin(package_file: str) -> bool:
         return False
 
     for parent in package_dir.parents:
-        if (parent / "core/src/arbiter_core").is_dir() and (
+        if (parent / "server/src/arbiter_server").is_dir() and (
             parent / "examples/plugins/echo/pyproject.toml"
         ).is_file():
             return True

@@ -18,7 +18,7 @@ from a staging identity to the installed service identity.
 1. [Prepare Docker Deployment](./deployment/1-docker-prepare.md): stage and
    test an Arbiter instance as an unprivileged operator.
    - Initialize a Docker staging directory.
-   - Prepare the installation bundle by selecting Arbiter core and service
+   - Prepare the installation bundle by selecting Arbiter server and service
      plugin packages.
    - Bootstrap configuration for plugin accounts and policies.
    - Bring up the staged Docker instance.

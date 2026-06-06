@@ -6,7 +6,7 @@ Arbiter is a policy-controlled service access runtime. Its capabilities
 are loaded through service plugins, activated by config, and currently exposed
 through MCP and CLI surfaces.
 
-## Core responsibilities
+## Server responsibilities
 
 - compose Hydra/OmegaConf config
 - register structured config schemas
@@ -34,9 +34,9 @@ Service operations use ids such as `smtp:send_email` and
 ## Repository shape
 
 ```text
-core/   Arbiter server, client CLI, plugin contracts
-smtp/   SMTP service plugin
-imap/   IMAP service plugin
+server/   Arbiter server, plugin contracts
+plugins/smtp/   SMTP service plugin
+plugins/imap/   IMAP service plugin
 docs/   source markdown notes
 website/ Docusaurus website
 deploy/ Docker deployment material

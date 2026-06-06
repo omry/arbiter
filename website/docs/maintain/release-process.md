@@ -4,11 +4,12 @@ title: Release Process
 
 Arbiter publishes several Python distributions from one repository:
 
-- `core`: `arbiter-core`, the real core runtime package
+- `server`: `arbiter-server`, the real server runtime package
 - `imap`: `arbiter-imap`, the IMAP plugin
 - `smtp`: `arbiter-smtp`, the SMTP plugin
 - `meta:all`: `arbiter-suite`, a zero-code dependency bundle for all real
   packages
+- `client`: `arbiter-client`, the platform-tagged native client wheel set
 - `skill`: `arbiter-skill`, the agent-skill selector package
 - `skill:linux-amd64`: `arbiter-skill-linux-amd64`, the Linux amd64 native
   skill target
@@ -26,8 +27,9 @@ Arbiter publishes several Python distributions from one repository:
 Meta package keys do not expand to their dependencies. Selecting `meta:all`
 publishes only the `arbiter-suite` package.
 
-Skill package versions come from `arbiter-core`. They are generated wheel-only
-artifacts and do not have separate towncrier release notes.
+The native client and skill package versions come from `arbiter-server`. They are
+generated wheel-only artifacts and do not have separate towncrier release notes.
+The transitional Python CLI client is repo-local and is not published.
 
 This page describes publishing mechanics only.
 
@@ -40,9 +42,9 @@ notes.
 Add fragments under the package that changed:
 
 ```text
-core/newsfragments/123.feature.md
-imap/newsfragments/123.bugfix.md
-smtp/newsfragments/+smtp-only-change.feature.md
+server/newsfragments/123.feature.md
+plugins/imap/newsfragments/123.bugfix.md
+plugins/smtp/newsfragments/+smtp-only-change.feature.md
 meta/arbiter-suite/newsfragments/+meta-package-change.feature.md
 ```
 
@@ -53,14 +55,14 @@ Before a final release, preview and build the notes for each package that will
 publish:
 
 ```bash
-.venv/bin/python -m towncrier build --draft --config core/pyproject.toml --version 0.9.0
-.venv/bin/python -m towncrier build --yes --config core/pyproject.toml --version 0.9.0
+.venv/bin/python -m towncrier build --draft --config server/pyproject.toml --version 0.9.0
+.venv/bin/python -m towncrier build --yes --config server/pyproject.toml --version 0.9.0
 
-.venv/bin/python -m towncrier build --draft --config imap/pyproject.toml --version 0.9.0
-.venv/bin/python -m towncrier build --yes --config imap/pyproject.toml --version 0.9.0
+.venv/bin/python -m towncrier build --draft --config plugins/imap/pyproject.toml --version 0.9.0
+.venv/bin/python -m towncrier build --yes --config plugins/imap/pyproject.toml --version 0.9.0
 
-.venv/bin/python -m towncrier build --draft --config smtp/pyproject.toml --version 0.9.0
-.venv/bin/python -m towncrier build --yes --config smtp/pyproject.toml --version 0.9.0
+.venv/bin/python -m towncrier build --draft --config plugins/smtp/pyproject.toml --version 0.9.0
+.venv/bin/python -m towncrier build --yes --config plugins/smtp/pyproject.toml --version 0.9.0
 
 .venv/bin/python -m towncrier build --draft --config meta/arbiter-suite/pyproject.toml --version 0.9.0
 .venv/bin/python -m towncrier build --yes --config meta/arbiter-suite/pyproject.toml --version 0.9.0
@@ -83,9 +85,10 @@ local version is newer, or whose PyPI project does not exist yet, into
 Limit the publish set with package keys:
 
 ```bash
-tools/plan_pypi_publish --packages core --prepare-output-dir
-tools/plan_pypi_publish --packages core,imap --prepare-output-dir
+tools/plan_pypi_publish --packages server --prepare-output-dir
+tools/plan_pypi_publish --packages server,imap --prepare-output-dir
 tools/plan_pypi_publish --packages smtp --prepare-output-dir
+tools/plan_pypi_publish --packages client --prepare-output-dir
 tools/plan_pypi_publish --packages skill:linux-amd64 --prepare-output-dir
 ```
 
@@ -103,17 +106,18 @@ publisher per GitHub repo/workflow/environment. Use manual workflow dispatch
 with one selected package at a time, creating the matching pending publisher
 before each run:
 
-1. `core` (`arbiter-core`)
+1. `server` (`arbiter-server`)
 2. `imap` (`arbiter-imap`)
 3. `smtp` (`arbiter-smtp`)
 4. `meta:all` (`arbiter-suite`)
-5. `skill` (`arbiter-skill`)
-6. `skill:linux-amd64` (`arbiter-skill-linux-amd64`)
-7. `skill:linux-arm64` (`arbiter-skill-linux-arm64`)
-8. `skill:darwin-amd64` (`arbiter-skill-darwin-amd64`)
-9. `skill:darwin-arm64` (`arbiter-skill-darwin-arm64`)
-10. `skill:windows-amd64` (`arbiter-skill-windows-amd64`)
-11. `skill:windows-arm64` (`arbiter-skill-windows-arm64`)
+5. `client` (`arbiter-client`)
+6. `skill` (`arbiter-skill`)
+7. `skill:linux-amd64` (`arbiter-skill-linux-amd64`)
+8. `skill:linux-arm64` (`arbiter-skill-linux-arm64`)
+9. `skill:darwin-amd64` (`arbiter-skill-darwin-amd64`)
+10. `skill:darwin-arm64` (`arbiter-skill-darwin-arm64`)
+11. `skill:windows-amd64` (`arbiter-skill-windows-amd64`)
+12. `skill:windows-arm64` (`arbiter-skill-windows-arm64`)
 
 ## Dev releases
 

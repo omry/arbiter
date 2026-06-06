@@ -74,7 +74,7 @@ schema for those files, so SMTP, IMAP, and future plugins can each own their
 service-specific config shape.
 
 At startup, `arbiter-server serve` composes the active config, validates it
-against core and plugin schemas, and only then exposes tools.
+against server and plugin schemas, and only then exposes tools.
 
 ## Command-line overrides
 

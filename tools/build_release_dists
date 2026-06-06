@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -19,10 +20,11 @@ class Package:
 
 
 PACKAGES = (
-    Package(key="core", name="arbiter-core", path=Path("core")),
-    Package(key="imap", name="arbiter-imap", path=Path("imap")),
-    Package(key="smtp", name="arbiter-smtp", path=Path("smtp")),
+    Package(key="server", name="arbiter-server", path=Path("server")),
+    Package(key="imap", name="arbiter-imap", path=Path("plugins/imap")),
+    Package(key="smtp", name="arbiter-smtp", path=Path("plugins/smtp")),
     Package(key="meta:all", name="arbiter-suite", path=Path("meta/arbiter-suite")),
+    Package(key="client", name="arbiter-client", path=None, kind="client"),
     Package(key="skill", name="arbiter-skill", path=None, kind="skill"),
     Package(
         key="skill:linux-amd64",
@@ -63,6 +65,14 @@ PACKAGES = (
 )
 PACKAGE_BY_KEY = {package.key: package for package in PACKAGES}
 PACKAGE_KEYS = tuple(PACKAGE_BY_KEY)
+CLIENT_TARGETS = (
+    "linux-amd64",
+    "linux-arm64",
+    "darwin-amd64",
+    "darwin-arm64",
+    "windows-amd64",
+    "windows-arm64",
+)
 
 
 def _parse_package_keys(value: str) -> tuple[Package, ...]:
@@ -90,9 +100,10 @@ def _run(
     command: list[str],
     *,
     verbose: bool,
+    env: dict[str, str] | None = None,
 ) -> None:
     if verbose:
-        subprocess.run(command, check=True)
+        subprocess.run(command, check=True, env=env)
         return
 
     result = subprocess.run(
@@ -100,6 +111,7 @@ def _run(
         check=False,
         text=True,
         capture_output=True,
+        env=env,
     )
     if result.returncode != 0:
         if result.stdout:
@@ -111,6 +123,31 @@ def _run(
 
 def _distribution_name(package_name: str) -> str:
     return package_name.replace("-", "_")
+
+
+def _server_version(root: Path) -> str:
+    in_project = False
+    for line in (root / "server" / "pyproject.toml").read_text().splitlines():
+        stripped = line.strip()
+        if stripped == "[project]":
+            in_project = True
+            continue
+        if in_project and stripped.startswith("["):
+            break
+        if in_project and stripped.startswith("version"):
+            _name, _separator, value = stripped.partition("=")
+            version = value.strip().strip('"')
+            if version:
+                return version
+    raise ValueError("missing project.version in server/pyproject.toml")
+
+
+def _build_go_client(*, root: Path, verbose: bool) -> None:
+    print("build: arbiter Go client binaries")
+    _run(
+        [str(root / "tools" / "build_go_client"), "--root", str(root), "--clean"],
+        verbose=verbose,
+    )
 
 
 def _copy_skill_wheels(
@@ -144,11 +181,6 @@ def _build_skill_distributions(
         prefix="arbiter-skill-release-", dir=outdir.parent
     ) as tmp:
         skill_outdir = Path(tmp)
-        print("build: arbiter Go client binaries")
-        _run(
-            [str(root / "tools" / "build_go_client"), "--root", str(root), "--clean"],
-            verbose=verbose,
-        )
         print("build: arbiter skill wheels")
         _run(
             [
@@ -166,6 +198,38 @@ def _build_skill_distributions(
         _copy_skill_wheels(source_dir=skill_outdir, outdir=outdir, packages=packages)
 
 
+def _build_client_distributions(
+    *,
+    root: Path,
+    outdir: Path,
+    verbose: bool,
+) -> None:
+    version = _server_version(root)
+    client_root = root / "client" / "arbiter-client"
+    for target in CLIENT_TARGETS:
+        print(f"build: arbiter-client {target} wheel")
+        env = os.environ.copy()
+        env.update(
+            {
+                "ARBITER_CLIENT_VERSION": version,
+                "ARBITER_CLIENT_TARGET": target,
+            }
+        )
+        _run(
+            [
+                sys.executable,
+                "-m",
+                "build",
+                "--wheel",
+                "--outdir",
+                str(outdir),
+                str(client_root),
+            ],
+            verbose=verbose,
+            env=env,
+        )
+
+
 def build_distributions(
     *,
     root: Path,
@@ -179,6 +243,7 @@ def build_distributions(
     outdir.mkdir(parents=True, exist_ok=True)
 
     python_packages = tuple(package for package in packages if package.kind == "python")
+    client_selected = any(package.kind == "client" for package in packages)
     skill_selected = any(package.kind == "skill" for package in packages)
 
     for package in python_packages:
@@ -195,6 +260,12 @@ def build_distributions(
             str(root / package.path),
         ]
         _run(command, verbose=verbose)
+
+    if client_selected or skill_selected:
+        _build_go_client(root=root, verbose=verbose)
+
+    if client_selected:
+        _build_client_distributions(root=root, outdir=outdir, verbose=verbose)
 
     if skill_selected:
         _build_skill_distributions(

@@ -26,9 +26,9 @@ services:
         rm -rf /tmp/arbiter-wheels &&
         mkdir -p /tmp/arbiter-source &&
         mkdir -p /tmp/arbiter-wheels &&
-        cp -a /source/arbiter/README.md /source/arbiter/core /source/arbiter/smtp /source/arbiter/imap /tmp/arbiter-source/ &&
+        cp -a /source/arbiter/server /source/arbiter/plugins /tmp/arbiter-source/ &&
         find /tmp/arbiter-source -type d \( -name "*.egg-info" -o -name "__pycache__" \) -prune -exec rm -rf {} + &&
-        python -m pip wheel --no-cache-dir --no-deps --wheel-dir /tmp/arbiter-wheels /tmp/arbiter-source/core /tmp/arbiter-source/smtp /tmp/arbiter-source/imap &&
+        python -m pip wheel --no-cache-dir --no-deps --wheel-dir /tmp/arbiter-wheels /tmp/arbiter-source/server /tmp/arbiter-source/plugins/smtp /tmp/arbiter-source/plugins/imap &&
         python -m pip install --no-cache-dir /tmp/arbiter-wheels/*.whl;
       else
         python -m pip install --no-cache-dir "$$install_target";

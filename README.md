@@ -2,8 +2,8 @@
 
 |  | Description |
 | --- | --- |
-| Project | [![PyPI version](https://badge.fury.io/py/arbiter-suite.svg)](https://badge.fury.io/py/arbiter-suite)[![Downloads](https://pepy.tech/badge/arbiter-core/month)](https://pepy.tech/project/arbiter-core)![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue) |
-| Packages | [![arbiter-core](https://img.shields.io/pypi/v/arbiter-core.svg?label=arbiter-core)](https://pypi.org/project/arbiter-core/)[![arbiter-smtp](https://img.shields.io/pypi/v/arbiter-smtp.svg?label=arbiter-smtp)](https://pypi.org/project/arbiter-smtp/)[![arbiter-imap](https://img.shields.io/pypi/v/arbiter-imap.svg?label=arbiter-imap)](https://pypi.org/project/arbiter-imap/) |
+| Project | [![PyPI version](https://badge.fury.io/py/arbiter-suite.svg)](https://badge.fury.io/py/arbiter-suite)[![Downloads](https://pepy.tech/badge/arbiter-server/month)](https://pepy.tech/project/arbiter-server)![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue) |
+| Packages | [![arbiter-server](https://img.shields.io/pypi/v/arbiter-server.svg?label=arbiter-server)](https://pypi.org/project/arbiter-server/)[![arbiter-smtp](https://img.shields.io/pypi/v/arbiter-smtp.svg?label=arbiter-smtp)](https://pypi.org/project/arbiter-smtp/)[![arbiter-imap](https://img.shields.io/pypi/v/arbiter-imap.svg?label=arbiter-imap)](https://pypi.org/project/arbiter-imap/) |
 | Code quality | [![CI](https://github.com/omry/arbiter/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/omry/arbiter/actions/workflows/ci.yml) |
 | Docs and support | [![Documentation](https://img.shields.io/badge/docs-arbiter.yadan.net-blue)](https://arbiter.yadan.net/) |
 | License | [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) |
@@ -20,8 +20,9 @@ Current implementation status:
 - IMAP list/get/search/move/mark-read/delete tools scoped to configured accounts and folders
 - `arbiter.account.<service>` and reusable `arbiter.policy.<service>` objects
   for per-service account policy
-- `arbiter-py` Python client CLI and `arbiter-server` server/operator CLI
-- Docker deployment files for a standard SMTP gateway and a hardened read-only IMAP variant
+- `arbiter-py` Python client CLI, native `arbiter` client CLI, and
+  `arbiter-server` server/operator CLI
+- Docker deployment tooling for staged and installed Arbiter services
 
 Known open gaps:
 
@@ -41,8 +42,9 @@ Create and use the repo-local virtualenv with:
 - `.venv/bin/python -m pip install -r requirements-dev.txt`
 
 The repository root is a workspace, not an Arbiter runtime package. The dev
-requirements file installs `core`, `smtp`, and `imap` editably so the
-`arbiter-py` and `arbiter-server` commands come from this checkout.
+requirements file installs `server`, `client/python-cli`, `plugins/smtp`, and `plugins/imap`
+editably so the `arbiter-py` and `arbiter-server` commands come from this
+checkout.
 
 Run the test suite from the repo root with:
 
@@ -53,8 +55,8 @@ The `lint` session runs both `black --check` and `pyrefly check`.
 
 For focused local runs without `nox`, use the same environment directly, for example:
 
-- `.venv/bin/python -m pytest core/tests/unit/test_config.py`
-- `.venv/bin/python -m pytest core/tests/unit/test_app.py`
+- `.venv/bin/python -m pytest server/tests/unit/test_config.py`
+- `.venv/bin/python -m pytest server/tests/unit/test_app.py`
 
 The Docusaurus website lives in [website/](website/):
 
@@ -62,13 +64,13 @@ The Docusaurus website lives in [website/](website/):
 - `cd website && npm run start`
 - `cd website && npm run build`
 
-The experimental native Go client lives in [client-go/](client-go/). Build all
-default release targets from the repo root with:
+The experimental native Go CLI client lives in [client/go-cli/](client/go-cli/).
+Build all default release targets from the repo root with:
 
 - `tools/build_go_client --clean`
 
 This writes stripped Linux, macOS, and Windows binaries for `amd64` and `arm64`
-under `client-go/dist/`. Limit the matrix with one or more `--target
+under `client/go-cli/dist/`. Limit the matrix with one or more `--target
 GOOS-GOARCH` arguments, for example `tools/build_go_client --target
 linux-arm64`; pass `--debug` to keep debug symbols.
 
@@ -79,6 +81,19 @@ Package the native client as platform-specific skill artifacts with:
 This writes a selector skill artifact plus one `arbiter-skill-{os}-{arch}`
 target artifact per built binary under `dist/arbiter-skill/`, with local
 directories and wheels generated side by side.
+
+The native client can also be packaged as the `arbiter-client` PyPI project:
+
+- `tools/build_release_dists --packages client`
+
+This builds one platform-tagged wheel per native target. Each wheel installs the
+native `arbiter` executable directly as a wheel script; it does not contain a
+Python wrapper.
+
+The transitional Python CLI client lives in
+[client/python-cli/](client/python-cli/). It owns the repo-local `arbiter-py`
+command for development, but it is not part of the release publishing surface.
+The canonical distributable client is the native `arbiter-client` package.
 
 The user-facing documentation lives in [website/docs/](website/docs/). The
 root [docs/](docs/) directory is reserved for internal planning and future
@@ -187,13 +202,6 @@ IMAP operations use folder-scoped UIDs returned by `imap:list_messages` and
 `imap:search_messages`; pass those ids back to `imap:get_message`,
 `imap:move_message`, `imap:mark_message_read`, or `imap:delete_message` with
 the same account and folder.
-
-## Read-Only Real Inbox Docker Run
-
-For a hardened Docker setup that reads a single real IMAP folder with Docker
-secrets and no SMTP access, see:
-
-- [deploy/readonly-imap/README.md](deploy/readonly-imap/README.md)
 
 ## License
 

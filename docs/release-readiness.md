@@ -22,7 +22,7 @@ run, it is not done.
 - Confirm package versions are on the intended release line.
 - Confirm the all-in-one meta package uses exact dependencies for the real
   packages it curates.
-- Confirm plugin packages declare the correct core compatibility line.
+- Confirm plugin packages declare the correct server compatibility line.
 - Run:
 
 ```bash
@@ -41,8 +41,8 @@ Build all distributions into a temporary wheelhouse:
 tools/build_release_dists --clean --outdir /tmp/arbiter-release/dist
 ```
 
-Use `--packages core,smtp`, `--packages meta:all`, or a skill key such as
-`--packages skill:linux-amd64` for narrower package sets.
+Use `--packages server,smtp`, `--packages meta:all`, `--packages client`, or a
+skill key such as `--packages skill:linux-amd64` for narrower package sets.
 Add `--verbose` when build logs are needed.
 
 Prepare the publish artifact set from the built wheelhouse:
@@ -75,7 +75,7 @@ package-specific behavior touched by the release.
 Run the normal release checks:
 
 ```bash
-.venv/bin/python -m pytest core/tests smtp/tests imap/tests
+.venv/bin/python -m pytest server/tests plugins/smtp/tests plugins/imap/tests
 .venv/bin/python -m nox -s lint
 .venv/bin/python -m nox -s compat
 ```
@@ -135,8 +135,10 @@ For the initial bootstrap, publish one package at a time because PyPI pending
 trusted publishers currently allow only one pending project for the same
 repository, workflow, and environment.
 
-The skill publishing set is the selector package `skill` plus the six native
-target packages: `skill:linux-amd64`, `skill:linux-arm64`,
+The native client publishing key is `client`, which publishes the
+`arbiter-client` platform wheel set. The transitional Python CLI client is not
+published. The skill publishing set is the selector package `skill` plus the
+six native target packages: `skill:linux-amd64`, `skill:linux-arm64`,
 `skill:darwin-amd64`, `skill:darwin-arm64`, `skill:windows-amd64`, and
 `skill:windows-arm64`.
 

@@ -75,9 +75,9 @@ def display_path(path: Path, root: Path) -> str:
         return str(path)
 
 
-def core_version(root: Path) -> str:
+def server_version(root: Path) -> str:
     in_project = False
-    for line in (root / "core" / "pyproject.toml").read_text().splitlines():
+    for line in (root / "server" / "pyproject.toml").read_text().splitlines():
         stripped = line.strip()
         if stripped == "[project]":
             in_project = True
@@ -89,7 +89,7 @@ def core_version(root: Path) -> str:
             version = value.strip().strip('"')
             if version:
                 return version
-    raise ValueError("missing project.version in core/pyproject.toml")
+    raise ValueError("missing project.version in server/pyproject.toml")
 
 
 def selector_config(root: Path) -> bytes:
@@ -101,7 +101,7 @@ def target_installer_config(root: Path) -> bytes:
 
 
 def target_binary(root: Path, target: Target) -> Path:
-    return root / "client-go" / "dist" / target.label / target.binary_name
+    return root / "client/go-cli" / "dist" / target.label / target.binary_name
 
 
 def ensure_target_binary(root: Path, target: Target) -> Path:
@@ -269,7 +269,7 @@ def package_skill(
         shutil.rmtree(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
-    version = core_version(root)
+    version = server_version(root)
     binaries = {target: ensure_target_binary(root, target) for target in targets}
     written: list[Path] = []
 

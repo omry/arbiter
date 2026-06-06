@@ -1,10 +1,13 @@
--e ./core
--e ./smtp
--e ./imap
+-e ./server
+-e ./client/python-cli
+-e ./plugins/smtp
+-e ./plugins/imap
 
 nox[pbs]>=2024.10,<2026.0
 aiosmtpd>=1.4.6,<2.0
 black>=25.0,<26.0
+build>=1.2,<2.0
+hatchling>=1.24,<2.0
 pyrefly>=0.39,<0.40
 pytest>=7.4,<9.0
 tomli>=2.0,<3.0

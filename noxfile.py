@@ -7,15 +7,17 @@ import nox
 
 nox.options.sessions = ["tests", "lint"]
 
-CORE_PYPROJECT = nox.project.load_toml("core/pyproject.toml")
+SERVER_PYPROJECT = nox.project.load_toml("server/pyproject.toml")
 
 BLACK_TARGETS = [
-    "core/src",
-    "core/tests",
-    "smtp/src",
-    "smtp/tests",
-    "imap/src",
-    "imap/tests",
+    "client/python-cli/src",
+    "client/python-cli/tests",
+    "server/src",
+    "server/tests",
+    "plugins/smtp/src",
+    "plugins/smtp/tests",
+    "plugins/imap/src",
+    "plugins/imap/tests",
     "examples/plugins/echo/src",
     "examples/plugins/echo/tests",
     "noxfile.py",
@@ -26,19 +28,22 @@ BLACK_TARGETS = [
     "tools/upgrade_release_line",
 ]
 TEST_TARGETS = [
-    "core/tests",
-    "smtp/tests",
-    "imap/tests",
+    "client/python-cli/tests",
+    "server/tests",
+    "plugins/smtp/tests",
+    "plugins/imap/tests",
     "examples/plugins/echo/tests",
 ]
-SUPPORTED_PYTHONS = nox.project.python_versions(CORE_PYPROJECT)
+SUPPORTED_PYTHONS = nox.project.python_versions(SERVER_PYPROJECT)
 PYREFLY_TARGETS = [
-    "core/src",
-    "core/tests",
-    "smtp/src",
-    "smtp/tests",
-    "imap/src",
-    "imap/tests",
+    "client/python-cli/src",
+    "client/python-cli/tests",
+    "server/src",
+    "server/tests",
+    "plugins/smtp/src",
+    "plugins/smtp/tests",
+    "plugins/imap/src",
+    "plugins/imap/tests",
     "examples/plugins/echo/src",
     "examples/plugins/echo/tests",
     "noxfile.py",
@@ -49,14 +54,17 @@ def install_project(session: nox.Session) -> None:
     session.install(
         "aiosmtpd>=1.4.6,<2.0",
         "black>=25.0,<26.0",
+        "build>=1.2,<2.0",
+        "hatchling>=1.24,<2.0",
         "nox>=2024.10,<2026.0",
         "pyrefly>=0.39,<0.40",
         "pytest>=7.4,<9.0",
         "tomli>=2.0,<3.0",
     )
-    session.install("-e", "core")
-    session.install("-e", "smtp")
-    session.install("-e", "imap")
+    session.install("-e", "client/python-cli")
+    session.install("-e", "server")
+    session.install("-e", "plugins/smtp")
+    session.install("-e", "plugins/imap")
 
 
 def iter_black_targets() -> list[str]:
@@ -90,7 +98,7 @@ def deploy_test(session: nox.Session) -> None:
     install_project(session)
     session.run(
         "pytest",
-        "imap/tests/integration/test_deploy_docker_integration.py",
+        "plugins/imap/tests/integration/test_deploy_docker_integration.py",
         env={"ARBITER_RUN_DOCKER_DEPLOY_TESTS": "1"},
     )
 

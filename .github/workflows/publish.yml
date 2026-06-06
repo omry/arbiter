@@ -18,7 +18,7 @@ on:
         default: false
         type: boolean
       publish_packages:
-        description: "Publish keys: all or comma-separated keys like core,imap,meta:all,skill:linux-amd64; meta:all is only the zero-code all-in-one meta package"
+        description: "Publish keys: all or comma-separated keys like server,imap,meta:all,client,skill:linux-amd64; meta:all is only the zero-code all-in-one meta package"
         required: true
         default: all
         type: string
@@ -54,9 +54,9 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           RELEASE_LINE_INPUT: ${{ inputs.release_line }}
         run: |
-          project_version="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' core/pyproject.toml | head -n 1)"
+          project_version="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' server/pyproject.toml | head -n 1)"
           if [[ -z "$project_version" ]]; then
-            echo "Could not read project version from core/pyproject.toml" >&2
+            echo "Could not read project version from server/pyproject.toml" >&2
             exit 1
           fi
           if [[ "${{ github.event_name }}" == "release" ]]; then
@@ -89,7 +89,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: client-go/go.mod
+          go-version-file: client/go-cli/go.mod
 
       - name: Install build tools
         run: python -m pip install "nox[pbs]>=2024.10,<2026.0" build
@@ -103,21 +103,46 @@ jobs:
       - name: Run compatibility tests
         run: nox -s compat
 
-      - name: Build core distribution
-        run: python -m build --sdist --wheel --outdir dist core
+      - name: Build server distribution
+        run: python -m build --sdist --wheel --outdir dist server
 
       - name: Build IMAP plugin distribution
-        run: python -m build --sdist --wheel --outdir dist imap
+        run: python -m build --sdist --wheel --outdir dist plugins/imap
 
       - name: Build SMTP plugin distribution
-        run: python -m build --sdist --wheel --outdir dist smtp
+        run: python -m build --sdist --wheel --outdir dist plugins/smtp
 
       - name: Build meta distribution
         run: python -m build --sdist --wheel --outdir dist meta/arbiter-suite
 
-      - name: Build Arbiter skill distributions
+      - name: Build Arbiter native distributions
+        shell: bash
         run: |
           tools/build_go_client --clean
+          version="$(python - <<'PY'
+          from pathlib import Path
+          in_project = False
+          for line in Path("server/pyproject.toml").read_text().splitlines():
+              stripped = line.strip()
+              if stripped == "[project]":
+                  in_project = True
+                  continue
+              if in_project and stripped.startswith("["):
+                  break
+              if in_project and stripped.startswith("version"):
+                  print(stripped.partition("=")[2].strip().strip('"'))
+                  break
+          PY
+          )"
+          for target in \
+            linux-amd64 linux-arm64 \
+            darwin-amd64 darwin-arm64 \
+            windows-amd64 windows-arm64
+          do
+            ARBITER_CLIENT_VERSION="$version" \
+              ARBITER_CLIENT_TARGET="$target" \
+              python -m build --wheel --outdir dist client/arbiter-client
+          done
           tools/package_arbiter_skill --clean --format wheel
           cp dist/arbiter-skill/wheels/*.whl dist/
 
@@ -154,7 +179,7 @@ jobs:
             if [[ "$package_version" == *".dev"* ]]; then
               continue
             fi
-            if [[ "$package_key" == skill* ]]; then
+            if [[ "$package_key" == client || "$package_key" == skill* ]]; then
               continue
             fi
             tools/extract_release_notes \
@@ -192,7 +217,9 @@ jobs:
           run_server_smoke=false
           for spec in "${publish_specs[@]}"; do
             package_name="${spec%%==*}"
-            if [[ "$package_name" == arbiter-skill* ]]; then
+            if [[ "$package_name" == arbiter-client ]]; then
+              .release-smoke/bin/arbiter --help > /dev/null
+            elif [[ "$package_name" == arbiter-skill* ]]; then
               module_name="${package_name//-/_}"
               .release-smoke/bin/python -c "__import__('$module_name')"
             else
@@ -279,7 +306,7 @@ jobs:
           for index in "${!package_keys[@]}"; do
             package_key="${package_keys[$index]}"
             package_version="${publish_specs[$index]##*==}"
-            if [[ "$package_key" == skill* ]]; then
+            if [[ "$package_key" == client || "$package_key" == skill* ]]; then
               continue
             fi
             if [[ "$package_version" == *".dev"* ]]; then

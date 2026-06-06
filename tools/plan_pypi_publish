@@ -37,65 +37,73 @@ class Package:
 
 
 PACKAGES = (
-    Package(kind="core", name="arbiter-core", path=Path("core")),
-    Package(kind="plugin", name="arbiter-imap", path=Path("imap")),
-    Package(kind="plugin", name="arbiter-smtp", path=Path("smtp")),
+    Package(kind="server", name="arbiter-server", path=Path("server")),
+    Package(kind="plugin", name="arbiter-imap", path=Path("plugins/imap")),
+    Package(kind="plugin", name="arbiter-smtp", path=Path("plugins/smtp")),
     Package(kind="meta", name="arbiter-suite", path=Path("meta/arbiter-suite")),
+    Package(
+        kind="client",
+        name="arbiter-client",
+        path=Path("server"),
+        project_name="arbiter-server",
+        artifacts=("wheel",),
+    ),
     Package(
         kind="skill",
         name="arbiter-skill",
-        path=Path("core"),
-        project_name="arbiter-core",
+        path=Path("server"),
+        project_name="arbiter-server",
         artifacts=("wheel",),
     ),
     Package(
         kind="skill",
         name="arbiter-skill-linux-amd64",
-        path=Path("core"),
-        project_name="arbiter-core",
+        path=Path("server"),
+        project_name="arbiter-server",
         artifacts=("wheel",),
     ),
     Package(
         kind="skill",
         name="arbiter-skill-linux-arm64",
-        path=Path("core"),
-        project_name="arbiter-core",
+        path=Path("server"),
+        project_name="arbiter-server",
         artifacts=("wheel",),
     ),
     Package(
         kind="skill",
         name="arbiter-skill-darwin-amd64",
-        path=Path("core"),
-        project_name="arbiter-core",
+        path=Path("server"),
+        project_name="arbiter-server",
         artifacts=("wheel",),
     ),
     Package(
         kind="skill",
         name="arbiter-skill-darwin-arm64",
-        path=Path("core"),
-        project_name="arbiter-core",
+        path=Path("server"),
+        project_name="arbiter-server",
         artifacts=("wheel",),
     ),
     Package(
         kind="skill",
         name="arbiter-skill-windows-amd64",
-        path=Path("core"),
-        project_name="arbiter-core",
+        path=Path("server"),
+        project_name="arbiter-server",
         artifacts=("wheel",),
     ),
     Package(
         kind="skill",
         name="arbiter-skill-windows-arm64",
-        path=Path("core"),
-        project_name="arbiter-core",
+        path=Path("server"),
+        project_name="arbiter-server",
         artifacts=("wheel",),
     ),
 )
 PACKAGE_BY_KEY = {
-    "core": "arbiter-core",
+    "server": "arbiter-server",
     "imap": "arbiter-imap",
     "smtp": "arbiter-smtp",
     "meta:all": "arbiter-suite",
+    "client": "arbiter-client",
     "skill": "arbiter-skill",
     "skill:linux-amd64": "arbiter-skill-linux-amd64",
     "skill:linux-arm64": "arbiter-skill-linux-arm64",
@@ -106,6 +114,14 @@ PACKAGE_BY_KEY = {
 }
 PACKAGE_KEY_BY_NAME = {name: key for key, name in PACKAGE_BY_KEY.items()}
 PACKAGE_KEYS = tuple(PACKAGE_BY_KEY)
+CLIENT_PLATFORM_TAGS = (
+    "manylinux_2_17_x86_64",
+    "manylinux_2_17_aarch64",
+    "macosx_11_0_x86_64",
+    "macosx_11_0_arm64",
+    "win_amd64",
+    "win_arm64",
+)
 
 
 @total_ordering
@@ -219,25 +235,25 @@ def _pypi_version(package_name: str) -> Version | None:
 
 def _validate_versions(root: Path) -> dict[str, Version]:
     versions = {package.name: _project_version(root, package) for package in PACKAGES}
-    core_version = versions["arbiter-core"]
+    server_version = versions["arbiter-server"]
 
     main_version = versions["arbiter-suite"]
-    if main_version.line != core_version.line:
+    if main_version.line != server_version.line:
         raise ValueError(
             "arbiter-suite version line "
-            f"{main_version.major}.{main_version.minor} does not match core "
-            f"{core_version.major}.{core_version.minor}"
+            f"{main_version.major}.{main_version.minor} does not match server "
+            f"{server_version.major}.{server_version.minor}"
         )
 
     for package in PACKAGES:
         if package.kind != "plugin":
             continue
-        plugin_version = versions[package.name]
-        if plugin_version.line != core_version.line:
+        line_version = versions[package.name]
+        if line_version.line != server_version.line:
             raise ValueError(
                 f"{package.name} version line "
-                f"{plugin_version.major}.{plugin_version.minor} does not match core "
-                f"{core_version.major}.{core_version.minor}"
+                f"{line_version.major}.{line_version.minor} does not match server "
+                f"{server_version.major}.{server_version.minor}"
             )
 
     return versions
@@ -245,6 +261,9 @@ def _validate_versions(root: Path) -> dict[str, Version]:
 
 def _distribution_patterns(package: Package, version: Version) -> tuple[str, ...]:
     base = f"{package.normalized_name}-{version.text}"
+    if package.kind == "client":
+        return tuple(f"{base}-py3-none-{tag}.whl" for tag in CLIENT_PLATFORM_TAGS)
+
     filenames: list[str] = []
     if "sdist" in package.artifacts:
         filenames.append(f"{base}.tar.gz")

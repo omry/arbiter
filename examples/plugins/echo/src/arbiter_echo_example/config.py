@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 from hydra.core.config_store import ConfigStore
 
-from arbiter_core.config import Policy
+from arbiter_server.config import Policy
 
 
 @dataclass

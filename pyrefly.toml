@@ -1,7 +1,8 @@
 search-path = [
-    "core/src",
-    "smtp/src",
-    "imap/src",
+    "client/python-cli/src",
+    "server/src",
+    "plugins/smtp/src",
+    "plugins/imap/src",
     "examples/plugins/echo/src",
 ]
 python-version = "3.10.0"

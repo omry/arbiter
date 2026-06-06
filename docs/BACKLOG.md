@@ -227,6 +227,18 @@ This file is the day-to-day queue for design and implementation gaps.
       schema-driven CLI generation from optional task-specific wrapper
       behavior.
 
+- [ ] `P2` Bring the Go CLI client to parity with the Python CLI.
+      The Go CLI is expected to become the canonical distributable Arbiter
+      client, while the Python CLI is transitional and repo-local. Before the
+      Python CLI can be removed or fully demoted, the Go CLI should cover the
+      working user-facing behavior that currently exists there.
+      Acceptance checks: compare command, flag, config, override, output, error,
+      and version-warning behavior between `client/python-cli` and
+      `client/go-cli`; close or explicitly defer each gap; ensure the native
+      `arbiter-client` wheel exercises the canonical CLI in release smoke
+      tests; update docs to prefer the Go CLI; and either remove the Python CLI
+      or document the remaining repo-local reason it exists.
+
 - [ ] `P2` Add plugin-authored workflow discovery.
       Service plugins should be able to describe domain-specific manual
       workflows that help agents choose and sequence existing atomic

@@ -90,7 +90,7 @@ arbiter-server env check [override...]
 
 ## version
 
-Print core and plugin runtime versions. When the command is running from a
+Print server and plugin runtime versions. When the command is running from a
 source checkout, it also reports the current source commit and whether the
 checkout has uncommitted changes.
 
@@ -98,7 +98,7 @@ checkout has uncommitted changes.
 arbiter-server version [--json]
 ```
 
-- `version`: print the loaded Arbiter core version, core API line, source
+- `version`: print the loaded Arbiter server version, server API line, source
   checkout state when available, and installed service plugin versions.
 - `version --json`: print the same information as JSON.
 
@@ -108,7 +108,7 @@ Create or update Docker deployment files from the installed `arbiter-server`
 command. See [Deployment](./deployment.md) for the Docker deployment workflow,
 generated helper commands, package bundle management, and Linux install.
 For this release line, explicit deployment package pins use versions such as
-`arbiter-core==0.9.0.dev2`.
+`arbiter-server==0.9.0.dev2`.
 
 ## plugins
 
@@ -119,6 +119,6 @@ arbiter-server plugins list [--json]
 ```
 
 - `plugins list`: print installed plugin names.
-- `plugins list --json`: print core runtime version info, source checkout state
-  when available, and plugin names, versions, and core API compatibility lines
+- `plugins list --json`: print server runtime version info, source checkout state
+  when available, and plugin names, versions, and server API compatibility lines
   as JSON.

@@ -122,7 +122,7 @@ def build_targets(
     strip: bool,
     verbose: bool,
 ) -> list[Path]:
-    client_dir = root / "client-go"
+    client_dir = root / "client/go-cli"
     if not (client_dir / "go.mod").exists():
         raise FileNotFoundError(f"missing Go client module: {client_dir / 'go.mod'}")
 
@@ -180,8 +180,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--root", default=".", help=argparse.SUPPRESS)
     parser.add_argument(
         "--outdir",
-        default="client-go/dist",
-        help="output directory, default: client-go/dist",
+        default="client/go-cli/dist",
+        help="output directory, default: client/go-cli/dist",
     )
     parser.add_argument(
         "--target",
@@ -231,7 +231,7 @@ def main(argv: list[str] | None = None) -> int:
             strip=not namespace.debug,
             verbose=namespace.verbose,
         )
-        local_dist = root / "client-go" / "dist"
+        local_dist = root / "client/go-cli" / "dist"
         host_target = current_target()
         if host_target is not None and outdir == local_dist:
             built_by_target = dict(zip(targets, built, strict=True))

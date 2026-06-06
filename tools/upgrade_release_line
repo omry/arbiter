@@ -14,9 +14,9 @@ from typing import TextIO
 SUITE_PYPROJECT = Path("meta/arbiter-suite/pyproject.toml")
 PACKAGE_FILES = (
     SUITE_PYPROJECT,
-    Path("core/pyproject.toml"),
-    Path("smtp/pyproject.toml"),
-    Path("imap/pyproject.toml"),
+    Path("server/pyproject.toml"),
+    Path("plugins/smtp/pyproject.toml"),
+    Path("plugins/imap/pyproject.toml"),
 )
 DOC_FILES = (
     Path("website/docs/operate/deployment/3-bundle-deep-dive.md"),
@@ -26,39 +26,39 @@ DOC_FILES = (
 DOC_EXPECTATIONS = {
     Path("website/docs/operate/deployment/3-bundle-deep-dive.md"): (
         "arbiter-suite=={final_version}",
-        "arbiter-core=={version}",
+        "arbiter-server=={version}",
         "arbiter-smtp=={version}",
-        "/wheels/arbiter_core-{version}-py3-none-any.whl",
+        "/wheels/arbiter_server-{version}-py3-none-any.whl",
         "/wheels/arbiter_smtp-{version}-py3-none-any.whl",
         "{dev_version}",
     ),
-    Path("website/docs/operate/server-reference.md"): ("arbiter-core=={version}",),
+    Path("website/docs/operate/server-reference.md"): ("arbiter-server=={version}",),
     Path("website/docs/extend/plugins.md"): (
         "`{line}.x`",
         "`{line}` line",
         "`{final_version}`",
         "`{line}.1`",
-        'core_api_version = "{line}"',
-        '"arbiter-core>={final_version},<{next_version}"',
+        'server_api_version = "{line}"',
+        '"arbiter-server>={final_version},<{next_version}"',
     ),
 }
 META_PACKAGE_DEPENDENCIES = (
-    "arbiter-core",
+    "arbiter-server",
     "arbiter-smtp",
     "arbiter-imap",
 )
 PACKAGE_FILE_BY_DISTRIBUTION = {
-    "arbiter-core": Path("core/pyproject.toml"),
-    "arbiter-smtp": Path("smtp/pyproject.toml"),
-    "arbiter-imap": Path("imap/pyproject.toml"),
+    "arbiter-server": Path("server/pyproject.toml"),
+    "arbiter-smtp": Path("plugins/smtp/pyproject.toml"),
+    "arbiter-imap": Path("plugins/imap/pyproject.toml"),
 }
 PLUGIN_PACKAGE_FILES = (
-    Path("smtp/pyproject.toml"),
-    Path("imap/pyproject.toml"),
+    Path("plugins/smtp/pyproject.toml"),
+    Path("plugins/imap/pyproject.toml"),
 )
 PLUGIN_RUNTIME_FILES = (
-    Path("smtp/src/arbiter_smtp/__init__.py"),
-    Path("imap/src/arbiter_imap/__init__.py"),
+    Path("plugins/smtp/src/arbiter_smtp/__init__.py"),
+    Path("plugins/imap/src/arbiter_imap/__init__.py"),
 )
 GREEN = "\033[32m"
 RED = "\033[31m"
@@ -179,14 +179,14 @@ def _version_line(version: str) -> ReleaseLine:
     return PackageVersion.parse(version).line
 
 
-def _extract_core_dependency_range(text: str, path: Path) -> tuple[str, str]:
+def _extract_server_dependency_range(text: str, path: Path) -> tuple[str, str]:
     match = re.search(
-        r'"arbiter-core>=([0-9]+\.[0-9]+\.[0-9]+'
+        r'"arbiter-server>=([0-9]+\.[0-9]+\.[0-9]+'
         r'(?:[.-]dev[0-9]+)?),<([0-9]+\.[0-9]+\.[0-9]+)"',
         text,
     )
     if match is None:
-        raise ValueError(f"{path} is missing an arbiter-core dependency range")
+        raise ValueError(f"{path} is missing an arbiter-server dependency range")
     return match.group(1), match.group(2)
 
 
@@ -216,17 +216,17 @@ def _validate_current_state(root: Path) -> ReleaseLine:
 
     for path in PLUGIN_PACKAGE_FILES:
         text = _read(root, path)
-        lower_bound, upper_bound = _extract_core_dependency_range(text, path)
+        lower_bound, upper_bound = _extract_server_dependency_range(text, path)
         lower_bound_line = _version_line(lower_bound)
         if lower_bound_line != current_line or upper_bound != expected_next:
             raise ValueError(
-                f"{path} arbiter-core dependency must stay on line "
+                f"{path} arbiter-server dependency must stay on line "
                 f"{current_line.text} with upper bound <{expected_next}"
             )
 
     for path in PLUGIN_RUNTIME_FILES:
         text = _read(root, path)
-        if f'CORE_API_VERSION = "{current_line.text}"' not in text:
+        if f'SERVER_API_VERSION = "{current_line.text}"' not in text:
             raise ValueError(f"{path} does not declare API line {current_line.text}")
 
     return current_line
@@ -283,9 +283,9 @@ def _update_pyproject(
             )
     if path in PLUGIN_PACKAGE_FILES:
         updated = re.sub(
-            r'"arbiter-core>=[0-9]+\.[0-9]+\.[0-9]+'
+            r'"arbiter-server>=[0-9]+\.[0-9]+\.[0-9]+'
             r'(?:[.-]dev[0-9]+)?,<[0-9]+\.[0-9]+\.[0-9]+"',
-            f'"arbiter-core>={target.version},<{target.next_version}"',
+            f'"arbiter-server>={target.version},<{target.next_version}"',
             updated,
         )
     return updated
@@ -298,8 +298,8 @@ def _update_runtime_file(
 ) -> str:
     return _replace_one(
         text,
-        r'^CORE_API_VERSION = "[0-9]+\.[0-9]+"$',
-        f'CORE_API_VERSION = "{target.text}"',
+        r'^SERVER_API_VERSION = "[0-9]+\.[0-9]+"$',
+        f'SERVER_API_VERSION = "{target.text}"',
         path,
     )
 

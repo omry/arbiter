@@ -4,7 +4,7 @@ title: What Is Arbiter?
 slug: /
 ---
 
-[![PyPI](https://img.shields.io/pypi/v/arbiter-core.svg?label=arbiter-core)](https://pypi.org/project/arbiter-core/) [![Python](https://img.shields.io/pypi/pyversions/arbiter-core.svg?label=python)](https://pypi.org/project/arbiter-core/) [![Downloads](https://pepy.tech/badge/arbiter-core/month)](https://pepy.tech/project/arbiter-core)
+[![PyPI](https://img.shields.io/pypi/v/arbiter-server.svg?label=arbiter-server)](https://pypi.org/project/arbiter-server/) [![Python](https://img.shields.io/pypi/pyversions/arbiter-server.svg?label=python)](https://pypi.org/project/arbiter-server/) [![Downloads](https://pepy.tech/badge/arbiter-server/month)](https://pepy.tech/project/arbiter-server)
 
 Arbiter is a policy firewall for AI agents that need access to sensitive
 services. It runs in your trusted environment, keeps upstream account
@@ -35,7 +35,7 @@ flowchart LR
 
     subgraph arbiterContent[" "]
       direction TB
-      arbiter[Core Server]
+      arbiter[Server]
 
       subgraph imapPlugin[IMAP Plugin]
         direction TB
@@ -95,7 +95,7 @@ flowchart LR
   style smtpPlugin fill:#342b45,stroke:#8c7ab8,stroke-width:2px,color:#f7f3ff
 ```
 
-- The core server composes config, loads plugins, exposes MCP and CLI access
+- The server server composes config, loads plugins, exposes MCP and CLI access
   surfaces, and enforces the shared discovery flow.
 - Operators configure accounts, credentials, service activation, and policies.
 - Agents discover capabilities before selecting operations.
