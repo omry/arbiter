@@ -215,6 +215,33 @@ This file is the day-to-day queue for design and implementation gaps.
       schema-driven CLI generation from optional task-specific wrapper
       behavior.
 
+- [ ] `P2` Add plugin-authored workflow discovery.
+      Service plugins should be able to describe domain-specific manual
+      workflows that help agents choose and sequence existing atomic
+      operations without adding orchestration to Arbiter itself. These
+      workflows are plugin-owned guidance, not user-authored workflows.
+      Acceptance checks: define a small workflow metadata contract with stable
+      ids, purpose, prerequisites, referenced operation ids, suggested steps,
+      policy notes, and preferred output views; expose workflows through
+      discovery for MCP and CLI surfaces from the same metadata; add at least
+      one IMAP example such as message lookup using `imap:search_messages` then
+      `imap:get_message`; and keep operation schemas/descriptions owned by the
+      plugin's atomic operations.
+
+- [ ] `P2` Design user-authored cross-plugin workflow surface.
+      User-authored workflows are a separate product surface from
+      plugin-authored workflow discovery. They should be able to describe
+      manual workflows that cross plugin boundaries, such as reading an
+      original message with IMAP and sending an approved response with SMTP,
+      while preserving the underlying per-account policies and operation
+      boundaries.
+      Acceptance checks: define where user-authored workflows are stored and
+      discovered; define how workflows reference canonical operation ids across
+      plugins; distinguish user-authored workflow guidance from plugin-owned
+      atomic operation descriptions; model policy and approval gates without
+      hiding the underlying operations; and document at least one mail
+      cross-plugin example without making Arbiter execute the workflow.
+
 - [ ] `P2` Add skill-local discovery caching.
       The skill client should be able to cache Arbiter discovery responses
       under a skill subdirectory and reuse them to speed up time to first
