@@ -30,6 +30,14 @@ in operator-owned account configuration and environment values. Service plugins
 use those credentials inside the server process after applying policy checks,
 then talk to the upstream service using its native protocol.
 
+The Arbiter operator is the root administrator for the deployment. Arbiter
+protects configured services from agents and other MCP callers; it does not
+protect account owners from the person or organization that controls the
+Arbiter host, process, configuration, plugin packages, logs, and startup
+environment. Do not ask users to provide private account credentials to an
+Arbiter deployment unless they trust that deployment's operator with those
+credentials or with equivalent delegated access.
+
 Do not expose the same credentials to the agent through environment variables,
 workspace files, shell startup files, local credential stores, unrestricted API
 tokens, or helper tools. If an agent can use the protected service directly,
@@ -80,3 +88,11 @@ root-equivalent.
 Client identification and authentication are planned design work. Until then,
 deploy Arbiter only where the MCP endpoint is reachable by trusted local
 clients.
+
+Hosted or shared Arbiter deployments need a separate secret-ownership design
+before they can safely serve users who do not trust the operator with their
+account credentials. PKI-mediated secret release, user-provided decryption keys,
+OAuth delegation, local credential brokers, per-user execution workers, and
+confidential-computing approaches may all be useful building blocks, but none
+should be documented as solving operator trust until the runtime threat model is
+explicit.

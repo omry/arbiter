@@ -155,6 +155,18 @@ This file is the day-to-day queue for design and implementation gaps.
       operator behavior; and keep transport encryption separate from
       bidirectional identity.
 
+- [ ] `P3` Investigate user-owned secret execution for hosted Arbiter.
+      A future hosted Arbiter model may need to serve users who do not have
+      administrative access to the Arbiter host and do not want the host
+      operator to receive their account credentials. Treat this as a careful
+      research direction rather than a product promise. Acceptance checks:
+      define the hosted threat model and which party is trusted with runtime
+      plaintext or usable delegated authority; distinguish storage encryption
+      from runtime credential access; evaluate options such as user-owned local
+      sidecars, per-user workers, OAuth delegation, PKI-mediated secret release,
+      and confidential-computing/enclave designs; and document what each option
+      does and does not protect from the Arbiter operator.
+
 - [ ] `P2` Finish the installation security evaluator.
       The Docker helper now has `doctor` and `install` checks for generated
       deployment files, env files, Docker socket access, and agent identity. The
