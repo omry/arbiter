@@ -154,11 +154,18 @@ def _package_files(root: Path) -> tuple[Path, ...]:
 
 
 def _meta_package_dependencies(root: Path) -> tuple[str, ...]:
-    return ("arbiter-server", *(package.name for package in plugin_packages(root)))
+    return (
+        "arbiter-server",
+        "arbiter-client",
+        *(package.name for package in plugin_packages(root)),
+    )
 
 
 def _package_file_by_distribution(root: Path) -> dict[str, Path]:
-    package_files = {"arbiter-server": Path("server/pyproject.toml")}
+    package_files = {
+        "arbiter-server": Path("server/pyproject.toml"),
+        "arbiter-client": Path("server/pyproject.toml"),
+    }
     package_files.update(
         {
             package.name: package.path / "pyproject.toml"

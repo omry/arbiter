@@ -18,6 +18,7 @@ name = "arbiter-suite"
 version = "0.8.0"
 dependencies = [
   "arbiter-server==0.8.0",
+  "arbiter-client==0.8.0",
   "arbiter-smtp==0.8.0",
   "arbiter-imap==0.8.0",
 ]
@@ -75,6 +76,7 @@ name = "arbiter-suite"
 version = "0.9.0.dev1"
 dependencies = [
   "arbiter-server==0.9.0.dev1",
+  "arbiter-client==0.9.0.dev1",
   "arbiter-smtp==0.9.0.dev1",
   "arbiter-imap==0.9.0.dev1",
 ]
@@ -131,6 +133,7 @@ name = "arbiter-suite"
 version = "0.8.0"
 dependencies = [
   "arbiter-server==0.8.0",
+  "arbiter-client==0.8.0",
   "arbiter-smtp==0.8.1",
   "arbiter-imap==0.8.0",
 ]
