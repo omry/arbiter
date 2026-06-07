@@ -14,7 +14,7 @@ PROJECT = REPO_ROOT / "client" / "arbiter-client"
 
 def test_hatchling_builds_platform_tagged_script_wheel(tmp_path: Path) -> None:
     binary = tmp_path / "arbiter"
-    binary.write_text("native binary\n", encoding="utf-8")
+    binary.write_bytes(b"native binary\n")
     binary.chmod(binary.stat().st_mode | stat.S_IXUSR)
     outdir = tmp_path / "dist"
     env = os.environ.copy()
@@ -67,7 +67,7 @@ def test_hatchling_builds_platform_tagged_script_wheel(tmp_path: Path) -> None:
 
 def test_hatchling_builds_windows_exe_script_wheel(tmp_path: Path) -> None:
     binary = tmp_path / "arbiter.exe"
-    binary.write_text("windows binary\n", encoding="utf-8")
+    binary.write_bytes(b"windows binary\n")
     outdir = tmp_path / "dist"
     env = os.environ.copy()
     env.update(

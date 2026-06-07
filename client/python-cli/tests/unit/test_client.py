@@ -18,6 +18,7 @@ def isolate_client_config(
 ) -> None:
     monkeypatch.delenv("ARBITER_MCP_URL", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setattr(client, "_STAGED_DEPLOYMENT_WARNING_EMITTED", False)
 
 

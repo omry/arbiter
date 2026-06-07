@@ -18,9 +18,14 @@ from arbiter_server.config import AppConfig, ArbiterConfig, DiscoveryConfig
 from arbiter_server.app import SERVER_TOOL_NAMES
 from arbiter_server.main import (
     ENV_FILE_MODE,
+    _WindowsAccessAce,
     _build_local_source_wheel,
     _default_container_user,
+    _ensure_windows_runtime_config_permissions,
     _run_server,
+    _windows_icacls_remediation,
+    _windows_unallowed_access_reason,
+    _windows_unallowed_permission_reason,
     _write_text_with_mode,
     build_app,
     build_server,
@@ -750,6 +755,28 @@ def test_cli_serve_rejects_world_readable_config_file(
     assert "unsafe config file permissions" in capsys.readouterr().err
 
 
+def test_cli_serve_rejects_group_writable_config_file(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if not _SUPPORTS_POSIX_FILE_MODES:
+        pytest.skip("POSIX permission checks are not available")
+    config_file = tmp_path / "arbiter-server.yaml"
+    config_file.write_text(
+        "arbiter:\n  server:\n    transport: stdio\n", encoding="utf-8"
+    )
+    config_file.chmod(0o660)
+    monkeypatch.setattr(
+        "arbiter_server.main.build_server",
+        lambda _cfg, **_kwargs: pytest.fail("server should not be built"),
+    )
+
+    assert main(["--config-dir", str(tmp_path), "serve"]) == 1
+
+    assert "unsafe config file permissions" in capsys.readouterr().err
+
+
 def test_cli_serve_rejects_group_readable_env_file(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -774,6 +801,247 @@ def test_cli_serve_rejects_group_readable_env_file(
     assert main(["--config-dir", str(tmp_path), "serve"]) == 1
 
     assert "unsafe app env file permissions" in capsys.readouterr().err
+
+
+def test_cli_serve_rejects_world_writable_config_directory(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if not _SUPPORTS_POSIX_FILE_MODES:
+        pytest.skip("POSIX permission checks are not available")
+    config_file = tmp_path / "arbiter-server.yaml"
+    config_file.write_text(
+        "arbiter:\n  server:\n    transport: stdio\n", encoding="utf-8"
+    )
+    config_file.chmod(0o640)
+    tmp_path.chmod(0o777)
+    monkeypatch.setattr(
+        "arbiter_server.main.build_server",
+        lambda _cfg, **_kwargs: pytest.fail("server should not be built"),
+    )
+
+    try:
+        assert main(["--config-dir", str(tmp_path), "serve"]) == 1
+    finally:
+        tmp_path.chmod(0o700)
+
+    assert "unsafe config directory permissions" in capsys.readouterr().err
+
+
+def test_cli_serve_rejects_group_writable_config_directory(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if not _SUPPORTS_POSIX_FILE_MODES:
+        pytest.skip("POSIX permission checks are not available")
+    config_file = tmp_path / "arbiter-server.yaml"
+    config_file.write_text(
+        "arbiter:\n  server:\n    transport: stdio\n", encoding="utf-8"
+    )
+    config_file.chmod(0o640)
+    tmp_path.chmod(0o770)
+    monkeypatch.setattr(
+        "arbiter_server.main.build_server",
+        lambda _cfg, **_kwargs: pytest.fail("server should not be built"),
+    )
+
+    try:
+        assert main(["--config-dir", str(tmp_path), "serve"]) == 1
+    finally:
+        tmp_path.chmod(0o700)
+
+    assert "unsafe config directory permissions" in capsys.readouterr().err
+
+
+def test_windows_acl_reason_uses_allowlist() -> None:
+    assert (
+        _windows_unallowed_access_reason(
+            [_WindowsAccessAce(sid="S-1-5-32-545", mask=0x00000001)],
+            owner_sid="S-1-5-21-1-2-3-1001",
+            access_mask=0x00000001,
+        )
+        == "Builtin Users (S-1-5-32-545) grants access outside the allowlist"
+    )
+    assert (
+        _windows_unallowed_access_reason(
+            [_WindowsAccessAce(sid="S-1-5-21-1-2-3-513", mask=0x40000000)],
+            owner_sid="S-1-5-21-1-2-3-1001",
+            access_mask=0x40000000,
+        )
+        == "Domain Users (S-1-5-21-1-2-3-513) grants access outside the allowlist"
+    )
+    assert (
+        _windows_unallowed_access_reason(
+            [_WindowsAccessAce(sid="S-1-5-21-1-2-3-1001", mask=0x00000001)],
+            owner_sid="S-1-5-21-1-2-3-1001",
+            access_mask=0x00000001,
+        )
+        is None
+    )
+    assert (
+        _windows_unallowed_access_reason(
+            [_WindowsAccessAce(sid="S-1-5-32-544", mask=0x00000001)],
+            owner_sid="S-1-5-21-1-2-3-1001",
+            access_mask=0x00000001,
+        )
+        is None
+    )
+    assert (
+        _windows_unallowed_access_reason(
+            [_WindowsAccessAce(sid="S-1-1-0", mask=0)],
+            owner_sid="S-1-5-21-1-2-3-1001",
+            access_mask=0x00000001,
+        )
+        is None
+    )
+
+
+def test_windows_icacls_remediation_uses_allowed_principals() -> None:
+    message = _windows_icacls_remediation(Path("C:/arbiter/arbiter-server.yaml"))
+
+    assert "elevated Command Prompt (cmd.exe)" in message
+    assert "takeown /F" in message
+    assert "icacls" in message
+    assert "%USERDOMAIN%\\%USERNAME%:F" in message
+    assert "*S-1-5-18:F" in message
+    assert "*S-1-5-32-544:F" in message
+    assert "S-1-3-4" not in message
+    assert "Owner Rights" not in message
+
+
+def test_windows_permissions_reject_broad_config_acl(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_file = tmp_path / "arbiter-server.yaml"
+    config_file.write_text(
+        "arbiter:\n  server:\n    transport: stdio\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        "arbiter_server.main._windows_unallowed_permission_reason",
+        lambda path, *, access_mask: (
+            "Everyone (S-1-1-0) grants access outside the allowlist"
+            if path == config_file
+            else None
+        ),
+    )
+
+    with pytest.raises(ValueError, match="unsafe config file permissions") as exc:
+        _ensure_windows_runtime_config_permissions(
+            config_dir=tmp_path,
+            env_file=None,
+        )
+
+    assert "Everyone" in str(exc.value)
+    assert "icacls" in str(exc.value)
+
+
+def test_windows_permissions_reject_unverified_env_file_acl(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_file = tmp_path / "arbiter-server.yaml"
+    config_file.write_text(
+        "arbiter:\n" "  env_file: local.env\n" "  server:\n" "    transport: stdio\n",
+        encoding="utf-8",
+    )
+    env_file = tmp_path / "local.env"
+    env_file.write_text("", encoding="utf-8")
+
+    def permission_reason(path: Path, *, access_mask: int) -> str | None:
+        if path == env_file:
+            raise OSError("ACL unavailable")
+        return None
+
+    monkeypatch.setattr(
+        "arbiter_server.main._windows_unallowed_permission_reason",
+        permission_reason,
+    )
+
+    with pytest.raises(ValueError, match="unsafe app env file permissions") as exc:
+        _ensure_windows_runtime_config_permissions(
+            config_dir=tmp_path,
+            env_file=env_file,
+        )
+
+    assert "could not verify Windows ACLs" in str(exc.value)
+    assert "icacls" in str(exc.value)
+
+
+def test_windows_real_acl_rejects_builtin_users_read(
+    tmp_path: Path,
+) -> None:
+    if os.name != "nt":
+        pytest.skip("real ACL checks require Windows")
+    sensitive_file = tmp_path / "sensitive.txt"
+    sensitive_file.write_text("super-secret\n", encoding="utf-8")
+    current_user = subprocess.check_output(["whoami"], text=True).strip()
+    subprocess.run(
+        [
+            "icacls",
+            str(sensitive_file),
+            "/inheritance:r",
+            "/grant:r",
+            f"{current_user}:F",
+            "/grant",
+            "*S-1-5-32-545:R",
+        ],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    reason = _windows_unallowed_permission_reason(
+        sensitive_file, access_mask=0x00000001
+    )
+
+    assert reason is not None
+    assert "Builtin Users" in reason
+
+
+def test_windows_real_acl_rejects_broad_config_before_serve(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if os.name != "nt":
+        pytest.skip("real ACL checks require Windows")
+    config_file = tmp_path / "arbiter-server.yaml"
+    config_file.write_text(
+        "arbiter:\n  server:\n    transport: stdio\n", encoding="utf-8"
+    )
+    current_user = subprocess.check_output(["whoami"], text=True).strip()
+    for path in (tmp_path, config_file):
+        subprocess.run(
+            [
+                "icacls",
+                str(path),
+                "/inheritance:r",
+                "/grant:r",
+                f"{current_user}:F",
+            ],
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+    subprocess.run(
+        ["icacls", str(config_file), "/grant", "*S-1-5-32-545:R"],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    monkeypatch.setattr(
+        "arbiter_server.main.build_server",
+        lambda _cfg, **_kwargs: pytest.fail("server should not be built"),
+    )
+
+    assert main(["--config-dir", str(tmp_path), "serve"]) == 1
+
+    stderr = capsys.readouterr().err
+    assert "unsafe config file permissions" in stderr
+    assert "Builtin Users" in stderr
 
 
 def test_cli_env_check_accepts_env_file_and_process_env(

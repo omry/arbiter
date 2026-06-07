@@ -166,6 +166,20 @@ def _run_tool(
     )
 
 
+def _assert_success_status(output: str, message: str) -> None:
+    assert any(
+        f"{marker} {message}" in output
+        for marker in ("\x1b[32m✓\x1b[0m", "\x1b[32mOK\x1b[0m")
+    )
+
+
+def _assert_error_status(output: str, message: str) -> None:
+    assert any(
+        f"{marker} {message}" in output
+        for marker in ("\x1b[31m✗\x1b[0m", "\x1b[31mERROR\x1b[0m")
+    )
+
+
 def test_upgrade_release_line_dry_run_prints_patch_without_writing(
     tmp_path: Path,
 ) -> None:
@@ -178,7 +192,7 @@ def test_upgrade_release_line_dry_run_prints_patch_without_writing(
     assert (tmp_path / SUITE_PYPROJECT).read_text(encoding="utf-8") == before
     assert '+  "arbiter-server==0.9.0"' in result.stdout
     assert '+  "arbiter-server>=0.9.0,<0.10.0"' in result.stdout
-    assert "\x1b[32m✓\x1b[0m would update 9 file(s)" in result.stdout
+    _assert_success_status(result.stdout, "would update 9 file(s)")
 
 
 def test_upgrade_release_line_updates_packages_runtime_and_docs(
@@ -280,6 +294,20 @@ def test_upgrade_release_line_rejects_same_or_older_release_line(
     result = _run_tool(tmp_path, "0.8")
 
     assert result.returncode == 1
+    _assert_error_status(result.stderr, "upgrade_release_line:")
+    assert "target release line 0.8 must be greater than current line 0.8" in (
+        result.stderr
+    )
+
+
+def test_upgrade_release_line_error_uses_unicode_status_for_utf8_stream_encoding(
+    tmp_path: Path,
+) -> None:
+    _write_fixture(tmp_path)
+
+    result = _run_tool(tmp_path, "0.8", env={"PYTHONIOENCODING": "utf-8"})
+
+    assert result.returncode == 1
     assert "\x1b[31m✗\x1b[0m upgrade_release_line:" in result.stderr
     assert "target release line 0.8 must be greater than current line 0.8" in (
         result.stderr
@@ -292,6 +320,17 @@ def test_upgrade_release_line_check_accepts_matching_release_line(
     _write_fixture(tmp_path)
 
     result = _run_tool(tmp_path, "--check", "0.8")
+
+    assert result.returncode == 0, result.stderr
+    _assert_success_status(result.stdout, "release line check passed: 0.8 (0.8.0)")
+
+
+def test_upgrade_release_line_check_uses_unicode_status_for_utf8_stream_encoding(
+    tmp_path: Path,
+) -> None:
+    _write_fixture(tmp_path)
+
+    result = _run_tool(tmp_path, "--check", "0.8", env={"PYTHONIOENCODING": "utf-8"})
 
     assert result.returncode == 0, result.stderr
     assert "\x1b[32m✓\x1b[0m release line check passed: 0.8 (0.8.0)" in (result.stdout)
@@ -316,8 +355,9 @@ def test_upgrade_release_line_check_accepts_matching_dev_release_line(
     result = _run_tool(tmp_path, "--check", "0.9")
 
     assert result.returncode == 0, result.stderr
-    assert "\x1b[32m✓\x1b[0m release line check passed: 0.9 (0.9.0.dev1)" in (
-        result.stdout
+    _assert_success_status(
+        result.stdout,
+        "release line check passed: 0.9 (0.9.0.dev1)",
     )
 
 
@@ -329,5 +369,5 @@ def test_upgrade_release_line_check_rejects_mismatched_release_line(
     result = _run_tool(tmp_path, "--check", "0.9")
 
     assert result.returncode == 1
-    assert "\x1b[31m✗\x1b[0m upgrade_release_line:" in result.stderr
+    _assert_error_status(result.stderr, "upgrade_release_line:")
     assert "target release line 0.9 does not match current line 0.8" in result.stderr

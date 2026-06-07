@@ -216,6 +216,8 @@ def _arbiter_server_command() -> Path:
     if command:
         return Path(command)
     command_path = Path(sys.executable).with_name("arbiter-server")
+    if os.name == "nt" and not command_path.exists():
+        command_path = command_path.with_suffix(".exe")
     if not command_path.exists():
         raise AssertionError(f"arbiter-server console script not found: {command_path}")
     return command_path
@@ -226,6 +228,8 @@ def _arbiter_command() -> Path:
     if command:
         return Path(command)
     command_path = Path(sys.executable).with_name("arbiter-py")
+    if os.name == "nt" and not command_path.exists():
+        command_path = command_path.with_suffix(".exe")
     if not command_path.exists():
         raise AssertionError(f"arbiter-py console script not found: {command_path}")
     return command_path
