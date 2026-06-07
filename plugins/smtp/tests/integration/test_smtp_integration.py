@@ -6,6 +6,7 @@ from email.parser import BytesParser
 from socket import timeout as socket_timeout
 import smtplib
 import ssl
+import threading
 import time
 from typing import Any
 
@@ -133,16 +134,45 @@ class IntegrationController(Controller):
         self._integration_ready_timeout = ready_timeout
         super().__init__(*args, ready_timeout=ready_timeout, **kwargs)
 
-    def _trigger_server(self) -> None:
-        deadline = time.monotonic() + self._integration_ready_timeout
-        while True:
+    def start(self) -> None:
+        assert self._thread is None, "SMTP daemon already running"
+        self._factory_invoked.clear()
+
+        ready_event = threading.Event()
+        self._thread = threading.Thread(target=self._run, args=(ready_event,))
+        self._thread.daemon = True
+        self._thread.start()
+
+        start = time.monotonic()
+        deadline = start + self._integration_ready_timeout
+        if not ready_event.wait(self._integration_ready_timeout):
+            if self._thread_exception is not None:
+                raise self._thread_exception
+            raise TimeoutError(
+                "SMTP server failed to start within allotted time. "
+                "This might happen if the system is too busy. "
+                "Try increasing the `ready_timeout` parameter."
+            )
+
+        while not self._factory_invoked.is_set():
+            if self._thread_exception is not None:
+                raise self._thread_exception
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    "SMTP server started, but not responding within allotted time. "
+                    "This might happen if the system is too busy. "
+                    "Try increasing the `ready_timeout` parameter."
+                )
             try:
                 super()._trigger_server()
-                return
             except socket_timeout:
-                if time.monotonic() >= deadline:
-                    raise
-                time.sleep(0.05)
+                pass
+            time.sleep(0.05)
+
+        if self._thread_exception is not None:
+            raise self._thread_exception
+        if self.smtpd is None:
+            raise RuntimeError("Unknown Error, failed to init SMTP server")
 
 
 def _build_server_ssl_context(cert_path: str, key_path: str) -> ssl.SSLContext:

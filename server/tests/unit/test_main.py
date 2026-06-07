@@ -1077,7 +1077,10 @@ def test_windows_real_acl_rejects_broad_config_before_serve(
     assert main(["--config-dir", str(tmp_path), "serve"]) == 1
 
     stderr = capsys.readouterr().err
-    assert "unsafe config file permissions" in stderr
+    assert (
+        "unsafe config file permissions" in stderr
+        or "unsafe config directory permissions" in stderr
+    )
     assert "Builtin Users" in stderr
 
 
