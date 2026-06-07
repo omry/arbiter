@@ -1056,6 +1056,8 @@ def test_windows_real_acl_rejects_broad_config_before_serve(
                 "/inheritance:r",
                 "/grant:r",
                 f"{current_user}:F",
+                "*S-1-5-18:F",
+                "*S-1-5-32-544:F",
             ],
             check=True,
             text=True,
@@ -2878,9 +2880,7 @@ def test_cli_deploy_docker_generated_helper_prepare_pypi_only_resolves_index_pin
     assert "--find-links /wheels" not in docker_call_lines[1]
     assert " python -c " in docker_call_lines[2]
     assert docker_call_lines[3] == "info"
-    assert docker_call_lines[4].startswith(
-        f"run --rm --user {docker_user} " "-v "
-    )
+    assert docker_call_lines[4].startswith(f"run --rm --user {docker_user} " "-v ")
     assert "arbiter-pypi-prepare-transaction." in docker_call_lines[4]
     assert ":/requirements.txt:ro -v " in docker_call_lines[4]
     assert "arbiter-wheelhouse." in docker_call_lines[4]
@@ -2899,9 +2899,7 @@ def test_cli_deploy_docker_generated_helper_prepare_pypi_only_resolves_index_pin
     assert "--report /work/report.json" in docker_call_lines[6]
     assert " python -c " in docker_call_lines[7]
     assert docker_call_lines[8] == "info"
-    assert docker_call_lines[9].startswith(
-        f"run --rm --user {docker_user} " "-v "
-    )
+    assert docker_call_lines[9].startswith(f"run --rm --user {docker_user} " "-v ")
     assert "arbiter-pypi-prepare-transaction." in docker_call_lines[9]
     assert ":/requirements.txt:ro -v " in docker_call_lines[9]
     assert docker_call_lines[9].endswith(
@@ -5808,6 +5806,7 @@ def test_cli_serve_subcommand_passes_config_and_overrides(
             "config_dir": "/tmp",
             "config_name": "arbiter-server-local",
             "overrides": ["arbiter.server.port=8025"],
+            "skip_runtime_permission_checks": False,
         },
     ]
 

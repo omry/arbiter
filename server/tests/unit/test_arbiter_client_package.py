@@ -59,7 +59,8 @@ def test_hatchling_builds_platform_tagged_script_wheel(tmp_path: Path) -> None:
             == b"native binary\n"
         )
         script_info = archive.getinfo("arbiter_client-1.2.3.data/scripts/arbiter")
-        assert (script_info.external_attr >> 16) & stat.S_IXUSR
+        if os.name != "nt":
+            assert (script_info.external_attr >> 16) & stat.S_IXUSR
         wheel_metadata = archive.read("arbiter_client-1.2.3.dist-info/WHEEL").decode()
         assert "Root-Is-Purelib: false\n" in wheel_metadata
         assert "Tag: py3-none-manylinux_2_17_x86_64\n" in wheel_metadata

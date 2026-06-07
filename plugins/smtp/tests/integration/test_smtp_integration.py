@@ -3,8 +3,10 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from email import policy
 from email.parser import BytesParser
+from socket import timeout as socket_timeout
 import smtplib
 import ssl
+import time
 from typing import Any
 
 from aiosmtpd.controller import Controller
@@ -121,6 +123,28 @@ class DisconnectingDataHandler(CapturingHandler):
         raise ConnectionResetError("connection lost during DATA")
 
 
+class IntegrationController(Controller):
+    def __init__(
+        self,
+        *args: Any,
+        ready_timeout: float,
+        **kwargs: Any,
+    ) -> None:
+        self._integration_ready_timeout = ready_timeout
+        super().__init__(*args, ready_timeout=ready_timeout, **kwargs)
+
+    def _trigger_server(self) -> None:
+        deadline = time.monotonic() + self._integration_ready_timeout
+        while True:
+            try:
+                super()._trigger_server()
+                return
+            except socket_timeout:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.05)
+
+
 def _build_server_ssl_context(cert_path: str, key_path: str) -> ssl.SSLContext:
     context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
     context.load_cert_chain(certfile=cert_path, keyfile=key_path)
@@ -218,7 +242,7 @@ def smtp_server_factory(
     ) -> tuple[CapturingHandler, Controller]:
         cert_path, key_path = server_certificate_paths
         active_handler = handler or CapturingHandler()
-        controller = Controller(
+        controller = IntegrationController(
             active_handler,
             hostname="127.0.0.1",
             port=free_tcp_port_factory(),
