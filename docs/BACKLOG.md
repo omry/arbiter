@@ -102,6 +102,27 @@ This file is the day-to-day queue for design and implementation gaps.
       paths, capability ids, and runtime compatibility checks; and update the
       plugin author guide with one complete example.
 
+- [ ] `P2` Create a web interface for Arbiter management.
+      Operators should have a first-class browser surface for inspecting and
+      managing Arbiter without editing config files or reading raw MCP
+      discovery output for common tasks. Acceptance checks: define the initial
+      management scope, such as server status, configured services/accounts,
+      plugin discovery, policy visibility, and safe configuration checks;
+      define authentication and trust assumptions before exposing remote access;
+      implement a minimal read-only management view before adding mutation
+      paths; and document how the web surface relates to CLI and deployment
+      workflows.
+
+- [ ] `P2` Create a side-by-side Arbiter demo surface.
+      A demo should show the agent view and the Arbiter management/operator
+      view together, so users can send requests and see what the agent is
+      seeing through Arbiter. Acceptance checks: provide a runnable demo mode
+      with a safe sample configuration; show request input, selected agent
+      context/discovery, Arbiter policy and account state, tool call/result
+      flow, and operator-visible logs or decisions side by side; avoid exposing
+      real credentials or production accounts; and make the demo useful for
+      documentation, onboarding, and security-model explanation.
+
 - [ ] `P2` Design live config reload for service runtimes. A future reload path
       should apply validated configuration changes without interrupting
       in-flight tool calls. Acceptance checks: define whether reload happens by
