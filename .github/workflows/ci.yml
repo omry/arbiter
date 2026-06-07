@@ -151,7 +151,6 @@ jobs:
         env:
           ARBITER_GO_CLIENT_SMOKE_OUTDIR: .ci/go-client-smoke
           ARBITER_GO_CLIENT_SMOKE_REUSE: "1"
-          ARBITER_SMTP_TEST_DEBUG: ${{ startsWith(matrix.platform_id, 'macos-') && '1' || '0' }}
           GOCACHE: ${{ runner.temp }}/go-build
         run: nox -s ${{ matrix.nox_session }}
 

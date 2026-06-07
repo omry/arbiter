@@ -304,6 +304,7 @@ def _smtp_config(
     authenticate: bool | None = None,
     **overrides: Any,
 ) -> SMTPConfig:
+    overrides.setdefault("timeout_seconds", 2.0)
     if use_ssl:
         tls = MailTlsMode.implicit
     elif starttls is False:
