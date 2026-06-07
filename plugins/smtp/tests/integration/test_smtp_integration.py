@@ -392,6 +392,7 @@ def smtp_server_factory(
             active_handler,
             hostname="localhost",
             port=free_tcp_port_factory(),
+            server_hostname="localhost",
             tls_context=(
                 _build_server_ssl_context(cert_path, key_path) if starttls else None
             ),
