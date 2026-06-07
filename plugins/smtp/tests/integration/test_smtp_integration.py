@@ -154,7 +154,7 @@ class IntegrationController(Controller):
                 "Try increasing the `ready_timeout` parameter."
             )
 
-        while not self._factory_invoked.is_set():
+        while True:
             if self._thread_exception is not None:
                 raise self._thread_exception
             if time.monotonic() >= deadline:
@@ -164,8 +164,9 @@ class IntegrationController(Controller):
                     "Try increasing the `ready_timeout` parameter."
                 )
             try:
-                super()._trigger_server()
-            except socket_timeout:
+                self._probe_server()
+                break
+            except (OSError, smtplib.SMTPException, socket_timeout):
                 pass
             time.sleep(0.05)
 
@@ -173,6 +174,23 @@ class IntegrationController(Controller):
             raise self._thread_exception
         if self.smtpd is None:
             raise RuntimeError("Unknown Error, failed to init SMTP server")
+
+    def _probe_server(self) -> None:
+        hostname = self.hostname or self._localhost
+        if self.ssl_context is None:
+            with smtplib.SMTP(hostname, self.port, timeout=1.0):
+                return
+
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        with smtplib.SMTP_SSL(
+            hostname,
+            self.port,
+            timeout=1.0,
+            context=context,
+        ):
+            return
 
 
 def _build_server_ssl_context(cert_path: str, key_path: str) -> ssl.SSLContext:

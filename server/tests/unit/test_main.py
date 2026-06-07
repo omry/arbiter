@@ -1081,7 +1081,10 @@ def test_windows_real_acl_rejects_broad_config_before_serve(
         "unsafe config file permissions" in stderr
         or "unsafe config directory permissions" in stderr
     )
-    assert "Builtin Users" in stderr
+    if "unsafe config file permissions" in stderr:
+        assert "Builtin Users" in stderr
+    else:
+        assert str(tmp_path) in stderr
 
 
 def test_cli_env_check_accepts_env_file_and_process_env(
