@@ -16,16 +16,18 @@ from omegaconf import OmegaConf
 
 from arbiter_server.config import AppConfig, ArbiterConfig, DiscoveryConfig
 from arbiter_server.app import SERVER_TOOL_NAMES
-from arbiter_server.main import (
-    ENV_FILE_MODE,
+from arbiter_server.file_protection.windows import (
     _WindowsAccessAce,
-    _build_local_source_wheel,
-    _default_container_user,
-    _ensure_windows_runtime_config_permissions,
-    _run_server,
     _windows_icacls_remediation,
     _windows_unallowed_access_reason,
     _windows_unallowed_permission_reason,
+    ensure_runtime_config_permissions as ensure_windows_runtime_config_permissions,
+)
+from arbiter_server.main import (
+    ENV_FILE_MODE,
+    _build_local_source_wheel,
+    _default_container_user,
+    _run_server,
     _write_text_with_mode,
     build_app,
     build_server,
@@ -920,7 +922,7 @@ def test_windows_permissions_reject_broad_config_acl(
         "arbiter:\n  server:\n    transport: stdio\n", encoding="utf-8"
     )
     monkeypatch.setattr(
-        "arbiter_server.main._windows_unallowed_permission_reason",
+        "arbiter_server.file_protection.windows._windows_unallowed_permission_reason",
         lambda path, *, access_mask: (
             "Everyone (S-1-1-0) grants access outside the allowlist"
             if path == config_file
@@ -929,7 +931,7 @@ def test_windows_permissions_reject_broad_config_acl(
     )
 
     with pytest.raises(ValueError, match="unsafe config file permissions") as exc:
-        _ensure_windows_runtime_config_permissions(
+        ensure_windows_runtime_config_permissions(
             config_dir=tmp_path,
             env_file=None,
         )
@@ -956,12 +958,12 @@ def test_windows_permissions_reject_unverified_env_file_acl(
         return None
 
     monkeypatch.setattr(
-        "arbiter_server.main._windows_unallowed_permission_reason",
+        "arbiter_server.file_protection.windows._windows_unallowed_permission_reason",
         permission_reason,
     )
 
     with pytest.raises(ValueError, match="unsafe app env file permissions") as exc:
-        _ensure_windows_runtime_config_permissions(
+        ensure_windows_runtime_config_permissions(
             config_dir=tmp_path,
             env_file=env_file,
         )
