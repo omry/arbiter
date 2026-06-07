@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from email import policy
 from email.parser import BytesParser
-from socket import timeout as socket_timeout
 import smtplib
 import ssl
 import threading
@@ -154,21 +153,28 @@ class IntegrationController(Controller):
                 "Try increasing the `ready_timeout` parameter."
             )
 
-        while True:
+        last_probe_error: BaseException | None = None
+        while time.monotonic() < deadline:
             if self._thread_exception is not None:
                 raise self._thread_exception
-            if time.monotonic() >= deadline:
-                raise TimeoutError(
-                    "SMTP server started, but not responding within allotted time. "
-                    "This might happen if the system is too busy. "
-                    "Try increasing the `ready_timeout` parameter."
-                )
             try:
                 self._probe_server()
                 break
-            except (OSError, smtplib.SMTPException, socket_timeout):
-                pass
+            except (OSError, smtplib.SMTPException) as exc:
+                last_probe_error = exc
             time.sleep(0.05)
+        else:
+            detail = (
+                f" Last probe error: {last_probe_error!r}."
+                if last_probe_error is not None
+                else ""
+            )
+            raise TimeoutError(
+                "SMTP server started, but not responding within allotted time. "
+                "This might happen if the system is too busy. "
+                "Try increasing the `ready_timeout` parameter."
+                f"{detail}"
+            )
 
         if self._thread_exception is not None:
             raise self._thread_exception
@@ -292,7 +298,7 @@ def smtp_server_factory(
         active_handler = handler or CapturingHandler()
         controller = IntegrationController(
             active_handler,
-            hostname="127.0.0.1",
+            hostname="localhost",
             port=free_tcp_port_factory(),
             tls_context=(
                 _build_server_ssl_context(cert_path, key_path) if starttls else None
