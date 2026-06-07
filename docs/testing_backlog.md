@@ -56,6 +56,12 @@ This file tracks the highest-value gaps between:
   - Status: `todo`
   - Acceptance: Windows arm64 caches vcpkg/OpenSSL setup or uses vcpkg binary caching; nox/pip editable install overhead is reduced where practical; cache keys include dependency inputs so stale toolchains are not reused silently; and CI job logs make cache hits/misses obvious.
 
+- Investigate macOS SMTP integration CI slowdown
+  - Why: full platform CI passes, but macOS x64/arm64 spend roughly 15 minutes between `server/tests/unit/test_version.py` and `plugins/smtp/tests/integration/test_smtp_integration.py`, while the same SMTP integration file runs locally on Linux in under a second.
+  - Level: CI + integration
+  - Status: `todo`
+  - Acceptance: macOS CI captures enough per-test timing or server lifecycle diagnostics to identify the slow SMTP integration test or fixture phase; the root cause is documented; and the fix either removes the macOS-only delay or marks the remaining runtime as an accepted platform cost with evidence.
+
 - `verify_peer=true` succeeds against a trusted local CA
   - Why: complete the TLS success-path contract
   - Level: integration
