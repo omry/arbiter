@@ -1,0 +1,20 @@
+{
+  "ignore_dirs": [
+    ".ci",
+    ".nox",
+    ".pytest_cache",
+    ".venv",
+    "__pycache__",
+    "arbiter-docker",
+    "build",
+    "client/go-cli/dist",
+    "config.local",
+    "dist",
+    "outputs",
+    "skill/bin",
+    "temp",
+    "website/.docusaurus",
+    "website/build",
+    "website/node_modules"
+  ]
+}
