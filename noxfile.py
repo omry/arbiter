@@ -5,7 +5,7 @@ from pathlib import Path
 import nox
 
 
-nox.options.sessions = ["tests", "lint"]
+nox.options.sessions = ["unit", "lint"]
 
 SERVER_PYPROJECT = nox.project.load_toml("server/pyproject.toml")
 
@@ -24,6 +24,7 @@ BLACK_TARGETS = [
     "tools/build_release_dists",
     "tools/extract_release_notes",
     "tools/plan_pypi_publish",
+    "tools/release_packages.py",
     "tools/sl_precommit_lint",
     "tools/upgrade_release_line",
 ]
@@ -33,6 +34,23 @@ TEST_TARGETS = [
     "plugins/smtp/tests",
     "plugins/imap/tests",
     "examples/plugins/echo/tests",
+]
+UNIT_TEST_TARGETS = [
+    "client/python-cli/tests/unit",
+    "server/tests/unit",
+    "plugins/smtp/tests/unit",
+    "plugins/imap/tests/unit",
+    "examples/plugins/echo/tests",
+]
+SERVER_INTEGRATION_TEST_TARGETS = ["server/tests/integration"]
+PLUGIN_INTEGRATION_TEST_TARGETS = [
+    str(path)
+    for path in sorted(Path("plugins").glob("*/tests/integration"))
+    if path.is_dir()
+]
+INTEGRATION_TEST_TARGETS = [
+    *SERVER_INTEGRATION_TEST_TARGETS,
+    *PLUGIN_INTEGRATION_TEST_TARGETS,
 ]
 SUPPORTED_PYTHONS = nox.project.python_versions(SERVER_PYPROJECT)
 PYREFLY_TARGETS = [
@@ -79,6 +97,24 @@ def iter_black_targets() -> list[str]:
 
 
 @nox.session
+def unit(session: nox.Session) -> None:
+    install_project(session)
+    session.run("pytest", *(session.posargs or UNIT_TEST_TARGETS))
+
+
+@nox.session
+def integration(session: nox.Session) -> None:
+    install_project(session)
+    session.run("pytest", *(session.posargs or INTEGRATION_TEST_TARGETS))
+
+
+@nox.session(name="server-integration")
+def server_integration(session: nox.Session) -> None:
+    install_project(session)
+    session.run("pytest", *(session.posargs or SERVER_INTEGRATION_TEST_TARGETS))
+
+
+@nox.session
 def tests(session: nox.Session) -> None:
     install_project(session)
     session.run("pytest", *(session.posargs or TEST_TARGETS))
@@ -90,7 +126,7 @@ def tests(session: nox.Session) -> None:
 )
 def compat(session: nox.Session) -> None:
     install_project(session)
-    session.run("pytest", *(session.posargs or TEST_TARGETS))
+    session.run("pytest", *(session.posargs or UNIT_TEST_TARGETS))
 
 
 @nox.session(name="deploy-test")

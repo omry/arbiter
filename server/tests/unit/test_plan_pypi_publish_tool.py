@@ -124,6 +124,27 @@ def test_build_plan_only_queries_selected_packages(
     ] == ["arbiter-imap", "arbiter-smtp"]
 
 
+def test_build_plan_discovers_new_plugin_package(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tool = _load_tool()
+    _write_fixture(tmp_path)
+    _write_project(tmp_path, "plugins/pop", "arbiter-pop", "0.9.0.dev1")
+    queried_packages: list[str] = []
+
+    def fake_pypi_version(package_name: str) -> None:
+        queried_packages.append(package_name)
+        return None
+
+    monkeypatch.setattr(tool, "_pypi_version", fake_pypi_version)
+
+    package_keys = getattr(tool, "_parse_package_keys")("pop", root=tmp_path)
+    plan = _build_plan(tool)(tmp_path, package_keys=package_keys)
+
+    assert queried_packages == ["arbiter-pop"]
+    assert [item.package.name for item in plan if item.publish] == ["arbiter-pop"]
+
+
 def test_build_plan_validates_unselected_plugin_version_lines(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -168,7 +189,7 @@ def test_skill_publish_key_uses_server_version_and_wheel_only_artifact(
     publish_items = [item for item in plan if item.publish]
 
     assert [
-        getattr(tool, "PACKAGE_KEY_BY_NAME")[item.package.name]
+        getattr(tool, "package_key_by_name")(tmp_path)[item.package.name]
         for item in publish_items
     ] == ["skill:linux-amd64"]
     item = publish_items[0]
@@ -193,7 +214,7 @@ def test_client_publish_key_uses_server_version_and_platform_wheels(
     publish_items = [item for item in plan if item.publish]
 
     assert [
-        getattr(tool, "PACKAGE_KEY_BY_NAME")[item.package.name]
+        getattr(tool, "package_key_by_name")(tmp_path)[item.package.name]
         for item in publish_items
     ] == ["client"]
     item = publish_items[0]
@@ -237,7 +258,12 @@ def test_copy_distributions_missing_artifact_explains_build_order(
     package_type = getattr(tool, "Package")
     version_type = getattr(tool, "Version")
     item_type = getattr(tool, "PlanItem")
-    package = package_type(kind="server", name="arbiter-server", path=Path("server"))
+    package = package_type(
+        key="server",
+        kind="server",
+        name="arbiter-server",
+        path=Path("server"),
+    )
     item = item_type(
         package=package,
         local_version=version_type.parse("0.9.0.dev1"),

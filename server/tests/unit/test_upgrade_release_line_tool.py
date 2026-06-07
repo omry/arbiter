@@ -240,6 +240,46 @@ def test_upgrade_release_line_accepts_independently_patched_plugin(
     )
 
 
+def test_upgrade_release_line_discovers_new_plugin_package(
+    tmp_path: Path,
+) -> None:
+    _write_fixture(tmp_path)
+    suite_path = tmp_path / SUITE_PYPROJECT
+    suite_path.write_text(
+        suite_path.read_text(encoding="utf-8").replace(
+            '  "arbiter-imap==0.8.0",\n',
+            '  "arbiter-imap==0.8.0",\n  "arbiter-pop==0.8.0",\n',
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "plugins/pop/src/arbiter_pop").mkdir(parents=True)
+    (tmp_path / "plugins/pop/pyproject.toml").write_text(
+        """[project]
+name = "arbiter-pop"
+version = "0.8.0"
+dependencies = [
+  "arbiter-server>=0.8.0,<0.9.0",
+]
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "plugins/pop/src/arbiter_pop/__init__.py").write_text(
+        'SERVER_API_VERSION = "0.8"\n',
+        encoding="utf-8",
+    )
+
+    result = _run_tool(tmp_path, "0.9")
+
+    assert result.returncode == 0, result.stderr
+    assert '"arbiter-pop==0.9.0"' in suite_path.read_text(encoding="utf-8")
+    assert '"arbiter-server>=0.9.0,<0.10.0"' in (
+        tmp_path / "plugins/pop/pyproject.toml"
+    ).read_text(encoding="utf-8")
+    assert 'SERVER_API_VERSION = "0.9"' in (
+        tmp_path / "plugins/pop/src/arbiter_pop/__init__.py"
+    ).read_text(encoding="utf-8")
+
+
 def test_upgrade_release_line_promotes_dev_version_to_final_same_line(
     tmp_path: Path,
 ) -> None:

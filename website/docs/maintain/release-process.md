@@ -5,8 +5,8 @@ title: Release Process
 Arbiter publishes several Python distributions from one repository:
 
 - `server`: `arbiter-server`, the real server runtime package
-- `imap`: `arbiter-imap`, the IMAP plugin
-- `smtp`: `arbiter-smtp`, the SMTP plugin
+- plugin keys discovered from `plugins/*/pyproject.toml`, such as `imap` for
+  `arbiter-imap` and `smtp` for `arbiter-smtp`
 - `meta:all`: `arbiter-suite`, a zero-code dependency bundle for all real
   packages
 - `client`: `arbiter-client`, the platform-tagged native client wheel set
@@ -35,8 +35,10 @@ This page describes publishing mechanics only.
 
 ## News fragments
 
-Final releases require package-scoped towncrier release notes for every package
-that will publish. Dev releases such as `0.9.0.dev1` do not consume release
+Final server, plugin, and meta releases require package-scoped towncrier release
+notes for every package that will publish. Final client and skill releases use
+generated draft GitHub Release notes because they are wheel-only artifacts tied
+to the server version. Dev releases such as `0.9.0.dev1` do not consume release
 notes.
 
 Add fragments under the package that changed:
@@ -70,9 +72,49 @@ publish:
 
 Commit the updated `NEWS.md` files and removed fragments before publishing.
 
+## Prepare and publish workflow
+
+Final releases use a two-step GitHub Actions flow. There are two release
+kinds:
+
+- `new-release-line`: move the whole compatibility line, such as
+  `0.9.0.dev2` to `0.9.0`; this always prepares all package targets together.
+- `regular`: publish new plugins, updates to existing plugins, or updates to
+  server/client packages already prepared on the current line.
+
+1. Run **Prepare Release** with the target `release_line`,
+   `release_kind`, `publish_packages`, and target branch.
+2. If version files or package release notes need changes, the workflow opens
+   or updates a release preparation PR and runs the full platform integration
+   suite on that prepared branch.
+3. Review and merge the release preparation PR after the PR contents and
+   integration run are approved.
+4. Run **Prepare Release** again on `main`. With the release files already
+   prepared, it creates or refreshes the draft GitHub Release tags for the
+   selected final packages and runs the full integration suite on `main`.
+5. Run **Publish** with the same `release_line` and `publish_packages`. Publish
+   validates the prepared draft releases, reruns lint, the full platform unit
+   matrix, build/smoke checks, and the full platform integration gates from
+   `main`, uploads to PyPI only after those gates pass, then promotes the draft
+   GitHub Releases.
+
+Because Arbiter can publish several packages at once, prepare and publish are
+keyed by package selection rather than by a single release tag. Packages with
+the same final version share a draft GitHub Release tag, such as `v0.9.0`.
+Independent plugin patch releases can create separate draft release tags in the
+same prepare run.
+
+For regular releases, `publish_packages=all` means all selected packages whose
+local version is newer than PyPI, or whose PyPI project does not exist yet.
+Use a comma-separated package key list to release a specific target set.
+
+Dev releases such as `0.9.0.dev1` do not require package release notes or draft
+GitHub Releases. Use **Publish** directly for dev package uploads after normal
+CI is green and the matching PyPI trusted publisher is ready.
+
 ## Publish planning
 
-The publish workflow builds all bundled distributions, then runs:
+The publish workflow builds the selected distributions, then runs:
 
 ```bash
 tools/plan_pypi_publish --prepare-output-dir
@@ -92,7 +134,8 @@ tools/plan_pypi_publish --packages client --prepare-output-dir
 tools/plan_pypi_publish --packages skill:linux-amd64 --prepare-output-dir
 ```
 
-The planner reads each selected package's local version independently. Use
+The planner discovers plugin package keys from `plugins/*/pyproject.toml` and
+reads each selected package's local version independently. Use
 `tools/upgrade_release_line 0.9 --check` to validate that packages remain on
 the intended compatibility line.
 
@@ -121,7 +164,8 @@ before each run:
 
 ## Dev releases
 
-Use manual workflow dispatch for dev package releases such as `0.9.0.dev1`:
+Use **Publish** manual workflow dispatch for dev package releases such as
+`0.9.0.dev1`:
 
 - `release_line`: the `MAJOR.MINOR` line, such as `0.9`
 - `publish_packages`: one key or a comma-separated key list
@@ -133,20 +177,24 @@ releases.
 
 ## Final releases
 
-For coordinated releases where all package versions follow the suite meta
-package, publish a GitHub release with a tag like `v0.9.0`. The release workflow
-validates the matching package release notes, publishes the selected
-distributions to PyPI, and then edits the GitHub release with those notes.
+For new release lines where all package versions follow the suite meta
+package, run **Prepare Release** with `release_kind=new-release-line` and
+`publish_packages=all`, then run **Publish** with `publish_packages=all`.
 
-For fine-grained final releases, use manual workflow dispatch:
+For regular final releases, use `release_kind=regular` in **Prepare Release**:
 
 - `release_line`: the `MAJOR.MINOR` line, such as `0.9`
-- `publish_packages`: the package keys to publish, such as `smtp`
-- `publish_to_pypi`: `true`
+- `publish_packages`: `all` for all new publishable targets, or a package key
+  list such as `smtp,client`
+- `publish_to_pypi`: `true` in the **Publish** workflow
 
-The workflow validates release notes only for final packages that will publish,
-publishes the selected distributions to PyPI, and then creates or updates GitHub
-release tags from each published package version, such as `v0.9.1`.
+Prepare validates or builds package release notes only for final packages that
+will publish, adds generated entries for final client and skill artifacts, then
+creates draft GitHub Release tags from each published package version, such as
+`v0.9.1`. Publish requires those releases to still be drafts and to point at the
+commit being published. Publish also reruns the full platform integration
+matrix, full platform unit matrix, and Docker deploy integration, and the PyPI
+upload job depends on those jobs completing successfully.
 
 Additional meta packages, such as a future `meta:mail`, should follow the same
 non-expanding package-key model.

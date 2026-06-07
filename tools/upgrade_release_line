@@ -10,14 +10,12 @@ from functools import total_ordering
 from pathlib import Path
 from typing import TextIO
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from release_packages import plugin_packages  # noqa: E402
+
 
 SUITE_PYPROJECT = Path("meta/arbiter-suite/pyproject.toml")
-PACKAGE_FILES = (
-    SUITE_PYPROJECT,
-    Path("server/pyproject.toml"),
-    Path("plugins/smtp/pyproject.toml"),
-    Path("plugins/imap/pyproject.toml"),
-)
 DOC_FILES = (
     Path("website/docs/operate/deployment/3-bundle-deep-dive.md"),
     Path("website/docs/operate/server-reference.md"),
@@ -42,24 +40,6 @@ DOC_EXPECTATIONS = {
         '"arbiter-server>={final_version},<{next_version}"',
     ),
 }
-META_PACKAGE_DEPENDENCIES = (
-    "arbiter-server",
-    "arbiter-smtp",
-    "arbiter-imap",
-)
-PACKAGE_FILE_BY_DISTRIBUTION = {
-    "arbiter-server": Path("server/pyproject.toml"),
-    "arbiter-smtp": Path("plugins/smtp/pyproject.toml"),
-    "arbiter-imap": Path("plugins/imap/pyproject.toml"),
-}
-PLUGIN_PACKAGE_FILES = (
-    Path("plugins/smtp/pyproject.toml"),
-    Path("plugins/imap/pyproject.toml"),
-)
-PLUGIN_RUNTIME_FILES = (
-    Path("plugins/smtp/src/arbiter_smtp/__init__.py"),
-    Path("plugins/imap/src/arbiter_imap/__init__.py"),
-)
 GREEN = "\033[32m"
 RED = "\033[31m"
 RESET = "\033[0m"
@@ -157,6 +137,59 @@ def _read(root: Path, path: Path) -> str:
     return full_path.read_text(encoding="utf-8")
 
 
+def _plugin_package_files(root: Path) -> tuple[Path, ...]:
+    return tuple(
+        package.path / "pyproject.toml"
+        for package in plugin_packages(root)
+        if package.path is not None
+    )
+
+
+def _package_files(root: Path) -> tuple[Path, ...]:
+    return (
+        SUITE_PYPROJECT,
+        Path("server/pyproject.toml"),
+        *_plugin_package_files(root),
+    )
+
+
+def _meta_package_dependencies(root: Path) -> tuple[str, ...]:
+    return ("arbiter-server", *(package.name for package in plugin_packages(root)))
+
+
+def _package_file_by_distribution(root: Path) -> dict[str, Path]:
+    package_files = {"arbiter-server": Path("server/pyproject.toml")}
+    package_files.update(
+        {
+            package.name: package.path / "pyproject.toml"
+            for package in plugin_packages(root)
+            if package.path is not None
+        }
+    )
+    return package_files
+
+
+def _plugin_runtime_file(root: Path, plugin_path: Path, package_name: str) -> Path:
+    module_name = package_name.replace("-", "_")
+    candidate = plugin_path / "src" / module_name / "__init__.py"
+    if (root / candidate).exists():
+        return candidate
+
+    for path in sorted((root / plugin_path / "src").glob("*/__init__.py")):
+        relative_path = path.relative_to(root)
+        if "SERVER_API_VERSION" in _read(root, relative_path):
+            return relative_path
+    return candidate
+
+
+def _plugin_runtime_files(root: Path) -> tuple[Path, ...]:
+    return tuple(
+        _plugin_runtime_file(root, package.path, package.name)
+        for package in plugin_packages(root)
+        if package.path is not None
+    )
+
+
 def _replace_one(text: str, pattern: str, replacement: str, path: Path) -> str:
     updated, count = re.subn(pattern, replacement, text, count=1, flags=re.MULTILINE)
     if count != 1:
@@ -197,7 +230,7 @@ def _validate_current_state(root: Path) -> ReleaseLine:
     expected_next = current_line.next_version
 
     versions: dict[Path, str] = {}
-    for path in PACKAGE_FILES:
+    for path in _package_files(root):
         text = _read(root, path)
         found = _extract_version(text, path)
         found_line = _version_line(found)
@@ -208,13 +241,14 @@ def _validate_current_state(root: Path) -> ReleaseLine:
             )
         versions[path] = found
 
-    for package_name in META_PACKAGE_DEPENDENCIES:
-        package_version = versions[PACKAGE_FILE_BY_DISTRIBUTION[package_name]]
+    package_file_by_distribution = _package_file_by_distribution(root)
+    for package_name in _meta_package_dependencies(root):
+        package_version = versions[package_file_by_distribution[package_name]]
         dependency = f'"{package_name}=={package_version}"'
         if dependency not in suite_pyproject:
             raise ValueError(f"{SUITE_PYPROJECT} is missing dependency {dependency}")
 
-    for path in PLUGIN_PACKAGE_FILES:
+    for path in _plugin_package_files(root):
         text = _read(root, path)
         lower_bound, upper_bound = _extract_server_dependency_range(text, path)
         lower_bound_line = _version_line(lower_bound)
@@ -224,7 +258,7 @@ def _validate_current_state(root: Path) -> ReleaseLine:
                 f"{current_line.text} with upper bound <{expected_next}"
             )
 
-    for path in PLUGIN_RUNTIME_FILES:
+    for path in _plugin_runtime_files(root):
         text = _read(root, path)
         if f'SERVER_API_VERSION = "{current_line.text}"' not in text:
             raise ValueError(f"{path} does not declare API line {current_line.text}")
@@ -266,6 +300,8 @@ def _update_pyproject(
     text: str,
     path: Path,
     target: ReleaseLine,
+    *,
+    root: Path,
 ) -> str:
     updated = _replace_one(
         text,
@@ -274,14 +310,14 @@ def _update_pyproject(
         path,
     )
     if path == SUITE_PYPROJECT:
-        for package_name in META_PACKAGE_DEPENDENCIES:
+        for package_name in _meta_package_dependencies(root):
             updated = re.sub(
                 rf'"{re.escape(package_name)}==[0-9]+\.[0-9]+\.[0-9]+'
                 r'(?:[.-]dev[0-9]+)?"',
                 f'"{package_name}=={target.version}"',
                 updated,
             )
-    if path in PLUGIN_PACKAGE_FILES:
+    if path in _plugin_package_files(root):
         updated = re.sub(
             r'"arbiter-server>=[0-9]+\.[0-9]+\.[0-9]+'
             r'(?:[.-]dev[0-9]+)?,<[0-9]+\.[0-9]+\.[0-9]+"',
@@ -358,13 +394,13 @@ def build_changes(root: Path, target: ReleaseLine) -> list[Change]:
         )
 
     changes: list[Change] = []
-    for path in PACKAGE_FILES:
+    for path in _package_files(root):
         before = _read(root, path)
-        after = _update_pyproject(before, path, target)
+        after = _update_pyproject(before, path, target, root=root)
         if after != before:
             changes.append(Change(path=path, before=before, after=after))
 
-    for path in PLUGIN_RUNTIME_FILES:
+    for path in _plugin_runtime_files(root):
         before = _read(root, path)
         after = _update_runtime_file(before, path, target)
         if after != before:

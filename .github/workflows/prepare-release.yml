@@ -1,0 +1,521 @@
+name: Prepare Release
+run-name: >-
+  Prepare ${{ inputs.release_kind }} release for ${{ inputs.publish_packages || 'all' }} on line ${{ inputs.release_line }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_kind:
+        description: "Release kind: new-release-line changes the whole line; regular publishes selected newer targets"
+        required: true
+        default: regular
+        type: choice
+        options:
+          - regular
+          - new-release-line
+      release_line:
+        description: "Release line to prepare, for example 0.9"
+        required: true
+        type: string
+      publish_packages:
+        description: "Publish keys: all or comma-separated keys like server,imap,meta:all,client,skill:linux-amd64"
+        required: true
+        default: all
+        type: string
+      date:
+        description: "Release date in YYYY-MM-DD format. Defaults to today in UTC."
+        required: false
+        type: string
+      target_branch:
+        description: "Branch to prepare from"
+        required: false
+        default: main
+        type: string
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: >-
+    ${{ github.workflow }}-${{ inputs.target_branch }}-${{ inputs.release_kind }}-${{ inputs.release_line }}-${{ inputs.publish_packages }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare release PR and drafts
+    runs-on: ubuntu-latest
+
+    outputs:
+      integration_matrix: ${{ steps.integration-matrix.outputs.matrix }}
+      release_ref: ${{ steps.prep.outputs.release_ref }}
+
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_LINE: ${{ inputs.release_line }}
+      RELEASE_KIND: ${{ inputs.release_kind }}
+      RELEASE_DATE: ${{ inputs.date }}
+      PUBLISH_PACKAGES: ${{ inputs.publish_packages }}
+      TARGET_BRANCH: ${{ inputs.target_branch }}
+
+    steps:
+      - name: Check out target branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_branch }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install release tools
+        run: python -m pip install --upgrade pip packaging towncrier
+
+      - name: Normalize release metadata
+        id: release
+        shell: bash
+        run: |
+          python - <<'PY'
+          from datetime import date, datetime, timezone
+          import os
+          import re
+          from pathlib import Path
+
+          release_line = os.environ["RELEASE_LINE"].strip()
+          if re.fullmatch(r"(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)", release_line) is None:
+              raise SystemExit("::error::release_line must use MAJOR.MINOR")
+
+          release_kind = os.environ["RELEASE_KIND"].strip()
+          if release_kind not in {"regular", "new-release-line"}:
+              raise SystemExit("::error::release_kind must be regular or new-release-line")
+          if release_kind == "new-release-line" and os.environ["PUBLISH_PACKAGES"].strip() != "all":
+              raise SystemExit("::error::new-release-line releases must use publish_packages=all")
+
+          raw_date = os.environ["RELEASE_DATE"].strip()
+          if raw_date:
+              try:
+                  release_date = date.fromisoformat(raw_date).isoformat()
+              except ValueError:
+                  raise SystemExit("::error::date must be a real YYYY-MM-DD date")
+          else:
+              release_date = datetime.now(timezone.utc).date().isoformat()
+
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              print(f"release_line={release_line}", file=output)
+              print(f"version={release_line}.0", file=output)
+              print(f"release_kind={release_kind}", file=output)
+              print(f"date={release_date}", file=output)
+          PY
+
+      - name: Prepare release line state
+        shell: bash
+        env:
+          RELEASE_KIND: ${{ steps.release.outputs.release_kind }}
+        run: |
+          set -euo pipefail
+          if [[ "$RELEASE_KIND" == "new-release-line" ]]; then
+            if ! tools/upgrade_release_line "${{ steps.release.outputs.release_line }}"; then
+              tools/upgrade_release_line "${{ steps.release.outputs.release_line }}" --check
+            fi
+          else
+            tools/upgrade_release_line "${{ steps.release.outputs.release_line }}" --check
+          fi
+
+      - name: Plan publish set
+        id: pypi-plan
+        shell: bash
+        env:
+          PUBLISH_PACKAGES: ${{ inputs.publish_packages }}
+        run: tools/plan_pypi_publish --packages "$PUBLISH_PACKAGES"
+
+      - name: Build release notes
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_DATE: ${{ steps.release.outputs.date }}
+          PUBLISH_KEYS: ${{ steps.pypi-plan.outputs.publish_keys }}
+          PUBLISH_SPECS: ${{ steps.pypi-plan.outputs.publish_specs }}
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import os
+          import re
+          import subprocess
+          import sys
+          import tomllib
+
+          release_date = os.environ["RELEASE_DATE"]
+          sys.path.insert(0, str(Path("tools").resolve()))
+          from release_packages import package_by_key
+
+          packages = package_by_key(Path.cwd())
+          keys = [item for item in os.environ["PUBLISH_KEYS"].split(",") if item]
+          specs = [item for item in os.environ["PUBLISH_SPECS"].split(",") if item]
+
+          for package_key, spec in zip(keys, specs, strict=True):
+              package = packages[package_key]
+              if package.kind not in {"server", "plugin", "meta"}:
+                  continue
+              if package.path is None:
+                  continue
+              package_path = package.path
+              version = spec.rsplit("==", 1)[1]
+              if ".dev" in version:
+                  continue
+              pyproject = package_path / "pyproject.toml"
+              project = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]
+              if project["version"] != version:
+                  raise SystemExit(
+                      f"{pyproject} version is {project['version']}, expected {version}"
+                  )
+              notes_path = package_path / "NEWS.md"
+              fragments_dir = package_path / "newsfragments"
+              fragments = sorted(
+                  path
+                  for path in fragments_dir.iterdir()
+                  if path.is_file() and path.name != "README.md"
+              )
+              notes = notes_path.read_text(encoding="utf-8")
+              marker = "<!-- towncrier release notes start -->"
+              if marker not in notes:
+                  raise SystemExit(f"{notes_path} does not contain the Towncrier marker")
+              rendered = notes.split(marker, 1)[1]
+              section_pattern = re.compile(
+                  r"(?ms)^## .+ "
+                  + re.escape(version)
+                  + r" [(][^)]+[)]\n.*?(?=^## |\Z)"
+              )
+              if section_pattern.search(rendered):
+                  if fragments:
+                      names = ", ".join(path.name for path in fragments)
+                      raise SystemExit(
+                          f"{notes_path} already has a {version} section; "
+                          f"remaining fragments: {names}"
+                      )
+                  print(f"release notes already exist for {package_key} {version}")
+                  continue
+              subprocess.run(
+                  [
+                      sys.executable,
+                      "-m",
+                      "towncrier",
+                      "build",
+                      "--config",
+                      str(pyproject),
+                      "--version",
+                      version,
+                      "--date",
+                      release_date,
+                      "--yes",
+                  ],
+                  check=True,
+              )
+          PY
+
+      - name: Write draft release notes
+        if: steps.pypi-plan.outputs.has_publish == 'true'
+        env:
+          PUBLISH_KEYS: ${{ steps.pypi-plan.outputs.publish_keys }}
+          PUBLISH_SPECS: ${{ steps.pypi-plan.outputs.publish_specs }}
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import os
+          import re
+          import sys
+
+          sys.path.insert(0, str(Path("tools").resolve()))
+          from release_packages import package_by_key
+
+          packages = package_by_key(Path.cwd())
+          keys = [item for item in os.environ["PUBLISH_KEYS"].split(",") if item]
+          specs = [item for item in os.environ["PUBLISH_SPECS"].split(",") if item]
+          notes_by_version: dict[str, list[str]] = {}
+
+          for key, spec in zip(keys, specs, strict=True):
+              version = spec.rsplit("==", 1)[1]
+              if ".dev" in version:
+                  continue
+              package = packages[key]
+              if package.kind in {"server", "plugin", "meta"}:
+                  if package.path is None:
+                      raise SystemExit(f"{key} is missing a package path")
+                  notes_path = package.path / "NEWS.md"
+                  notes = notes_path.read_text(encoding="utf-8")
+                  marker = "<!-- towncrier release notes start -->"
+                  rendered = notes.split(marker, 1)[1].lstrip()
+                  match = re.search(
+                      r"(?ms)^## .+ "
+                      + re.escape(version)
+                      + r" [(][^)]+[)]\n(.*?)(?=^## |\Z)",
+                      rendered,
+                  )
+                  if match is None:
+                      raise SystemExit(f"missing release notes for {key} {version}")
+                  body = match.group(1).strip()
+                  if not body:
+                      raise SystemExit(f"empty release notes for {key} {version}")
+              else:
+                  package_name = spec.rsplit("==", 1)[0]
+                  body = f"- Publish `{package_name}=={version}`."
+              notes_by_version.setdefault(version, []).append(body)
+
+          for version, sections in notes_by_version.items():
+              path = Path(f"release-notes-{version}.md")
+              path.write_text("\n\n".join(sections).strip() + "\n", encoding="utf-8")
+          PY
+
+      - name: Build integration test matrix
+        id: integration-matrix
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import os
+
+          platforms = [
+              ("Linux x64", "ubuntu-24.04", "linux-x64"),
+              ("Linux arm64", "ubuntu-24.04-arm", "linux-arm64"),
+              ("macOS x64", "macos-15-intel", "macos-x64"),
+              ("macOS arm64", "macos-15", "macos-arm64"),
+              ("Windows x64", "windows-2025", "windows-x64"),
+              ("Windows arm64", "windows-11-arm", "windows-arm64"),
+          ]
+          suites = [{"suite": "Core", "target": "server/tests/integration", "go_tests": True}]
+          for path in sorted(Path("plugins").glob("*/tests/integration")):
+              if path.is_dir():
+                  suites.append(
+                      {
+                          "suite": path.parts[1].upper(),
+                          "target": str(path),
+                          "go_tests": False,
+                      }
+                  )
+
+          include = []
+          for suite in suites:
+              for label, runner, platform_id in platforms:
+                  include.append(
+                      {
+                          "name": f"{suite['suite']} integration {label}",
+                          "runner": runner,
+                          "python_version": "3.13",
+                          "platform_id": platform_id,
+                          "test_target": suite["target"],
+                          "go_tests": suite["go_tests"],
+                      }
+                  )
+
+          matrix = json.dumps({"include": include}, separators=(",", ":"))
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"matrix={matrix}\n")
+          PY
+
+      - name: Commit release preparation or open PR
+        id: prep
+        shell: bash
+        env:
+          PUBLISH_KEYS: ${{ steps.pypi-plan.outputs.publish_keys }}
+          PUBLISH_SPECS: ${{ steps.pypi-plan.outputs.publish_specs }}
+        run: |
+          set -euo pipefail
+
+          version="${{ steps.release.outputs.version }}"
+          prepare_branch="release/prepare-v${version}"
+          title="Prepare ${version} release"
+          body_file="$(mktemp)"
+
+          cat > "$body_file" <<BODY
+          Prepare ${{ steps.release.outputs.release_kind }} release for ${version}.
+
+          Publish keys: \`${PUBLISH_KEYS:-none}\`
+
+          Publish specs: \`${PUBLISH_SPECS:-none}\`
+
+          The prepare workflow is also running the full platform integration
+          suite on this prepared branch. Once this PR and the integration run are
+          approved, rerun **Prepare Release** on \`${TARGET_BRANCH}\` to create
+          or refresh the draft GitHub Release tags, then run **Publish**.
+          BODY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -u
+
+          if git diff --cached --quiet; then
+            echo "No release preparation changes to commit."
+            echo "needs_pr=false" >> "$GITHUB_OUTPUT"
+            echo "release_ref=$TARGET_BRANCH" >> "$GITHUB_OUTPUT"
+            echo "Release files are already prepared on ${TARGET_BRANCH}." >> "$GITHUB_STEP_SUMMARY"
+          else
+            git commit -m "$title"
+            git push origin "HEAD:refs/heads/${prepare_branch}" --force-with-lease
+
+            pr_url="$(gh pr list \
+              --base "$TARGET_BRANCH" \
+              --head "$prepare_branch" \
+              --state open \
+              --json url \
+              --jq '.[0].url // ""')"
+
+            if [[ -n "$pr_url" ]]; then
+              gh pr edit "$pr_url" --title "$title" --body-file "$body_file"
+              echo "Updated release preparation PR: $pr_url" >> "$GITHUB_STEP_SUMMARY"
+            else
+              pr_url="$(gh pr create \
+                --base "$TARGET_BRANCH" \
+                --head "$prepare_branch" \
+                --title "$title" \
+                --body-file "$body_file")"
+              echo "Created release preparation PR: $pr_url" >> "$GITHUB_STEP_SUMMARY"
+            fi
+
+            echo "needs_pr=true" >> "$GITHUB_OUTPUT"
+            echo "release_ref=$prepare_branch" >> "$GITHUB_OUTPUT"
+            echo "pr_url=$pr_url" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create or update draft GitHub Releases
+        if: steps.prep.outputs.needs_pr == 'false'
+        shell: bash
+        env:
+          PUBLISH_KEYS: ${{ steps.pypi-plan.outputs.publish_keys }}
+          PUBLISH_SPECS: ${{ steps.pypi-plan.outputs.publish_specs }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${PUBLISH_SPECS:-}" ]]; then
+            echo "No publishable packages; no draft releases needed." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          target_sha="$(git rev-parse HEAD)"
+          IFS=',' read -ra package_keys <<< "$PUBLISH_KEYS"
+          IFS=',' read -ra publish_specs <<< "$PUBLISH_SPECS"
+          declare -A notes_files=()
+
+          for index in "${!package_keys[@]}"; do
+            package_key="${package_keys[$index]}"
+            package_version="${publish_specs[$index]##*==}"
+            if [[ "$package_version" == *".dev"* ]]; then
+              continue
+            fi
+            notes_files["v$package_version"]="release-notes-$package_version.md"
+          done
+
+          for tag in "${!notes_files[@]}"; do
+            notes_file="${notes_files[$tag]}"
+            git tag --force "$tag" "$target_sha"
+            git push origin "refs/tags/$tag" --force
+            if gh release view "$tag" >/dev/null 2>&1; then
+              gh release edit "$tag" \
+                --draft \
+                --target "$target_sha" \
+                --title "$tag" \
+                --notes-file "$notes_file"
+            else
+              gh release create "$tag" \
+                --draft \
+                --verify-tag \
+                --target "$target_sha" \
+                --title "$tag" \
+                --notes-file "$notes_file"
+            fi
+            echo "Prepared draft release $tag" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+  integration-tests:
+    name: ${{ matrix.name }}
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.integration_matrix) }}
+
+    steps:
+      - name: Check out prepared ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.release_ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python_version }}
+          cache: pip
+
+      - name: Set up Go
+        if: ${{ matrix.go_tests == true }}
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: client/go-cli/go.mod
+
+      - name: Cache Go client smoke binary
+        if: ${{ matrix.go_tests == true }}
+        uses: actions/cache@v4
+        with:
+          path: .ci/go-client-smoke
+          key: go-client-smoke-${{ matrix.platform_id }}-${{ hashFiles('client/go-cli/**', 'tools/build_go_client') }}
+
+      - name: Install nox
+        run: python -m pip install "nox[pbs]>=2024.10,<2026.0"
+
+      - name: Set up OpenSSL for Windows arm64 Python dependencies
+        if: ${{ matrix.platform_id == 'windows-arm64' }}
+        shell: pwsh
+        run: |
+          $vcpkgRoot = Join-Path $env:RUNNER_TEMP "vcpkg"
+          git clone https://github.com/microsoft/vcpkg $vcpkgRoot
+          & (Join-Path $vcpkgRoot "bootstrap-vcpkg.bat") -disableMetrics
+          & (Join-Path $vcpkgRoot "vcpkg.exe") install openssl:arm64-windows-static-md
+          $opensslRoot = Join-Path $vcpkgRoot "installed\arm64-windows-static-md"
+          "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "OPENSSL_DIR=$opensslRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Run Go client tests
+        if: ${{ matrix.go_tests == true }}
+        working-directory: client/go-cli
+        env:
+          GOCACHE: ${{ runner.temp }}/go-build
+        run: go test ./...
+
+      - name: Run platform integration suite
+        env:
+          ARBITER_GO_CLIENT_SMOKE_OUTDIR: .ci/go-client-smoke
+          ARBITER_GO_CLIENT_SMOKE_REUSE: "1"
+          GOCACHE: ${{ runner.temp }}/go-build
+        run: nox -s integration -- ${{ matrix.test_target }}
+
+  docker-deploy-test:
+    name: Docker deploy integration
+    needs: prepare
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out prepared ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.release_ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install nox
+        run: python -m pip install "nox[pbs]>=2024.10,<2026.0"
+
+      - name: Show Docker environment
+        run: |
+          docker info
+          docker compose version
+
+      - name: Run Docker deploy integration
+        run: nox -s deploy-test

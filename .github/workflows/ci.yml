@@ -63,37 +63,37 @@ jobs:
           - name: Platform Linux x64
             runner: ubuntu-24.04
             python_version: "3.13"
-            nox_session: tests
+            nox_session: unit
             platform_id: linux-x64
             go_tests: true
           - name: Platform Linux arm64
             runner: ubuntu-24.04-arm
             python_version: "3.13"
-            nox_session: tests
+            nox_session: unit
             platform_id: linux-arm64
             go_tests: true
           - name: Platform macOS x64
             runner: macos-15-intel
             python_version: "3.13"
-            nox_session: tests
+            nox_session: unit
             platform_id: macos-x64
             go_tests: true
           - name: Platform macOS arm64
             runner: macos-15
             python_version: "3.13"
-            nox_session: tests
+            nox_session: unit
             platform_id: macos-arm64
             go_tests: true
           - name: Platform Windows x64
             runner: windows-2025
             python_version: "3.13"
-            nox_session: tests
+            nox_session: unit
             platform_id: windows-x64
             go_tests: true
           - name: Platform Windows arm64
             runner: windows-11-arm
             python_version: "3.13"
-            nox_session: tests
+            nox_session: unit
             platform_id: windows-arm64
             go_tests: true
 
@@ -142,42 +142,17 @@ jobs:
           GOCACHE: ${{ runner.temp }}/go-build
         run: go test ./...
 
-      - name: Run Python compatibility suite
+      - name: Run Python compatibility unit suite
         if: ${{ matrix.go_tests != true }}
         run: nox -s ${{ matrix.nox_session }}
 
-      - name: Run platform full test suite
+      - name: Run platform unit test suite
         if: ${{ matrix.go_tests == true }}
         env:
           ARBITER_GO_CLIENT_SMOKE_OUTDIR: .ci/go-client-smoke
           ARBITER_GO_CLIENT_SMOKE_REUSE: "1"
           GOCACHE: ${{ runner.temp }}/go-build
         run: nox -s ${{ matrix.nox_session }}
-
-  docker-deploy-test:
-    name: Docker deploy integration
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-          cache: pip
-
-      - name: Install nox
-        run: python -m pip install "nox[pbs]>=2024.10,<2026.0"
-
-      - name: Show Docker environment
-        run: |
-          docker info
-          docker compose version
-
-      - name: Run Docker deploy integration
-        run: nox -s deploy-test
 
   website:
     name: Website
@@ -214,7 +189,6 @@ jobs:
     needs:
       - lint
       - tests
-      - docker-deploy-test
       - website
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 

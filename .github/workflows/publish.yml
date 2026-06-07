@@ -1,89 +1,318 @@
 name: Publish
 run-name: >-
-  ${{ github.event_name == 'workflow_dispatch' && format('Publish {0} on line {1} {2}', inputs.publish_packages || 'all', inputs.release_line, inputs.publish_to_pypi && 'to PyPI' || 'dry run') || format('Publish all from release {0}', github.event.release.tag_name) }}
+  Publish ${{ inputs.publish_packages || 'all' }} on line ${{ inputs.release_line }} ${{ inputs.publish_to_pypi && 'to PyPI' || 'dry run' }}
 
 on:
-  release:
-    types:
-      - published
   workflow_dispatch:
     inputs:
       release_line:
-        description: "Release line to validate and build, for example 0.9"
+        description: "Prepared release line to publish, for example 0.9"
         required: true
         type: string
-      publish_to_pypi:
-        description: "Publish built distributions to PyPI"
-        required: true
-        default: false
-        type: boolean
       publish_packages:
-        description: "Publish keys: all or comma-separated keys like server,imap,meta:all,client,skill:linux-amd64; meta:all is only the zero-code all-in-one meta package"
+        description: "Publish keys: all or comma-separated keys like server,imap,meta:all,client,skill:linux-amd64"
         required: true
         default: all
         type: string
+      publish_to_pypi:
+        description: "Publish built distributions to PyPI and promote draft GitHub releases"
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
   group: >-
-    ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.release_line || github.run_id }}-${{ github.event_name == 'workflow_dispatch' && inputs.publish_packages || github.run_id }}
+    ${{ github.workflow }}-${{ github.ref }}-${{ inputs.release_line }}-${{ inputs.publish_packages }}
   cancel-in-progress: false
 
 jobs:
-  build:
-    name: Build distributions
+  validate:
+    name: Validate prepared release
     runs-on: ubuntu-latest
 
     outputs:
-      release_line: ${{ steps.release.outputs.release_line }}
       has_publish: ${{ steps.pypi-plan.outputs.has_publish }}
+      integration_matrix: ${{ steps.integration-matrix.outputs.matrix }}
       publish_keys: ${{ steps.pypi-plan.outputs.publish_keys }}
       publish_specs: ${{ steps.pypi-plan.outputs.publish_specs }}
       publish_title: ${{ steps.pypi-plan.outputs.publish_title }}
+      release_tags: ${{ steps.drafts.outputs.release_tags }}
+
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Resolve release line
         id: release
         shell: bash
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
           RELEASE_LINE_INPUT: ${{ inputs.release_line }}
         run: |
-          project_version="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' server/pyproject.toml | head -n 1)"
-          if [[ -z "$project_version" ]]; then
-            echo "Could not read project version from server/pyproject.toml" >&2
+          set -euo pipefail
+          release_line="$RELEASE_LINE_INPUT"
+          if [[ ! "$release_line" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::release_line must use MAJOR.MINOR, got: $release_line"
             exit 1
           fi
-          if [[ "${{ github.event_name }}" == "release" ]]; then
-            tag="$RELEASE_TAG"
-            if [[ ! "$tag" =~ ^v([0-9]+)\.([0-9]+)\.0$ ]]; then
-              echo "Release tags must use vMAJOR.MINOR.0, got: $tag" >&2
-              exit 1
-            fi
-            release_line="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
-            expected_project_version="${release_line}.0"
-            if [[ "$project_version" != "$expected_project_version" ]]; then
-              echo "Project version $project_version does not match release tag $tag" >&2
-              exit 1
-            fi
-          else
-            release_line="$RELEASE_LINE_INPUT"
-            if [[ ! "$release_line" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-              echo "Release line must use MAJOR.MINOR, got: $release_line" >&2
-              exit 1
-            fi
-          fi
           echo "release_line=$release_line" >> "$GITHUB_OUTPUT"
+
+      - name: Verify release line
+        run: tools/upgrade_release_line "${{ steps.release.outputs.release_line }}" --check
+
+      - name: Plan publish set
+        id: pypi-plan
+        shell: bash
+        env:
+          PUBLISH_PACKAGES: ${{ inputs.publish_packages }}
+        run: tools/plan_pypi_publish --packages "$PUBLISH_PACKAGES"
+
+      - name: Validate draft GitHub Releases
+        id: drafts
+        shell: bash
+        env:
+          PUBLISH_KEYS: ${{ steps.pypi-plan.outputs.publish_keys }}
+          PUBLISH_SPECS: ${{ steps.pypi-plan.outputs.publish_specs }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${PUBLISH_SPECS:-}" ]]; then
+            echo "release_tags=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          current_sha="$(git rev-parse HEAD)"
+          IFS=',' read -ra package_keys <<< "$PUBLISH_KEYS"
+          IFS=',' read -ra publish_specs <<< "$PUBLISH_SPECS"
+          release_tags=()
+
+          for index in "${!package_keys[@]}"; do
+            package_key="${package_keys[$index]}"
+            package_version="${publish_specs[$index]##*==}"
+            if [[ "$package_version" == *".dev"* ]]; then
+              continue
+            fi
+            release_tag="v$package_version"
+            if [[ " ${release_tags[*]} " != *" $release_tag "* ]]; then
+              release_tags+=("$release_tag")
+            fi
+          done
+
+          for release_tag in "${release_tags[@]}"; do
+            draft="$(gh api --paginate "repos/{owner}/{repo}/releases" \
+              --jq ".[] | select(.tag_name == \"$release_tag\") | .draft")"
+            if [[ "$draft" != "true" ]]; then
+              echo "::error::Release $release_tag must exist and still be a draft."
+              exit 1
+            fi
+            tag_sha="$(git rev-list -n 1 "$release_tag")"
+            if [[ "$tag_sha" != "$current_sha" ]]; then
+              echo "::error::Release tag $release_tag points at $tag_sha, expected $current_sha."
+              exit 1
+            fi
+          done
+
+          {
+            printf "release_tags="
+            local_prefix=""
+            for release_tag in "${release_tags[@]}"; do
+              printf "%s%s" "$local_prefix" "$release_tag"
+              local_prefix=","
+            done
+            printf "\n"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build integration test matrix
+        id: integration-matrix
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import os
+
+          platforms = [
+              ("Linux x64", "ubuntu-24.04", "linux-x64"),
+              ("Linux arm64", "ubuntu-24.04-arm", "linux-arm64"),
+              ("macOS x64", "macos-15-intel", "macos-x64"),
+              ("macOS arm64", "macos-15", "macos-arm64"),
+              ("Windows x64", "windows-2025", "windows-x64"),
+              ("Windows arm64", "windows-11-arm", "windows-arm64"),
+          ]
+          suites = [{"suite": "Core", "target": "server/tests/integration", "go_tests": True}]
+          for path in sorted(Path("plugins").glob("*/tests/integration")):
+              if path.is_dir():
+                  suites.append(
+                      {
+                          "suite": path.parts[1].upper(),
+                          "target": str(path),
+                          "go_tests": False,
+                      }
+                  )
+
+          include = []
+          for suite in suites:
+              for label, runner, platform_id in platforms:
+                  include.append(
+                      {
+                          "name": f"{suite['suite']} integration {label}",
+                          "runner": runner,
+                          "python_version": "3.13",
+                          "platform_id": platform_id,
+                          "test_target": suite["target"],
+                          "go_tests": suite["go_tests"],
+                      }
+                  )
+
+          matrix = json.dumps({"include": include}, separators=(",", ":"))
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"matrix={matrix}\n")
+          PY
+
+  platform-tests:
+    name: ${{ matrix.name }}
+    needs: validate
+    runs-on: ${{ matrix.runner }}
+
+    if: needs.validate.outputs.has_publish == 'true'
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Python 3.10
+            runner: ubuntu-latest
+            python_version: "3.10"
+            nox_session: compat-3.10
+          - name: Python 3.11
+            runner: ubuntu-latest
+            python_version: "3.11"
+            nox_session: compat-3.11
+          - name: Python 3.12
+            runner: ubuntu-latest
+            python_version: "3.12"
+            nox_session: compat-3.12
+          - name: Python 3.14
+            runner: ubuntu-latest
+            python_version: "3.14"
+            nox_session: compat-3.14
+          - name: Platform Linux x64
+            runner: ubuntu-24.04
+            python_version: "3.13"
+            nox_session: unit
+            platform_id: linux-x64
+            go_tests: true
+          - name: Platform Linux arm64
+            runner: ubuntu-24.04-arm
+            python_version: "3.13"
+            nox_session: unit
+            platform_id: linux-arm64
+            go_tests: true
+          - name: Platform macOS x64
+            runner: macos-15-intel
+            python_version: "3.13"
+            nox_session: unit
+            platform_id: macos-x64
+            go_tests: true
+          - name: Platform macOS arm64
+            runner: macos-15
+            python_version: "3.13"
+            nox_session: unit
+            platform_id: macos-arm64
+            go_tests: true
+          - name: Platform Windows x64
+            runner: windows-2025
+            python_version: "3.13"
+            nox_session: unit
+            platform_id: windows-x64
+            go_tests: true
+          - name: Platform Windows arm64
+            runner: windows-11-arm
+            python_version: "3.13"
+            nox_session: unit
+            platform_id: windows-arm64
+            go_tests: true
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python_version }}
+          cache: pip
+
+      - name: Set up Go
+        if: ${{ matrix.go_tests == true }}
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: client/go-cli/go.mod
+
+      - name: Cache Go client smoke binary
+        if: ${{ matrix.go_tests == true }}
+        uses: actions/cache@v4
+        with:
+          path: .ci/go-client-smoke
+          key: go-client-smoke-${{ matrix.platform_id }}-${{ hashFiles('client/go-cli/**', 'tools/build_go_client') }}
+
+      - name: Install nox
+        run: python -m pip install "nox[pbs]>=2024.10,<2026.0"
+
+      - name: Set up OpenSSL for Windows arm64 Python dependencies
+        if: ${{ matrix.platform_id == 'windows-arm64' }}
+        shell: pwsh
+        run: |
+          $vcpkgRoot = Join-Path $env:RUNNER_TEMP "vcpkg"
+          git clone https://github.com/microsoft/vcpkg $vcpkgRoot
+          & (Join-Path $vcpkgRoot "bootstrap-vcpkg.bat") -disableMetrics
+          & (Join-Path $vcpkgRoot "vcpkg.exe") install openssl:arm64-windows-static-md
+          $opensslRoot = Join-Path $vcpkgRoot "installed\arm64-windows-static-md"
+          "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "OPENSSL_DIR=$opensslRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Run Go client tests
+        if: ${{ matrix.go_tests == true }}
+        working-directory: client/go-cli
+        env:
+          GOCACHE: ${{ runner.temp }}/go-build
+        run: go test ./...
+
+      - name: Run Python compatibility unit suite
+        if: ${{ matrix.go_tests != true }}
+        run: nox -s ${{ matrix.nox_session }}
+
+      - name: Run platform unit test suite
+        if: ${{ matrix.go_tests == true }}
+        env:
+          ARBITER_GO_CLIENT_SMOKE_OUTDIR: .ci/go-client-smoke
+          ARBITER_GO_CLIENT_SMOKE_REUSE: "1"
+          GOCACHE: ${{ runner.temp }}/go-build
+        run: nox -s ${{ matrix.nox_session }}
+
+  build:
+    name: Build distributions
+    needs: validate
+    runs-on: ubuntu-latest
+
+    if: needs.validate.outputs.has_publish == 'true'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
 
       - name: Set up bootstrap Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.13"
           cache: pip
 
       - name: Set up Go
@@ -94,122 +323,28 @@ jobs:
       - name: Install build tools
         run: python -m pip install "nox[pbs]>=2024.10,<2026.0" build
 
-      - name: Verify release line
-        run: tools/upgrade_release_line "${{ steps.release.outputs.release_line }}" --check
-
       - name: Run lint
         run: nox -s lint
 
-      - name: Run compatibility tests
+      - name: Run compatibility unit tests
         run: nox -s compat
 
-      - name: Build server distribution
-        run: python -m build --sdist --wheel --outdir dist server
-
-      - name: Build IMAP plugin distribution
-        run: python -m build --sdist --wheel --outdir dist plugins/imap
-
-      - name: Build SMTP plugin distribution
-        run: python -m build --sdist --wheel --outdir dist plugins/smtp
-
-      - name: Build meta distribution
-        run: python -m build --sdist --wheel --outdir dist meta/arbiter-suite
-
-      - name: Build Arbiter native distributions
-        shell: bash
-        run: |
-          tools/build_go_client --clean
-          version="$(python - <<'PY'
-          from pathlib import Path
-          in_project = False
-          for line in Path("server/pyproject.toml").read_text().splitlines():
-              stripped = line.strip()
-              if stripped == "[project]":
-                  in_project = True
-                  continue
-              if in_project and stripped.startswith("["):
-                  break
-              if in_project and stripped.startswith("version"):
-                  print(stripped.partition("=")[2].strip().strip('"'))
-                  break
-          PY
-          )"
-          for target in \
-            linux-amd64 linux-arm64 \
-            darwin-amd64 darwin-arm64 \
-            windows-amd64 windows-arm64
-          do
-            ARBITER_CLIENT_VERSION="$version" \
-              ARBITER_CLIENT_TARGET="$target" \
-              python -m build --wheel --outdir dist client/arbiter-client
-          done
-          tools/package_arbiter_skill --clean --format wheel
-          cp dist/arbiter-skill/wheels/*.whl dist/
-
-      - name: Plan selective PyPI publish
-        id: pypi-plan
-        shell: bash
+      - name: Build selected distributions
         env:
-          PUBLISH_PACKAGES: ${{ inputs.publish_packages || 'all' }}
-        run: |
-          args=(--prepare-output-dir --packages "$PUBLISH_PACKAGES")
-          tools/plan_pypi_publish "${args[@]}"
+          PUBLISH_PACKAGES: ${{ inputs.publish_packages }}
+        run: tools/build_release_dists --clean --packages "$PUBLISH_PACKAGES"
 
-      - name: Validate release notes
-        if: >-
-          steps.pypi-plan.outputs.has_publish == 'true' &&
-          (github.event_name == 'release' ||
-           (github.event_name == 'workflow_dispatch' && inputs.publish_to_pypi))
-        shell: bash
+      - name: Prepare publishable distributions
         env:
-          RELEASE_EVENT_TAG: ${{ github.event.release.tag_name }}
-          PUBLISH_KEYS: ${{ steps.pypi-plan.outputs.publish_keys }}
-          PUBLISH_SPECS: ${{ steps.pypi-plan.outputs.publish_specs }}
-        run: |
-          IFS=',' read -ra package_keys <<< "$PUBLISH_KEYS"
-          IFS=',' read -ra publish_specs <<< "$PUBLISH_SPECS"
-          release_event_version="${RELEASE_EVENT_TAG#v}"
-          for index in "${!package_keys[@]}"; do
-            package_key="${package_keys[$index]}"
-            package_version="${publish_specs[$index]##*==}"
-            if [[ "${{ github.event_name }}" == "release" && "$package_version" != "$release_event_version" ]]; then
-              echo "Release event tag $RELEASE_EVENT_TAG cannot publish $package_key version $package_version" >&2
-              exit 1
-            fi
-            if [[ "$package_version" == *".dev"* ]]; then
-              continue
-            fi
-            if [[ "$package_key" == client || "$package_key" == skill* ]]; then
-              continue
-            fi
-            tools/extract_release_notes \
-              "$package_version" \
-              --package-key "$package_key" \
-              > /dev/null
-          done
-
-      - name: Summarize publish plan
-        if: steps.pypi-plan.outputs.has_publish == 'true'
-        env:
-          PUBLISH_KEYS: ${{ steps.pypi-plan.outputs.publish_keys }}
-          PUBLISH_SPECS: ${{ steps.pypi-plan.outputs.publish_specs }}
-          PUBLISH_TITLE: ${{ steps.pypi-plan.outputs.publish_title }}
-        run: |
-          {
-            echo "### Publish plan"
-            echo
-            echo "- Release line: ${{ steps.release.outputs.release_line }}"
-            echo "- Package keys: $PUBLISH_KEYS"
-            echo "- Package specs: $PUBLISH_SPECS"
-            echo "- Publish title: publishing $PUBLISH_TITLE to PyPI"
-          } >> "$GITHUB_STEP_SUMMARY"
+          PUBLISH_PACKAGES: ${{ inputs.publish_packages }}
+        run: tools/plan_pypi_publish --prepare-output-dir --packages "$PUBLISH_PACKAGES"
 
       - name: Smoke install built release
-        if: steps.pypi-plan.outputs.has_publish == 'true'
         shell: bash
         env:
-          PUBLISH_SPECS: ${{ steps.pypi-plan.outputs.publish_specs }}
+          PUBLISH_SPECS: ${{ needs.validate.outputs.publish_specs }}
         run: |
+          set -euo pipefail
           python -m venv .release-smoke
           .release-smoke/bin/python -m pip install --upgrade pip
           IFS=',' read -ra publish_specs <<< "$PUBLISH_SPECS"
@@ -238,24 +373,119 @@ jobs:
           if-no-files-found: error
 
       - name: Upload publishable distributions
-        if: steps.pypi-plan.outputs.has_publish == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: python-distributions-to-publish
           path: dist-publish/*
           if-no-files-found: error
 
+  integration-tests:
+    name: ${{ matrix.name }}
+    needs: validate
+    runs-on: ${{ matrix.runner }}
+
+    if: needs.validate.outputs.has_publish == 'true'
+
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.validate.outputs.integration_matrix) }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python_version }}
+          cache: pip
+
+      - name: Set up Go
+        if: ${{ matrix.go_tests == true }}
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: client/go-cli/go.mod
+
+      - name: Cache Go client smoke binary
+        if: ${{ matrix.go_tests == true }}
+        uses: actions/cache@v4
+        with:
+          path: .ci/go-client-smoke
+          key: go-client-smoke-${{ matrix.platform_id }}-${{ hashFiles('client/go-cli/**', 'tools/build_go_client') }}
+
+      - name: Install nox
+        run: python -m pip install "nox[pbs]>=2024.10,<2026.0"
+
+      - name: Set up OpenSSL for Windows arm64 Python dependencies
+        if: ${{ matrix.platform_id == 'windows-arm64' }}
+        shell: pwsh
+        run: |
+          $vcpkgRoot = Join-Path $env:RUNNER_TEMP "vcpkg"
+          git clone https://github.com/microsoft/vcpkg $vcpkgRoot
+          & (Join-Path $vcpkgRoot "bootstrap-vcpkg.bat") -disableMetrics
+          & (Join-Path $vcpkgRoot "vcpkg.exe") install openssl:arm64-windows-static-md
+          $opensslRoot = Join-Path $vcpkgRoot "installed\arm64-windows-static-md"
+          "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "OPENSSL_DIR=$opensslRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Run Go client tests
+        if: ${{ matrix.go_tests == true }}
+        working-directory: client/go-cli
+        env:
+          GOCACHE: ${{ runner.temp }}/go-build
+        run: go test ./...
+
+      - name: Run platform integration suite
+        env:
+          ARBITER_GO_CLIENT_SMOKE_OUTDIR: .ci/go-client-smoke
+          ARBITER_GO_CLIENT_SMOKE_REUSE: "1"
+          GOCACHE: ${{ runner.temp }}/go-build
+        run: nox -s integration -- ${{ matrix.test_target }}
+
+  docker-deploy-test:
+    name: Docker deploy integration
+    needs: validate
+    runs-on: ubuntu-latest
+
+    if: needs.validate.outputs.has_publish == 'true'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install nox
+        run: python -m pip install "nox[pbs]>=2024.10,<2026.0"
+
+      - name: Show Docker environment
+        run: |
+          docker info
+          docker compose version
+
+      - name: Run Docker deploy integration
+        run: nox -s deploy-test
+
   publish:
-    name: publishing ${{ needs.build.outputs.publish_title }} to PyPI
-    needs: build
+    name: Publish ${{ needs.validate.outputs.publish_title }} to PyPI
+    needs:
+      - build
+      - docker-deploy-test
+      - integration-tests
+      - platform-tests
+      - validate
     runs-on: ubuntu-latest
     if: >-
       needs.build.result == 'success' &&
-      needs.build.outputs.has_publish == 'true' &&
-      (github.event_name == 'release' ||
-       (github.event_name == 'workflow_dispatch' &&
-        github.ref == 'refs/heads/main' &&
-        inputs.publish_to_pypi))
+      needs['integration-tests'].result == 'success' &&
+      needs['docker-deploy-test'].result == 'success' &&
+      needs['platform-tests'].result == 'success' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.publish_to_pypi
     environment: pypi
     permissions:
       contents: read
@@ -271,68 +501,28 @@ jobs:
       - name: Publish distributions
         uses: pypa/gh-action-pypi-publish@release/v1
 
-  release_notes:
-    name: Attach release notes
+  promote:
+    name: Promote GitHub Releases
     needs:
-      - build
       - publish
+      - validate
     runs-on: ubuntu-latest
     if: >-
-      always() &&
-      needs.build.outputs.has_publish == 'true' &&
       needs.publish.result == 'success' &&
-      (github.event_name == 'release' ||
-       (github.event_name == 'workflow_dispatch' &&
-        github.ref == 'refs/heads/main' &&
-        inputs.publish_to_pypi))
+      needs.validate.outputs.release_tags != ''
     permissions:
       contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
 
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Attach release notes
+      - name: Publish draft releases
         env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_EVENT_TAG: ${{ github.event.release.tag_name }}
-          PUBLISH_KEYS: ${{ needs.build.outputs.publish_keys }}
-          PUBLISH_SPECS: ${{ needs.build.outputs.publish_specs }}
+          RELEASE_TAGS: ${{ needs.validate.outputs.release_tags }}
         run: |
-          IFS=',' read -ra package_keys <<< "$PUBLISH_KEYS"
-          IFS=',' read -ra publish_specs <<< "$PUBLISH_SPECS"
-          declare -A notes_files=()
-          release_tags=()
-          for index in "${!package_keys[@]}"; do
-            package_key="${package_keys[$index]}"
-            package_version="${publish_specs[$index]##*==}"
-            if [[ "$package_key" == client || "$package_key" == skill* ]]; then
-              continue
-            fi
-            if [[ "$package_version" == *".dev"* ]]; then
-              continue
-            fi
-            release_tag="${RELEASE_EVENT_TAG:-v$package_version}"
-            if [[ -z "${notes_files[$release_tag]:-}" ]]; then
-              notes_file="release-notes-${#release_tags[@]}.md"
-              notes_files[$release_tag]="$notes_file"
-              release_tags+=("$release_tag")
-              : > "$notes_file"
-            fi
-            tools/extract_release_notes \
-              "$package_version" \
-              --package-key "$package_key" \
-              >> "${notes_files[$release_tag]}"
-            printf '\n' >> "${notes_files[$release_tag]}"
-          done
+          set -euo pipefail
+          IFS=',' read -ra release_tags <<< "$RELEASE_TAGS"
           for release_tag in "${release_tags[@]}"; do
-            notes_file="${notes_files[$release_tag]}"
-            if gh release view "$release_tag" >/dev/null 2>&1; then
-              gh release edit "$release_tag" --notes-file "$notes_file"
-            else
-              gh release create "$release_tag" \
-                --target "$GITHUB_SHA" \
-                --title "$release_tag" \
-                --notes-file "$notes_file"
-            fi
+            gh release edit "$release_tag" --draft=false
           done

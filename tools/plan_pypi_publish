@@ -13,114 +13,20 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 try:
     from tomllib import loads as load_toml  # type: ignore[import-not-found]
 except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10.
     from tomli import loads as load_toml
 
-
-@dataclass(frozen=True)
-class Package:
-    kind: str
-    name: str
-    path: Path
-    project_name: str | None = None
-    artifacts: tuple[str, ...] = ("sdist", "wheel")
-
-    @property
-    def normalized_name(self) -> str:
-        return self.name.replace("-", "_")
-
-    @property
-    def expected_project_name(self) -> str:
-        return self.project_name or self.name
-
-
-PACKAGES = (
-    Package(kind="server", name="arbiter-server", path=Path("server")),
-    Package(kind="plugin", name="arbiter-imap", path=Path("plugins/imap")),
-    Package(kind="plugin", name="arbiter-smtp", path=Path("plugins/smtp")),
-    Package(kind="meta", name="arbiter-suite", path=Path("meta/arbiter-suite")),
-    Package(
-        kind="client",
-        name="arbiter-client",
-        path=Path("server"),
-        project_name="arbiter-server",
-        artifacts=("wheel",),
-    ),
-    Package(
-        kind="skill",
-        name="arbiter-skill",
-        path=Path("server"),
-        project_name="arbiter-server",
-        artifacts=("wheel",),
-    ),
-    Package(
-        kind="skill",
-        name="arbiter-skill-linux-amd64",
-        path=Path("server"),
-        project_name="arbiter-server",
-        artifacts=("wheel",),
-    ),
-    Package(
-        kind="skill",
-        name="arbiter-skill-linux-arm64",
-        path=Path("server"),
-        project_name="arbiter-server",
-        artifacts=("wheel",),
-    ),
-    Package(
-        kind="skill",
-        name="arbiter-skill-darwin-amd64",
-        path=Path("server"),
-        project_name="arbiter-server",
-        artifacts=("wheel",),
-    ),
-    Package(
-        kind="skill",
-        name="arbiter-skill-darwin-arm64",
-        path=Path("server"),
-        project_name="arbiter-server",
-        artifacts=("wheel",),
-    ),
-    Package(
-        kind="skill",
-        name="arbiter-skill-windows-amd64",
-        path=Path("server"),
-        project_name="arbiter-server",
-        artifacts=("wheel",),
-    ),
-    Package(
-        kind="skill",
-        name="arbiter-skill-windows-arm64",
-        path=Path("server"),
-        project_name="arbiter-server",
-        artifacts=("wheel",),
-    ),
-)
-PACKAGE_BY_KEY = {
-    "server": "arbiter-server",
-    "imap": "arbiter-imap",
-    "smtp": "arbiter-smtp",
-    "meta:all": "arbiter-suite",
-    "client": "arbiter-client",
-    "skill": "arbiter-skill",
-    "skill:linux-amd64": "arbiter-skill-linux-amd64",
-    "skill:linux-arm64": "arbiter-skill-linux-arm64",
-    "skill:darwin-amd64": "arbiter-skill-darwin-amd64",
-    "skill:darwin-arm64": "arbiter-skill-darwin-arm64",
-    "skill:windows-amd64": "arbiter-skill-windows-amd64",
-    "skill:windows-arm64": "arbiter-skill-windows-arm64",
-}
-PACKAGE_KEY_BY_NAME = {name: key for key, name in PACKAGE_BY_KEY.items()}
-PACKAGE_KEYS = tuple(PACKAGE_BY_KEY)
-CLIENT_PLATFORM_TAGS = (
-    "manylinux_2_17_x86_64",
-    "manylinux_2_17_aarch64",
-    "macosx_11_0_x86_64",
-    "macosx_11_0_arm64",
-    "win_amd64",
-    "win_arm64",
+from release_packages import (  # noqa: E402
+    CLIENT_PLATFORM_TAGS,
+    Package,
+    package_by_key,
+    package_key_by_name,
+    package_keys,
+    release_packages,
 )
 
 
@@ -187,6 +93,8 @@ class PlanItem:
 
 
 def _read_project(root: Path, package: Package) -> dict[str, object]:
+    if package.path is None:
+        raise ValueError(f"{package.name} does not have a pyproject path")
     pyproject = root / package.path / "pyproject.toml"
     if not pyproject.exists():
         raise FileNotFoundError(f"missing package pyproject: {pyproject}")
@@ -234,7 +142,8 @@ def _pypi_version(package_name: str) -> Version | None:
 
 
 def _validate_versions(root: Path) -> dict[str, Version]:
-    versions = {package.name: _project_version(root, package) for package in PACKAGES}
+    packages = release_packages(root)
+    versions = {package.name: _project_version(root, package) for package in packages}
     server_version = versions["arbiter-server"]
 
     main_version = versions["arbiter-suite"]
@@ -245,7 +154,7 @@ def _validate_versions(root: Path) -> dict[str, Version]:
             f"{server_version.major}.{server_version.minor}"
         )
 
-    for package in PACKAGES:
+    for package in packages:
         if package.kind != "plugin":
             continue
         line_version = versions[package.name]
@@ -293,20 +202,26 @@ def _copy_distributions(
     return copied
 
 
-def _parse_package_keys(value: str) -> frozenset[str] | None:
+def _parse_package_keys(
+    value: str,
+    *,
+    root: Path | None = None,
+) -> frozenset[str] | None:
     value = value.strip()
     if value == "all":
         return None
 
+    root = root or Path.cwd()
+    known_keys = package_keys(root)
     keys = frozenset(key.strip() for key in value.split(",") if key.strip())
     if not keys:
         raise ValueError("--packages must be 'all' or a comma-separated key list")
     if "all" in keys:
         raise ValueError("--packages cannot combine 'all' with package keys")
 
-    unknown = sorted(keys - set(PACKAGE_KEYS))
+    unknown = sorted(keys - set(known_keys))
     if unknown:
-        expected = ", ".join(("all", *PACKAGE_KEYS))
+        expected = ", ".join(("all", *known_keys))
         raise ValueError(
             f"unknown package key in --packages: {', '.join(unknown)} "
             f"(expected one or more of: {expected})"
@@ -319,14 +234,16 @@ def build_plan(
     *,
     package_keys: frozenset[str] | None = None,
 ) -> list[PlanItem]:
+    packages = release_packages(root)
+    packages_by_key = package_by_key(root)
     versions = _validate_versions(root)
     selected_package_names = (
-        {PACKAGE_BY_KEY[key] for key in package_keys}
+        {packages_by_key[key].name for key in package_keys}
         if package_keys is not None
         else None
     )
     plan: list[PlanItem] = []
-    for package in PACKAGES:
+    for package in packages:
         local_version = versions[package.name]
         if (
             selected_package_names is not None
@@ -406,7 +323,7 @@ def main(argv: list[str] | None = None) -> int:
         metavar="KEYS",
         help=(
             "limit publishing to 'all' or comma-separated package keys "
-            f"({', '.join(PACKAGE_KEYS)})"
+            "(run with an invalid key to see the currently discovered keys)"
         ),
     )
     parser.add_argument(
@@ -418,12 +335,11 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         root = Path(namespace.root).resolve()
-        package_keys = _parse_package_keys(namespace.packages)
+        package_keys = _parse_package_keys(namespace.packages, root=root)
         plan = build_plan(root, package_keys=package_keys)
         publish_items = [item for item in plan if item.publish]
-        publish_keys = [
-            PACKAGE_KEY_BY_NAME[item.package.name] for item in publish_items
-        ]
+        keys_by_name = package_key_by_name(root)
+        publish_keys = [keys_by_name[item.package.name] for item in publish_items]
         publish_specs = [
             f"{item.package.name}=={item.local_version.text}" for item in publish_items
         ]

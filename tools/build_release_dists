@@ -7,93 +7,41 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-@dataclass(frozen=True)
-class Package:
-    key: str
-    name: str
-    path: Path | None
-    kind: str = "python"
-
-
-PACKAGES = (
-    Package(key="server", name="arbiter-server", path=Path("server")),
-    Package(key="imap", name="arbiter-imap", path=Path("plugins/imap")),
-    Package(key="smtp", name="arbiter-smtp", path=Path("plugins/smtp")),
-    Package(key="meta:all", name="arbiter-suite", path=Path("meta/arbiter-suite")),
-    Package(key="client", name="arbiter-client", path=None, kind="client"),
-    Package(key="skill", name="arbiter-skill", path=None, kind="skill"),
-    Package(
-        key="skill:linux-amd64",
-        name="arbiter-skill-linux-amd64",
-        path=None,
-        kind="skill",
-    ),
-    Package(
-        key="skill:linux-arm64",
-        name="arbiter-skill-linux-arm64",
-        path=None,
-        kind="skill",
-    ),
-    Package(
-        key="skill:darwin-amd64",
-        name="arbiter-skill-darwin-amd64",
-        path=None,
-        kind="skill",
-    ),
-    Package(
-        key="skill:darwin-arm64",
-        name="arbiter-skill-darwin-arm64",
-        path=None,
-        kind="skill",
-    ),
-    Package(
-        key="skill:windows-amd64",
-        name="arbiter-skill-windows-amd64",
-        path=None,
-        kind="skill",
-    ),
-    Package(
-        key="skill:windows-arm64",
-        name="arbiter-skill-windows-arm64",
-        path=None,
-        kind="skill",
-    ),
-)
-PACKAGE_BY_KEY = {package.key: package for package in PACKAGES}
-PACKAGE_KEYS = tuple(PACKAGE_BY_KEY)
-CLIENT_TARGETS = (
-    "linux-amd64",
-    "linux-arm64",
-    "darwin-amd64",
-    "darwin-arm64",
-    "windows-amd64",
-    "windows-arm64",
+from release_packages import (  # noqa: E402
+    CLIENT_TARGETS,
+    Package,
+    package_by_key,
+    package_keys,
+    release_packages,
 )
 
 
-def _parse_package_keys(value: str) -> tuple[Package, ...]:
+def _parse_package_keys(value: str, *, root: Path | None = None) -> tuple[Package, ...]:
     value = value.strip()
+    root = root or Path.cwd()
     if value == "all":
-        return PACKAGES
+        return release_packages(root)
 
+    known_keys = package_keys(root)
+    packages_by_key = package_by_key(root)
     keys = tuple(dict.fromkeys(key.strip() for key in value.split(",") if key.strip()))
     if not keys:
         raise ValueError("--packages must be 'all' or a comma-separated key list")
     if "all" in keys:
         raise ValueError("--packages cannot combine 'all' with package keys")
 
-    unknown = sorted(set(keys) - set(PACKAGE_KEYS))
+    unknown = sorted(set(keys) - set(known_keys))
     if unknown:
-        expected = ", ".join(("all", *PACKAGE_KEYS))
+        expected = ", ".join(("all", *known_keys))
         raise ValueError(
             f"unknown package key in --packages: {', '.join(unknown)} "
             f"(expected one or more of: {expected})"
         )
-    return tuple(PACKAGE_BY_KEY[key] for key in keys)
+    return tuple(packages_by_key[key] for key in keys)
 
 
 def _run(
@@ -242,7 +190,9 @@ def build_distributions(
         shutil.rmtree(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
-    python_packages = tuple(package for package in packages if package.kind == "python")
+    python_packages = tuple(
+        package for package in packages if package.kind in {"server", "plugin", "meta"}
+    )
     client_selected = any(package.kind == "client" for package in packages)
     skill_selected = any(package.kind == "skill" for package in packages)
 
@@ -295,7 +245,7 @@ def main(argv: list[str] | None = None) -> int:
         metavar="KEYS",
         help=(
             "limit builds to 'all' or comma-separated package keys "
-            f"({', '.join(PACKAGE_KEYS)})"
+            "(run with an invalid key to see the currently discovered keys)"
         ),
     )
     parser.add_argument(
@@ -306,9 +256,10 @@ def main(argv: list[str] | None = None) -> int:
     namespace = parser.parse_args(argv)
 
     try:
-        packages = _parse_package_keys(namespace.packages)
+        root = Path(namespace.root).resolve()
+        packages = _parse_package_keys(namespace.packages, root=root)
         build_distributions(
-            root=Path(namespace.root).resolve(),
+            root=root,
             outdir=Path(namespace.outdir).resolve(),
             clean=namespace.clean,
             packages=packages,

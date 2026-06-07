@@ -102,6 +102,42 @@ def test_build_distributions_selects_packages_and_supports_verbose(
         assert stderr is None
 
 
+def test_build_distributions_discovers_new_plugin_package(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    tool = _load_tool()
+    (tmp_path / "plugins" / "pop").mkdir(parents=True)
+    (tmp_path / "plugins" / "pop" / "pyproject.toml").write_text(
+        '[project]\nname = "arbiter-pop"\nversion = "1.2.3"\n',
+        encoding="utf-8",
+    )
+    calls: list[tuple[list[str], object, object]] = []
+
+    def fake_run(
+        command: list[str],
+        *,
+        check: bool,
+        env: dict[str, str] | None = None,
+        stdout: object | None = None,
+        stderr: object | None = None,
+    ) -> None:
+        assert check is True
+        calls.append((command, stdout, stderr))
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    tool.build_distributions(
+        root=tmp_path,
+        outdir=tmp_path / "dist",
+        clean=False,
+        packages=tool._parse_package_keys("pop", root=tmp_path),
+        verbose=True,
+    )
+
+    assert [call[0][-1] for call in calls] == [str(tmp_path / "plugins" / "pop")]
+
+
 def test_build_distributions_copies_only_selected_skill_wheels(
     tmp_path: Path,
     monkeypatch: Any,
