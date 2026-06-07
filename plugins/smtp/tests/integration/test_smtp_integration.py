@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Iterator
 from email import policy
 from email.parser import BytesParser
+import os
 import smtplib
 import ssl
 import threading
@@ -74,8 +76,16 @@ ExcruTfHGIOOQ+TRKDh3kYyq7Q==
 class CapturingHandler:
     def __init__(self) -> None:
         self.envelopes: list[Any] = []
+        self._debug_callback: Callable[[str], None] | None = None
+
+    def _debug_event(self, event: str) -> None:
+        if self._debug_callback is not None:
+            self._debug_callback(event)
 
     async def handle_DATA(self, server, session, envelope) -> str:
+        self._debug_event(
+            f"handler DATA from={envelope.mail_from!r} rcpt={envelope.rcpt_tos!r}"
+        )
         self.envelopes.append(envelope)
         return "250 Message accepted for delivery"
 
@@ -86,6 +96,7 @@ class RejectingRcptHandler(CapturingHandler):
         self.rejected_recipients: list[str] = []
 
     async def handle_RCPT(self, server, session, envelope, address, options) -> str:
+        self._debug_event(f"handler RCPT rejecting address={address!r}")
         self.rejected_recipients.append(address)
         return "550 Recipient rejected"
 
@@ -98,8 +109,10 @@ class PartiallyRejectingRcptHandler(CapturingHandler):
 
     async def handle_RCPT(self, server, session, envelope, address, options):
         if address == self.rejected_recipient:
+            self._debug_event(f"handler RCPT partially rejecting address={address!r}")
             self.rejected_recipients.append(address)
             return "550 Recipient rejected"
+        self._debug_event(f"handler RCPT accepting via default address={address!r}")
         return MISSING
 
 
@@ -109,6 +122,7 @@ class RejectingDataHandler(CapturingHandler):
         self.data_attempts = 0
 
     async def handle_DATA(self, server, session, envelope) -> str:
+        self._debug_event("handler DATA rejecting message")
         self.data_attempts += 1
         return "554 Message rejected during DATA"
 
@@ -119,6 +133,7 @@ class DisconnectingDataHandler(CapturingHandler):
         self.data_attempts = 0
 
     async def handle_DATA(self, server, session, envelope) -> str:
+        self._debug_event("handler DATA disconnecting during message")
         self.data_attempts += 1
         raise ConnectionResetError("connection lost during DATA")
 
@@ -131,16 +146,66 @@ class IntegrationController(Controller):
         **kwargs: Any,
     ) -> None:
         self._integration_ready_timeout = ready_timeout
+        self._debug_enabled = os.environ.get("ARBITER_SMTP_TEST_DEBUG") == "1"
+        self._debug_started = time.monotonic()
+        self._debug_events: list[str] = []
         super().__init__(*args, ready_timeout=ready_timeout, **kwargs)
+
+    def debug_event(self, event: str) -> None:
+        elapsed = time.monotonic() - self._debug_started
+        entry = f"+{elapsed:.3f}s {event}"
+        self._debug_events.append(entry)
+        if self._debug_enabled:
+            print(f"[smtp-test] {entry}", flush=True)
+
+    def _run(self, ready_event: threading.Event) -> None:
+        self.debug_event("controller thread entering _run")
+        asyncio.set_event_loop(self.loop)
+        try:
+            self.debug_event(
+                f"creating server host={self.hostname!r} port={self.port!r}"
+            )
+            self.server_coro = self._create_server()
+            self.server = self.loop.run_until_complete(self.server_coro)
+            sockets = getattr(self.server, "sockets", None) or []
+            socket_names = [socket.getsockname() for socket in sockets]
+            self.debug_event(f"server bound sockets={socket_names!r}")
+        except Exception as error:
+            self._thread_exception = error
+            self.debug_event(f"server _run failed before ready: {error!r}")
+            return
+
+        def set_ready_event(*_args: object) -> None:
+            ready_event.set()
+
+        self.loop.call_soon(set_ready_event)
+        self.debug_event("ready event scheduled")
+        self.loop.run_forever()
+        self.debug_event("event loop stopped")
+
+        assert self.server is not None
+        self.server.close()
+        self.loop.run_until_complete(self.server.wait_closed())
+        self.loop.close()
+        self.server = None
+        self.debug_event("server closed")
+
+    def factory(self):
+        self.debug_event("SMTP factory invoked")
+        smtp = super().factory()
+        self.debug_event(f"SMTP factory returned {type(smtp).__name__}")
+        return smtp
 
     def start(self) -> None:
         assert self._thread is None, "SMTP daemon already running"
         self._factory_invoked.clear()
+        self.debug_event("start requested")
 
         ready_event = threading.Event()
         self._thread = threading.Thread(target=self._run, args=(ready_event,))
         self._thread.daemon = True
         self._thread.start()
+        self.debug_event("controller thread started")
 
         start = time.monotonic()
         deadline = start + self._integration_ready_timeout
@@ -148,20 +213,26 @@ class IntegrationController(Controller):
             if self._thread_exception is not None:
                 raise self._thread_exception
             raise TimeoutError(
-                "SMTP server failed to start within allotted time. "
+                "SMTP server failed to start "
+                f"within {self._integration_ready_timeout:.1f}s. "
                 "This might happen if the system is too busy. "
                 "Try increasing the `ready_timeout` parameter."
             )
 
         last_probe_error: BaseException | None = None
+        probe_attempts = 0
         while time.monotonic() < deadline:
             if self._thread_exception is not None:
                 raise self._thread_exception
             try:
+                probe_attempts += 1
+                self.debug_event(f"probe {probe_attempts} starting")
                 self._probe_server()
+                self.debug_event(f"probe {probe_attempts} succeeded")
                 break
             except (OSError, smtplib.SMTPException) as exc:
                 last_probe_error = exc
+                self.debug_event(f"probe {probe_attempts} failed: {exc!r}")
             time.sleep(0.05)
         else:
             detail = (
@@ -170,10 +241,11 @@ class IntegrationController(Controller):
                 else ""
             )
             raise TimeoutError(
-                "SMTP server started, but not responding within allotted time. "
+                "SMTP server started, but did not respond "
+                f"within {self._integration_ready_timeout:.1f}s. "
                 "This might happen if the system is too busy. "
                 "Try increasing the `ready_timeout` parameter."
-                f"{detail}"
+                f"{detail} {self._readiness_diagnostics(probe_attempts)}"
             )
 
         if self._thread_exception is not None:
@@ -184,12 +256,16 @@ class IntegrationController(Controller):
     def _probe_server(self) -> None:
         hostname = self.hostname or self._localhost
         if self.ssl_context is None:
+            self.debug_event(
+                f"probe connecting SMTP host={hostname!r} port={self.port}"
+            )
             with smtplib.SMTP(hostname, self.port, timeout=1.0):
                 return
 
         context = ssl.create_default_context()
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
+        self.debug_event(f"probe connecting SMTPS host={hostname!r} port={self.port}")
         with smtplib.SMTP_SSL(
             hostname,
             self.port,
@@ -197,6 +273,22 @@ class IntegrationController(Controller):
             context=context,
         ):
             return
+
+    def _readiness_diagnostics(self, probe_attempts: int) -> str:
+        thread = self._thread
+        return (
+            "SMTP readiness diagnostics: "
+            f"host={self.hostname!r}, "
+            f"port={self.port!r}, "
+            f"implicit_tls={self.ssl_context is not None}, "
+            f"starttls={self.SMTP_kwargs.get('tls_context') is not None}, "
+            f"thread_alive={thread.is_alive() if thread is not None else None}, "
+            f"thread_exception={self._thread_exception!r}, "
+            f"factory_invoked={self._factory_invoked.is_set()}, "
+            f"smtpd_ready={self.smtpd is not None}, "
+            f"probe_attempts={probe_attempts}, "
+            f"events={self._debug_events!r}."
+        )
 
 
 def _build_server_ssl_context(cert_path: str, key_path: str) -> ssl.SSLContext:
@@ -309,6 +401,7 @@ def smtp_server_factory(
             ready_timeout=10.0,
             **controller_kwargs,
         )
+        active_handler._debug_callback = controller.debug_event
         controller.start()
         controllers.append(controller)
         return active_handler, controller
