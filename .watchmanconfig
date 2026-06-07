@@ -6,7 +6,6 @@
     ".venv",
     "__pycache__",
     "arbiter-docker",
-    "build",
     "client/go-cli/dist",
     "config.local",
     "dist",

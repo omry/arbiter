@@ -6,7 +6,6 @@ __pycache__/
 *.py[cod]
 *.egg
 *.egg-info/
-build/
 dist/
 skill/bin/
 outputs/

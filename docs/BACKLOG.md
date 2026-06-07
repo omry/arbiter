@@ -209,6 +209,19 @@ This file is the day-to-day queue for design and implementation gaps.
       the trust, privacy, latency, and failure-mode expectations for filter
       plugins.
 
+- [ ] `P2` Centralize movable scratch directories.
+      Several tools create local-only build, publish, cache, and staging
+      directories at different repo locations, which makes cleanup and watcher
+      ignores harder to reason about. Move scratch outputs that do not need to
+      live beside their source into one clearly named local scratch root.
+      Acceptance checks: inventory current and potential scratch directories,
+      including `dist-publish`, `dist`, `.ci`, `outputs`, `temp`,
+      `client/go-cli/dist`, `skill/bin`, website build output, and package
+      build caches; decide which ones must stay in place and which can move;
+      update tool defaults, docs, `.gitignore`, `.dockerignore`, and
+      `.watchmanconfig`; preserve release and CI behavior; and document the
+      cleanup command or policy for the central scratch root.
+
 - [ ] `P2` Add Docker deployment uninstall support.
       Operators who use `arbiter-docker install` need a matching cleanup path.
       Acceptance checks: `arbiter-docker uninstall` stops and disables the
