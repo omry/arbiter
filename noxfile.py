@@ -10,6 +10,7 @@ nox.options.sessions = ["unit", "lint"]
 SERVER_PYPROJECT = nox.project.load_toml("server/pyproject.toml")
 
 BLACK_TARGETS = [
+    "client/hatch_build.py",
     "client/python-cli/src",
     "client/python-cli/tests",
     "server/src",
@@ -54,6 +55,7 @@ INTEGRATION_TEST_TARGETS = [
 ]
 SUPPORTED_PYTHONS = nox.project.python_versions(SERVER_PYPROJECT)
 PYREFLY_TARGETS = [
+    "client/hatch_build.py",
     "client/python-cli/src",
     "client/python-cli/tests",
     "server/src",

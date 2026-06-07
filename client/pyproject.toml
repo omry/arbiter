@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.24"]
+requires = ["hatchling>=1.24", "editables>=0.5"]
 build-backend = "hatchling.build"
 
 [project]
@@ -34,8 +34,9 @@ Homepage = "https://github.com/omry/arbiter"
 Repository = "https://github.com/omry/arbiter"
 
 [tool.hatch.version]
-source = "env"
-variable = "ARBITER_CLIENT_VERSION"
+source = "code"
+path = "hatch_build.py"
+expression = "client_version()"
 
 [tool.hatch.build.targets.wheel]
 bypass-selection = true
