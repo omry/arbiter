@@ -50,6 +50,12 @@ This file tracks the highest-value gaps between:
 
 ## P1
 
+- Improve CI performance with dependency caching
+  - Why: platform CI is now broad enough that repeated setup dominates runtime, especially Windows arm64
+  - Level: CI
+  - Status: `todo`
+  - Acceptance: Windows arm64 caches vcpkg/OpenSSL setup or uses vcpkg binary caching; nox/pip editable install overhead is reduced where practical; cache keys include dependency inputs so stale toolchains are not reused silently; and CI job logs make cache hits/misses obvious.
+
 - `verify_peer=true` succeeds against a trusted local CA
   - Why: complete the TLS success-path contract
   - Level: integration
