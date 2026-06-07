@@ -461,7 +461,12 @@ def test_arbiter_console_script_serve_reports_unrunnable_config(
     result = _run_arbiter_server("--config-dir", str(tmp_path), "bootstrap", "arbiter")
     assert result.returncode == 0
 
-    serve = _run_arbiter_server("--config-dir", str(tmp_path), "serve")
+    serve = _run_arbiter_server(
+        "--config-dir",
+        str(tmp_path),
+        "--unsafe-skip-runtime-permission-checks",
+        "serve",
+    )
 
     assert serve.returncode == 1
     assert "config must define at least one service account" in serve.stderr

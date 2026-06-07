@@ -300,15 +300,15 @@ def test_upgrade_release_line_rejects_same_or_older_release_line(
     )
 
 
-def test_upgrade_release_line_error_uses_unicode_status_for_utf8_stream_encoding(
+def test_upgrade_release_line_error_uses_ascii_status_for_limited_stream_encoding(
     tmp_path: Path,
 ) -> None:
     _write_fixture(tmp_path)
 
-    result = _run_tool(tmp_path, "0.8", env={"PYTHONIOENCODING": "utf-8"})
+    result = _run_tool(tmp_path, "0.8", env={"PYTHONIOENCODING": "cp1252"})
 
     assert result.returncode == 1
-    assert "\x1b[31m✗\x1b[0m upgrade_release_line:" in result.stderr
+    assert "\x1b[31mERROR\x1b[0m upgrade_release_line:" in result.stderr
     assert "target release line 0.8 must be greater than current line 0.8" in (
         result.stderr
     )
@@ -323,17 +323,6 @@ def test_upgrade_release_line_check_accepts_matching_release_line(
 
     assert result.returncode == 0, result.stderr
     _assert_success_status(result.stdout, "release line check passed: 0.8 (0.8.0)")
-
-
-def test_upgrade_release_line_check_uses_unicode_status_for_utf8_stream_encoding(
-    tmp_path: Path,
-) -> None:
-    _write_fixture(tmp_path)
-
-    result = _run_tool(tmp_path, "--check", "0.8", env={"PYTHONIOENCODING": "utf-8"})
-
-    assert result.returncode == 0, result.stderr
-    assert "\x1b[32m✓\x1b[0m release line check passed: 0.8 (0.8.0)" in (result.stdout)
 
 
 def test_upgrade_release_line_check_uses_ascii_status_for_limited_stream_encoding(

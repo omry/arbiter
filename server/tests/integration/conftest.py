@@ -141,6 +141,7 @@ class LocalArbiterServerFactory:
                     str(_arbiter_server_command()),
                     "--config-dir",
                     str(config_dir),
+                    "--unsafe-skip-runtime-permission-checks",
                     "serve",
                     "arbiter.server.host=127.0.0.1",
                     f"arbiter.server.port={port}",

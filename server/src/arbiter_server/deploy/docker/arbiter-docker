@@ -1970,7 +1970,11 @@ compose_down() {
   fi
 
   if compose_file_matches_manifest && [[ "$has_remove_orphans" -eq 0 ]]; then
-    args=(--remove-orphans "${args[@]}")
+    if [[ "${#args[@]}" -gt 0 ]]; then
+      args=(--remove-orphans "${args[@]}")
+    else
+      args=(--remove-orphans)
+    fi
   elif [[ "$has_remove_orphans" -eq 0 ]]; then
     reason="$(compose_manifest_mismatch_reason)"
     printf 'not removing orphan containers automatically: %s\n' "$reason" >&2

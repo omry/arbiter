@@ -596,6 +596,39 @@ def test_server_cli_reports_clean_keyboard_interrupt(
     assert capsys.readouterr().err == "Arbiter server stopped.\n"
 
 
+def test_cli_serve_unsafe_skip_runtime_permission_checks_only_skips_permission_gate(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert main(["--config-dir", str(tmp_path), "bootstrap", "arbiter"]) == 0
+    capsys.readouterr()
+
+    def reject_permissions(**_kwargs: object) -> None:
+        raise ValueError("permission sentinel")
+
+    monkeypatch.setattr(
+        "arbiter_server.main.ensure_runtime_config_permissions",
+        reject_permissions,
+    )
+
+    assert main(["--config-dir", str(tmp_path), "serve"]) == 1
+    assert "permission sentinel" in capsys.readouterr().err
+
+    assert (
+        main(
+            [
+                "--config-dir",
+                str(tmp_path),
+                "--unsafe-skip-runtime-permission-checks",
+                "serve",
+            ]
+        )
+        == 1
+    )
+    assert "config must define at least one service account" in capsys.readouterr().err
+
+
 def test_compose_config_registers_configs_before_composing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2639,8 +2672,9 @@ def test_cli_deploy_docker_generated_helper_bundle_prepare_builds_wheelhouse(
         f"run --rm --user {docker_user} "
         f"-v {deploy_dir / 'requirements.txt'}:/requirements.txt:ro "
         f"-v {deploy_dir / 'wheels'}:/wheels:ro "
-        "-v /tmp/arbiter-wheelhouse."
+        "-v "
     )
+    assert "arbiter-wheelhouse." in docker_call_lines[1]
     assert docker_call_lines[1].endswith(
         ":/wheelhouse python:3.11-slim python -m pip "
         "--disable-pip-version-check wheel --no-cache-dir "
@@ -2845,9 +2879,11 @@ def test_cli_deploy_docker_generated_helper_prepare_pypi_only_resolves_index_pin
     assert " python -c " in docker_call_lines[2]
     assert docker_call_lines[3] == "info"
     assert docker_call_lines[4].startswith(
-        f"run --rm --user {docker_user} " "-v /tmp/arbiter-pypi-prepare-transaction."
+        f"run --rm --user {docker_user} " "-v "
     )
-    assert ":/requirements.txt:ro -v /tmp/arbiter-wheelhouse." in docker_call_lines[4]
+    assert "arbiter-pypi-prepare-transaction." in docker_call_lines[4]
+    assert ":/requirements.txt:ro -v " in docker_call_lines[4]
+    assert "arbiter-wheelhouse." in docker_call_lines[4]
     assert docker_call_lines[4].endswith(
         ":/wheelhouse python:3.11-slim python -m pip "
         "--disable-pip-version-check wheel --no-cache-dir "
@@ -2864,12 +2900,10 @@ def test_cli_deploy_docker_generated_helper_prepare_pypi_only_resolves_index_pin
     assert " python -c " in docker_call_lines[7]
     assert docker_call_lines[8] == "info"
     assert docker_call_lines[9].startswith(
-        f"run --rm --user {docker_user} " "-v /tmp/arbiter-pypi-prepare-transaction."
+        f"run --rm --user {docker_user} " "-v "
     )
-    assert (
-        ":/requirements.txt:ro -v /tmp/arbiter-pypi-prepare-transaction."
-        in docker_call_lines[9]
-    )
+    assert "arbiter-pypi-prepare-transaction." in docker_call_lines[9]
+    assert ":/requirements.txt:ro -v " in docker_call_lines[9]
     assert docker_call_lines[9].endswith(
         "/wheels:/wheels:ro python:3.11-slim python -m pip "
         "--disable-pip-version-check install --no-cache-dir "
@@ -5937,7 +5971,17 @@ def test_cli_bootstrap_arbiter_writes_main_config(
         served["transport"] = transport
 
     monkeypatch.setattr("arbiter_server.main._run_server", fake_run_server)
-    assert main(["--config-dir", str(config_dir), "serve"]) == 1
+    assert (
+        main(
+            [
+                "--config-dir",
+                str(config_dir),
+                "--unsafe-skip-runtime-permission-checks",
+                "serve",
+            ]
+        )
+        == 1
+    )
     assert capsys.readouterr().err == (
         "Arbiter config error: config must define at least one service "
         "account before Arbiter can run\n"

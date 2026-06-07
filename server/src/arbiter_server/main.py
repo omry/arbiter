@@ -1021,7 +1021,12 @@ def _normalized_distribution_name(name: str) -> str:
 
 def _distribution_direct_url_source_root(installed_distribution: Any) -> Path | None:
     for distribution_file in installed_distribution.files or ():
-        if not str(distribution_file).endswith(".dist-info/direct_url.json"):
+        parts = distribution_file.parts
+        if (
+            len(parts) < 2
+            or parts[-1] != "direct_url.json"
+            or not parts[-2].endswith(".dist-info")
+        ):
             continue
         direct_url_path = Path(installed_distribution.locate_file(distribution_file))
         try:
@@ -1749,13 +1754,14 @@ def _run_serve(
     config_dir: str,
     config_name: str,
     overrides: Sequence[str],
+    skip_runtime_permission_checks: bool = False,
 ) -> int:
     try:
         cfg = compose_config(
             config_dir=config_dir,
             config_name=config_name,
             overrides=overrides,
-            enforce_runtime_permissions=True,
+            enforce_runtime_permissions=not skip_runtime_permission_checks,
         )
         app_config = _instantiate_app_config(cfg)
         ensure_runnable_config(app_config)
@@ -2387,6 +2393,10 @@ def _extract_global_config_args(args: Sequence[str]) -> list[str]:
         if arg == "--":
             remaining.extend(args[index:])
             break
+        if arg == "--unsafe-skip-runtime-permission-checks":
+            extracted.append(arg)
+            index += 1
+            continue
         if arg in {"--config-dir", "--config-name"}:
             extracted.append(arg)
             if index + 1 < len(args):
@@ -2418,6 +2428,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--config-name",
         default=DEFAULT_SERVER_CONFIG_NAME,
         help="root config file name without .yaml",
+    )
+    parser.add_argument(
+        "--unsafe-skip-runtime-permission-checks",
+        action="store_true",
+        help=argparse.SUPPRESS,
     )
     subcommands = parser.add_subparsers(dest="command", required=True)
 
@@ -2559,6 +2574,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             config_dir=namespace.config_dir,
             config_name=namespace.config_name,
             overrides=namespace.overrides,
+            skip_runtime_permission_checks=(
+                namespace.unsafe_skip_runtime_permission_checks
+            ),
         )
     if namespace.command == "config" and namespace.config_command == "check":
         return _run_config_check(
