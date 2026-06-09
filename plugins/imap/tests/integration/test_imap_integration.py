@@ -378,7 +378,35 @@ def test_imap_client_parses_multipart_messages(
     assert message.subject == "Multipart update 43"
     assert message.text_body == "Plain multipart body for 43\n"
     assert message.html_body == "<p>HTML multipart body for 43</p>\n"
+    assert len(message.attachments) == 1
+    attachment = message.attachments[0]
+    assert attachment.id == "part-3"
+    assert attachment.filename == "ignored.bin"
+    assert attachment.content_type == "application/octet-stream"
+    assert attachment.size == len(b"ignored attachment")
+    assert attachment.disposition == "attachment"
+    assert attachment.content_id is None
+    assert attachment.inline is False
     assert message.snippet == "Plain multipart body for 43"
+
+
+def test_imap_client_fetches_attachment_content(
+    imap_server_factory: Callable[..., LocalIMAPServer],
+) -> None:
+    imap_server = imap_server_factory(
+        search_uids=("43",),
+        messages={"43": _multipart_message_bytes("43")},
+    )
+    client = _client(imap_server)
+
+    attachment_content = client.get_attachment(
+        folder="INBOX",
+        uid="43",
+        attachment_id="part-3",
+    )
+
+    assert attachment_content.attachment.filename == "ignored.bin"
+    assert attachment_content.content == b"ignored attachment"
 
 
 def test_imap_client_surfaces_login_failure(

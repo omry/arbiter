@@ -13,7 +13,7 @@ Current scope:
 - CLI shell for the native `arbiter` client
 - MCP URL resolution from command-line override, environment, or client config
 - minimal MCP Streamable HTTP transport
-- `info`, `op`, and raw `mcp` commands
+- `info`, `op`, explicit small-text `artifact`, and raw `mcp` commands
 
 ## Build
 

@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/omry/arbiter/client/go-cli/internal/mcp"
 )
@@ -19,6 +21,7 @@ const (
 	MCPURLEnvVar            = "ARBITER_MCP_URL"
 	DefaultConfigDir        = ".arbiter"
 	DefaultClientConfigName = "arbiter-client.yaml"
+	DefaultArtifactMaxBytes = 16 * 1024
 )
 
 type EnvLookup func(string) (string, bool)
@@ -83,11 +86,40 @@ func Main(
 		return runInfo(remaining[1:], options, stdout, stderr, lookupEnv, homeDir)
 	case "op":
 		return runOperation(remaining[1:], options, stdout, stderr, lookupEnv, homeDir)
+	case "artifact":
+		return runArtifact(remaining[1:], stdout, stderr)
 	case "mcp":
 		return runMCP(remaining[1:], options, stdout, stderr, lookupEnv, homeDir)
 	default:
 		fmt.Fprintf(stderr, "Arbiter usage error: unknown command: %s\n", remaining[0])
 		printShortUsage(stderr)
+		return 2
+	}
+}
+
+func runArtifact(
+	args []string,
+	stdout io.Writer,
+	stderr io.Writer,
+) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "Arbiter usage error: expected: arbiter artifact get <url> --stdout [--max-bytes N]")
+		return 2
+	}
+	switch args[0] {
+	case "get":
+		artifactURL, maxBytes, err := parseArtifactGetArgs(args[1:])
+		if err != nil {
+			fmt.Fprintf(stderr, "Arbiter usage error: %v\n", err)
+			return 2
+		}
+		if err := writeArtifactToStdout(context.Background(), artifactURL, maxBytes, stdout); err != nil {
+			fmt.Fprintf(stderr, "Arbiter artifact error: %s\n", err)
+			return 1
+		}
+		return 0
+	default:
+		fmt.Fprintf(stderr, "Arbiter usage error: unknown artifact command: %s\n", args[0])
 		return 2
 	}
 }
@@ -507,6 +539,119 @@ func parseArgsFlag(args []string) (map[string]any, error) {
 	return parsed, nil
 }
 
+func parseArtifactGetArgs(args []string) (string, int64, error) {
+	if len(args) < 2 {
+		if len(args) == 1 && strings.TrimSpace(args[0]) != "" {
+			return "", 0, fmt.Errorf("artifact get requires explicit --stdout")
+		}
+		return "", 0, fmt.Errorf("expected: arbiter artifact get <url> --stdout [--max-bytes N]")
+	}
+	artifactURL := args[0]
+	if strings.TrimSpace(artifactURL) == "" {
+		return "", 0, fmt.Errorf("artifact URL must be non-empty")
+	}
+	stdoutRequested := false
+	maxBytes := int64(DefaultArtifactMaxBytes)
+	for index := 1; index < len(args); index++ {
+		switch args[index] {
+		case "--stdout":
+			stdoutRequested = true
+		case "--max-bytes":
+			if index+1 >= len(args) {
+				return "", 0, fmt.Errorf("--max-bytes requires a value")
+			}
+			parsed, err := strconv.ParseInt(args[index+1], 10, 64)
+			if err != nil || parsed < 1 {
+				return "", 0, fmt.Errorf("--max-bytes must be a positive integer")
+			}
+			maxBytes = parsed
+			index++
+		default:
+			return "", 0, fmt.Errorf("unknown artifact get argument: %s", args[index])
+		}
+	}
+	if !stdoutRequested {
+		return "", 0, fmt.Errorf("artifact get requires explicit --stdout")
+	}
+	return artifactURL, maxBytes, nil
+}
+
+func writeArtifactToStdout(
+	ctx context.Context,
+	artifactURL string,
+	maxBytes int64,
+	stdout io.Writer,
+) error {
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	headReq, err := http.NewRequestWithContext(ctx, http.MethodHead, artifactURL, nil)
+	if err != nil {
+		return err
+	}
+	headResp, err := httpClient.Do(headReq)
+	if err != nil {
+		return err
+	}
+	headResp.Body.Close()
+	if headResp.StatusCode < 200 || headResp.StatusCode >= 300 {
+		return fmt.Errorf("artifact metadata request failed: HTTP %d", headResp.StatusCode)
+	}
+	contentType := headResp.Header.Get("Content-Type")
+	if !isTextualArtifactContentType(contentType) {
+		return fmt.Errorf("refusing to write non-text artifact to stdout: %s", contentType)
+	}
+	if headResp.ContentLength < 0 {
+		return fmt.Errorf("refusing to write artifact with unknown size to stdout")
+	}
+	if headResp.ContentLength > maxBytes {
+		return fmt.Errorf("refusing to write %d byte artifact to stdout; limit is %d bytes", headResp.ContentLength, maxBytes)
+	}
+
+	getReq, err := http.NewRequestWithContext(ctx, http.MethodGet, artifactURL, nil)
+	if err != nil {
+		return err
+	}
+	getResp, err := httpClient.Do(getReq)
+	if err != nil {
+		return err
+	}
+	defer getResp.Body.Close()
+	if getResp.StatusCode < 200 || getResp.StatusCode >= 300 {
+		return fmt.Errorf("artifact fetch failed: HTTP %d", getResp.StatusCode)
+	}
+	getContentType := getResp.Header.Get("Content-Type")
+	if !isTextualArtifactContentType(getContentType) {
+		return fmt.Errorf("refusing to write non-text artifact to stdout: %s", getContentType)
+	}
+	data, err := io.ReadAll(io.LimitReader(getResp.Body, maxBytes+1))
+	if err != nil {
+		return err
+	}
+	if int64(len(data)) > maxBytes {
+		return fmt.Errorf("refusing to write artifact larger than %d bytes to stdout", maxBytes)
+	}
+	_, err = stdout.Write(data)
+	return err
+}
+
+func isTextualArtifactContentType(contentType string) bool {
+	mediaType := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+	if strings.HasPrefix(mediaType, "text/") {
+		return true
+	}
+	switch mediaType {
+	case "application/json",
+		"application/ld+json",
+		"application/xml",
+		"application/yaml",
+		"application/x-yaml",
+		"application/toml",
+		"application/javascript":
+		return true
+	default:
+		return strings.HasSuffix(mediaType, "+json") || strings.HasSuffix(mediaType, "+xml")
+	}
+}
+
 func callToolPayload(
 	name string,
 	arguments map[string]any,
@@ -760,12 +905,12 @@ func parseConfigStringScalar(value string, path string) (string, error) {
 }
 
 func printShortUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: arbiter {bootstrap,config,info,op,mcp} ...")
+	fmt.Fprintln(w, "usage: arbiter {bootstrap,config,info,op,artifact,mcp} ...")
 	fmt.Fprintln(w, "Run 'arbiter --help' for full help.")
 }
 
 func printHelp(w io.Writer) {
-	fmt.Fprintln(w, "usage: arbiter [--version] {bootstrap,config,info,op,mcp} ...")
+	fmt.Fprintln(w, "usage: arbiter [--version] {bootstrap,config,info,op,artifact,mcp} ...")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Native Arbiter client.")
 	fmt.Fprintln(w)
@@ -774,6 +919,7 @@ func printHelp(w io.Writer) {
 	fmt.Fprintln(w, "  config mcp-url  print the resolved MCP URL")
 	fmt.Fprintln(w, "  info            discover Arbiter server identity and services")
 	fmt.Fprintln(w, "  op              inspect or run Arbiter operations")
+	fmt.Fprintln(w, "  artifact        explicitly read small textual artifacts")
 	fmt.Fprintln(w, "  mcp             inspect or call raw MCP tools")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "The Go client is experimental.")

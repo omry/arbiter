@@ -11,6 +11,7 @@ provide arbitrary mailbox access.
 
 - `imap:list_messages`
 - `imap:get_message`
+- `imap:get_attachment` when HTTP artifact delivery is available
 - `imap:search_messages`
 - `imap:move_message`
 - `imap:mark_message_read`
@@ -122,6 +123,38 @@ arbiter op run imap:get_message --args '{
 }'
 ```
 
+`imap:get_message` returns the message body plus an `attachments` inventory.
+Each attachment entry includes a MIME-part id, filename, content type, decoded
+size, disposition, content id, and whether it is inline. Attachment bodies are
+not returned by `imap:get_message`.
+
+Fetch attachment content with `imap:get_attachment`. The operation does not
+return attachment bytes in the tool result. Instead, it materializes the
+attachment in the server's IMAP plugin storage and returns a one-time artifact
+URL. Use an explicit artifact-aware client command to read the artifact; request
+the attachment again if a new one-time URL is needed. This operation is exposed
+only when Arbiter is running with HTTP artifact delivery; stdio transports do
+not have a URL channel for artifact access.
+
+```bash
+arbiter op run imap:get_attachment --args '{
+  "account": "bot",
+  "folder": "INBOX",
+  "message_id": "42",
+  "attachment_id": "part-3"
+}'
+```
+
+The Go client will not fetch artifact bytes automatically. For a small textual
+artifact only, an agent can explicitly stream the artifact to stdout:
+
+```bash
+arbiter artifact get 'http://127.0.0.1:8000/_arbiter/artifacts/...' --stdout
+```
+
+The client checks artifact metadata first and refuses stdout for non-text,
+unknown-size, or over-limit artifacts.
+
 ## Policy checks
 
 The IMAP policy gates:
@@ -135,3 +168,5 @@ The IMAP policy gates:
 
 `imap:mark_message_read` mutates the standard `seen` flag and requires
 `read_write` access to that flag.
+
+`imap:get_attachment` is read-only and is governed by `allow_read`.

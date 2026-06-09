@@ -69,7 +69,7 @@ class SMTPLimitsConfig:
 @dataclass
 class SMTPIdempotencyConfig:
     expiration_days: int = 7
-    cache_dir: str = ".arbiter/smtp-idempotency"
+    cache_dir: str | None = None
 
 
 @dataclass
@@ -91,6 +91,13 @@ class SMTPServicePolicyConfig(Policy):
 ```
 
 </details>
+
+When `cache_dir` is `null`, Arbiter stores SMTP idempotency records under the
+SMTP plugin's server-managed writable data directory. If set, `cache_dir` is a
+plugin-relative subdirectory, not an arbitrary filesystem path. Account tests
+validate idempotency storage by writing and deleting a short-lived readiness
+record, so permission problems are reported before keyed sends attempt SMTP
+delivery.
 
 ## Run
 
@@ -115,6 +122,6 @@ The server enforces:
 - no caller override for SMTP host, TLS, credentials, sender identity, or
   `Reply-To`
 
-Provide `idempotency_key` when retrying a send. The SMTP plugin stores
-successful keyed results in the policy's persistent cache and replays the same
-result for the same key and payload until the idempotency record expires.
+Provide `idempotency_key` when retrying a send. The SMTP plugin stores keyed
+records in its plugin data directory and replays a successful result for the
+same key and payload until the idempotency record expires.

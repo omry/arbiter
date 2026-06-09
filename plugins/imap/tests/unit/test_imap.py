@@ -8,7 +8,12 @@ from typing import Any
 import pytest
 
 from arbiter_imap import IMAPRuntime
-from arbiter_imap.client import FetchedIMAPMessage, IMAPClient, IMAPOperationError
+from arbiter_imap.client import (
+    FetchedIMAPMessage,
+    IMAPAttachmentContent,
+    IMAPClient,
+    IMAPOperationError,
+)
 from arbiter_imap.config import (
     IMAPAccessPolicyConfig,
     IMAPConfig,
@@ -190,6 +195,15 @@ def test_runtime_tests_configured_folders_read_only() -> None:
         def get_message(self, *, folder: str, uid: str) -> FetchedIMAPMessage:
             raise AssertionError("get_message should not be called")
 
+        def get_attachment(
+            self,
+            *,
+            folder: str,
+            uid: str,
+            attachment_id: str,
+        ) -> IMAPAttachmentContent:
+            raise AssertionError("get_attachment should not be called")
+
         def search_messages(
             self,
             *,
@@ -257,6 +271,15 @@ def test_runtime_skips_folder_probe_when_no_folders_are_configured() -> None:
 
         def get_message(self, *, folder: str, uid: str) -> FetchedIMAPMessage:
             raise AssertionError("get_message should not be called")
+
+        def get_attachment(
+            self,
+            *,
+            folder: str,
+            uid: str,
+            attachment_id: str,
+        ) -> IMAPAttachmentContent:
+            raise AssertionError("get_attachment should not be called")
 
         def search_messages(
             self,

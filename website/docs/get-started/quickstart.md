@@ -132,9 +132,10 @@ arbiter:
   server:
     name: arbiter
     transport: streamable-http
-    host: 127.0.0.1
-    port: 8000
-    path: /mcp
+    bind:
+      host: 127.0.0.1
+      port: 8000
+      path: /mcp
   account:
     smtp:
       bot:

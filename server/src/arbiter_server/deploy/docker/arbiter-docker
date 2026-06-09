@@ -1391,6 +1391,10 @@ wheels_dir_path() {
   deploy_path_from_compose_value "$(compose_env_value ARBITER_WHEELS_DIR ./wheels)"
 }
 
+plugin_data_dir_path() {
+  deploy_path_from_compose_value "$(compose_env_value ARBITER_PLUGIN_DATA_DIR ./data/plugins)"
+}
+
 config_name_value() {
   compose_env_value ARBITER_CONFIG_NAME arbiter-server
 }
@@ -2001,6 +2005,7 @@ info() {
   printf 'docker env file: %s\n' "$compose_env_file"
   printf 'requirements file: %s\n' "$requirements_file"
   printf 'wheels dir: %s\n' "$(wheels_dir_path)"
+  printf 'plugin data dir: %s\n' "$(plugin_data_dir_path)"
   print_mcp_url
   if command -v docker >/dev/null && docker info >/dev/null 2>&1; then
     check_container_name_owner warn || true
@@ -2436,6 +2441,7 @@ doctor_check_preinstall_ready() {
   local active_app_env
   local active_requirements_file
   local active_wheels_dir
+  local active_plugin_data_dir
   local wheel_requirement
   local wheel_path
 
@@ -2443,11 +2449,14 @@ doctor_check_preinstall_ready() {
   active_app_env="$(app_env_path)"
   active_requirements_file="$(deploy_path_from_compose_value "$(compose_env_value ARBITER_REQUIREMENTS_FILE ./requirements.txt)")"
   active_wheels_dir="$(wheels_dir_path)"
+  active_plugin_data_dir="$(plugin_data_dir_path)"
 
   doctor_check_install_deploy_path "$(compose_env_value ARBITER_CONFIG_DIR ./conf)" "config directory" "ARBITER_CONFIG_DIR"
   doctor_check_install_deploy_path "$(compose_env_value ARBITER_APP_ENV_FILE ./conf/.env)" "app env file" "ARBITER_APP_ENV_FILE"
   doctor_check_install_deploy_path "$(compose_env_value ARBITER_REQUIREMENTS_FILE ./requirements.txt)" "runtime requirements file" "ARBITER_REQUIREMENTS_FILE"
   doctor_check_install_deploy_path "$(compose_env_value ARBITER_WHEELS_DIR ./wheels)" "wheels directory" "ARBITER_WHEELS_DIR"
+  doctor_check_install_deploy_path "$(compose_env_value ARBITER_PLUGIN_DATA_DIR ./data/plugins)" "plugin data directory" "ARBITER_PLUGIN_DATA_DIR"
+  doctor_check_dir "$active_plugin_data_dir" "plugin data directory"
   doctor_check_file "$active_requirements_file" "runtime requirements file"
   doctor_check_requirements_file "$active_requirements_file"
 
@@ -2553,6 +2562,7 @@ doctor_check_agent_access() {
   local active_config_dir
   local active_config_file
   local active_app_env
+  local active_plugin_data_dir
 
   if ! doctor_resolve_agent; then
     doctor_warn "skipping agent permission checks; pass --agent-user USER or --agent-uid UID"
@@ -2643,9 +2653,11 @@ doctor() {
   active_config_dir="$(config_dir_path)"
   active_config_file="$(config_main_file)"
   active_app_env="$(app_env_path)"
+  active_plugin_data_dir="$(plugin_data_dir_path)"
   doctor_check_dir "$deploy_dir" "deployment directory"
   doctor_check_file "$compose_file" "compose file"
   doctor_check_dir "$active_config_dir" "config directory"
+  doctor_check_dir "$active_plugin_data_dir" "plugin data directory"
   doctor_check_file "$active_config_file" "main config file"
   doctor_check_file "$active_app_env" "app env file"
   doctor_check_file "$compose_env_file" "docker env file"
@@ -2955,8 +2967,11 @@ install_copy_deployment() {
   local preserve_config_dir_value="./conf"
   local preserve_app_env_value="./conf/.env"
   local preserve_config_name_value="arbiter-server"
+  local preserve_plugin_data_dir_value="./data/plugins"
+  local preserve_plugin_data_dir_env=0
   local preserve_config_dir
   local preserve_app_env
+  local preserve_plugin_data_dir
   local staging_config_dir
   local staging_app_env
   local preserve_tmp_dir=""
@@ -2982,6 +2997,15 @@ install_copy_deployment() {
 
   if [[ "$(normalize_path_allow_missing "$target_dir")" != "$source_dir" ]]; then
     install_reject_symlinks "$source_dir"
+  fi
+
+  if [[ -e "$target_dir" && -f "$target_docker_env_file" ]]; then
+    preserve_plugin_data_dir_value="$(env_file_value "$target_docker_env_file" ARBITER_PLUGIN_DATA_DIR || printf './data/plugins\n')"
+    preserve_plugin_data_dir="$(install_target_path_from_compose_value "$preserve_plugin_data_dir_value")"
+    if [[ -e "$preserve_plugin_data_dir" || -L "$preserve_plugin_data_dir" ]]; then
+      install_reject_symlinks "$preserve_plugin_data_dir"
+    fi
+    preserve_plugin_data_dir_env=1
   fi
 
   if [[ "$install_replace_config" -eq 0 && -e "$target_dir" ]]; then
@@ -3058,6 +3082,9 @@ install_copy_deployment() {
     set_env_file_value "$target_docker_env_file" ARBITER_APP_ENV_FILE "$preserve_app_env_value"
     set_env_file_value "$target_docker_env_file" ARBITER_CONFIG_NAME "$preserve_config_name_value"
     rm -rf "$preserve_tmp_dir"
+  fi
+  if [[ "$preserve_plugin_data_dir_env" -eq 1 ]]; then
+    set_env_file_value "$target_docker_env_file" ARBITER_PLUGIN_DATA_DIR "$preserve_plugin_data_dir_value"
   fi
 }
 

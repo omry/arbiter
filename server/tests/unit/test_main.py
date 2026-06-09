@@ -25,8 +25,10 @@ from arbiter_server.file_protection.windows import (
 )
 from arbiter_server.main import (
     ENV_FILE_MODE,
+    _artifact_base_url,
     _build_local_source_wheel,
     _default_container_user,
+    _register_artifact_route,
     _run_server,
     _write_text_with_mode,
     build_app,
@@ -39,6 +41,7 @@ from arbiter_server.main import (
     main,
     service_plugin_names,
 )
+from arbiter_server.artifacts import ArtifactStore
 from arbiter_server.plugins import discover_service_plugins
 from arbiter_imap import IMAPRuntime, IMAPServicePlugin
 from arbiter_imap.config import (
@@ -1291,9 +1294,14 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
         "-r /tmp/requirements.pinned /tmp/arbiter-wheels/*.whl"
     ) in compose_text
     assert "${ARBITER_WHEELS_DIR:-./wheels}:/wheels:ro" in compose_text
+    assert "${ARBITER_PLUGIN_DATA_DIR:-./data/plugins}:/data/plugins" in compose_text
     assert "container_name: ${ARBITER_CONTAINER_NAME:-arbiter-staging}" in compose_text
     assert "user: ${ARBITER_CONTAINER_USER:-10001:10001}" in compose_text
     assert "ARBITER_SERVER_HOST: 0.0.0.0" in compose_text
+    assert "ARBITER_HOST_BIND: ${ARBITER_HOST_BIND:-127.0.0.1}" in compose_text
+    assert "ARBITER_HOST_PORT: ${ARBITER_HOST_PORT:-18025}" in compose_text
+    assert "ARBITER_PUBLIC_SCHEME: ${ARBITER_PUBLIC_SCHEME:-http}" in compose_text
+    assert "ARBITER_PUBLIC_BASE_URL: ${ARBITER_PUBLIC_BASE_URL:-}" in compose_text
     assert "ARBITER_RUNTIME_VENV: ${ARBITER_RUNTIME_VENV:-/tmp/arbiter-venv}" in (
         compose_text
     )
@@ -1301,8 +1309,16 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
     assert 'case "$$runtime_venv" in *..*)' in compose_text
     assert 'case "$$HOME" in /tmp/arbiter-*)' in compose_text
     assert 'case "$$HOME" in *..*)' in compose_text
+    assert 'public_host="$${ARBITER_HOST_BIND:-127.0.0.1}"' in compose_text
+    assert '"arbiter.server.public.scheme=$${ARBITER_PUBLIC_SCHEME:-http}"' in (
+        compose_text
+    )
+    assert '"arbiter.server.public.host=$$public_host"' in compose_text
+    assert '"arbiter.server.public.port=$${ARBITER_HOST_PORT:-18025}"' in compose_text
+    assert 'if [ -n "$${ARBITER_PUBLIC_BASE_URL:-}" ]; then' in compose_text
     assert 'python -m venv "$$runtime_venv"' in compose_text
-    assert 'exec "$$runtime_venv/bin/arbiter-server"' in compose_text
+    assert 'set -- "$$runtime_venv/bin/arbiter-server"' in compose_text
+    assert 'exec "$$@"' in compose_text
     assert (
         '"${ARBITER_HOST_BIND:-127.0.0.1}:'
         '${ARBITER_HOST_PORT:-18025}:${ARBITER_CONTAINER_PORT:-8025}"'
@@ -1315,12 +1331,17 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
     assert 'subnet: "${ARBITER_DOCKER_SUBNET:-172.31.251.0/24}"' in compose_text
     assert "ARBITER_DEPLOYMENT_SCOPE" not in compose_text
     assert (
-        '"arbiter.server.host=$$ARBITER_SERVER_HOST" '
-        '"arbiter.server.port=$$ARBITER_CONTAINER_PORT" '
+        '"arbiter.server.bind.host=$$ARBITER_SERVER_HOST" '
+        '"arbiter.server.bind.port=$$ARBITER_CONTAINER_PORT" '
+        '"arbiter.server.public.scheme=$${ARBITER_PUBLIC_SCHEME:-http}" '
+        '"arbiter.server.public.host=$$public_host" '
+        '"arbiter.server.public.port=$${ARBITER_HOST_PORT:-18025}" '
+        '"arbiter.storage.plugin_data_dir=/data/plugins" '
         '"arbiter.deployment_scope=staged"'
     ) in compose_text
     assert not (deploy_dir / "config.yaml").exists()
     assert (deploy_dir / "conf").is_dir()
+    assert (deploy_dir / "data" / "plugins").is_dir()
     assert not (deploy_dir / "conf" / ".env").exists()
     docker_env = (deploy_dir / "docker.env").read_text(encoding="utf-8")
     assert "ARBITER_DEPLOYMENT_SCOPE" not in docker_env
@@ -1329,6 +1350,9 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
     assert "ARBITER_HOST_BIND=127.0.0.1\n" in docker_env
     assert "ARBITER_HOST_PORT=18025\n" in docker_env
     assert "ARBITER_WHEELS_DIR=./wheels\n" in docker_env
+    assert "ARBITER_PLUGIN_DATA_DIR=./data/plugins\n" in docker_env
+    assert "ARBITER_PUBLIC_SCHEME=http\n" in docker_env
+    assert "ARBITER_PUBLIC_BASE_URL=\n" in docker_env
     assert "ARBITER_DOCKER_NETWORK_NAME=arbiter-staging\n" in docker_env
     assert "ARBITER_DOCKER_BRIDGE_NAME=arbiter-stg0\n" in docker_env
     assert "ARBITER_DOCKER_SUBNET=172.31.251.0/24\n" in docker_env
@@ -4404,6 +4428,7 @@ def test_cli_deploy_docker_generated_helper_install_omits_missing_docker_unit(
     assert "ARBITER_CONTAINER_USER=123:123\n" in installed_docker_env
     assert "ARBITER_HOST_BIND=127.0.0.1\n" in installed_docker_env
     assert "ARBITER_HOST_PORT=8025\n" in installed_docker_env
+    assert "ARBITER_PLUGIN_DATA_DIR=./data/plugins\n" in installed_docker_env
     assert "ARBITER_DOCKER_NETWORK_NAME=arbiter\n" in installed_docker_env
     assert "ARBITER_DOCKER_BRIDGE_NAME=arbiter0\n" in installed_docker_env
     assert "ARBITER_DOCKER_SUBNET=172.31.250.0/24\n" in installed_docker_env
@@ -4465,9 +4490,11 @@ def test_cli_deploy_docker_generated_helper_install_preserves_existing_config(
     (install_dir / "docker.env").write_text(
         "ARBITER_CONFIG_DIR=./conf\n"
         "ARBITER_APP_ENV_FILE=./conf/.env\n"
-        "ARBITER_CONFIG_NAME=installed-server\n",
+        "ARBITER_CONFIG_NAME=installed-server\n"
+        "ARBITER_PLUGIN_DATA_DIR=./state/plugins\n",
         encoding="utf-8",
     )
+    (install_dir / "state" / "plugins").mkdir(parents=True)
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -4527,6 +4554,7 @@ def test_cli_deploy_docker_generated_helper_install_preserves_existing_config(
     assert "ARBITER_CONFIG_DIR=./conf\n" in installed_docker_env
     assert "ARBITER_APP_ENV_FILE=./conf/.env\n" in installed_docker_env
     assert "ARBITER_CONFIG_NAME=installed-server\n" in installed_docker_env
+    assert "ARBITER_PLUGIN_DATA_DIR=./state/plugins\n" in installed_docker_env
 
 
 def test_cli_deploy_docker_generated_helper_install_symlink_failure_keeps_config(
@@ -5406,9 +5434,12 @@ def test_cli_deploy_docker_update_preserves_local_config_and_env_values(
         "ARBITER_CONFIG_NAME=arbiter-server\n"
         "ARBITER_REQUIREMENTS_FILE=./requirements.txt\n"
         "ARBITER_WHEELS_DIR=./wheels\n"
+        "ARBITER_PLUGIN_DATA_DIR=./data/plugins\n"
         "ARBITER_HOST_BIND=0.0.0.0\n"
         "ARBITER_HOST_PORT=9000\n"
         "ARBITER_CONTAINER_PORT=8025\n"
+        "ARBITER_PUBLIC_SCHEME=http\n"
+        "ARBITER_PUBLIC_BASE_URL=\n"
         "ARBITER_DOCKER_NETWORK_NAME=arbiter-staging\n"
         "ARBITER_DOCKER_BRIDGE_NAME=arbiter-stg0\n"
         "ARBITER_DOCKER_SUBNET=172.31.251.0/24\n"
@@ -5801,7 +5832,7 @@ def test_cli_serve_subcommand_passes_config_and_overrides(
                 "--config-name",
                 "arbiter-server-local",
                 "serve",
-                "arbiter.server.port=8025",
+                "arbiter.server.bind.port=8025",
             ]
         )
         == 0
@@ -5811,7 +5842,7 @@ def test_cli_serve_subcommand_passes_config_and_overrides(
         {
             "config_dir": "/tmp",
             "config_name": "arbiter-server-local",
-            "overrides": ["arbiter.server.port=8025"],
+            "overrides": ["arbiter.server.bind.port=8025"],
             "skip_runtime_permission_checks": False,
         },
     ]
@@ -5842,7 +5873,15 @@ def test_cli_config_check_subcommand_passes_config_and_overrides(
     monkeypatch.setattr("arbiter_server.main._run_config_check", fake_check)
 
     assert (
-        main(["--config-dir", "/tmp", "config", "check", "arbiter.server.port=8025"])
+        main(
+            [
+                "--config-dir",
+                "/tmp",
+                "config",
+                "check",
+                "arbiter.server.bind.port=8025",
+            ]
+        )
         == 0
     )
 
@@ -5850,7 +5889,7 @@ def test_cli_config_check_subcommand_passes_config_and_overrides(
         {
             "config_dir": "/tmp",
             "config_name": "arbiter-server",
-            "overrides": ["arbiter.server.port=8025"],
+            "overrides": ["arbiter.server.bind.port=8025"],
         },
     ]
 
@@ -5874,7 +5913,7 @@ def test_cli_config_show_subcommand_passes_config_and_overrides(
                 "config",
                 "show",
                 "--resolve",
-                "arbiter.server.port=8025",
+                "arbiter.server.bind.port=8025",
             ]
         )
         == 0
@@ -5884,7 +5923,7 @@ def test_cli_config_show_subcommand_passes_config_and_overrides(
         {
             "config_dir": "/tmp",
             "config_name": "arbiter-server",
-            "overrides": ["arbiter.server.port=8025"],
+            "overrides": ["arbiter.server.bind.port=8025"],
             "resolve": True,
         },
     ]
@@ -5925,7 +5964,7 @@ def test_cli_bootstrap_arbiter_writes_main_config(
         "# Inspect the composed config with:\n"
         "#   arbiter-server --config-dir <dir> --config-name arbiter-server config show\n"
         "# Override composed values with Hydra overrides, for example:\n"
-        "#   arbiter-server --config-dir <dir> serve arbiter.server.port=8025\n"
+        "#   arbiter-server --config-dir <dir> serve arbiter.server.bind.port=8025\n"
         "# Optionally load a config-dir-relative dotenv file before composition:\n"
         "#   arbiter:\n"
         "#     env_file: local.env\n"
@@ -5939,9 +5978,10 @@ def test_cli_bootstrap_arbiter_writes_main_config(
         "server:\n"
         "  name: arbiter\n"
         "  transport: streamable-http\n"
-        "  host: 127.0.0.1\n"
-        "  port: 8000\n"
-        "  path: /mcp\n"
+        "  bind:\n"
+        "    host: 127.0.0.1\n"
+        "    port: 8000\n"
+        "    path: /mcp\n"
         "  stateless_http: true\n"
         "  json_response: true\n"
         "deployment_scope: unknown\n"
@@ -6555,12 +6595,118 @@ def test_log_startup_summary_includes_safe_runtime_context(
     assert "agent@example.com" not in message
 
 
+def test_log_startup_summary_uses_public_base_url(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    cfg = _app_config_with_smtp()
+    cfg.arbiter.server.bind.host = "0.0.0.0"
+    cfg.arbiter.server.bind.port = 8025
+    cfg.arbiter.server.public.base_url = "https://arbiter.example.test"
+    caplog.set_level(logging.INFO, logger="arbiter_server.main")
+
+    log_startup_summary(cfg)
+
+    message = caplog.messages[0]
+    assert "bind=0.0.0.0:8025/mcp" in message
+    assert "mcp_url=https://arbiter.example.test/mcp" in message
+
+
+def test_server_urls_default_to_loopback_base_url() -> None:
+    cfg = _app_config_with_smtp()
+    cfg.arbiter.server.bind.host = "0.0.0.0"
+    cfg.arbiter.server.bind.port = 8025
+
+    assert _artifact_base_url(cfg) == "http://127.0.0.1:8025/_arbiter/artifacts"
+
+
+def test_empty_public_base_url_override_is_invalid() -> None:
+    cfg = _app_config_with_smtp()
+    cfg.arbiter.server.bind.host = "0.0.0.0"
+    cfg.arbiter.server.bind.port = 8025
+    cfg.arbiter.server.public.base_url = " "
+
+    with pytest.raises(ValueError, match="public.base_url must be non-empty"):
+        _artifact_base_url(cfg)
+
+
+def test_artifact_base_url_uses_public_base_url() -> None:
+    cfg = _app_config_with_smtp()
+    cfg.arbiter.server.bind.host = "0.0.0.0"
+    cfg.arbiter.server.bind.port = 8025
+    cfg.arbiter.server.public.base_url = "https://arbiter.example.test/root/"
+
+    assert (
+        _artifact_base_url(cfg)
+        == "https://arbiter.example.test/root/_arbiter/artifacts"
+    )
+
+
+def test_artifact_route_forces_attachment_disposition_without_filename(
+    tmp_path: Path,
+) -> None:
+    import asyncio
+    from urllib.parse import parse_qs, urlparse
+
+    from starlette.requests import Request
+
+    artifact_store = ArtifactStore(
+        root=tmp_path,
+        base_url="http://127.0.0.1:8000/_arbiter/artifacts",
+    )
+    descriptor = artifact_store.create(
+        plugin="imap",
+        content=b"<script>alert(1)</script>",
+        filename=None,
+        content_type="text/html",
+        source={},
+    )
+    parsed_url = urlparse(descriptor.url)
+    artifact_id = parsed_url.path.rsplit("/", 1)[1]
+    nonce = parse_qs(parsed_url.query)["nonce"][0]
+    handler: Callable[[Request], object] | None = None
+
+    class RouteServer:
+        def custom_route(
+            self,
+            path: str,
+            methods: list[str],
+            name: str | None = None,
+            include_in_schema: bool = True,
+        ) -> Callable[[Callable[..., object]], Callable[..., object]]:
+            def decorator(func: Callable[..., object]) -> Callable[..., object]:
+                nonlocal handler
+                handler = cast(Callable[[Request], object], func)
+                return func
+
+            return decorator
+
+    _register_artifact_route(cast(Any, RouteServer()), artifact_store)
+    assert handler is not None
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": parsed_url.path,
+            "headers": [],
+            "query_string": f"nonce={nonce}".encode("ascii"),
+            "path_params": {"artifact_id": artifact_id},
+        }
+    )
+    response = asyncio.run(cast(Any, handler)(request))
+
+    assert response.status_code == 200
+    assert response.headers["content-disposition"] == "attachment"
+    assert response.headers["content-type"].startswith("text/html")
+
+
 def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     tools: dict[str, Callable[..., object]] = {}
     list_accounts_calls = 0
     send_email_calls: list[dict[str, object]] = []
     list_messages_calls: list[dict[str, object]] = []
     get_message_calls: list[dict[str, object]] = []
+    get_attachment_calls: list[dict[str, object]] = []
     search_messages_calls: list[dict[str, object]] = []
     move_message_calls: list[dict[str, object]] = []
     mark_message_read_calls: list[dict[str, object]] = []
@@ -6611,6 +6757,9 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
             )
 
     class FakeIMAPRuntime(IMAPRuntime):
+        def artifact_delivery_available(self) -> bool:
+            return True
+
         def test_accounts(self) -> dict[str, object]:
             return {
                 "primary": {
@@ -6641,6 +6790,34 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
                 {"account": account, "message_id": message_id, "folder": folder}
             )
             return {"account": account, "folder": folder or "INBOX", "message": {}}
+
+        def get_attachment(
+            self,
+            account: str,
+            message_id: str,
+            attachment_id: str,
+            folder: str | None = None,
+        ) -> dict[str, object]:
+            get_attachment_calls.append(
+                {
+                    "account": account,
+                    "message_id": message_id,
+                    "attachment_id": attachment_id,
+                    "folder": folder,
+                }
+            )
+            return {
+                "account": account,
+                "folder": folder or "INBOX",
+                "message_id": message_id,
+                "attachment": {"id": attachment_id},
+                "delivery": "arbiter_artifact",
+                "artifact": {
+                    "id": "art-1",
+                    "url": "http://127.0.0.1:8000/_arbiter/artifacts/art-1?nonce=nonce-1",
+                    "one_time": True,
+                },
+            }
 
         def search_messages(
             self,
@@ -6898,6 +7075,18 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
 
             return decorator
 
+        def custom_route(
+            self,
+            path: str,
+            methods: list[str],
+            name: str | None = None,
+            include_in_schema: bool = True,
+        ) -> Callable[[Callable[..., object]], Callable[..., object]]:
+            def decorator(func: Callable[..., object]) -> Callable[..., object]:
+                return func
+
+            return decorator
+
         def run(self, *, transport: str) -> None:
             self.run_transport = transport
 
@@ -6943,7 +7132,7 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
         "description": "Read and manage mail through configured IMAP accounts.",
         "version": IMAPServicePlugin.version,
         "account_count": 1,
-        "operation_count": 6,
+        "operation_count": 7,
         "accounts": [
             {
                 "plugin": "imap",
@@ -7035,9 +7224,10 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
             "account_count": 1,
             "accounts": ["primary"],
             "accounts_truncated": False,
-            "operation_count": 6,
+            "operation_count": 7,
             "operations": [
                 "delete_message",
+                "get_attachment",
                 "get_message",
                 "list_messages",
                 "mark_message_read",
@@ -7067,8 +7257,8 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     assert imap_limited["id"] == "imap"
     assert imap_limited["operations"] == [
         "delete_message",
+        "get_attachment",
         "get_message",
-        "list_messages",
     ]
     assert imap_limited["operations_truncated"] is True
 
@@ -7129,6 +7319,7 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     }
     assert [operation["id"] for operation in imap_capability["operations"]] == [
         "imap:delete_message",
+        "imap:get_attachment",
         "imap:get_message",
         "imap:list_messages",
         "imap:mark_message_read",
@@ -7250,11 +7441,40 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     assert capped_capabilities["capabilities"][0]["operations"] == [
         "delete_message",
-        "get_message",
+        "get_attachment",
     ]
     assert capped_capabilities["capabilities"][0]["operations_truncated"] is True
     assert get_message_calls == [
         {"account": "primary", "message_id": "42", "folder": "INBOX"}
+    ]
+
+    assert tools["run_op"](
+        id="imap:get_attachment",
+        arguments={
+            "account": "primary",
+            "folder": "INBOX",
+            "message_id": "42",
+            "attachment_id": "part-3",
+        },
+    ) == {
+        "account": "primary",
+        "folder": "INBOX",
+        "message_id": "42",
+        "attachment": {"id": "part-3"},
+        "delivery": "arbiter_artifact",
+        "artifact": {
+            "id": "art-1",
+            "url": "http://127.0.0.1:8000/_arbiter/artifacts/art-1?nonce=nonce-1",
+            "one_time": True,
+        },
+    }
+    assert get_attachment_calls == [
+        {
+            "account": "primary",
+            "message_id": "42",
+            "attachment_id": "part-3",
+            "folder": "INBOX",
+        }
     ]
 
     assert tools["run_op"](

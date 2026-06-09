@@ -23,6 +23,12 @@ from hydra import compose, initialize_config_dir
 from omegaconf import DictConfig, OmegaConf
 
 from .app import ArbiterApp
+from .artifacts import (
+    ArtifactConsumed,
+    ArtifactExpired,
+    ArtifactNotFound,
+    ArtifactStore,
+)
 from .cli_errors import print_cli_error
 from .config import (
     AppConfig,
@@ -30,6 +36,7 @@ from .config import (
     DiscoveryConfig,
     FastMCPConfig,
     DeploymentScope,
+    StorageConfig,
     configured_service_names,
     register_configs,
     service_accounts_for,
@@ -51,6 +58,7 @@ from .services import (
     validate_service_plugin_compatibility,
     validate_service_plugins,
 )
+from .storage import PluginStorage, default_plugin_data_root
 from .version import arbiter_server_version, source_info
 
 if TYPE_CHECKING:
@@ -82,6 +90,7 @@ DEFAULT_SERVER_CONFIG_NAME = "arbiter-server"
 CONFIG_FILE_MODE = 0o640
 ENV_FILE_MODE = 0o600
 DEFAULT_DOCKER_DEPLOY_DIR = "./arbiter-docker"
+ARTIFACT_ROUTE_PREFIX = "/_arbiter/artifacts"
 DEPLOY_MANIFEST_FILE_NAME = ".arbiter-deploy.json"
 ARBITER_SERVER_PACKAGE = "arbiter-server"
 ARBITER_ALL_META_PACKAGE = "arbiter-suite"
@@ -114,9 +123,12 @@ DOCKER_COMPOSE_ENV_DEFAULTS = [
     ("ARBITER_CONFIG_NAME", "arbiter-server"),
     ("ARBITER_REQUIREMENTS_FILE", "./requirements.txt"),
     ("ARBITER_WHEELS_DIR", "./wheels"),
+    ("ARBITER_PLUGIN_DATA_DIR", "./data/plugins"),
     ("ARBITER_HOST_BIND", "127.0.0.1"),
     ("ARBITER_HOST_PORT", "18025"),
     ("ARBITER_CONTAINER_PORT", "8025"),
+    ("ARBITER_PUBLIC_SCHEME", "http"),
+    ("ARBITER_PUBLIC_BASE_URL", ""),
     ("ARBITER_DOCKER_NETWORK_NAME", "arbiter-staging"),
     ("ARBITER_DOCKER_BRIDGE_NAME", "arbiter-stg0"),
     ("ARBITER_DOCKER_SUBNET", "172.31.251.0/24"),
@@ -130,7 +142,7 @@ MAIN_CONFIG_TEMPLATE = """defaults:
 # Inspect the composed config with:
 #   arbiter-server --config-dir <dir> --config-name arbiter-server config show
 # Override composed values with Hydra overrides, for example:
-#   arbiter-server --config-dir <dir> serve arbiter.server.port=8025
+#   arbiter-server --config-dir <dir> serve arbiter.server.bind.port=8025
 # Optionally load a config-dir-relative dotenv file before composition:
 #   arbiter:
 #     env_file: local.env
@@ -142,9 +154,10 @@ SERVER_CONFIG_TEMPLATE = """# @package arbiter
 server:
   name: arbiter
   transport: streamable-http
-  host: 127.0.0.1
-  port: 8000
-  path: /mcp
+  bind:
+    host: 127.0.0.1
+    port: 8000
+    path: /mcp
   stateless_http: true
   json_response: true
 deployment_scope: unknown
@@ -195,16 +208,19 @@ def _instantiate_app_config_from_hydra(cfg: DictConfig) -> AppConfig:
         if isinstance(raw_deployment_scope, DeploymentScope)
         else DeploymentScope(str(raw_deployment_scope))
     )
-    server_cfg = cast(
-        DictConfig,
-        OmegaConf.merge(
-            OmegaConf.structured(FastMCPConfig),
-            OmegaConf.select(cfg, "arbiter.server", default={}),
-        ),
+    server_root_cfg = OmegaConf.create(
+        {
+            "arbiter": {
+                "server": OmegaConf.merge(
+                    OmegaConf.structured(FastMCPConfig),
+                    OmegaConf.select(cfg, "arbiter.server", default={}),
+                )
+            }
+        }
     )
     server = cast(
         FastMCPConfig,
-        _to_object(server_cfg),
+        _select_object(server_root_cfg, "arbiter.server", {}),
     )
     discovery_cfg = cast(
         DictConfig,
@@ -268,9 +284,8 @@ def build_app(
         discover_service_plugins() if service_plugins is None else service_plugins
     )
     active_service_plugins = _configured_service_plugins(app_config, available_plugins)
-    runtime_context = ServiceRuntimeContext(
-        dependencies=runtime_dependencies or {},
-    )
+    shared_runtime_dependencies = runtime_dependencies or {}
+    plugin_data_root = _plugin_data_root(app_config.arbiter.storage)
     runtimes: dict[str, object] = {}
     for service_plugin in active_service_plugins:
         accounts = service_accounts_for(app_config, service_plugin.name)
@@ -279,12 +294,33 @@ def build_app(
                 f"service config is not configured: {service_plugin.name}"
             )
         policies = service_policies_for(app_config, service_plugin.name)
+        plugin_dependencies = {
+            **shared_runtime_dependencies,
+            "plugin_storage": PluginStorage(
+                plugin_name=service_plugin.name,
+                root=plugin_data_root,
+            ),
+        }
+        artifact_store = shared_runtime_dependencies.get("artifact_store")
+        if isinstance(artifact_store, ArtifactStore):
+            plugin_dependencies["artifact_store"] = artifact_store.for_plugin(
+                service_plugin.name
+            )
+        runtime_context = ServiceRuntimeContext(
+            dependencies=plugin_dependencies,
+        )
         runtimes[service_plugin.name] = service_plugin.build_runtime(
             accounts=accounts,
             policies=policies,
             context=runtime_context,
         )
     return ArbiterApp(RuntimeRegistry(runtimes))
+
+
+def _plugin_data_root(storage_config: StorageConfig) -> Path:
+    if storage_config.plugin_data_dir is not None:
+        return Path(storage_config.plugin_data_dir).expanduser().resolve()
+    return default_plugin_data_root()
 
 
 def _csv_or_none(values: list[str]) -> str:
@@ -303,10 +339,36 @@ def _service_accounts_summary(cfg: AppConfig) -> str:
 def _server_mcp_url(cfg: AppConfig) -> str:
     if cfg.arbiter.server.transport == "stdio":
         return "stdio"
-    return (
-        f"http://{cfg.arbiter.server.host}:"
-        f"{cfg.arbiter.server.port}{cfg.arbiter.server.path}"
-    )
+    return f"{_server_base_url(cfg)}{_server_public_path(cfg)}"
+
+
+def _server_public_path(cfg: AppConfig) -> str:
+    public_path = cfg.arbiter.server.public.path
+    if "${" in public_path:
+        public_path = cfg.arbiter.server.bind.path
+    return public_path
+
+
+def _server_base_url(cfg: AppConfig) -> str:
+    if cfg.arbiter.server.transport == "stdio":
+        raise ValueError("stdio transport does not expose HTTP artifact URLs")
+    public_base_url = cfg.arbiter.server.public.base_url.strip()
+    if "${" in public_base_url:
+        public_port = str(cfg.arbiter.server.public.port)
+        if "${" in public_port:
+            public_port = str(cfg.arbiter.server.bind.port)
+        public_base_url = (
+            f"{cfg.arbiter.server.public.scheme}://"
+            f"{cfg.arbiter.server.public.host}:"
+            f"{public_port}"
+        )
+    if not public_base_url:
+        raise ValueError("arbiter.server.public.base_url must be non-empty")
+    return public_base_url.rstrip("/")
+
+
+def _artifact_base_url(cfg: AppConfig) -> str:
+    return f"{_server_base_url(cfg)}{ARTIFACT_ROUTE_PREFIX}"
 
 
 def log_startup_summary(cfg: AppConfig) -> None:
@@ -318,9 +380,9 @@ def log_startup_summary(cfg: AppConfig) -> None:
         arbiter_server_version(),
         cfg.arbiter.deployment_scope.value,
         cfg.arbiter.server.transport,
-        cfg.arbiter.server.host,
-        cfg.arbiter.server.port,
-        cfg.arbiter.server.path,
+        cfg.arbiter.server.bind.host,
+        cfg.arbiter.server.bind.port,
+        cfg.arbiter.server.bind.path,
         _server_mcp_url(cfg),
         _csv_or_none(active_services),
         _service_accounts_summary(cfg),
@@ -546,9 +608,9 @@ def _create_fastmcp_server(app_config: AppConfig) -> "FastMCP":
         stateless_http=app_config.arbiter.server.stateless_http,
         json_response=app_config.arbiter.server.json_response,
     )
-    server.settings.host = app_config.arbiter.server.host
-    server.settings.port = app_config.arbiter.server.port
-    server.settings.streamable_http_path = app_config.arbiter.server.path
+    server.settings.host = app_config.arbiter.server.bind.host
+    server.settings.port = int(app_config.arbiter.server.bind.port)
+    server.settings.streamable_http_path = app_config.arbiter.server.bind.path
     mcp_server = getattr(server, "_mcp_server", None)
     if mcp_server is not None:
         mcp_server.version = arbiter_server_version()
@@ -567,8 +629,22 @@ def build_server(
         app_config,
         available_service_plugins,
     )
-    app = build_app(app_config, service_plugins=active_service_plugins)
+    artifact_store: ArtifactStore | None = None
+    runtime_dependencies: dict[str, object] = {}
+    if app_config.arbiter.server.transport != "stdio":
+        artifact_store = ArtifactStore(
+            root=_plugin_data_root(app_config.arbiter.storage),
+            base_url=_artifact_base_url(app_config),
+        )
+        runtime_dependencies["artifact_store"] = artifact_store
+    app = build_app(
+        app_config,
+        service_plugins=active_service_plugins,
+        runtime_dependencies=runtime_dependencies,
+    )
     server = _create_fastmcp_server(app_config)
+    if artifact_store is not None:
+        _register_artifact_route(server, artifact_store)
     catalog = OperationCatalog(
         active_service_plugins,
         ServicePluginContext(runtimes=app.runtime_registry),
@@ -583,6 +659,49 @@ def build_server(
     )
 
     return server
+
+
+def _register_artifact_route(server: "FastMCP", artifact_store: ArtifactStore) -> None:
+    from starlette.requests import Request
+    from starlette.responses import FileResponse, PlainTextResponse, Response
+
+    @server.custom_route(
+        f"{ARTIFACT_ROUTE_PREFIX}/{{artifact_id}}",
+        methods=["GET", "HEAD"],
+        include_in_schema=False,
+    )
+    async def get_artifact(request: Request) -> Response:
+        artifact_id = request.path_params["artifact_id"]
+        nonce = request.query_params.get("nonce", "")
+        if not nonce:
+            return PlainTextResponse("not found", status_code=404)
+        try:
+            if request.method == "HEAD":
+                artifact = artifact_store.inspect(artifact_id, nonce)
+            else:
+                artifact = artifact_store.open_once(artifact_id, nonce)
+        except ArtifactConsumed:
+            return PlainTextResponse("gone", status_code=410)
+        except (ArtifactExpired, ArtifactNotFound):
+            return PlainTextResponse("not found", status_code=404)
+        if request.method == "HEAD":
+            response = Response(status_code=200, media_type=artifact.content_type)
+            response.headers["Content-Length"] = str(artifact.size)
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["X-Arbiter-Artifact-SHA256"] = artifact.sha256
+            return response
+        response = FileResponse(
+            artifact.path,
+            media_type=artifact.content_type,
+            filename=artifact.filename,
+            content_disposition_type="attachment",
+        )
+        response.headers.setdefault("Content-Disposition", "attachment")
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Arbiter-Artifact-SHA256"] = artifact.sha256
+        return response
 
 
 async def _serve_uvicorn_app(server: "FastMCP", starlette_app: object) -> None:
@@ -1130,6 +1249,26 @@ def _ensure_writable_wheel_dir(wheel_dir: Path) -> bool:
     return True
 
 
+def _ensure_writable_plugin_data_dir(plugin_data_dir: Path) -> bool:
+    try:
+        plugin_data_dir.mkdir(parents=True, exist_ok=True)
+        write_check = plugin_data_dir / ".arbiter-write-check"
+        write_check.write_text("", encoding="utf-8")
+        write_check.unlink()
+    except OSError as exc:
+        print_cli_error(
+            "deployment plugin data directory is not writable",
+            area="deploy",
+            details=[
+                f"plugin data dir: {plugin_data_dir}",
+                f"error: {exc}",
+                "remove or chown the plugin data directory, then retry",
+            ],
+        )
+        return False
+    return True
+
+
 def _docker_requirement_for_installed_distribution(
     *,
     distribution_name: str,
@@ -1628,6 +1767,8 @@ def _run_deploy_docker(argv: Sequence[str]) -> int:
             return 2
         if not _ensure_writable_wheel_dir(deploy_dir / "wheels"):
             return 1
+        if not _ensure_writable_plugin_data_dir(deploy_dir / "data" / "plugins"):
+            return 1
         manifest_hashes: dict[str, str] = {}
         _write_manifest_owned_deploy_file(
             path=paths["compose"],
@@ -1664,6 +1805,8 @@ def _run_deploy_docker(argv: Sequence[str]) -> int:
     if parsed.action == "update":
         deploy_dir.mkdir(parents=True, exist_ok=True)
         if not _ensure_writable_wheel_dir(deploy_dir / "wheels"):
+            return 1
+        if not _ensure_writable_plugin_data_dir(deploy_dir / "data" / "plugins"):
             return 1
         manifest_hashes = _load_deploy_manifest(deploy_dir)
         original_manifest_hashes = dict(manifest_hashes)

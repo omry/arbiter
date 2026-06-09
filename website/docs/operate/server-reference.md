@@ -33,7 +33,7 @@ Examples:
 
 ```bash
 arbiter-server serve
-arbiter-server serve arbiter.server.port=8025
+arbiter-server serve arbiter.server.bind.port=8025
 arbiter-server --config-dir ./config.local serve
 ```
 

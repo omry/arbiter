@@ -26,16 +26,23 @@ This file is the day-to-day queue for design and implementation gaps.
 
 ## Now
 
-- [ ] `P1` Fix SMTP idempotency cache readiness in deployed runtimes.
-      Keyed sends can fail before delivery when the configured idempotency
-      cache directory cannot be created or written, as seen with the relative
-      `.arbiter/smtp-idempotency` path in the live MCP mail connector.
-      Acceptance checks: deployed SMTP policies use or resolve to a writable
-      durable cache path; startup or account checks validate idempotency
-      storage when keyed sends are advertised; keyed send failures caused by
-      cache setup return an operator-useful configuration error before any SMTP
-      submission attempt; and SMTP docs describe cache path and permission
-      expectations.
+- [ ] `P1` Add real OS/process isolation for plugin writable storage.
+      The server now gives each plugin a scoped storage capability, but
+      same-process Python plugins still run as the same OS user and can bypass
+      path-capability conventions. Process isolation is valuable even before it
+      becomes a complete security boundary because it can also support live
+      plugin add/remove, crash containment, and plugin config reload without
+      restarting the main server. Acceptance checks: define a portable plugin
+      worker model and an isolation-provider abstraction with capability
+      reporting, such as crash containment, live reload, filesystem isolation,
+      network isolation, and process-tree isolation; evaluate process,
+      container, or OS-user isolation providers for plugins; ensure one plugin
+      cannot read another plugin's data directory through ordinary filesystem
+      access where the platform supports strong enforcement; document Linux as
+      the recommended production platform and most capable provider target for
+      stronger isolation; keep Windows and macOS isolation easy and ergonomic
+      without overclaiming equivalent security guarantees; and document the
+      threat model for trusted versus isolated plugins.
 
 - [ ] `P1` Prepare release packaging and version readiness.
       The service plugin/config reroute is in place, so the package/release
@@ -67,6 +74,19 @@ This file is the day-to-day queue for design and implementation gaps.
       concrete fixes into backlog items or immediate patches; document any
       explicit accepted risks for the initial release; and confirm operator
       docs do not overstate the current security model.
+
+- [ ] `P1` Promote artifact delivery into a first-class server surface.
+      IMAP attachments are the first artifact-producing workflow, but artifact
+      delivery is a reusable client-facing facility rather than an IMAP-specific
+      detail. Acceptance checks: expose artifact delivery in server/plugin
+      discovery with description, guidance, one-time URL semantics, HEAD metadata
+      expectations, default TTLs, size/text safety rules, and recommended client
+      commands; add config options for artifact behavior and guidance; let
+      artifact-producing operations declare that they return `arbiter_artifact`
+      delivery; guide agents to avoid consuming large artifacts directly and to
+      pipe artifacts to appropriate tools when explicit artifact access is
+      needed; document how plugins can produce artifacts without redefining the
+      artifact contract from scratch.
 
 - [ ] `P1` Complete the website documentation readiness pass.
       The Docusaurus site is the user-facing documentation home, but it still

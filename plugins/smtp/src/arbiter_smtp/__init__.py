@@ -6,6 +6,7 @@ from email.message import EmailMessage
 from email.utils import formataddr, make_msgid
 import hashlib
 import json
+import secrets
 import smtplib
 from time import monotonic
 from typing import Callable, Protocol, cast
@@ -18,6 +19,7 @@ from arbiter_server.services import (
     ServicePluginContext,
     ServiceRuntimeContext,
 )
+from arbiter_server.storage import PluginStorage
 from arbiter_server.version import distribution_version
 
 from .config import (
@@ -114,6 +116,7 @@ class SMTPRuntime:
         smtp_client_factory: SMTPClientFactory,
         time_provider: TimeProvider = monotonic,
         idempotency_store_factory: SMTPIdempotencyStoreFactory = SMTPIdempotencyStore,
+        plugin_storage: PluginStorage | None = None,
     ) -> None:
         self._accounts = cast(Mapping[str, SMTPConfig], accounts)
         self._policies = cast(
@@ -123,6 +126,7 @@ class SMTPRuntime:
         self._smtp_client_factory = smtp_client_factory
         self._time_provider = time_provider
         self._idempotency_store_factory = idempotency_store_factory
+        self._plugin_storage = plugin_storage
         self._idempotency_stores: dict[str, SMTPIdempotencyStore] = {}
         self._attempt_timestamps: dict[str, list[float]] = {}
         self._validate_config()
@@ -147,10 +151,11 @@ class SMTPRuntime:
         for account_name, smtp_config in sorted(self._accounts.items()):
             try:
                 self._smtp_client_factory(smtp_config).test_connection()
+                self._test_idempotency_storage(self._policies[smtp_config.policy])
             except Exception as exc:
                 results[account_name] = {
                     "status": "failed",
-                    "stage": "connect_auth_noop",
+                    "stage": "connect_auth_noop_idempotency",
                     "error_type": type(exc).__name__,
                     "message": str(exc),
                 }
@@ -160,9 +165,10 @@ class SMTPRuntime:
                 checks.append("tls")
             if smtp_config.authenticate:
                 checks.append("authenticate")
+            checks.append("idempotency_storage")
             results[account_name] = {
                 "status": "ok",
-                "stage": "connect_auth_noop",
+                "stage": "connect_auth_noop_idempotency",
                 "checks": checks,
                 "delivery": "skipped",
                 "reason": "read-only SMTP account test does not send mail",
@@ -303,10 +309,13 @@ class SMTPRuntime:
                     "SMTP idempotency expiration_days must be positive: "
                     f"{policy_name}"
                 )
-            if not smtp_policy.idempotency.cache_dir.strip():
+            cache_dir = smtp_policy.idempotency.cache_dir
+            if cache_dir is not None and not cache_dir.strip():
                 raise ValueError(
                     f"SMTP idempotency cache_dir must be non-empty: {policy_name}"
                 )
+            if cache_dir is not None and self._plugin_storage is not None:
+                self._plugin_storage.path(cache_dir.strip())
 
     def _normalize_recipients(
         self,
@@ -507,12 +516,45 @@ class SMTPRuntime:
         self,
         smtp_policy: SMTPServicePolicyConfig,
     ) -> SMTPIdempotencyStore:
-        cache_dir = smtp_policy.idempotency.cache_dir
+        cache_dir = self._idempotency_cache_dir(smtp_policy)
         store = self._idempotency_stores.get(cache_dir)
         if store is None:
             store = self._idempotency_store_factory(cache_dir)
             self._idempotency_stores[cache_dir] = store
         return store
+
+    def _test_idempotency_storage(
+        self,
+        smtp_policy: SMTPServicePolicyConfig,
+    ) -> None:
+        store = self._idempotency_store(smtp_policy)
+        key = f"__arbiter_readiness__:{secrets.token_urlsafe(16)}"
+        payload_hash = hashlib.sha256(key.encode("utf-8")).hexdigest()
+        try:
+            added = store.add_pending(
+                key,
+                payload_hash=payload_hash,
+                expire_seconds=60,
+            )
+            if not added:
+                raise ValueError("SMTP idempotency cache readiness key collided")
+            record = store.get(key)
+            if record is None or record.payload_hash != payload_hash:
+                raise ValueError("SMTP idempotency cache readiness read failed")
+        finally:
+            store.delete(key)
+
+    def _idempotency_cache_dir(self, smtp_policy: SMTPServicePolicyConfig) -> str:
+        configured_cache_dir = smtp_policy.idempotency.cache_dir
+        if configured_cache_dir is not None:
+            if self._plugin_storage is not None:
+                return str(self._plugin_storage.path(configured_cache_dir.strip()))
+            return configured_cache_dir.strip()
+        if self._plugin_storage is None:
+            raise ValueError(
+                "SMTP idempotency cache_dir is required when plugin storage is unavailable"
+            )
+        return str(self._plugin_storage.path("idempotency"))
 
     def _idempotency_expire_seconds(
         self,
@@ -600,7 +642,9 @@ limits:
 # Dedupe window for repeated send attempts.
 idempotency:
   expiration_days: 7
-  cache_dir: .arbiter/smtp-idempotency
+  # Optional plugin-relative subdirectory. Defaults to the SMTP plugin's
+  # private writable space under idempotency/.
+  cache_dir: null
 
 # Empty lists do not restrict recipients. Add entries to enforce allow/block rules.
 recipient_policy:
@@ -654,6 +698,9 @@ class SMTPServicePlugin:
             policies=policies,
             smtp_client_factory=smtp_client_factory,
             time_provider=time_provider,
+            plugin_storage=cast(
+                PluginStorage | None, context.dependencies.get("plugin_storage")
+            ),
         )
 
     def describe_capability(

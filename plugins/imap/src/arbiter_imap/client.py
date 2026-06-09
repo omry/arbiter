@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from collections.abc import Sequence
 from email import policy
 from email.message import EmailMessage
@@ -12,6 +12,23 @@ import ssl
 from typing import Any
 
 from .config import IMAPConfig, MailTlsMode
+
+
+@dataclass(frozen=True)
+class IMAPAttachment:
+    id: str
+    filename: str | None
+    content_type: str
+    size: int
+    disposition: str | None
+    content_id: str | None
+    inline: bool
+
+
+@dataclass(frozen=True)
+class IMAPAttachmentContent:
+    attachment: IMAPAttachment
+    content: bytes
 
 
 @dataclass(frozen=True)
@@ -27,6 +44,7 @@ class FetchedIMAPMessage:
     text_body: str | None
     html_body: str | None
     snippet: str
+    attachments: list[IMAPAttachment] = field(default_factory=list)
 
 
 class IMAPOperationError(RuntimeError):
@@ -55,6 +73,22 @@ class IMAPClient:
         with self._session() as server:
             self._select_folder(server, folder, readonly=True)
             return self._fetch_message(server, uid)
+
+    def get_attachment(
+        self,
+        *,
+        folder: str,
+        uid: str,
+        attachment_id: str,
+    ) -> IMAPAttachmentContent:
+        with self._session() as server:
+            self._select_folder(server, folder, readonly=True)
+            message_bytes = self._fetch_message_bytes(server, uid)
+        email_message = BytesParser(policy=policy.default).parsebytes(message_bytes)
+        return self._extract_attachment_content(
+            email_message,
+            attachment_id=attachment_id,
+        )
 
     def search_messages(
         self, *, folder: str, query: str, limit: int
@@ -163,6 +197,7 @@ class IMAPClient:
         message_bytes = self._fetch_message_bytes(server, uid)
         email_message = BytesParser(policy=policy.default).parsebytes(message_bytes)
         text_body, html_body = self._extract_bodies(email_message)
+        attachments = self._extract_attachments(email_message)
         snippet = self._snippet_from_body(text_body or html_body or "")
         return FetchedIMAPMessage(
             uid=uid,
@@ -176,6 +211,7 @@ class IMAPClient:
             text_body=text_body,
             html_body=html_body,
             snippet=snippet,
+            attachments=attachments,
         )
 
     def _fetch_flags(
@@ -327,6 +363,79 @@ class IMAPClient:
                 part.get_content_charset() or "utf-8", errors="replace"
             )
         return str(content)
+
+    def _extract_attachments(self, message: EmailMessage) -> list[IMAPAttachment]:
+        attachments: list[IMAPAttachment] = []
+        for index, part in enumerate(self._iter_leaf_parts(message), start=1):
+            attachment = self._attachment_metadata(part, index)
+            if attachment is None:
+                continue
+            attachments.append(attachment)
+        return attachments
+
+    def _extract_attachment_content(
+        self,
+        message: EmailMessage,
+        *,
+        attachment_id: str,
+    ) -> IMAPAttachmentContent:
+        for index, part in enumerate(self._iter_leaf_parts(message), start=1):
+            attachment = self._attachment_metadata(part, index)
+            if attachment is None or attachment.id != attachment_id:
+                continue
+            content = self._part_payload_bytes(part)
+            return IMAPAttachmentContent(
+                attachment=attachment,
+                content=content,
+            )
+        raise IMAPOperationError(f"attachment not found: {attachment_id}")
+
+    def _attachment_metadata(
+        self,
+        part: EmailMessage,
+        index: int,
+    ) -> IMAPAttachment | None:
+        disposition = part.get_content_disposition()
+        filename = part.get_filename()
+        content_id = part.get("Content-ID")
+        if (
+            disposition not in {"attachment", "inline"}
+            and filename is None
+            and content_id is None
+        ):
+            return None
+        return IMAPAttachment(
+            id=f"part-{index}",
+            filename=filename,
+            content_type=part.get_content_type(),
+            size=len(self._part_payload_bytes(part)),
+            disposition=disposition,
+            content_id=content_id,
+            inline=disposition == "inline",
+        )
+
+    def _iter_leaf_parts(self, message: EmailMessage) -> list[EmailMessage]:
+        if message.is_multipart():
+            return [
+                part
+                for part in message.walk()
+                if isinstance(part, EmailMessage) and not part.is_multipart()
+            ]
+        return [message]
+
+    def _part_payload_size(self, part: EmailMessage) -> int:
+        return len(self._part_payload_bytes(part))
+
+    def _part_payload_bytes(self, part: EmailMessage) -> bytes:
+        payload = part.get_payload(decode=True)
+        if isinstance(payload, bytes):
+            return payload
+        content = part.get_content()
+        if isinstance(content, str):
+            return content.encode(part.get_content_charset() or "utf-8")
+        if isinstance(content, bytes):
+            return content
+        return b""
 
     def _snippet_from_body(self, body: str) -> str:
         compact = " ".join(body.split())

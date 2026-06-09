@@ -5,6 +5,7 @@ from typing import Callable, Protocol, cast
 
 from hydra.core.config_store import ConfigStore
 
+from arbiter_server.artifacts import PluginArtifactStore
 from arbiter_server.services import (
     CapabilityDescriptor,
     OperationDescriptor,
@@ -22,7 +23,7 @@ from .config import (
     resolve_system_flag_key,
 )
 
-from .client import FetchedIMAPMessage
+from .client import FetchedIMAPMessage, IMAPAttachmentContent
 
 SERVER_API_VERSION = "0.9"
 
@@ -33,6 +34,14 @@ class IMAPClientProtocol(Protocol):
     def list_messages(self, *, folder: str, limit: int) -> list[FetchedIMAPMessage]: ...
 
     def get_message(self, *, folder: str, uid: str) -> FetchedIMAPMessage: ...
+
+    def get_attachment(
+        self,
+        *,
+        folder: str,
+        uid: str,
+        attachment_id: str,
+    ) -> IMAPAttachmentContent: ...
 
     def search_messages(
         self,
@@ -82,13 +91,16 @@ MESSAGE_ID_PROPERTY = {
     "type": "string",
     "description": "IMAP UID scoped to the selected account and folder.",
 }
+ATTACHMENT_ID_PROPERTY = {
+    "type": "string",
+    "description": "Attachment MIME-part id returned by imap:get_message.",
+}
 LIMIT_PROPERTY = {
     "type": "integer",
     "minimum": 1,
     "maximum": 100,
     "description": "Maximum number of messages to return.",
 }
-
 IMAP_OPERATION_DESCRIPTORS = (
     OperationDescriptor(
         name="list_messages",
@@ -118,6 +130,23 @@ IMAP_OPERATION_DESCRIPTORS = (
                 "folder": FOLDER_PROPERTY,
             },
             ["account", "message_id"],
+        ),
+    ),
+    OperationDescriptor(
+        name="get_attachment",
+        description=(
+            "Create a one-time server artifact URL for one attachment by message "
+            "UID and attachment id. The attachment bytes are not returned in the "
+            "tool result."
+        ),
+        input_schema=_object_schema(
+            {
+                "account": ACCOUNT_PROPERTY,
+                "message_id": MESSAGE_ID_PROPERTY,
+                "attachment_id": ATTACHMENT_ID_PROPERTY,
+                "folder": FOLDER_PROPERTY,
+            },
+            ["account", "message_id", "attachment_id"],
         ),
     ),
     OperationDescriptor(
@@ -199,6 +228,7 @@ class IMAPRuntime:
         accounts: Mapping[str, object],
         policies: Mapping[str, object],
         imap_client_factory: IMAPClientFactory | None = None,
+        artifact_store: PluginArtifactStore | None = None,
     ) -> None:
         self._accounts = cast(Mapping[str, IMAPConfig], accounts)
         self._policies = cast(
@@ -206,6 +236,7 @@ class IMAPRuntime:
             policies,
         )
         self._imap_client_factory = imap_client_factory
+        self._artifact_store = artifact_store
         self._validate_policy_references()
 
     def account_summaries(self) -> dict[str, object]:
@@ -307,6 +338,75 @@ class IMAPRuntime:
                 include_body=True,
             ),
         }
+
+    def get_attachment(
+        self,
+        account: str,
+        message_id: str,
+        attachment_id: str,
+        folder: str | None = None,
+    ) -> dict[str, object]:
+        imap_config, imap_policy, folder_name = self._resolve_context(
+            "get_attachment", account, folder
+        )
+        if not imap_policy.allow_read:
+            raise ValueError(f"get_attachment is not allowed for account: {account}")
+        if self._artifact_store is None:
+            raise ValueError(
+                "get_attachment requires server artifact storage; "
+                "HTTP artifact delivery is unavailable"
+            )
+
+        uid = self._normalize_message_uid(message_id)
+        normalized_attachment_id = self._normalize_attachment_id(attachment_id)
+        attachment_content = self._make_client(imap_config).get_attachment(
+            folder=folder_name,
+            uid=uid,
+            attachment_id=normalized_attachment_id,
+        )
+        attachment = attachment_content.attachment
+        artifact = self._artifact_store.create(
+            content=attachment_content.content,
+            filename=attachment.filename,
+            content_type=attachment.content_type,
+            source={
+                "account": account,
+                "folder": folder_name,
+                "message_id": uid,
+                "attachment_id": attachment.id,
+            },
+        )
+        return {
+            "account": account,
+            "folder": folder_name,
+            "message_id": uid,
+            "attachment": {
+                "id": attachment.id,
+                "filename": attachment.filename,
+                "content_type": attachment.content_type,
+                "size": attachment.size,
+                "disposition": attachment.disposition,
+                "content_id": attachment.content_id,
+                "inline": attachment.inline,
+            },
+            "delivery": "arbiter_artifact",
+            "artifact": {
+                **artifact.to_dict(),
+                "handling": {
+                    "prefer_inline": False,
+                    "save_locally": False,
+                    "instructions": (
+                        "Use the one-time URL only through an explicit artifact "
+                        "reader such as `arbiter artifact get --stdout` for small "
+                        "textual attachments. Do not save, copy, or persist the "
+                        "file unless the user explicitly asks."
+                    ),
+                },
+            },
+        }
+
+    def artifact_delivery_available(self) -> bool:
+        return self._artifact_store is not None
 
     def search_messages(
         self,
@@ -541,6 +641,12 @@ class IMAPRuntime:
             raise ValueError("IMAP message_id must be an IMAP UID")
         return uid
 
+    def _normalize_attachment_id(self, attachment_id: str) -> str:
+        normalized = attachment_id.strip()
+        if not normalized:
+            raise ValueError("IMAP attachment_id must be non-empty")
+        return normalized
+
     def _message_to_dict(
         self,
         message: FetchedIMAPMessage,
@@ -565,6 +671,18 @@ class IMAPRuntime:
         if include_body:
             message_dict["text_body"] = message.text_body
             message_dict["html_body"] = message.html_body
+            message_dict["attachments"] = [
+                {
+                    "id": attachment.id,
+                    "filename": attachment.filename,
+                    "content_type": attachment.content_type,
+                    "size": attachment.size,
+                    "disposition": attachment.disposition,
+                    "content_id": attachment.content_id,
+                    "inline": attachment.inline,
+                }
+                for attachment in message.attachments
+            ]
         return message_dict
 
     def _visible_flags(
@@ -682,10 +800,15 @@ class IMAPServicePlugin:
             IMAPClientFactory,
             context.dependencies.get("imap_client_factory", IMAPClient),
         )
+        artifact_store = cast(
+            PluginArtifactStore | None,
+            context.dependencies.get("artifact_store"),
+        )
         return IMAPRuntime(
             accounts=accounts,
             policies=policies,
             imap_client_factory=imap_client_factory,
+            artifact_store=artifact_store,
         )
 
     def describe_capability(
@@ -701,7 +824,14 @@ class IMAPServicePlugin:
         self,
         context: ServicePluginContext,
     ) -> tuple[OperationDescriptor, ...]:
-        return IMAP_OPERATION_DESCRIPTORS
+        runtime = context.runtimes.require(self.name, IMAPRuntime)
+        if runtime.artifact_delivery_available():
+            return IMAP_OPERATION_DESCRIPTORS
+        return tuple(
+            descriptor
+            for descriptor in IMAP_OPERATION_DESCRIPTORS
+            if descriptor.name != "get_attachment"
+        )
 
     def invoke_operation(
         self,
@@ -720,6 +850,13 @@ class IMAPServicePlugin:
             return runtime.get_message(
                 account=cast(str, arguments.get("account")),
                 message_id=cast(str, arguments.get("message_id")),
+                folder=cast(str | None, arguments.get("folder")),
+            )
+        if operation == "get_attachment":
+            return runtime.get_attachment(
+                account=cast(str, arguments.get("account")),
+                message_id=cast(str, arguments.get("message_id")),
+                attachment_id=cast(str, arguments.get("attachment_id")),
                 folder=cast(str | None, arguments.get("folder")),
             )
         if operation == "search_messages":

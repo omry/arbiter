@@ -93,7 +93,7 @@ Use an override with `serve` when you want a one-off runtime change without
 editing the config files:
 
 ```bash
-arbiter-server serve arbiter.server.port=8025
+arbiter-server serve arbiter.server.bind.port=8025
 ```
 
 That command starts the server on port `8025` for that process only.

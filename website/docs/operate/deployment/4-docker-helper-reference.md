@@ -20,7 +20,7 @@ the helper.
 
 | Command | Purpose |
 | --- | --- |
-| `info` | Show generated paths and Docker Compose version. |
+| `info` | Show generated paths, including the plugin data directory, and Docker Compose version. |
 | `doctor` | Check generated files, env syntax, package requirements, and Docker Compose availability. |
 | `doctor --agent-user USER` | Also check common permission mistakes for an agent identity. |
 | `doctor --preinstall` | Check that the prepared directory is ready to promote. |

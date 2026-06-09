@@ -30,6 +30,8 @@ commands instead of editing generated deployment files directly.
 
 - `arbiter-docker`: local helper script for this deployment.
 - `conf/`: deployment config directory.
+- `data/plugins/`: writable server runtime state for plugins, such as
+  idempotency records and temporary artifacts.
 - `requirements.txt`: exact package pins or explicit wheel paths installed
   inside the container.
 - `wheels/`: prepared dependency wheelhouse.
@@ -43,6 +45,16 @@ commands instead of editing generated deployment files directly.
 Prepared Docker directories are staged deployments. They use staging-specific
 Docker names and ports so they can run next to an installed Arbiter. During
 install, the copied directory is rewritten to the installed identity.
+
+Artifact URLs use the public HTTP base URL that clients can reach. Arbiter
+computes `arbiter.server.public.base_url` from `arbiter.server.public.scheme`,
+`arbiter.server.public.host`, and `arbiter.server.public.port`; by default those
+resolve to `http://127.0.0.1:<server-port>`, not the internal bind address. The
+Docker wrapper passes public host and port values derived from
+`ARBITER_HOST_BIND` and `ARBITER_HOST_PORT` so staging port mappings work
+correctly. Set `ARBITER_PUBLIC_SCHEME` or `ARBITER_PUBLIC_BASE_URL` in
+`docker.env` when Arbiter is served through a different hostname, proxy, or TLS
+endpoint.
 
 ## Prepare the bundle
 

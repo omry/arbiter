@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from hydra.core.config_store import ConfigStore
-from omegaconf import OmegaConf
+from omegaconf import II, OmegaConf
 
 from .services import SERVICE_PLUGIN_ENTRY_POINT_GROUP, ServicePluginFactory
 from .services import validate_service_plugin_compatibility
@@ -19,12 +19,32 @@ LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
-class FastMCPConfig:
-    name: str = "arbiter"
-    transport: str = "streamable-http"
+class HTTPServerConfig:
+    scheme: str = "http"
     host: str = "127.0.0.1"
     port: int = 8000
     path: str = "/mcp"
+    base_url: str = "${.scheme}://${.host}:${.port}"
+
+
+def _bind_http_server_config() -> HTTPServerConfig:
+    return HTTPServerConfig()
+
+
+def _public_http_server_config() -> HTTPServerConfig:
+    return HTTPServerConfig(
+        host="127.0.0.1",
+        port=II("arbiter.server.bind.port"),
+        path=II("arbiter.server.bind.path"),
+    )
+
+
+@dataclass
+class FastMCPConfig:
+    name: str = "arbiter"
+    transport: str = "streamable-http"
+    bind: HTTPServerConfig = field(default_factory=_bind_http_server_config)
+    public: HTTPServerConfig = field(default_factory=_public_http_server_config)
     stateless_http: bool = True
     json_response: bool = True
 
@@ -39,6 +59,11 @@ class DiscoveryConfig:
             raise ValueError("max_account_preview_limit must be >= 1")
         if self.max_operation_preview_limit < 1:
             raise ValueError("max_operation_preview_limit must be >= 1")
+
+
+@dataclass
+class StorageConfig:
+    plugin_data_dir: str | None = None
 
 
 class DeploymentScope(str, Enum):
@@ -58,6 +83,7 @@ class ArbiterConfig:
     server: FastMCPConfig = field(default_factory=FastMCPConfig)
     deployment_scope: DeploymentScope = DeploymentScope.unknown
     discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
+    storage: StorageConfig = field(default_factory=StorageConfig)
     account: dict[str, Any] = field(default_factory=dict)
     policy: dict[str, Any] = field(default_factory=dict)
     etc: dict[str, Any] = field(default_factory=dict)

@@ -7,6 +7,7 @@ import smtplib
 
 import pytest
 
+from arbiter_server.storage import PluginStorage
 from arbiter_smtp import SMTPRuntime
 from arbiter_smtp.config import (
     SMTPConfig,
@@ -14,6 +15,7 @@ from arbiter_smtp.config import (
     SMTPLimitsConfig,
     SMTPServicePolicyConfig,
 )
+from arbiter_smtp.idempotency import SMTPIdempotencyStore
 
 
 class FakeSMTPClient:
@@ -100,8 +102,8 @@ def test_runtime_tests_accounts_without_sending(tmp_path: Path) -> None:
     assert runtime.test_accounts() == {
         "primary": {
             "status": "ok",
-            "stage": "connect_auth_noop",
-            "checks": ["connect", "ehlo", "noop", "tls"],
+            "stage": "connect_auth_noop_idempotency",
+            "checks": ["connect", "ehlo", "noop", "tls", "idempotency_storage"],
             "delivery": "skipped",
             "reason": "read-only SMTP account test does not send mail",
         }
@@ -109,7 +111,29 @@ def test_runtime_tests_accounts_without_sending(tmp_path: Path) -> None:
 
     assert len(factory.clients) == 1
     assert factory.clients[0].tested is True
-    assert factory.clients[0].message is None
+
+
+def test_send_email_uses_plugin_storage_for_default_idempotency_cache(
+    tmp_path: Path,
+) -> None:
+    factory = RecordingSMTPClientFactory()
+    runtime = SMTPRuntime(
+        accounts={"primary": SMTPConfig(policy="bot")},
+        policies={"bot": SMTPServicePolicyConfig()},
+        smtp_client_factory=factory,
+        plugin_storage=PluginStorage(plugin_name="smtp", root=tmp_path),
+    )
+
+    runtime.send_email(
+        account="primary",
+        to=["recipient@example.com"],
+        subject="Hello",
+        text_body="Body",
+        idempotency_key="send-1",
+    )
+
+    assert (tmp_path / "smtp" / "idempotency").exists()
+    assert factory.clients[0].message is not None
 
 
 def test_runtime_reports_account_test_failure(tmp_path: Path) -> None:
@@ -121,11 +145,39 @@ def test_runtime_reports_account_test_failure(tmp_path: Path) -> None:
     assert runtime.test_accounts() == {
         "primary": {
             "status": "failed",
-            "stage": "connect_auth_noop",
+            "stage": "connect_auth_noop_idempotency",
             "error_type": "RuntimeError",
             "message": "login failed",
         }
     }
+
+
+def test_runtime_reports_idempotency_storage_test_failure(tmp_path: Path) -> None:
+    factory = RecordingSMTPClientFactory()
+
+    def failing_store_factory(cache_dir: str) -> SMTPIdempotencyStore:
+        raise RuntimeError(f"cache not writable: {cache_dir}")
+
+    runtime = SMTPRuntime(
+        accounts={"primary": SMTPConfig(policy="bot")},
+        policies={
+            "bot": SMTPServicePolicyConfig(
+                idempotency=SMTPIdempotencyConfig(cache_dir=str(tmp_path)),
+            )
+        },
+        smtp_client_factory=factory,
+        idempotency_store_factory=failing_store_factory,
+    )
+
+    assert runtime.test_accounts() == {
+        "primary": {
+            "status": "failed",
+            "stage": "connect_auth_noop_idempotency",
+            "error_type": "RuntimeError",
+            "message": f"cache not writable: {tmp_path}",
+        }
+    }
+    assert factory.clients[0].tested is True
 
 
 def test_send_email_replays_same_idempotency_key_from_persistent_cache(

@@ -69,6 +69,11 @@ The default Docker env keeps the wheelhouse inside the deployment directory:
 `ARBITER_WHEELS_DIR=./wheels`. Keep runtime paths relative to the deployment
 directory; Linux install rejects absolute host paths for runtime files.
 
+Plugin writable state is also kept under the deployment directory by default:
+`ARBITER_PLUGIN_DATA_DIR=./data/plugins`. Docker mounts that host directory at
+`/data/plugins`, and the generated Compose command passes it to Arbiter as
+`arbiter.storage.plugin_data_dir=/data/plugins`.
+
 ## Upgrades
 
 `bundle upgrade` upgrades root package requirements and rebuilds the

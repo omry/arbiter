@@ -1,8 +1,10 @@
 from collections.abc import Sequence
 from email.message import EmailMessage
+from typing import cast
 
 import pytest
 
+from arbiter_server.artifacts import ArtifactDescriptor, PluginArtifactStore
 from arbiter_server.app import SERVER_TOOL_NAMES, ArbiterApp
 from arbiter_imap.config import (
     IMAPAccessPolicyConfig,
@@ -17,9 +19,13 @@ from arbiter_smtp.config import (
     SMTPRecipientPolicyConfig,
     SMTPServicePolicyConfig,
 )
-from arbiter_server.services import RuntimeRegistry
-from arbiter_imap import IMAPRuntime
-from arbiter_imap.client import FetchedIMAPMessage
+from arbiter_server.services import RuntimeRegistry, ServicePluginContext
+from arbiter_imap import IMAPRuntime, IMAPServicePlugin
+from arbiter_imap.client import (
+    FetchedIMAPMessage,
+    IMAPAttachment,
+    IMAPAttachmentContent,
+)
 from arbiter_smtp import SMTPRuntime
 
 
@@ -59,6 +65,7 @@ class FakeIMAPClient:
     def __init__(self) -> None:
         self.list_calls: list[dict[str, object]] = []
         self.get_calls: list[dict[str, object]] = []
+        self.get_attachment_calls: list[dict[str, object]] = []
         self.search_calls: list[dict[str, object]] = []
         self.move_calls: list[dict[str, object]] = []
         self.mark_read_calls: list[dict[str, object]] = []
@@ -76,6 +83,17 @@ class FakeIMAPClient:
                 text_body="Plain text body",
                 html_body=None,
                 snippet="Plain text body",
+                attachments=[
+                    IMAPAttachment(
+                        id="part-2",
+                        filename="contract.pdf",
+                        content_type="application/pdf",
+                        size=1234,
+                        disposition="attachment",
+                        content_id=None,
+                        inline=False,
+                    )
+                ],
             )
         ]
 
@@ -89,6 +107,25 @@ class FakeIMAPClient:
     def get_message(self, *, folder: str, uid: str) -> FetchedIMAPMessage:
         self.get_calls.append({"folder": folder, "uid": uid})
         return self.messages[0]
+
+    def get_attachment(
+        self,
+        *,
+        folder: str,
+        uid: str,
+        attachment_id: str,
+    ) -> IMAPAttachmentContent:
+        self.get_attachment_calls.append(
+            {
+                "folder": folder,
+                "uid": uid,
+                "attachment_id": attachment_id,
+            }
+        )
+        return IMAPAttachmentContent(
+            attachment=self.messages[0].attachments[0],
+            content=b"PDF",
+        )
 
     def search_messages(
         self, *, folder: str, query: str, limit: int
@@ -124,6 +161,39 @@ class RecordingIMAPClientFactory:
         client = FakeIMAPClient()
         self.clients.append(client)
         return client
+
+
+class FakeArtifactStore:
+    def __init__(self) -> None:
+        self.create_calls: list[dict[str, object]] = []
+
+    def create(
+        self,
+        *,
+        content: bytes,
+        filename: str | None,
+        content_type: str,
+        source: dict[str, object],
+    ) -> ArtifactDescriptor:
+        self.create_calls.append(
+            {
+                "content": content,
+                "filename": filename,
+                "content_type": content_type,
+                "source": source,
+            }
+        )
+        return ArtifactDescriptor(
+            id="art-1",
+            url="http://127.0.0.1:8000/_arbiter/artifacts/art-1?nonce=nonce-1",
+            filename=filename,
+            content_type=content_type,
+            size=len(content),
+            sha256="sha256",
+            created_at="2026-06-09T00:00:00+00:00",
+            expires_after_idle_seconds=600,
+            one_time=True,
+        )
 
 
 class FakeClock:
@@ -187,6 +257,7 @@ def _imap_runtime(
     accounts: dict[str, IMAPConfig] | None = None,
     policies: dict[str, IMAPAccessPolicyConfig] | None = None,
     imap_client_factory: RecordingIMAPClientFactory | None = None,
+    artifact_store: FakeArtifactStore | None = None,
 ) -> IMAPRuntime:
     return IMAPRuntime(
         accounts=accounts or {"personal": _imap_config()},
@@ -203,6 +274,7 @@ def _imap_runtime(
             )
         },
         imap_client_factory=imap_client_factory or RecordingIMAPClientFactory(),
+        artifact_store=cast(PluginArtifactStore | None, artifact_store),
     )
 
 
@@ -453,7 +525,101 @@ def test_get_message_includes_body() -> None:
     assert isinstance(message, dict)
     assert message["text_body"] == "Plain text body"
     assert message["html_body"] is None
+    assert message["attachments"] == [
+        {
+            "id": "part-2",
+            "filename": "contract.pdf",
+            "content_type": "application/pdf",
+            "size": 1234,
+            "disposition": "attachment",
+            "content_id": None,
+            "inline": False,
+        }
+    ]
     assert factory.clients[0].get_calls == [{"folder": "INBOX", "uid": "42"}]
+
+
+def test_get_attachment_returns_one_time_artifact_descriptor() -> None:
+    factory = RecordingIMAPClientFactory()
+    artifact_store = FakeArtifactStore()
+    runtime = _imap_runtime(
+        imap_client_factory=factory,
+        artifact_store=artifact_store,
+    )
+
+    result = runtime.get_attachment(
+        account="personal",
+        message_id="42",
+        attachment_id="part-2",
+    )
+
+    assert result["account"] == "personal"
+    assert result["folder"] == "INBOX"
+    assert result["message_id"] == "42"
+    assert result["attachment"] == {
+        "id": "part-2",
+        "filename": "contract.pdf",
+        "content_type": "application/pdf",
+        "size": 1234,
+        "disposition": "attachment",
+        "content_id": None,
+        "inline": False,
+    }
+    assert result["delivery"] == "arbiter_artifact"
+    assert result["artifact"] == {
+        "id": "art-1",
+        "url": "http://127.0.0.1:8000/_arbiter/artifacts/art-1?nonce=nonce-1",
+        "filename": "contract.pdf",
+        "content_type": "application/pdf",
+        "size": 3,
+        "sha256": "sha256",
+        "created_at": "2026-06-09T00:00:00+00:00",
+        "expires_after_idle_seconds": 600,
+        "one_time": True,
+        "handling": {
+            "prefer_inline": False,
+            "save_locally": False,
+            "instructions": (
+                "Use the one-time URL only through an explicit artifact reader "
+                "such as `arbiter artifact get --stdout` for small textual "
+                "attachments. Do not save, copy, or persist the file unless the "
+                "user explicitly asks."
+            ),
+        },
+    }
+    assert factory.clients[0].get_attachment_calls == [
+        {
+            "folder": "INBOX",
+            "uid": "42",
+            "attachment_id": "part-2",
+        }
+    ]
+    assert artifact_store.create_calls == [
+        {
+            "content": b"PDF",
+            "filename": "contract.pdf",
+            "content_type": "application/pdf",
+            "source": {
+                "account": "personal",
+                "folder": "INBOX",
+                "message_id": "42",
+                "attachment_id": "part-2",
+            },
+        }
+    ]
+
+
+def test_imap_get_attachment_is_hidden_without_artifact_store() -> None:
+    runtime = _imap_runtime()
+    plugin = IMAPServicePlugin()
+    context = ServicePluginContext(runtimes=RuntimeRegistry({"imap": runtime}))
+
+    operation_names = {
+        descriptor.name for descriptor in plugin.describe_operations(context)
+    }
+
+    assert "get_message" in operation_names
+    assert "get_attachment" not in operation_names
 
 
 def test_search_messages_requires_policy_permission() -> None:

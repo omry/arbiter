@@ -14,7 +14,7 @@ from typing import Any
 import anyio
 import httpx
 from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
 from omegaconf import DictConfig, OmegaConf
 from omegaconf.errors import OmegaConfBaseException
 
@@ -26,6 +26,7 @@ DEFAULT_MCP_URL = "http://127.0.0.1:8000/mcp"
 MCP_URL_ENV_VAR = "ARBITER_MCP_URL"
 DEFAULT_CONFIG_DIR = "~/.arbiter"
 DEFAULT_CLIENT_CONFIG_NAME = "arbiter-client"
+DEFAULT_ARTIFACT_MAX_BYTES = 16 * 1024
 BOOTSTRAP_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 _STAGED_DEPLOYMENT_WARNING_EMITTED = False
 _CAPABILITY_FIELD_ALIASES = {
@@ -331,6 +332,110 @@ def _parse_json_object(value: str) -> dict[str, Any]:
     return parsed
 
 
+def _parse_positive_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a positive integer") from exc
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
+
+
+def _is_textual_artifact_content_type(content_type: str) -> bool:
+    media_type = content_type.split(";", 1)[0].strip().lower()
+    if media_type.startswith("text/"):
+        return True
+    if media_type in {
+        "application/json",
+        "application/ld+json",
+        "application/xml",
+        "application/yaml",
+        "application/x-yaml",
+        "application/toml",
+        "application/javascript",
+    }:
+        return True
+    return media_type.endswith("+json") or media_type.endswith("+xml")
+
+
+def _content_length(response: httpx.Response) -> int:
+    raw_content_length = response.headers.get("content-length")
+    if raw_content_length is None:
+        raise ValueError("refusing to write artifact with unknown size to stdout")
+    try:
+        content_length = int(raw_content_length)
+    except ValueError as exc:
+        raise ValueError(
+            "refusing to write artifact with invalid size to stdout"
+        ) from exc
+    if content_length < 0:
+        raise ValueError("refusing to write artifact with invalid size to stdout")
+    return content_length
+
+
+def _fetch_artifact_stdout_bytes(artifact_url: str, max_bytes: int) -> bytes:
+    with httpx.Client(timeout=30.0) as http_client:
+        head_response = http_client.head(artifact_url)
+        if not 200 <= head_response.status_code < 300:
+            raise ValueError(
+                f"artifact metadata request failed: HTTP {head_response.status_code}"
+            )
+        content_type = head_response.headers.get("content-type", "")
+        if not _is_textual_artifact_content_type(content_type):
+            raise ValueError(
+                f"refusing to write non-text artifact to stdout: {content_type}"
+            )
+        content_length = _content_length(head_response)
+        if content_length > max_bytes:
+            raise ValueError(
+                f"refusing to write {content_length} byte artifact to stdout; "
+                f"limit is {max_bytes} bytes"
+            )
+
+        with http_client.stream("GET", artifact_url) as get_response:
+            if not 200 <= get_response.status_code < 300:
+                raise ValueError(
+                    f"artifact fetch failed: HTTP {get_response.status_code}"
+                )
+            get_content_type = get_response.headers.get("content-type", "")
+            if not _is_textual_artifact_content_type(get_content_type):
+                raise ValueError(
+                    "refusing to write non-text artifact to stdout: "
+                    f"{get_content_type}"
+                )
+            chunks: list[bytes] = []
+            total = 0
+            for chunk in get_response.iter_bytes():
+                total += len(chunk)
+                if total > max_bytes:
+                    raise ValueError(
+                        f"refusing to write artifact larger than {max_bytes} "
+                        "bytes to stdout"
+                    )
+                chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _run_artifact_get(namespace: argparse.Namespace) -> int:
+    if not namespace.stdout:
+        print_cli_error("artifact get requires explicit --stdout", area="usage")
+        return 2
+    try:
+        data = _fetch_artifact_stdout_bytes(namespace.url, namespace.max_bytes)
+    except (httpx.HTTPError, ValueError) as exc:
+        print_cli_error(str(exc), area="artifact")
+        return 1
+    stdout_buffer = getattr(sys.stdout, "buffer", None)
+    if stdout_buffer is not None:
+        stdout_buffer.write(data)
+        stdout_buffer.flush()
+    else:
+        sys.stdout.write(data.decode("utf-8"))
+        sys.stdout.flush()
+    return 0
+
+
 def _client_config_path(config_dir: str, config_name: str) -> Path:
     return Path(config_dir).expanduser() / f"{config_name}.yaml"
 
@@ -534,7 +639,7 @@ async def _warn_if_staged_server(session: ClientSession, url: str) -> None:
 
 
 async def list_tools(url: str) -> list[Mapping[str, object]]:
-    async with streamablehttp_client(url) as (read_stream, write_stream, _):
+    async with streamable_http_client(url) as (read_stream, write_stream, _):
         async with ClientSession(read_stream, write_stream) as session:
             initialize_result = await session.initialize()
             _warn_if_remote_version_mismatch(initialize_result)
@@ -555,7 +660,7 @@ async def call_tool(
     name: str,
     arguments: Mapping[str, Any],
 ) -> object:
-    async with streamablehttp_client(url) as (read_stream, write_stream, _):
+    async with streamable_http_client(url) as (read_stream, write_stream, _):
         async with ClientSession(read_stream, write_stream) as session:
             initialize_result = await session.initialize()
             _warn_if_remote_version_mismatch(initialize_result)
@@ -763,6 +868,31 @@ def _build_parser() -> argparse.ArgumentParser:
         default={},
         type=_parse_json_object,
         help='operation arguments as a JSON object, for example \'{"account": "bot"}\'',
+    )
+
+    artifact = subcommands.add_parser(
+        "artifact",
+        help="fetch explicit Arbiter artifacts",
+    )
+    artifact_subcommands = artifact.add_subparsers(
+        dest="artifact_command",
+        required=True,
+    )
+    artifact_get = artifact_subcommands.add_parser(
+        "get",
+        help="fetch a small textual artifact",
+    )
+    artifact_get.add_argument("url", help="one-time artifact URL")
+    artifact_get.add_argument(
+        "--stdout",
+        action="store_true",
+        help="write the artifact bytes to stdout",
+    )
+    artifact_get.add_argument(
+        "--max-bytes",
+        default=DEFAULT_ARTIFACT_MAX_BYTES,
+        type=_parse_positive_int,
+        help=f"maximum bytes to write to stdout (default: {DEFAULT_ARTIFACT_MAX_BYTES})",
     )
 
     accounts = subcommands.add_parser("accounts", help="inspect configured accounts")
@@ -1204,6 +1334,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     if namespace.command == "bootstrap" and namespace.bootstrap_command == "client":
         return _run_bootstrap_client(namespace)
+    if namespace.command == "artifact" and namespace.artifact_command == "get":
+        return _run_artifact_get(namespace)
     try:
         _apply_resolved_mcp_url(namespace, _resolve_mcp_url(namespace))
     except (FileNotFoundError, ValueError) as exc:

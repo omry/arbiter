@@ -6,13 +6,32 @@ import platform
 import shutil
 import subprocess
 import sys
+import threading
+from dataclasses import dataclass
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Mapping, Protocol
+from typing import Any, Mapping, Protocol
 
 import pytest
 
 _GO_CLIENT_SMOKE_OUTDIR_ENV = "ARBITER_GO_CLIENT_SMOKE_OUTDIR"
 _GO_CLIENT_SMOKE_REUSE_ENV = "ARBITER_GO_CLIENT_SMOKE_REUSE"
+
+
+@dataclass(frozen=True)
+class ClientCommand:
+    name: str
+    command: Path
+
+
+@dataclass
+class ArtifactHTTPState:
+    head_content_type: str = "text/plain; charset=utf-8"
+    head_content_length: int = 12
+    get_content_type: str = "text/plain; charset=utf-8"
+    body: bytes = b"hello world\n"
+    head_calls: int = 0
+    get_calls: int = 0
 
 
 class RunningArbiterServer(Protocol):
@@ -71,6 +90,21 @@ def _run_arbiter(
     )
 
 
+def _run_client_command(
+    command: Path,
+    *args: str,
+    env: Mapping[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [str(command), *args],
+        check=False,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
@@ -114,6 +148,9 @@ def _build_current_go_client(tmp_path: Path) -> Path:
         return binary
 
     env = os.environ.copy()
+    go_cache = outdir / ".gocache"
+    go_cache.mkdir(parents=True, exist_ok=True)
+    env.setdefault("GOCACHE", str(go_cache))
     result = subprocess.run(
         [
             sys.executable,
@@ -139,6 +176,84 @@ def _build_current_go_client(tmp_path: Path) -> Path:
     )
     assert binary.exists()
     return binary
+
+
+@pytest.fixture(scope="module")
+def current_go_client_binary(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return _build_current_go_client(tmp_path_factory.mktemp("go-client"))
+
+
+@pytest.fixture(params=["python", "go"])
+def arbiter_client_command(
+    request: pytest.FixtureRequest,
+) -> ClientCommand:
+    if request.param == "python":
+        return ClientCommand("python", _arbiter_command())
+    if request.param == "go":
+        return ClientCommand(
+            "go",
+            request.getfixturevalue("current_go_client_binary"),
+        )
+    raise AssertionError(f"unknown client parameter: {request.param}")
+
+
+class _ArtifactRequestHandler(BaseHTTPRequestHandler):
+    def do_HEAD(self) -> None:
+        state = _artifact_state(self.server)
+        state.head_calls += 1
+        self.send_response(200)
+        self.send_header("Content-Type", state.head_content_type)
+        self.send_header("Content-Length", str(state.head_content_length))
+        self.end_headers()
+
+    def do_GET(self) -> None:
+        state = _artifact_state(self.server)
+        state.get_calls += 1
+        self.send_response(200)
+        self.send_header("Content-Type", state.get_content_type)
+        self.send_header("Content-Length", str(len(state.body)))
+        self.end_headers()
+        self.wfile.write(state.body)
+
+    def log_message(self, format: str, *args: Any) -> None:
+        return
+
+
+class _ArtifactHTTPServer(ThreadingHTTPServer):
+    artifact_state: ArtifactHTTPState
+
+
+def _artifact_state(server: object) -> ArtifactHTTPState:
+    state = getattr(server, "artifact_state", None)
+    assert isinstance(state, ArtifactHTTPState)
+    return state
+
+
+@dataclass(frozen=True)
+class RunningArtifactHTTPServer:
+    url: str
+    state: ArtifactHTTPState
+    server: _ArtifactHTTPServer
+    thread: threading.Thread
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=5)
+
+
+def _start_artifact_http_server(state: ArtifactHTTPState) -> RunningArtifactHTTPServer:
+    server = _ArtifactHTTPServer(("127.0.0.1", 0), _ArtifactRequestHandler)
+    server.artifact_state = state
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address[:2]
+    return RunningArtifactHTTPServer(
+        url=f"http://{host}:{port}/artifact",
+        state=state,
+        server=server,
+        thread=thread,
+    )
 
 
 @pytest.mark.parametrize(
@@ -229,6 +344,8 @@ def test_arbiter_console_script_help(
         (("op", "desc", "--help"), "usage: arbiter-py op desc "),
         (("op", "describe", "--help"), "usage: arbiter-py op desc "),
         (("op", "run", "--help"), "usage: arbiter-py op run "),
+        (("artifact", "--help"), "usage: arbiter-py artifact "),
+        (("artifact", "get", "--help"), "usage: arbiter-py artifact get "),
         (("accounts", "--help"), "usage: arbiter-py accounts "),
         (("accounts", "list", "--help"), "usage: arbiter-py accounts list "),
         (("accounts", "desc", "--help"), "usage: arbiter-py accounts desc "),
@@ -549,6 +666,7 @@ def test_arbiter_client_console_script_bootstrap_client(
 
 
 def test_local_arbiter_server_fixture_serves_version_info(
+    arbiter_client_command: ClientCommand,
     local_arbiter_server_factory: LocalArbiterServerFactory,
 ) -> None:
     server = local_arbiter_server_factory.start()
@@ -557,7 +675,7 @@ def test_local_arbiter_server_fixture_serves_version_info(
         "mcp",
         "call",
         "version_info",
-        command=_arbiter_command(),
+        command=arbiter_client_command.command,
     )
 
     assert result.returncode == 0
@@ -566,21 +684,94 @@ def test_local_arbiter_server_fixture_serves_version_info(
     assert "structuredContent" in payload
 
 
-def test_current_platform_go_client_calls_local_arbiter_server(
-    tmp_path: Path,
-    local_arbiter_server_factory: LocalArbiterServerFactory,
+def test_arbiter_clients_require_explicit_stdout_for_artifacts(
+    arbiter_client_command: ClientCommand,
 ) -> None:
-    binary = _build_current_go_client(tmp_path)
-    server = local_arbiter_server_factory.start()
-
-    result = server.run_client(
-        "mcp",
-        "call",
-        "version_info",
-        command=binary,
+    result = _run_client_command(
+        arbiter_client_command.command,
+        "artifact",
+        "get",
+        "http://127.0.0.1:9/artifact",
     )
 
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert "requires explicit --stdout" in result.stderr
+
+
+def test_arbiter_clients_write_small_text_artifact_to_stdout(
+    arbiter_client_command: ClientCommand,
+) -> None:
+    server = _start_artifact_http_server(ArtifactHTTPState())
+    try:
+        result = _run_client_command(
+            arbiter_client_command.command,
+            "artifact",
+            "get",
+            server.url,
+            "--stdout",
+        )
+    finally:
+        server.close()
+
     assert result.returncode == 0
+    assert result.stdout == "hello world\n"
     assert result.stderr == ""
-    payload = json.loads(result.stdout)
-    assert "structuredContent" in payload
+    assert server.state.head_calls == 1
+    assert server.state.get_calls == 1
+
+
+def test_arbiter_clients_reject_non_text_artifact_before_get(
+    arbiter_client_command: ClientCommand,
+) -> None:
+    server = _start_artifact_http_server(
+        ArtifactHTTPState(
+            head_content_type="application/pdf",
+            head_content_length=12,
+        )
+    )
+    try:
+        result = _run_client_command(
+            arbiter_client_command.command,
+            "artifact",
+            "get",
+            server.url,
+            "--stdout",
+        )
+    finally:
+        server.close()
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert "non-text artifact" in result.stderr
+    assert server.state.head_calls == 1
+    assert server.state.get_calls == 0
+
+
+def test_arbiter_clients_reject_oversized_text_artifact_before_get(
+    arbiter_client_command: ClientCommand,
+) -> None:
+    server = _start_artifact_http_server(
+        ArtifactHTTPState(
+            head_content_type="text/plain",
+            head_content_length=13,
+        )
+    )
+    try:
+        result = _run_client_command(
+            arbiter_client_command.command,
+            "artifact",
+            "get",
+            server.url,
+            "--stdout",
+            "--max-bytes",
+            "12",
+        )
+    finally:
+        server.close()
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert "limit is 12 bytes" in result.stderr
+    assert server.state.head_calls == 1
+    assert server.state.get_calls == 0
