@@ -51,17 +51,19 @@ This file is the day-to-day queue for design and implementation gaps.
       metadata and deployment requirements docs agree; release notes and status notes
       are current; and a build/install smoke path is verified.
 
-- [ ] `P1` Add CI smoke tests for all platform-specific Arbiter skill binaries.
-      The `arbiter-skill` selector routes to six native Go client target
-      packages, so release CI should prove each target binary starts and can
-      talk to an Arbiter-compatible local test server before publishing.
-      Acceptance checks: CI builds or downloads all six target wheels; extracts
-      or installs each target artifact; runs the packaged `bin/arbiter` or
-      `bin/arbiter.exe` for `linux-amd64`, `linux-arm64`, `darwin-amd64`,
+- [ ] `P1` Add CI smoke tests for all platform-specific Arbiter client wheels.
+      The `arbiter-skill` package now relies on ASI to copy the native Go client
+      from the platform-selected `arbiter-client` companion wheel, so release CI
+      should prove each client wheel starts and can talk to an Arbiter-compatible
+      local test server before publishing.
+      Acceptance checks: CI builds or downloads all six `arbiter-client` wheels;
+      extracts or installs each target artifact; runs the packaged `arbiter`
+      executable for `linux-amd64`, `linux-arm64`, `darwin-amd64`,
       `darwin-arm64`, `windows-amd64`, and `windows-arm64`; each binary passes
       at least `--version` and one smoke request against a local test MCP server;
-      and failures identify the target package, OS, architecture, command, and
-      server log excerpt.
+      ASI install testing verifies `arbiter-skill` copies the selected companion
+      client into `bin/arbiter`; and failures identify the target package, OS,
+      architecture, command, and server log excerpt.
 
 - [ ] `P1` Run an Arbiter security analysis before initial release.
       Do one focused threat-model and implementation review pass over the

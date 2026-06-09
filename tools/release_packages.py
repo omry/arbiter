@@ -43,7 +43,6 @@ CLIENT_TARGETS = (
     "windows-amd64",
     "windows-arm64",
 )
-SKILL_TARGETS = CLIENT_TARGETS
 
 
 def _project_name(pyproject: Path) -> str:
@@ -74,7 +73,7 @@ def plugin_packages(root: Path) -> tuple[Package, ...]:
 
 
 def skill_packages() -> tuple[Package, ...]:
-    packages = [
+    return (
         Package(
             key="skill",
             kind="skill",
@@ -82,20 +81,8 @@ def skill_packages() -> tuple[Package, ...]:
             path=Path("server"),
             project_name="arbiter-server",
             artifacts=("wheel",),
-        )
-    ]
-    packages.extend(
-        Package(
-            key=f"skill:{target}",
-            kind="skill",
-            name=f"arbiter-skill-{target}",
-            path=Path("server"),
-            project_name="arbiter-server",
-            artifacts=("wheel",),
-        )
-        for target in SKILL_TARGETS
+        ),
     )
-    return tuple(packages)
 
 
 def release_packages(root: Path) -> tuple[Package, ...]:

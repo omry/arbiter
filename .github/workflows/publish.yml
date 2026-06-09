@@ -10,7 +10,7 @@ on:
         required: true
         type: string
       publish_packages:
-        description: "Publish keys: all or comma-separated keys like server,imap,meta:all,client,skill:linux-amd64"
+        description: "Publish keys: all or comma-separated keys like server,imap,meta:all,client,skill"
         required: true
         default: all
         type: string

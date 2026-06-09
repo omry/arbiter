@@ -13,6 +13,10 @@ run, it is not done.
 - Documentation pass across the published-package install and deployment path
   has not been completed.
 - Security analysis has not been completed.
+- Agent Skill Installer validation against the published `arbiter-skill`
+  package has not been completed.
+- Cleanup of the earlier platform-specific skill package attempt has not been
+  planned or executed.
 
 ## Required gates
 
@@ -41,8 +45,8 @@ Build all distributions into a temporary wheelhouse:
 tools/build_release_dists --clean --outdir /tmp/arbiter-release/dist
 ```
 
-Use `--packages server,smtp`, `--packages meta:all`, `--packages client`, or a
-skill key such as `--packages skill:linux-amd64` for narrower package sets.
+Use `--packages server,smtp`, `--packages meta:all`, `--packages client`, or
+`--packages skill` for narrower package sets.
 Add `--verbose` when build logs are needed.
 
 Prepare the publish artifact set from the built wheelhouse:
@@ -69,6 +73,12 @@ entry points:
 
 Also check installed CLI help, config bootstrap, plugin discovery, and any
 package-specific behavior touched by the release.
+
+For the skill package, test the Agent Skill Installer path from the built
+wheelhouse before publishing. Install `arbiter-skill` into a fresh temporary
+target directory through ASI, then verify that the installed skill exposes the
+expected `SKILL.md`, client entry point, and any installer-discoverable
+metadata.
 
 ### 3. Test and deployment readiness
 
@@ -137,10 +147,21 @@ repository, workflow, and environment.
 
 The native client publishing key is `client`, which publishes the
 `arbiter-client` platform wheel set. The transitional Python CLI client is not
-published. The skill publishing set is the selector package `skill` plus the
-six native target packages: `skill:linux-amd64`, `skill:linux-arm64`,
-`skill:darwin-amd64`, `skill:darwin-arm64`, `skill:windows-amd64`, and
-`skill:windows-arm64`.
+published. The skill publishing key is `skill`, which publishes the
+platform-neutral `arbiter-skill` package. The skill declares `arbiter-client`
+as an ASI companion wheel, so ASI should resolve the platform-specific native
+client through `arbiter-client` during skill install.
+
+Before the final initial release, publish and validate the intended skill
+package surface: publish `client`, publish `skill`, then verify ASI installs
+`arbiter-skill` and copies the platform-selected `arbiter-client` executable
+into the installed skill.
+
+Inventory any old platform-specific skill package projects or artifacts from
+the previous packaging attempt, including `arbiter-skill-{platform}` packages.
+Decide whether each one should be left as a historical dev artifact, yanked,
+deprecated in project metadata, or superseded by the single `arbiter-skill`
+package, and record the cleanup action taken.
 
 ### 8. Post-release verification
 

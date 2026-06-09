@@ -10,26 +10,15 @@ Arbiter publishes several Python distributions from one repository:
 - `meta:all`: `arbiter-suite`, a zero-code dependency bundle for all real
   packages
 - `client`: `arbiter-client`, the platform-tagged native client wheel set
-- `skill`: `arbiter-skill`, the agent-skill selector package
-- `skill:linux-amd64`: `arbiter-skill-linux-amd64`, the Linux amd64 native
-  skill target
-- `skill:linux-arm64`: `arbiter-skill-linux-arm64`, the Linux arm64 native
-  skill target
-- `skill:darwin-amd64`: `arbiter-skill-darwin-amd64`, the macOS amd64 native
-  skill target
-- `skill:darwin-arm64`: `arbiter-skill-darwin-arm64`, the macOS arm64 native
-  skill target
-- `skill:windows-amd64`: `arbiter-skill-windows-amd64`, the Windows amd64
-  native skill target
-- `skill:windows-arm64`: `arbiter-skill-windows-arm64`, the Windows arm64
-  native skill target
+- `skill`: `arbiter-skill`, the platform-neutral agent skill package that
+  declares `arbiter-client` as its native-client companion wheel
 
 Meta package keys do not expand to their dependencies. Selecting `meta:all`
 publishes only the `arbiter-suite` package.
 
-The native client and skill package versions come from `arbiter-server`. They are
-generated wheel-only artifacts and do not have separate towncrier release notes.
-The transitional Python CLI client is repo-local and is not published.
+The native client and skill package versions come from `arbiter-server`. They
+are generated wheel-only artifacts and do not have separate towncrier release
+notes. The transitional Python CLI client is repo-local and is not published.
 
 This page describes publishing mechanics only.
 
@@ -131,7 +120,7 @@ tools/plan_pypi_publish --packages server --prepare-output-dir
 tools/plan_pypi_publish --packages server,imap --prepare-output-dir
 tools/plan_pypi_publish --packages smtp --prepare-output-dir
 tools/plan_pypi_publish --packages client --prepare-output-dir
-tools/plan_pypi_publish --packages skill:linux-amd64 --prepare-output-dir
+tools/plan_pypi_publish --packages skill --prepare-output-dir
 ```
 
 The planner discovers plugin package keys from `plugins/*/pyproject.toml` and
@@ -155,12 +144,6 @@ before each run:
 4. `meta:all` (`arbiter-suite`)
 5. `client` (`arbiter-client`)
 6. `skill` (`arbiter-skill`)
-7. `skill:linux-amd64` (`arbiter-skill-linux-amd64`)
-8. `skill:linux-arm64` (`arbiter-skill-linux-arm64`)
-9. `skill:darwin-amd64` (`arbiter-skill-darwin-amd64`)
-10. `skill:darwin-arm64` (`arbiter-skill-darwin-arm64`)
-11. `skill:windows-amd64` (`arbiter-skill-windows-amd64`)
-12. `skill:windows-arm64` (`arbiter-skill-windows-arm64`)
 
 ## Dev releases
 

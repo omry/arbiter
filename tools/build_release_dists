@@ -211,7 +211,7 @@ def build_distributions(
         ]
         _run(command, verbose=verbose)
 
-    if client_selected or skill_selected:
+    if client_selected:
         _build_go_client(root=root, verbose=verbose)
 
     if client_selected:

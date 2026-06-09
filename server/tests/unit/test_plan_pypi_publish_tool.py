@@ -184,19 +184,19 @@ def test_skill_publish_key_uses_server_version_and_wheel_only_artifact(
 
     plan = _build_plan(tool)(
         tmp_path,
-        package_keys=_parse_package_keys(tool)("skill:linux-amd64"),
+        package_keys=_parse_package_keys(tool)("skill"),
     )
     publish_items = [item for item in plan if item.publish]
 
     assert [
         getattr(tool, "package_key_by_name")(tmp_path)[item.package.name]
         for item in publish_items
-    ] == ["skill:linux-amd64"]
+    ] == ["skill"]
     item = publish_items[0]
-    assert item.package.name == "arbiter-skill-linux-amd64"
+    assert item.package.name == "arbiter-skill"
     assert item.local_version.text == "0.9.0.dev1"
     assert _distribution_patterns(tool)(item.package, item.local_version) == (
-        "arbiter_skill_linux_amd64-0.9.0.dev1-py3-none-any.whl",
+        "arbiter_skill-0.9.0.dev1-py3-none-any.whl",
     )
 
 

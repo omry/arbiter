@@ -151,12 +151,9 @@ def test_build_distributions_copies_only_selected_skill_wheels(
             skill_outdir = Path(command[command.index("--outdir") + 1])
             wheels = skill_outdir / "wheels"
             wheels.mkdir(parents=True)
-            for name in (
-                "arbiter_skill-1.2.3-py3-none-any.whl",
-                "arbiter_skill_linux_amd64-1.2.3-py3-none-any.whl",
-                "arbiter_skill_windows_arm64-1.2.3-py3-none-any.whl",
-            ):
-                (wheels / name).write_text("wheel\n", encoding="utf-8")
+            (wheels / "arbiter_skill-1.2.3-py3-none-any.whl").write_text(
+                "wheel\n", encoding="utf-8"
+            )
 
     monkeypatch.setattr(tool, "_run", fake_run)
 
@@ -164,16 +161,13 @@ def test_build_distributions_copies_only_selected_skill_wheels(
         root=tmp_path,
         outdir=tmp_path / "dist",
         clean=False,
-        packages=tool._parse_package_keys("skill:windows-arm64"),
+        packages=tool._parse_package_keys("skill"),
         verbose=False,
     )
 
-    assert [Path(call[0]).name for call in calls] == [
-        "build_go_client",
-        "package_arbiter_skill",
-    ]
+    assert [Path(call[0]).name for call in calls] == ["package_arbiter_skill"]
     assert sorted(path.name for path in (tmp_path / "dist").iterdir()) == [
-        "arbiter_skill_windows_arm64-1.2.3-py3-none-any.whl",
+        "arbiter_skill-1.2.3-py3-none-any.whl",
     ]
 
 
