@@ -74,13 +74,14 @@ under `client/go-cli/dist/`. Limit the matrix with one or more `--target
 GOOS-GOARCH` arguments, for example `tools/build_go_client --target
 linux-arm64`; pass `--debug` to keep debug symbols.
 
-Package the native client as platform-specific skill artifacts with:
+Package the platform-neutral agent skill with:
 
 - `tools/package_arbiter_skill --clean`
 
-This writes a selector skill artifact plus one `arbiter-skill-{os}-{arch}`
-target artifact per built binary under `dist/arbiter-skill/`, with local
-directories and wheels generated side by side.
+This writes the platform-neutral `arbiter-skill` artifact under
+`dist/arbiter-skill/`, with local directories and wheels generated side by side.
+The skill declares `arbiter-client` as an Agent Skill Installer companion wheel;
+ASI lets pip select the current platform's native client wheel during install.
 
 The native client can also be packaged as the `arbiter-client` PyPI project:
 

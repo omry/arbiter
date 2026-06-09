@@ -42,6 +42,8 @@ def current_target() -> Target | None:
         "darwin": "darwin",
         "linux": "linux",
         "win32": "windows",
+        "cygwin": "windows",
+        "msys": "windows",
     }
     goarch_by_machine = {
         "amd64": "amd64",
@@ -92,19 +94,75 @@ def display_path(path: Path, root: Path) -> str:
         return str(path)
 
 
-def update_skill_bin_link(*, root: Path, binary: Path, target: Target) -> Path:
+def skill_launcher_text() -> str:
+    return """#!/usr/bin/env python3
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import platform
+import sys
+
+
+def current_target() -> tuple[str, str]:
+    os_by_platform = {
+        "darwin": "darwin",
+        "linux": "linux",
+        "win32": "windows",
+        "cygwin": "windows",
+        "msys": "windows",
+    }
+    arch_by_machine = {
+        "amd64": "amd64",
+        "x86_64": "amd64",
+        "aarch64": "arm64",
+        "arm64": "arm64",
+    }
+    goos = os_by_platform.get(sys.platform)
+    goarch = arch_by_machine.get(platform.machine().lower())
+    if goos is None or goarch is None:
+        raise RuntimeError(
+            f"unsupported platform: {sys.platform} {platform.machine()}"
+        )
+    return goos, goarch
+
+
+def main() -> int:
+    goos, goarch = current_target()
+    binary_name = "arbiter.exe" if goos == "windows" else "arbiter"
+    skill_bin = Path(__file__).resolve().parent
+    repo_root = skill_bin.parent.parent
+    binary = repo_root / "client" / "go-cli" / "dist" / f"{goos}-{goarch}" / binary_name
+    if not binary.is_file():
+        print(
+            f"missing Arbiter Go client for {goos}-{goarch}: {binary}",
+            file=sys.stderr,
+        )
+        print(
+            f"run: tools/build_go_client --target {goos}-{goarch}",
+            file=sys.stderr,
+        )
+        return 127
+    os.execv(binary, [str(binary), *sys.argv[1:]])
+    raise AssertionError("os.execv returned unexpectedly")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+"""
+
+
+def update_skill_bin_launcher(*, root: Path) -> Path:
     skill_bin_dir = root / "skill" / "bin"
     skill_bin_dir.mkdir(parents=True, exist_ok=True)
-    output = skill_bin_dir / target.binary_name
-    temporary = skill_bin_dir / f".{target.binary_name}.tmp-link"
+    output = skill_bin_dir / "arbiter"
+    temporary = skill_bin_dir / ".arbiter.tmp-launcher"
     if temporary.exists() or temporary.is_symlink():
         temporary.unlink()
     try:
-        os.link(binary, temporary)
-        if output.exists() and output.samefile(temporary):
-            temporary.unlink()
-        else:
-            os.replace(temporary, output)
+        temporary.write_text(skill_launcher_text(), encoding="utf-8")
+        temporary.chmod(0o755)
+        os.replace(temporary, output)
     except OSError:
         if temporary.exists() or temporary.is_symlink():
             temporary.unlink()
@@ -236,14 +294,10 @@ def main(argv: list[str] | None = None) -> int:
         if host_target is not None and outdir == local_dist:
             built_by_target = dict(zip(targets, built, strict=True))
             if host_target in built_by_target:
-                link = update_skill_bin_link(
-                    root=root,
-                    binary=built_by_target[host_target],
-                    target=host_target,
-                )
+                launcher = update_skill_bin_launcher(root=root)
                 print(
-                    "linked "
-                    f"{display_path(link, root)} -> "
+                    "updated "
+                    f"{display_path(launcher, root)} launcher for "
                     f"{display_path(built_by_target[host_target], root)}"
                 )
     except (OSError, subprocess.CalledProcessError) as exc:

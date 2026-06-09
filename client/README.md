@@ -4,6 +4,9 @@ Native Arbiter client binary packaged as platform-specific Python wheels.
 
 This distribution intentionally contains no Python wrapper. Installing the
 wheel places the native `arbiter` executable on the environment `PATH`.
+The wheel also includes the executable at `arbiter_client/bin/arbiter` so
+Agent Skill Installer can copy it into the installed Arbiter skill from a stable
+path across platform wheels.
 
 For local development from the repository root:
 

@@ -92,7 +92,7 @@ def _editable_launcher(
 
     launcher = launcher_dir / binary_name
     launcher.write_text(
-        f"#!/usr/bin/env sh\nexec {shlex.quote(str(binary))} \"$@\"\n",
+        f'#!/usr/bin/env sh\nexec {shlex.quote(str(binary))} "$@"\n',
         encoding="utf-8",
     )
     launcher.chmod(0o755)
@@ -152,6 +152,7 @@ class ArbiterClientBuildHook(BuildHookInterface):
             binary_name=binary_name,
         )
         build_data["shared_scripts"] = {str(script_source): script_name}
+        build_data["force_include"] = {str(script_source): "arbiter_client/bin/arbiter"}
 
 
 def get_build_hook() -> type[ArbiterClientBuildHook]:

@@ -1,5 +1,13 @@
 installer:
   version: 1
+  external_wheels:
+    - package: "arbiter-client==${package.version}"
+      editable: ../client
+      copies:
+        - wheel_path: arbiter_client/bin/arbiter
+          skill_path: bin/arbiter
+          executable: true
+          replace: true
   shared:
     instructions:
       discoverability:

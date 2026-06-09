@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 from importlib.machinery import SourceFileLoader
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -100,7 +101,41 @@ def test_main_reports_subprocess_failure(tmp_path, monkeypatch, capsys) -> None:
     assert "build_go_client:" in capsys.readouterr().err
 
 
-def test_main_links_current_platform_binary_into_skill_bin(
+def test_current_target_recognizes_windows_platform_aliases(monkeypatch) -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    tool = _load_tool(repo_root)
+    monkeypatch.setattr(tool.platform, "machine", lambda: "AMD64")
+
+    monkeypatch.setattr(tool.sys, "platform", "cygwin")
+    assert tool.current_target() == tool.Target("windows", "amd64")
+
+    monkeypatch.setattr(tool.sys, "platform", "msys")
+    assert tool.current_target() == tool.Target("windows", "amd64")
+
+
+def test_update_skill_bin_launcher_breaks_stale_binary_hardlink(tmp_path) -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    tool = _load_tool(repo_root)
+    binary = tmp_path / "client/go-cli/dist/linux-amd64/arbiter"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("binary\n", encoding="utf-8")
+    skill_bin = tmp_path / "skill" / "bin"
+    skill_bin.mkdir(parents=True)
+    launcher = skill_bin / "arbiter"
+    os.link(binary, launcher)
+    assert launcher.stat().st_ino == binary.stat().st_ino
+
+    result = tool.update_skill_bin_launcher(root=tmp_path)
+
+    assert result == launcher
+    assert binary.read_text(encoding="utf-8") == "binary\n"
+    assert launcher.read_text(encoding="utf-8").startswith("#!/usr/bin/env python3")
+    assert "tools/build_go_client --target" in launcher.read_text(encoding="utf-8")
+    assert launcher.stat().st_ino != binary.stat().st_ino
+    assert not (skill_bin / ".arbiter.tmp-launcher").exists()
+
+
+def test_main_writes_portable_skill_launcher_for_current_platform(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -141,11 +176,15 @@ def test_main_links_current_platform_binary_into_skill_bin(
     )
 
     binary = tmp_path / "client/go-cli" / "dist" / "linux-amd64" / "arbiter"
-    link = tmp_path / "skill" / "bin" / "arbiter"
+    launcher = tmp_path / "skill" / "bin" / "arbiter"
     assert result == 0
-    assert link.read_text(encoding="utf-8") == "new"
-    assert link.stat().st_ino == binary.stat().st_ino
-    assert not (skill_bin / ".arbiter.tmp-link").exists()
+    launcher_text = launcher.read_text(encoding="utf-8")
+    assert binary.read_text(encoding="utf-8") == "new"
+    assert launcher_text.startswith("#!/usr/bin/env python3")
+    assert "client\" / \"go-cli\" / \"dist\"" in launcher_text
+    assert "tools/build_go_client --target" in launcher_text
+    assert launcher.stat().st_ino != binary.stat().st_ino
+    assert not (skill_bin / ".arbiter.tmp-launcher").exists()
 
     result = tool.main(
         [
@@ -158,11 +197,14 @@ def test_main_links_current_platform_binary_into_skill_bin(
     )
 
     assert result == 0
-    assert link.stat().st_ino == binary.stat().st_ino
-    assert not (skill_bin / ".arbiter.tmp-link").exists()
+    assert launcher.stat().st_ino != binary.stat().st_ino
+    assert not (skill_bin / ".arbiter.tmp-launcher").exists()
 
 
-def test_main_does_not_link_custom_output_dir(tmp_path, monkeypatch) -> None:
+def test_main_does_not_update_skill_launcher_for_custom_output_dir(
+    tmp_path,
+    monkeypatch,
+) -> None:
     repo_root = Path(__file__).resolve().parents[3]
     tool = _load_tool(repo_root)
     client_dir = tmp_path / "client/go-cli"

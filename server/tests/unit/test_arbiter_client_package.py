@@ -65,19 +65,22 @@ def test_hatchling_builds_platform_tagged_script_wheel(tmp_path: Path) -> None:
     with zipfile.ZipFile(wheel) as archive:
         names = archive.namelist()
         assert names == [
+            "arbiter_client/bin/arbiter",
             "arbiter_client-1.2.3.data/scripts/arbiter",
             "arbiter_client-1.2.3.dist-info/METADATA",
             "arbiter_client-1.2.3.dist-info/WHEEL",
             "arbiter_client-1.2.3.dist-info/RECORD",
         ]
-        assert not any(name.startswith("arbiter_client/") for name in names)
         assert (
             archive.read("arbiter_client-1.2.3.data/scripts/arbiter")
             == b"native binary\n"
         )
+        assert archive.read("arbiter_client/bin/arbiter") == b"native binary\n"
         script_info = archive.getinfo("arbiter_client-1.2.3.data/scripts/arbiter")
+        companion_info = archive.getinfo("arbiter_client/bin/arbiter")
         if os.name != "nt":
             assert (script_info.external_attr >> 16) & stat.S_IXUSR
+            assert (companion_info.external_attr >> 16) & stat.S_IXUSR
         wheel_metadata = archive.read("arbiter_client-1.2.3.dist-info/WHEEL").decode()
         assert "Root-Is-Purelib: false\n" in wheel_metadata
         assert "Tag: py3-none-manylinux_2_17_x86_64\n" in wheel_metadata
@@ -117,10 +120,12 @@ def test_hatchling_builds_windows_exe_script_wheel(tmp_path: Path) -> None:
     assert wheel.is_file()
     with zipfile.ZipFile(wheel) as archive:
         assert "arbiter_client-1.2.3.data/scripts/arbiter.exe" in archive.namelist()
+        assert "arbiter_client/bin/arbiter" in archive.namelist()
         assert (
             archive.read("arbiter_client-1.2.3.data/scripts/arbiter.exe")
             == b"windows binary\n"
         )
+        assert archive.read("arbiter_client/bin/arbiter") == b"windows binary\n"
 
 
 def test_editable_linux_build_uses_live_launcher(tmp_path: Path) -> None:
@@ -140,8 +145,7 @@ def test_editable_linux_build_uses_live_launcher(tmp_path: Path) -> None:
     assert name == "arbiter"
     assert source != binary
     assert source.read_text(encoding="utf-8") == (
-        "#!/usr/bin/env sh\n"
-        f"exec '{binary}' \"$@\"\n"
+        "#!/usr/bin/env sh\n" f"exec '{binary}' \"$@\"\n"
     )
     assert source.stat().st_mode & stat.S_IXUSR
 
