@@ -127,7 +127,7 @@ def configured_service_names(accounts: Any) -> list[str]:
 
 
 def service_accounts_for(
-    config: AppConfig,
+    config: Any,
     service_name: str,
 ) -> Mapping[str, object] | None:
     accounts = _service_config_mapping(config.arbiter.account, service_name)
@@ -137,7 +137,7 @@ def service_accounts_for(
 
 
 def service_policies_for(
-    config: AppConfig,
+    config: Any,
     service_name: str,
 ) -> Mapping[str, object]:
     return _service_config_mapping(config.arbiter.policy, service_name)

@@ -32,9 +32,6 @@ from .artifacts import (
 from .cli_errors import print_cli_error
 from .config import (
     AppConfig,
-    ArbiterConfig,
-    DiscoveryConfig,
-    FastMCPConfig,
     DeploymentScope,
     StorageConfig,
     configured_service_names,
@@ -186,71 +183,6 @@ class DockerDeployRequirements:
     requirements: tuple[str, ...]
 
 
-def _to_object(value: Any) -> Any:
-    if OmegaConf.is_config(value):
-        return OmegaConf.to_object(value)
-    return value
-
-
-def _select_object(cfg: DictConfig, key: str, default: Any) -> Any:
-    value = OmegaConf.select(cfg, key, default=default)
-    return _to_object(value)
-
-
-def _instantiate_app_config_from_hydra(cfg: DictConfig) -> AppConfig:
-    raw_deployment_scope = _select_object(
-        cfg,
-        "arbiter.deployment_scope",
-        DeploymentScope.unknown,
-    )
-    deployment_scope = (
-        raw_deployment_scope
-        if isinstance(raw_deployment_scope, DeploymentScope)
-        else DeploymentScope(str(raw_deployment_scope))
-    )
-    server_root_cfg = OmegaConf.create(
-        {
-            "arbiter": {
-                "server": OmegaConf.merge(
-                    OmegaConf.structured(FastMCPConfig),
-                    OmegaConf.select(cfg, "arbiter.server", default={}),
-                )
-            }
-        }
-    )
-    server = cast(
-        FastMCPConfig,
-        _select_object(server_root_cfg, "arbiter.server", {}),
-    )
-    discovery_cfg = cast(
-        DictConfig,
-        OmegaConf.merge(
-            OmegaConf.structured(DiscoveryConfig),
-            OmegaConf.select(cfg, "arbiter.discovery", default={}),
-        ),
-    )
-    discovery = cast(
-        DiscoveryConfig,
-        _to_object(discovery_cfg),
-    )
-    return AppConfig(
-        arbiter=ArbiterConfig(
-            server=server,
-            deployment_scope=deployment_scope,
-            discovery=discovery,
-            account=cast(dict[str, Any], _select_object(cfg, "arbiter.account", {})),
-            policy=cast(dict[str, Any], _select_object(cfg, "arbiter.policy", {})),
-            etc=cast(dict[str, Any], _select_object(cfg, "arbiter.etc", {})),
-        )
-    )
-
-
-def _instantiate_app_config(cfg: HydraConfig) -> AppConfig:
-    if isinstance(cfg, AppConfig):
-        return cfg
-    return _instantiate_app_config_from_hydra(cfg)
-
-
 def _service_plugin_map(
     service_plugins: Sequence[ServicePlugin],
 ) -> dict[str, ServicePlugin]:
@@ -259,7 +191,7 @@ def _service_plugin_map(
 
 
 def _configured_service_plugins(
-    cfg: AppConfig,
+    cfg: HydraConfig,
     service_plugins: Sequence[ServicePlugin],
 ) -> list[ServicePlugin]:
     available_plugins = _service_plugin_map(service_plugins)
@@ -279,21 +211,20 @@ def build_app(
     service_plugins: Sequence[ServicePlugin] | None = None,
     runtime_dependencies: dict[str, object] | None = None,
 ) -> ArbiterApp:
-    app_config = _instantiate_app_config(cfg)
     available_plugins = (
         discover_service_plugins() if service_plugins is None else service_plugins
     )
-    active_service_plugins = _configured_service_plugins(app_config, available_plugins)
+    active_service_plugins = _configured_service_plugins(cfg, available_plugins)
     shared_runtime_dependencies = runtime_dependencies or {}
-    plugin_data_root = _plugin_data_root(app_config.arbiter.storage)
+    plugin_data_root = _plugin_data_root(_storage_config(cfg))
     runtimes: dict[str, object] = {}
     for service_plugin in active_service_plugins:
-        accounts = service_accounts_for(app_config, service_plugin.name)
+        accounts = service_accounts_for(cfg, service_plugin.name)
         if accounts is None:
             raise RuntimeError(
                 f"service config is not configured: {service_plugin.name}"
             )
-        policies = service_policies_for(app_config, service_plugin.name)
+        policies = service_policies_for(cfg, service_plugin.name)
         plugin_dependencies = {
             **shared_runtime_dependencies,
             "plugin_storage": PluginStorage(
@@ -317,9 +248,21 @@ def build_app(
     return ArbiterApp(RuntimeRegistry(runtimes))
 
 
-def _plugin_data_root(storage_config: StorageConfig) -> Path:
-    if storage_config.plugin_data_dir is not None:
-        return Path(storage_config.plugin_data_dir).expanduser().resolve()
+def _storage_config(cfg: HydraConfig) -> StorageConfig | Any | None:
+    if OmegaConf.is_config(cfg):
+        return OmegaConf.select(cast(Any, cfg), "arbiter.storage")
+    return getattr(cfg.arbiter, "storage", None)
+
+
+def _plugin_data_root(storage_config: StorageConfig | Any | None) -> Path:
+    if storage_config is None:
+        return default_plugin_data_root()
+    if OmegaConf.is_config(storage_config):
+        plugin_data_dir = OmegaConf.select(cast(Any, storage_config), "plugin_data_dir")
+    else:
+        plugin_data_dir = getattr(storage_config, "plugin_data_dir", None)
+    if plugin_data_dir is not None:
+        return Path(str(plugin_data_dir)).expanduser().resolve()
     return default_plugin_data_root()
 
 
@@ -327,7 +270,7 @@ def _csv_or_none(values: list[str]) -> str:
     return ",".join(values) if values else "none"
 
 
-def _service_accounts_summary(cfg: AppConfig) -> str:
+def _service_accounts_summary(cfg: HydraConfig) -> str:
     summaries: list[str] = []
     for service_name in configured_service_names(cfg.arbiter.account):
         accounts = cfg.arbiter.account.get(service_name, {})
@@ -336,20 +279,20 @@ def _service_accounts_summary(cfg: AppConfig) -> str:
     return ";".join(summaries) if summaries else "none"
 
 
-def _server_mcp_url(cfg: AppConfig) -> str:
+def _server_mcp_url(cfg: HydraConfig) -> str:
     if cfg.arbiter.server.transport == "stdio":
         return "stdio"
     return f"{_server_base_url(cfg)}{_server_public_path(cfg)}"
 
 
-def _server_public_path(cfg: AppConfig) -> str:
+def _server_public_path(cfg: HydraConfig) -> str:
     public_path = cfg.arbiter.server.public.path
     if "${" in public_path:
         public_path = cfg.arbiter.server.bind.path
     return public_path
 
 
-def _server_base_url(cfg: AppConfig) -> str:
+def _server_base_url(cfg: HydraConfig) -> str:
     if cfg.arbiter.server.transport == "stdio":
         raise ValueError("stdio transport does not expose HTTP artifact URLs")
     public_base_url = cfg.arbiter.server.public.base_url.strip()
@@ -367,18 +310,24 @@ def _server_base_url(cfg: AppConfig) -> str:
     return public_base_url.rstrip("/")
 
 
-def _artifact_base_url(cfg: AppConfig) -> str:
+def _artifact_base_url(cfg: HydraConfig) -> str:
     return f"{_server_base_url(cfg)}{ARTIFACT_ROUTE_PREFIX}"
 
 
-def log_startup_summary(cfg: AppConfig) -> None:
+def _deployment_scope_value(deployment_scope: DeploymentScope | str) -> str:
+    if isinstance(deployment_scope, DeploymentScope):
+        return deployment_scope.value
+    return str(deployment_scope)
+
+
+def log_startup_summary(cfg: HydraConfig) -> None:
     active_services = configured_service_names(cfg.arbiter.account)
 
     LOGGER.info(
         "Arbiter starting version=%s deployment_scope=%s transport=%s bind=%s:%s%s "
         "mcp_url=%s services=%s service_accounts=%s",
         arbiter_server_version(),
-        cfg.arbiter.deployment_scope.value,
+        _deployment_scope_value(cfg.arbiter.deployment_scope),
         cfg.arbiter.server.transport,
         cfg.arbiter.server.bind.host,
         cfg.arbiter.server.bind.port,
@@ -397,7 +346,7 @@ def _installed_plugin_summary(
 
 
 def ensure_runnable_config(
-    cfg: AppConfig,
+    cfg: HydraConfig,
     service_plugins: Sequence[ServicePlugin] | None = None,
 ) -> None:
     if not configured_service_names(cfg.arbiter.account):
@@ -414,13 +363,12 @@ def config_check_summary(
     cfg: HydraConfig,
     service_plugins: Sequence[ServicePlugin] | None = None,
 ) -> str:
-    app_config = _instantiate_app_config(cfg)
-    ensure_runnable_config(app_config, service_plugins=service_plugins)
-    build_app(app_config, service_plugins=service_plugins)
+    ensure_runnable_config(cfg, service_plugins=service_plugins)
+    build_app(cfg, service_plugins=service_plugins)
     return (
         "config ok: "
-        f"services={_csv_or_none(configured_service_names(app_config.arbiter.account))} "
-        f"service_accounts={_service_accounts_summary(app_config)}"
+        f"services={_csv_or_none(configured_service_names(cfg.arbiter.account))} "
+        f"service_accounts={_service_accounts_summary(cfg)}"
     )
 
 
@@ -507,7 +455,7 @@ def _register_server_tools(
     server: "FastMCP",
     catalog: OperationCatalog,
     service_plugins: Sequence[ServicePlugin],
-    deployment_scope: DeploymentScope,
+    deployment_scope: DeploymentScope | str,
 ) -> None:
     @server.tool(
         description=(
@@ -600,17 +548,17 @@ def _register_server_tools(
         return catalog.invoke_operation(id, arguments)
 
 
-def _create_fastmcp_server(app_config: AppConfig) -> "FastMCP":
+def _create_fastmcp_server(cfg: HydraConfig) -> "FastMCP":
     from mcp.server.fastmcp import FastMCP
 
     server = FastMCP(
-        app_config.arbiter.server.name,
-        stateless_http=app_config.arbiter.server.stateless_http,
-        json_response=app_config.arbiter.server.json_response,
+        cfg.arbiter.server.name,
+        stateless_http=cfg.arbiter.server.stateless_http,
+        json_response=cfg.arbiter.server.json_response,
     )
-    server.settings.host = app_config.arbiter.server.bind.host
-    server.settings.port = int(app_config.arbiter.server.bind.port)
-    server.settings.streamable_http_path = app_config.arbiter.server.bind.path
+    server.settings.host = cfg.arbiter.server.bind.host
+    server.settings.port = int(cfg.arbiter.server.bind.port)
+    server.settings.streamable_http_path = cfg.arbiter.server.bind.path
     mcp_server = getattr(server, "_mcp_server", None)
     if mcp_server is not None:
         mcp_server.version = arbiter_server_version()
@@ -621,41 +569,40 @@ def build_server(
     cfg: HydraConfig,
     service_plugins: Sequence[ServicePlugin] | None = None,
 ) -> "FastMCP":
-    app_config = _instantiate_app_config(cfg)
     available_service_plugins = (
         discover_service_plugins() if service_plugins is None else service_plugins
     )
     active_service_plugins = _configured_service_plugins(
-        app_config,
+        cfg,
         available_service_plugins,
     )
     artifact_store: ArtifactStore | None = None
     runtime_dependencies: dict[str, object] = {}
-    if app_config.arbiter.server.transport != "stdio":
+    if cfg.arbiter.server.transport != "stdio":
         artifact_store = ArtifactStore(
-            root=_plugin_data_root(app_config.arbiter.storage),
-            base_url=_artifact_base_url(app_config),
+            root=_plugin_data_root(_storage_config(cfg)),
+            base_url=_artifact_base_url(cfg),
         )
         runtime_dependencies["artifact_store"] = artifact_store
     app = build_app(
-        app_config,
+        cfg,
         service_plugins=active_service_plugins,
         runtime_dependencies=runtime_dependencies,
     )
-    server = _create_fastmcp_server(app_config)
+    server = _create_fastmcp_server(cfg)
     if artifact_store is not None:
         _register_artifact_route(server, artifact_store)
     catalog = OperationCatalog(
         active_service_plugins,
         ServicePluginContext(runtimes=app.runtime_registry),
-        max_account_preview_limit=app_config.arbiter.discovery.max_account_preview_limit,
-        max_operation_preview_limit=app_config.arbiter.discovery.max_operation_preview_limit,
+        max_account_preview_limit=cfg.arbiter.discovery.max_account_preview_limit,
+        max_operation_preview_limit=cfg.arbiter.discovery.max_operation_preview_limit,
     )
     _register_server_tools(
         server,
         catalog,
         active_service_plugins,
-        app_config.arbiter.deployment_scope,
+        cfg.arbiter.deployment_scope,
     )
 
     return server
@@ -1252,6 +1199,8 @@ def _ensure_writable_wheel_dir(wheel_dir: Path) -> bool:
 def _ensure_writable_plugin_data_dir(plugin_data_dir: Path) -> bool:
     try:
         plugin_data_dir.mkdir(parents=True, exist_ok=True)
+        if os.name != "nt":
+            plugin_data_dir.chmod(0o700)
         write_check = plugin_data_dir / ".arbiter-write-check"
         write_check.write_text("", encoding="utf-8")
         write_check.unlink()
@@ -1906,11 +1855,10 @@ def _run_serve(
             overrides=overrides,
             enforce_runtime_permissions=not skip_runtime_permission_checks,
         )
-        app_config = _instantiate_app_config(cfg)
-        ensure_runnable_config(app_config)
-        log_startup_summary(app_config)
-        server = build_server(app_config)
-        _run_server(server, cast(TransportMode, app_config.arbiter.server.transport))
+        ensure_runnable_config(cfg)
+        log_startup_summary(cfg)
+        server = build_server(cfg)
+        _run_server(server, cast(TransportMode, cfg.arbiter.server.transport))
     except KeyboardInterrupt:
         print("Arbiter server stopped.", file=sys.stderr)
         return 130
