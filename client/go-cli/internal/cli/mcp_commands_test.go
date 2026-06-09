@@ -62,6 +62,110 @@ func TestInfoYAMLFlagCanFollowSubcommand(t *testing.T) {
 	}
 }
 
+func TestInfoShortPrintsOnlyAccountSummary(t *testing.T) {
+	fake := installFakeMCPClient(t)
+	fake.callResult = mcp.ToolCallResult{
+		StructuredContent: map[string]any{
+			"kind": "overview",
+			"plugins": []any{
+				map[string]any{
+					"id":          "imap",
+					"description": "Read mail",
+					"accounts": []any{
+						map[string]any{"name": "bot", "description": "Bot mailbox"},
+						map[string]any{"name": "personal"},
+					},
+				},
+				map[string]any{
+					"id":          "smtp",
+					"description": "Send mail",
+					"accounts": []any{
+						map[string]any{"name": "bot", "description": "Bot sender"},
+					},
+				},
+			},
+			"operations": []any{map[string]any{"id": "imap:get_message"}},
+		},
+	}
+
+	result := runTestCLI("info", "--short", "arbiter.mcp_url=http://server.test/mcp")
+
+	if result.code != 0 {
+		t.Fatalf("expected exit code 0, got %d stderr=%q", result.code, result.stderr)
+	}
+	if fake.calls[0].arguments["kind"] != "overview" {
+		t.Fatalf("unexpected arguments: %#v", fake.calls[0].arguments)
+	}
+	expected := `{"accounts":[{"description":"Bot mailbox","id":"imap:bot"},{"id":"imap:personal"},{"description":"Bot sender","id":"smtp:bot"}],"kind":"overview_short","server_url":"http://server.test/mcp"}` + "\n"
+	if result.stdout != expected {
+		t.Fatalf("unexpected stdout:\n%s", result.stdout)
+	}
+}
+
+func TestInfoShortYAMLFlagCanFollowSubcommand(t *testing.T) {
+	fake := installFakeMCPClient(t)
+	fake.callResult = mcp.ToolCallResult{
+		StructuredContent: map[string]any{
+			"kind": "overview",
+			"plugins": []any{
+				map[string]any{
+					"id": "imap",
+					"accounts": []any{
+						map[string]any{"name": "bot", "description": "Bot mailbox"},
+					},
+				},
+			},
+		},
+	}
+
+	result := runTestCLI("info", "--yaml", "--short")
+
+	if result.code != 0 {
+		t.Fatalf("expected exit code 0, got %d stderr=%q", result.code, result.stderr)
+	}
+	if !strings.Contains(result.stdout, "kind: overview_short\n") {
+		t.Fatalf("expected short YAML output, got:\n%s", result.stdout)
+	}
+	if !strings.Contains(result.stdout, "id: imap:bot\n") {
+		t.Fatalf("expected account id in YAML output, got:\n%s", result.stdout)
+	}
+}
+
+func TestInfoShortPrintsEmptyAccountsList(t *testing.T) {
+	fake := installFakeMCPClient(t)
+	fake.callResult = mcp.ToolCallResult{
+		StructuredContent: map[string]any{
+			"kind":    "overview",
+			"plugins": []any{},
+		},
+	}
+
+	result := runTestCLI("info", "--short")
+
+	if result.code != 0 {
+		t.Fatalf("expected exit code 0, got %d stderr=%q", result.code, result.stderr)
+	}
+	if result.stdout != `{"accounts":[],"kind":"overview_short","server_url":"http://127.0.0.1:8000/mcp"}`+"\n" {
+		t.Fatalf("unexpected stdout:\n%s", result.stdout)
+	}
+}
+
+func TestInfoShortRejectsSubcommands(t *testing.T) {
+	fake := installFakeMCPClient(t)
+
+	result := runTestCLI("info", "plugin", "smtp", "--short")
+
+	if result.code != 2 {
+		t.Fatalf("expected exit code 2, got %d stderr=%q", result.code, result.stderr)
+	}
+	if len(fake.calls) != 0 {
+		t.Fatalf("expected no MCP calls, got %#v", fake.calls)
+	}
+	if !strings.Contains(result.stderr, "info --short is only valid for overview") {
+		t.Fatalf("unexpected stderr:\n%s", result.stderr)
+	}
+}
+
 func TestInfoTestStaleServerErrorMentionsServer(t *testing.T) {
 	fake := installFakeMCPClient(t)
 	fake.callErr = errors.New("unknown info kind: tests; supported kinds: account, accounts")

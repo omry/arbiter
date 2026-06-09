@@ -35,6 +35,8 @@ class ArtifactHTTPState:
 
 
 class RunningArbiterServer(Protocol):
+    mcp_url: str
+
     def run_client(
         self,
         *args: str,
@@ -682,6 +684,44 @@ def test_local_arbiter_server_fixture_serves_version_info(
     assert result.stderr == ""
     payload = json.loads(result.stdout)
     assert "structuredContent" in payload
+
+
+def test_arbiter_clients_info_short(
+    arbiter_client_command: ClientCommand,
+    local_arbiter_server_factory: LocalArbiterServerFactory,
+) -> None:
+    server = local_arbiter_server_factory.start()
+
+    json_result = server.run_client(
+        "info",
+        "--short",
+        command=arbiter_client_command.command,
+    )
+
+    assert json_result.returncode == 0
+    assert json_result.stderr == ""
+    payload = json.loads(json_result.stdout)
+    assert payload["kind"] == "overview_short"
+    assert payload["server_url"] == server.mcp_url
+    assert "plugins" not in payload
+    assert "operations" not in payload
+    accounts = payload["accounts"]
+    assert isinstance(accounts, list)
+    primary = next(account for account in accounts if account["id"] == "smtp:primary")
+    assert isinstance(primary.get("description"), str)
+
+    yaml_result = server.run_client(
+        "info",
+        "--short",
+        "--yaml",
+        command=arbiter_client_command.command,
+    )
+
+    assert yaml_result.returncode == 0
+    assert yaml_result.stderr == ""
+    assert "kind: overview_short\n" in yaml_result.stdout
+    assert f"server_url: {server.mcp_url}\n" in yaml_result.stdout
+    assert "id: smtp:primary\n" in yaml_result.stdout
 
 
 def test_arbiter_clients_require_explicit_stdout_for_artifacts(

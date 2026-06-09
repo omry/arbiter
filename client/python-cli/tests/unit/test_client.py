@@ -123,6 +123,121 @@ def test_client_info_summarizes_server_plugins_and_accounts(
     ]
 
 
+def test_client_info_short_summarizes_plugin_accounts(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        assert url == "http://localhost:18025/mcp"
+        assert name == "info"
+        assert arguments == {"kind": "overview"}
+        return SimpleNamespace(
+            structuredContent={
+                "kind": "overview",
+                "plugins": [
+                    {
+                        "id": "imap",
+                        "description": "Read mail",
+                        "accounts": [
+                            {"name": "bot", "description": "Bot mailbox"},
+                            {"name": "personal"},
+                        ],
+                    },
+                    {
+                        "id": "smtp",
+                        "description": "Send mail",
+                        "accounts": [
+                            {"name": "bot", "description": "Bot sender"},
+                        ],
+                    },
+                ],
+                "operations": [{"id": "imap:get_message"}],
+            },
+        )
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert (
+        client.main(
+            [
+                "info",
+                "--short",
+                "arbiter.mcp_url=http://localhost:18025/mcp",
+            ]
+        )
+        == 0
+    )
+
+    assert capsys.readouterr().out == (
+        '{"accounts": [{"description": "Bot mailbox", "id": "imap:bot"}, '
+        '{"id": "imap:personal"}, {"description": "Bot sender", '
+        '"id": "smtp:bot"}], "kind": "overview_short", '
+        '"server_url": "http://localhost:18025/mcp"}\n'
+    )
+
+
+def test_client_info_short_accepts_trailing_yaml(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        assert name == "info"
+        assert arguments == {"kind": "overview"}
+        return SimpleNamespace(
+            structuredContent={
+                "kind": "overview",
+                "plugins": [
+                    {
+                        "id": "imap",
+                        "accounts": [
+                            {"name": "bot", "description": "Bot mailbox"},
+                        ],
+                    },
+                ],
+            },
+        )
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert client.main(["info", "--short", "--yaml"]) == 0
+
+    assert capsys.readouterr().out == (
+        "kind: overview_short\n"
+        "server_url: http://127.0.0.1:8000/mcp\n"
+        "accounts:\n"
+        "- id: imap:bot\n"
+        "  description: Bot mailbox\n"
+    )
+
+
+def test_client_info_short_rejects_subcommands(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        raise AssertionError("info --short subcommands should not call the server")
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert client.main(["info", "plugin", "smtp", "--short"]) == 2
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "info --short is only valid for overview" in captured.err
+
+
 def test_client_artifact_get_requires_explicit_destination(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

@@ -205,9 +205,22 @@ func runInfo(
 	homeDir HomeDirFunc,
 ) int {
 	yaml := false
-	if len(args) > 0 && args[0] == "--yaml" {
-		yaml = true
+	short := false
+	for len(args) > 0 {
+		switch args[0] {
+		case "--yaml":
+			yaml = true
+		case "--short":
+			short = true
+		default:
+			goto parsedFlags
+		}
 		args = args[1:]
+	}
+parsedFlags:
+	if short && len(args) > 0 {
+		fmt.Fprintln(stderr, "Arbiter usage error: info --short is only valid for overview")
+		return 2
 	}
 	arguments, err := infoArguments(args)
 	if err != nil {
@@ -220,6 +233,9 @@ func runInfo(
 		return 1
 	}
 	payload = withServerURL(payload, options, lookupEnv, homeDir)
+	if short {
+		payload = shortInfoPayload(payload)
+	}
 	if yaml {
 		printYAML(stdout, payload)
 		return 0
@@ -520,6 +536,57 @@ func infoArguments(args []string) (map[string]any, error) {
 	default:
 		return nil, fmt.Errorf("unknown info command: %s", args[0])
 	}
+}
+
+func shortInfoPayload(payload any) any {
+	mapping, ok := payload.(map[string]any)
+	if !ok {
+		return payload
+	}
+	short := map[string]any{"kind": "overview_short"}
+	if serverURL, ok := mapping["server_url"].(string); ok {
+		short["server_url"] = serverURL
+	}
+	short["accounts"] = shortInfoAccounts(mapping["plugins"])
+	return short
+}
+
+func shortInfoAccounts(plugins any) []any {
+	pluginItems, ok := plugins.([]any)
+	if !ok {
+		return []any{}
+	}
+	accounts := []any{}
+	for _, pluginItem := range pluginItems {
+		plugin, ok := pluginItem.(map[string]any)
+		if !ok {
+			continue
+		}
+		pluginID, ok := plugin["id"].(string)
+		if !ok || pluginID == "" {
+			continue
+		}
+		accountItems, ok := plugin["accounts"].([]any)
+		if !ok {
+			continue
+		}
+		for _, accountItem := range accountItems {
+			account, ok := accountItem.(map[string]any)
+			if !ok {
+				continue
+			}
+			name, ok := account["name"].(string)
+			if !ok || name == "" {
+				continue
+			}
+			entry := map[string]any{"id": pluginID + ":" + name}
+			if description, ok := account["description"].(string); ok && description != "" {
+				entry["description"] = description
+			}
+			accounts = append(accounts, entry)
+		}
+	}
+	return accounts
 }
 
 func parseArgsFlag(args []string) (map[string]any, error) {
@@ -861,21 +928,21 @@ func normalizeInfoOutputFlags(args []string) []string {
 	if infoIndex == -1 {
 		return normalized
 	}
-	var withoutYAML []string
-	foundYAML := false
+	var withoutOutputFlags []string
+	var outputFlags []string
 	for index, arg := range normalized {
-		if index > infoIndex && arg == "--yaml" {
-			foundYAML = true
+		if index > infoIndex && (arg == "--yaml" || arg == "--short") {
+			outputFlags = append(outputFlags, arg)
 			continue
 		}
-		withoutYAML = append(withoutYAML, arg)
+		withoutOutputFlags = append(withoutOutputFlags, arg)
 	}
-	if !foundYAML {
+	if len(outputFlags) == 0 {
 		return normalized
 	}
 	return append(
-		append([]string{}, withoutYAML[:infoIndex+1]...),
-		append([]string{"--yaml"}, withoutYAML[infoIndex+1:]...)...,
+		append([]string{}, withoutOutputFlags[:infoIndex+1]...),
+		append(outputFlags, withoutOutputFlags[infoIndex+1:]...)...,
 	)
 }
 
@@ -987,7 +1054,7 @@ func printHelp(w io.Writer) {
 	fmt.Fprintln(w, "commands:")
 	fmt.Fprintln(w, "  bootstrap client  create the Arbiter client config")
 	fmt.Fprintln(w, "  config mcp-url  print the resolved MCP URL")
-	fmt.Fprintln(w, "  info            discover Arbiter server identity and services")
+	fmt.Fprintln(w, "  info [--short]  discover Arbiter server identity and services")
 	fmt.Fprintln(w, "  op              inspect or run Arbiter operations")
 	fmt.Fprintln(w, "  artifact        explicitly fetch Arbiter artifacts")
 	fmt.Fprintln(w, "  mcp             inspect or call raw MCP tools")

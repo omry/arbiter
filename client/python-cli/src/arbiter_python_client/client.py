@@ -791,6 +791,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="print YAML instead of the default JSON",
     )
+    info.add_argument(
+        "--short",
+        action="store_true",
+        help="print only plugin account identifiers and descriptions",
+    )
     info_subcommands = info.add_subparsers(dest="info_command")
 
     info_subcommands.add_parser(
@@ -1077,19 +1082,21 @@ def _normalize_info_output_flags(args: Sequence[str]) -> list[str]:
     if index >= len(normalized) or normalized[index] != "info":
         return normalized
 
-    yaml_count = normalized[index + 1 :].count("--yaml")
-    if yaml_count == 0:
+    output_flags = [
+        arg for arg in normalized[index + 1 :] if arg in {"--yaml", "--short"}
+    ]
+    if not output_flags:
         return normalized
 
-    without_yaml = [
+    without_output_flags = [
         arg
         for arg_index, arg in enumerate(normalized)
-        if arg_index <= index or arg != "--yaml"
+        if arg_index <= index or arg not in {"--yaml", "--short"}
     ]
     return [
-        *without_yaml[: index + 1],
-        "--yaml",
-        *without_yaml[index + 1 :],
+        *without_output_flags[: index + 1],
+        *output_flags,
+        *without_output_flags[index + 1 :],
     ]
 
 
@@ -1149,6 +1156,44 @@ def _with_server_url(payload: object, url: str) -> object:
     return {"server_url": url, **payload}
 
 
+def _short_info_payload(payload: object) -> object:
+    if not isinstance(payload, Mapping):
+        return payload
+    result: dict[str, object] = {"kind": "overview_short"}
+    server_url = payload.get("server_url")
+    if isinstance(server_url, str):
+        result["server_url"] = server_url
+    result["accounts"] = _short_info_accounts(payload.get("plugins"))
+    return result
+
+
+def _short_info_accounts(plugins: object) -> list[dict[str, str]]:
+    if not isinstance(plugins, list):
+        return []
+    accounts: list[dict[str, str]] = []
+    for plugin in plugins:
+        if not isinstance(plugin, Mapping):
+            continue
+        plugin_id = plugin.get("id")
+        if not isinstance(plugin_id, str) or not plugin_id:
+            continue
+        plugin_accounts = plugin.get("accounts")
+        if not isinstance(plugin_accounts, list):
+            continue
+        for account in plugin_accounts:
+            if not isinstance(account, Mapping):
+                continue
+            name = account.get("name")
+            if not isinstance(name, str) or not name:
+                continue
+            entry = {"id": f"{plugin_id}:{name}"}
+            description = account.get("description")
+            if isinstance(description, str) and description:
+                entry["description"] = description
+            accounts.append(entry)
+    return accounts
+
+
 def _tool_error_message_for_cli(
     exc: ToolCallError,
     namespace: argparse.Namespace,
@@ -1172,8 +1217,13 @@ def _tool_error_message_for_cli(
 
 async def _run_async(namespace: argparse.Namespace) -> int:
     if namespace.command == "info":
+        if namespace.short and namespace.info_command is not None:
+            print_cli_error("info --short is only valid for overview", area="usage")
+            return 2
         result = await call_tool(namespace.mcp_url, "info", _info_arguments(namespace))
         payload = _with_server_url(_tool_result_payload(result), namespace.mcp_url)
+        if namespace.short:
+            payload = _short_info_payload(payload)
         if namespace.yaml:
             _print_yaml(payload)
         else:
