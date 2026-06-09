@@ -696,7 +696,7 @@ def test_arbiter_clients_require_explicit_stdout_for_artifacts(
 
     assert result.returncode == 2
     assert result.stdout == ""
-    assert "requires explicit --stdout" in result.stderr
+    assert "requires exactly one of --stdout or --output PATH" in result.stderr
 
 
 def test_arbiter_clients_write_small_text_artifact_to_stdout(
@@ -718,6 +718,40 @@ def test_arbiter_clients_write_small_text_artifact_to_stdout(
     assert result.stdout == "hello world\n"
     assert result.stderr == ""
     assert server.state.head_calls == 1
+    assert server.state.get_calls == 1
+
+
+def test_arbiter_clients_save_binary_artifact_to_output_file(
+    arbiter_client_command: ClientCommand,
+    tmp_path: Path,
+) -> None:
+    body = b"%PDF\x00\xff"
+    server = _start_artifact_http_server(
+        ArtifactHTTPState(
+            head_content_type="application/pdf",
+            head_content_length=len(body),
+            get_content_type="application/pdf",
+            body=body,
+        )
+    )
+    output_path = tmp_path / "attachment.pdf"
+    try:
+        result = _run_client_command(
+            arbiter_client_command.command,
+            "artifact",
+            "get",
+            server.url,
+            "--output",
+            str(output_path),
+        )
+    finally:
+        server.close()
+
+    assert result.returncode == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+    assert output_path.read_bytes() == body
+    assert server.state.head_calls == 0
     assert server.state.get_calls == 1
 
 

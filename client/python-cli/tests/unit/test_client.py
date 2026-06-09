@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
+import stat
 from types import SimpleNamespace
 from typing import Any
 
@@ -120,6 +121,128 @@ def test_client_info_summarizes_server_plugins_and_accounts(
     assert calls == [
         ("info", {"kind": "overview"}),
     ]
+
+
+def test_client_artifact_get_requires_explicit_destination(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert client.main(["artifact", "get", "http://artifact.test/file"]) == 2
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert (
+        "artifact get requires exactly one of --stdout or --output PATH" in captured.err
+    )
+
+
+def test_client_artifact_get_saves_binary_artifact_to_output(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    requests: list[tuple[str, str]] = []
+    body = b"%PDF\x00\xff"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((request.method, str(request.url)))
+        assert request.method == "GET"
+        return httpx.Response(
+            200,
+            content=body,
+            headers={
+                "content-type": "application/pdf",
+                "content-length": str(len(body)),
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    original_client = httpx.Client
+
+    def fake_http_client(*args: Any, **kwargs: Any) -> httpx.Client:
+        return original_client(*args, transport=transport, **kwargs)
+
+    monkeypatch.setattr(httpx, "Client", fake_http_client)
+    output_path = tmp_path / "attachment.pdf"
+
+    assert (
+        client.main(
+            [
+                "artifact",
+                "get",
+                "http://artifact.test/file",
+                "--output",
+                str(output_path),
+            ]
+        )
+        == 0
+    )
+
+    assert output_path.read_bytes() == body
+    if client.os.name != "nt" and stat.S_IMODE(output_path.stat().st_mode) != 0o600:
+        pytest.fail(f"unexpected artifact file mode: {output_path.stat().st_mode:o}")
+    assert requests == [("GET", "http://artifact.test/file")]
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+def test_client_artifact_get_removes_output_when_close_fails(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    requests: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((request.method, str(request.url)))
+        return httpx.Response(200, content=b"partial")
+
+    class FailingClose:
+        def __init__(self, wrapped: Any) -> None:
+            self._wrapped = wrapped
+            self.closed = False
+
+        def write(self, data: bytes) -> object:
+            return self._wrapped.write(data)
+
+        def close(self) -> None:
+            if not self.closed:
+                self._wrapped.close()
+                self.closed = True
+            raise OSError("simulated close failure")
+
+    transport = httpx.MockTransport(handler)
+    original_client = httpx.Client
+    original_fdopen = client.os.fdopen
+
+    def fake_http_client(*args: Any, **kwargs: Any) -> httpx.Client:
+        return original_client(*args, transport=transport, **kwargs)
+
+    def fake_fdopen(fd: int, mode: str) -> FailingClose:
+        return FailingClose(original_fdopen(fd, mode))
+
+    monkeypatch.setattr(httpx, "Client", fake_http_client)
+    monkeypatch.setattr(client.os, "fdopen", fake_fdopen)
+    output_path = tmp_path / "attachment.pdf"
+
+    assert (
+        client.main(
+            [
+                "artifact",
+                "get",
+                "http://artifact.test/file",
+                "--output",
+                str(output_path),
+            ]
+        )
+        == 1
+    )
+
+    assert requests == [("GET", "http://artifact.test/file")]
+    assert not output_path.exists()
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "simulated close failure" in captured.err
 
 
 def test_client_info_plugin_subcommand_calls_info_tool(

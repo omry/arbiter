@@ -103,17 +103,17 @@ func runArtifact(
 	stderr io.Writer,
 ) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "Arbiter usage error: expected: arbiter artifact get <url> --stdout [--max-bytes N]")
+		fmt.Fprintln(stderr, "Arbiter usage error: expected: arbiter artifact get <url> (--stdout [--max-bytes N] | --output PATH)")
 		return 2
 	}
 	switch args[0] {
 	case "get":
-		artifactURL, maxBytes, err := parseArtifactGetArgs(args[1:])
+		options, err := parseArtifactGetArgs(args[1:])
 		if err != nil {
 			fmt.Fprintf(stderr, "Arbiter usage error: %v\n", err)
 			return 2
 		}
-		if err := writeArtifactToStdout(context.Background(), artifactURL, maxBytes, stdout); err != nil {
+		if err := fetchArtifact(context.Background(), options, stdout); err != nil {
 			fmt.Fprintf(stderr, "Arbiter artifact error: %s\n", err)
 			return 1
 		}
@@ -539,41 +539,71 @@ func parseArgsFlag(args []string) (map[string]any, error) {
 	return parsed, nil
 }
 
-func parseArtifactGetArgs(args []string) (string, int64, error) {
+type artifactGetOptions struct {
+	URL        string
+	Stdout     bool
+	OutputPath string
+	MaxBytes   int64
+}
+
+func parseArtifactGetArgs(args []string) (artifactGetOptions, error) {
+	options := artifactGetOptions{MaxBytes: int64(DefaultArtifactMaxBytes)}
 	if len(args) < 2 {
 		if len(args) == 1 && strings.TrimSpace(args[0]) != "" {
-			return "", 0, fmt.Errorf("artifact get requires explicit --stdout")
+			return options, fmt.Errorf("artifact get requires exactly one of --stdout or --output PATH")
 		}
-		return "", 0, fmt.Errorf("expected: arbiter artifact get <url> --stdout [--max-bytes N]")
+		return options, fmt.Errorf("expected: arbiter artifact get <url> (--stdout [--max-bytes N] | --output PATH)")
 	}
 	artifactURL := args[0]
 	if strings.TrimSpace(artifactURL) == "" {
-		return "", 0, fmt.Errorf("artifact URL must be non-empty")
+		return options, fmt.Errorf("artifact URL must be non-empty")
 	}
-	stdoutRequested := false
-	maxBytes := int64(DefaultArtifactMaxBytes)
+	options.URL = artifactURL
 	for index := 1; index < len(args); index++ {
 		switch args[index] {
 		case "--stdout":
-			stdoutRequested = true
+			options.Stdout = true
+		case "--output":
+			if index+1 >= len(args) {
+				return options, fmt.Errorf("--output requires a value")
+			}
+			if strings.TrimSpace(args[index+1]) == "" {
+				return options, fmt.Errorf("--output path must be non-empty")
+			}
+			options.OutputPath = args[index+1]
+			index++
 		case "--max-bytes":
 			if index+1 >= len(args) {
-				return "", 0, fmt.Errorf("--max-bytes requires a value")
+				return options, fmt.Errorf("--max-bytes requires a value")
 			}
 			parsed, err := strconv.ParseInt(args[index+1], 10, 64)
 			if err != nil || parsed < 1 {
-				return "", 0, fmt.Errorf("--max-bytes must be a positive integer")
+				return options, fmt.Errorf("--max-bytes must be a positive integer")
 			}
-			maxBytes = parsed
+			options.MaxBytes = parsed
 			index++
 		default:
-			return "", 0, fmt.Errorf("unknown artifact get argument: %s", args[index])
+			return options, fmt.Errorf("unknown artifact get argument: %s", args[index])
 		}
 	}
-	if !stdoutRequested {
-		return "", 0, fmt.Errorf("artifact get requires explicit --stdout")
+	if options.Stdout == (options.OutputPath != "") {
+		return options, fmt.Errorf("artifact get requires exactly one of --stdout or --output PATH")
 	}
-	return artifactURL, maxBytes, nil
+	if !options.Stdout && options.MaxBytes != int64(DefaultArtifactMaxBytes) {
+		return options, fmt.Errorf("--max-bytes is only valid with --stdout")
+	}
+	return options, nil
+}
+
+func fetchArtifact(
+	ctx context.Context,
+	options artifactGetOptions,
+	stdout io.Writer,
+) error {
+	if options.Stdout {
+		return writeArtifactToStdout(ctx, options.URL, options.MaxBytes, stdout)
+	}
+	return saveArtifactToFile(ctx, options.URL, options.OutputPath)
 }
 
 func writeArtifactToStdout(
@@ -631,6 +661,46 @@ func writeArtifactToStdout(
 	}
 	_, err = stdout.Write(data)
 	return err
+}
+
+func saveArtifactToFile(
+	ctx context.Context,
+	artifactURL string,
+	outputPath string,
+) error {
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	output, err := os.OpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	removeOutput := true
+	defer func() {
+		output.Close()
+		if removeOutput {
+			os.Remove(outputPath)
+		}
+	}()
+
+	getReq, err := http.NewRequestWithContext(ctx, http.MethodGet, artifactURL, nil)
+	if err != nil {
+		return err
+	}
+	getResp, err := httpClient.Do(getReq)
+	if err != nil {
+		return err
+	}
+	defer getResp.Body.Close()
+	if getResp.StatusCode < 200 || getResp.StatusCode >= 300 {
+		return fmt.Errorf("artifact fetch failed: HTTP %d", getResp.StatusCode)
+	}
+	if _, err := io.Copy(output, getResp.Body); err != nil {
+		return err
+	}
+	if err := output.Close(); err != nil {
+		return err
+	}
+	removeOutput = false
+	return nil
 }
 
 func isTextualArtifactContentType(contentType string) bool {
@@ -919,7 +989,7 @@ func printHelp(w io.Writer) {
 	fmt.Fprintln(w, "  config mcp-url  print the resolved MCP URL")
 	fmt.Fprintln(w, "  info            discover Arbiter server identity and services")
 	fmt.Fprintln(w, "  op              inspect or run Arbiter operations")
-	fmt.Fprintln(w, "  artifact        explicitly read small textual artifacts")
+	fmt.Fprintln(w, "  artifact        explicitly fetch Arbiter artifacts")
 	fmt.Fprintln(w, "  mcp             inspect or call raw MCP tools")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "The Go client is experimental.")

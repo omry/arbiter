@@ -15,3 +15,10 @@ Python CLI remains available. For explicit small textual artifacts:
 ```bash
 arbiter-py artifact get "$ARBITER_ARTIFACT_URL" --stdout
 ```
+
+For explicit local saves, such as when a user asks to save an attachment to a
+file:
+
+```bash
+arbiter-py artifact get "$ARBITER_ARTIFACT_URL" --output ./attachment.pdf
+```

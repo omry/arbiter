@@ -137,7 +137,8 @@ IMAP_OPERATION_DESCRIPTORS = (
         description=(
             "Create a one-time server artifact URL for one attachment by message "
             "UID and attachment id. The attachment bytes are not returned in the "
-            "tool result."
+            "tool result. Use local file save only when the user explicitly asks "
+            "to save the attachment."
         ),
         input_schema=_object_schema(
             {
@@ -394,12 +395,16 @@ class IMAPRuntime:
                 **artifact.to_dict(),
                 "handling": {
                     "prefer_inline": False,
-                    "save_locally": False,
+                    "save_locally": True,
+                    "requires_explicit_user_request": True,
+                    "save_interface": "arbiter artifact get <url> --output <path>",
                     "instructions": (
                         "Use the one-time URL only through an explicit artifact "
                         "reader such as `arbiter artifact get --stdout` for small "
-                        "textual attachments. Do not save, copy, or persist the "
-                        "file unless the user explicitly asks."
+                        "textual attachments. If the user explicitly asks to save "
+                        "the attachment to a local file, use "
+                        "`arbiter artifact get <url> --output <path>`. Do not "
+                        "otherwise save, copy, or persist the file."
                     ),
                 },
             },

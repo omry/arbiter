@@ -417,13 +417,61 @@ def _fetch_artifact_stdout_bytes(artifact_url: str, max_bytes: int) -> bytes:
     return b"".join(chunks)
 
 
+def _save_artifact_to_file(artifact_url: str, output_path: Path) -> None:
+    fd = os.open(output_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        output = os.fdopen(fd, "wb")
+    except Exception:
+        os.close(fd)
+        output_path.unlink(missing_ok=True)
+        raise
+    try:
+        with httpx.Client(timeout=30.0) as http_client:
+            with http_client.stream("GET", artifact_url) as get_response:
+                if not 200 <= get_response.status_code < 300:
+                    raise ValueError(
+                        f"artifact fetch failed: HTTP {get_response.status_code}"
+                    )
+                for chunk in get_response.iter_bytes():
+                    output.write(chunk)
+        try:
+            output.close()
+        except Exception:
+            if not getattr(output, "closed", True):
+                try:
+                    output.close()
+                except Exception:
+                    pass
+            output = None
+            raise
+        output = None
+    except Exception:
+        if output is not None:
+            try:
+                output.close()
+            except Exception:
+                pass
+        output_path.unlink(missing_ok=True)
+        raise
+
+
 def _run_artifact_get(namespace: argparse.Namespace) -> int:
-    if not namespace.stdout:
-        print_cli_error("artifact get requires explicit --stdout", area="usage")
+    output_path = namespace.output
+    if namespace.stdout == (output_path is not None):
+        print_cli_error(
+            "artifact get requires exactly one of --stdout or --output PATH",
+            area="usage",
+        )
+        return 2
+    if output_path is not None and namespace.max_bytes != DEFAULT_ARTIFACT_MAX_BYTES:
+        print_cli_error("--max-bytes is only valid with --stdout", area="usage")
         return 2
     try:
+        if output_path is not None:
+            _save_artifact_to_file(namespace.url, output_path)
+            return 0
         data = _fetch_artifact_stdout_bytes(namespace.url, namespace.max_bytes)
-    except (httpx.HTTPError, ValueError) as exc:
+    except (OSError, httpx.HTTPError, ValueError) as exc:
         print_cli_error(str(exc), area="artifact")
         return 1
     stdout_buffer = getattr(sys.stdout, "buffer", None)
@@ -880,13 +928,18 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     artifact_get = artifact_subcommands.add_parser(
         "get",
-        help="fetch a small textual artifact",
+        help="fetch an explicit artifact",
     )
     artifact_get.add_argument("url", help="one-time artifact URL")
     artifact_get.add_argument(
         "--stdout",
         action="store_true",
         help="write the artifact bytes to stdout",
+    )
+    artifact_get.add_argument(
+        "--output",
+        type=Path,
+        help="save the artifact bytes to a local file",
     )
     artifact_get.add_argument(
         "--max-bytes",

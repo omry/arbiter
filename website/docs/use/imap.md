@@ -155,6 +155,15 @@ arbiter artifact get 'http://127.0.0.1:8000/_arbiter/artifacts/...' --stdout
 The client checks artifact metadata first and refuses stdout for non-text,
 unknown-size, or over-limit artifacts.
 
+When the user explicitly asks to save an attachment to a local file, an agent
+can save the artifact bytes to a chosen path instead:
+
+```bash
+arbiter artifact get 'http://127.0.0.1:8000/_arbiter/artifacts/...' --output ./attachment.pdf
+```
+
+Local saves are explicit and do not use the stdout text-only guardrails.
+
 ## Policy checks
 
 The IMAP policy gates:
