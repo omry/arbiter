@@ -2616,8 +2616,8 @@ doctor_check_preinstall_ready() {
   doctor_check_file "$active_requirements_file" "runtime requirements file"
 
   if [[ -f "$active_requirements_file" ]] && grep -Eq '^[[:space:]]*/source/arbiter(/|$)' "$active_requirements_file"; then
-    doctor_fail "preinstall found local checkout requirements: $active_requirements_file"
-    printf '      direct doctor --preinstall expects an already install-ready deployment directory\n'
+    doctor_warn "preinstall found local checkout requirements: $active_requirements_file"
+    printf '      install will promote editable requirements to local wheels automatically\n'
     printf '      run %s install to promote editable requirements to local wheels automatically\n' "$deploy_dir/arbiter-docker"
   fi
 
@@ -2645,8 +2645,8 @@ doctor_check_preinstall_ready() {
   )
 
   if [[ -f "$compose_override_file" ]] && grep -q '/source/arbiter' "$compose_override_file"; then
-    doctor_fail "preinstall found local checkout compose override: $compose_override_file"
-    printf '      direct doctor --preinstall expects no /source/arbiter checkout mount\n'
+    doctor_warn "preinstall found local checkout compose override: $compose_override_file"
+    printf '      install will move the local checkout override aside during promotion\n'
     printf '      run %s install to move the local checkout override aside during promotion\n' "$deploy_dir/arbiter-docker"
   fi
 

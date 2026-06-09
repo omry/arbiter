@@ -4551,7 +4551,7 @@ def test_cli_deploy_docker_generated_helper_preinstall_rejects_deploy_root_runti
     assert "ok: preinstall checks passed\n" not in result.stdout
 
 
-def test_cli_deploy_docker_generated_helper_preinstall_rejects_source_override(
+def test_cli_deploy_docker_generated_helper_preinstall_warns_for_source_override(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -4594,30 +4594,31 @@ def test_cli_deploy_docker_generated_helper_preinstall_rejects_source_override(
         capture_output=True,
     )
 
-    assert result.returncode == 1
+    assert result.returncode == 0
     assert (
-        "fail: preinstall found local checkout requirements: "
+        "warn: preinstall found local checkout requirements: "
         f"{deploy_dir / 'requirements.txt'}\n"
     ) in result.stdout
     assert (
-        "      direct doctor --preinstall expects an already install-ready "
-        "deployment directory\n"
+        "      install will promote editable requirements to local wheels "
+        "automatically\n"
     ) in result.stdout
     assert (
         f"      run {deploy_dir / 'arbiter-docker'} install to promote editable "
         "requirements to local wheels automatically\n"
     ) in result.stdout
     assert (
-        "fail: preinstall found local checkout compose override: "
+        "warn: preinstall found local checkout compose override: "
         f"{deploy_dir / 'compose.override.yaml'}\n"
     ) in result.stdout
     assert (
-        "      direct doctor --preinstall expects no /source/arbiter checkout mount\n"
+        "      install will move the local checkout override aside during promotion\n"
     ) in result.stdout
     assert (
         f"      run {deploy_dir / 'arbiter-docker'} install to move the local "
         "checkout override aside during promotion\n"
     ) in result.stdout
+    assert "ok: preinstall checks passed\n" in result.stdout
 
 
 def test_cli_deploy_docker_generated_helper_install_promotes_source_checkout(
