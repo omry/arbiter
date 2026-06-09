@@ -3560,6 +3560,53 @@ def test_cli_deploy_docker_generated_helper_test_calls_version_info(
     assert result.stderr == ""
 
 
+def test_cli_deploy_docker_generated_helper_test_finds_checkout_skill_launcher(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "arbiter-docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    skill_bin = tmp_path / "skill" / "bin"
+    skill_bin.mkdir(parents=True)
+    arbiter_calls = tmp_path / "arbiter-calls"
+    checkout_arbiter = skill_bin / "arbiter"
+    checkout_arbiter.write_text(
+        "#!/usr/bin/env sh\n" f'printf "%s\\n" "$*" >> "{arbiter_calls}"\n',
+        encoding="utf-8",
+    )
+    checkout_arbiter.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = "/usr/bin:/bin"
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "test"],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == " ✔ MCP test: http://127.0.0.1:18025/mcp\n"
+    assert result.stderr == ""
+    assert arbiter_calls.read_text(encoding="utf-8") == (
+        "mcp call version_info arbiter.mcp_url=http://127.0.0.1:18025/mcp\n"
+    )
+
+
 def test_cli_deploy_docker_generated_helper_up_auto_selects_staging_subnet(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

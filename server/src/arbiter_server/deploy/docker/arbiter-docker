@@ -48,7 +48,8 @@ Install options:
 Environment:
   ARBITER_DOCKER_DIR   Deployment directory, default script directory
   ARBITER_CLIENT_COMMAND
-                      Arbiter client command for test, default arbiter
+                      Arbiter client command for test, default arbiter,
+                      then ../skill/bin/arbiter for checkout deployments
   ARBITER_EDITOR       Editor for edit-config/edit-env
 EOF
 }
@@ -1474,6 +1475,25 @@ print_staging_port_note() {
   printf ' Staging MCP port: 8025 -> %s to prevent collision\n' "$host_port"
 }
 
+resolve_arbiter_client_command() {
+  local checkout_client
+
+  if [[ -n "${ARBITER_CLIENT_COMMAND:-}" ]]; then
+    command -v "$ARBITER_CLIENT_COMMAND"
+    return
+  fi
+  if command -v arbiter >/dev/null; then
+    command -v arbiter
+    return
+  fi
+  checkout_client="$deploy_dir/../skill/bin/arbiter"
+  if [[ -x "$checkout_client" ]]; then
+    printf '%s\n' "$checkout_client"
+    return
+  fi
+  return 1
+}
+
 test_server_url() {
   local url="$1"
   local client_command
@@ -1481,10 +1501,10 @@ test_server_url() {
   local timeout
   local start_time
 
-  client_command="${ARBITER_CLIENT_COMMAND:-arbiter}"
-  if ! command -v "$client_command" >/dev/null; then
-    printf 'error: Arbiter client command not found: %s\n' "$client_command" >&2
-    printf '       activate the environment that provides arbiter, or set ARBITER_CLIENT_COMMAND\n' >&2
+  if ! client_command="$(resolve_arbiter_client_command)"; then
+    printf 'error: Arbiter client command not found\n' >&2
+    printf '       activate the environment that provides arbiter, set ARBITER_CLIENT_COMMAND,\n' >&2
+    printf '       or run from a checkout with ../skill/bin/arbiter available\n' >&2
     return 1
   fi
 
@@ -3578,9 +3598,8 @@ install_test_server() {
     return 0
   fi
 
-  client_command="${ARBITER_CLIENT_COMMAND:-arbiter}"
-  if ! command -v "$client_command" >/dev/null; then
-    doctor_warn "skipping MCP test; Arbiter client command not found: $client_command"
+  if ! client_command="$(resolve_arbiter_client_command)"; then
+    doctor_warn "skipping MCP test; Arbiter client command not found"
     return 0
   fi
   test_server_url "$url"
