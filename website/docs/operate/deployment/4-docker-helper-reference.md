@@ -47,7 +47,7 @@ the helper.
 | `up` | Start or update the staged Compose service, then print the MCP URL. |
 | `test` | Call `version_info` through the computed MCP URL, retrying through transient startup failures. |
 | `ps` | Show Docker Compose service status. |
-| `logs` | Follow Docker Compose logs. |
+| `logs` | Follow Docker Compose logs with Docker timestamps. |
 | `restart` | Recreate the container, reinstalling the configured requirements, then print the MCP URL. |
 | `down` | Stop and remove the staged Compose service. |
 

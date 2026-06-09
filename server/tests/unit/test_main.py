@@ -14,7 +14,7 @@ from typing import Any, cast
 import pytest
 from omegaconf import OmegaConf
 
-from arbiter_server.config import AppConfig, ArbiterConfig, DiscoveryConfig
+from arbiter_server.config import AppConfig, ArbiterConfig, DiscoveryConfig, StorageConfig
 from arbiter_server.app import SERVER_TOOL_NAMES
 from arbiter_server.file_protection.windows import (
     _WindowsAccessAce,
@@ -60,6 +60,7 @@ from arbiter_server.services import (
     RuntimeRegistry,
     ServicePlugin,
     ServicePluginContext,
+    ServiceRuntimeContext,
 )
 
 
@@ -259,6 +260,66 @@ def test_build_app_accepts_hydra_config() -> None:
     app = build_app(cfg, service_plugins=_test_service_plugins())
 
     assert app.tool_names() == list(SERVER_TOOL_NAMES)
+
+
+def test_build_app_uses_dictconfig_plugin_storage_root(tmp_path: Path) -> None:
+    captured: dict[str, Path] = {}
+
+    class FakePlugin:
+        name = "fake"
+        version = SERVER_VERSION
+        server_api_version = SERVER_API_VERSION
+
+        def register_configs(self, config_store: object) -> None:
+            return None
+
+        def bootstrap_config(self, *, kind: str, name: str) -> object | None:
+            return None
+
+        def build_runtime(
+            self,
+            accounts: Mapping[str, object],
+            policies: Mapping[str, object],
+            context: ServiceRuntimeContext,
+        ) -> object:
+            storage = context.dependencies["plugin_storage"]
+            captured["path"] = cast(Any, storage).path("sentinel")
+            return object()
+
+        def describe_capability(
+            self,
+            context: ServicePluginContext,
+        ) -> CapabilityDescriptor:
+            return CapabilityDescriptor(name="fake", description="Fake")
+
+        def describe_operations(
+            self,
+            context: ServicePluginContext,
+        ) -> list[OperationDescriptor]:
+            return []
+
+        def invoke_operation(
+            self,
+            operation: str,
+            arguments: Mapping[str, Any],
+            context: ServicePluginContext,
+        ) -> object:
+            return {}
+
+    plugin_data_dir = tmp_path / "plugins"
+    cfg = OmegaConf.structured(
+        AppConfig(
+            arbiter=ArbiterConfig(
+                storage=StorageConfig(plugin_data_dir=str(plugin_data_dir)),
+                account={"fake": {"primary": {}}},
+                policy={"fake": {}},
+            )
+        )
+    )
+
+    build_app(cfg, service_plugins=[FakePlugin()])
+
+    assert captured["path"] == plugin_data_dir / "fake" / "sentinel"
 
 
 def test_build_app_list_accounts_uses_real_config_shape() -> None:
@@ -1286,12 +1347,22 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
     assert (deploy_dir / "compose.yaml").exists()
     compose_text = (deploy_dir / "compose.yaml").read_text(encoding="utf-8")
     assert (
-        '"$$venv_python" -m pip --disable-pip-version-check wheel --no-cache-dir '
-        "--no-deps --wheel-dir"
+        '"$$venv_python" -m pip --disable-pip-version-check install --no-cache-dir '
+        '--find-links /wheels -e "$$requirement"'
     ) in compose_text
     assert (
         '"$$venv_python" -m pip --disable-pip-version-check install --no-cache-dir '
-        "-r /tmp/requirements.pinned /tmp/arbiter-wheels/*.whl"
+        "-r /tmp/requirements.pinned"
+    ) in compose_text
+    assert 'grep -Eq "^[[:space:]]*/source/arbiter(/|$)" /requirements.txt' in compose_text
+    assert (
+        'awk "!/^[[:space:]]*(#|$)/ && '
+        '!/^[[:space:]]*\\\\/source\\\\/arbiter(\\\\/|$)/ { print }" '
+        "/tmp/requirements.txt > /tmp/requirements.pinned"
+    ) in compose_text
+    assert (
+        'awk "/^[[:space:]]*\\\\/source\\\\/arbiter(\\\\/|$)/ { print }" '
+        "/tmp/requirements.txt > /tmp/requirements.editable"
     ) in compose_text
     assert "${ARBITER_WHEELS_DIR:-./wheels}:/wheels:ro" in compose_text
     assert "${ARBITER_PLUGIN_DATA_DIR:-./data/plugins}:/data/plugins" in compose_text
@@ -1317,8 +1388,15 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
     assert '"arbiter.server.public.port=$${ARBITER_HOST_PORT:-18025}"' in compose_text
     assert 'if [ -n "$${ARBITER_PUBLIC_BASE_URL:-}" ]; then' in compose_text
     assert 'python -m venv "$$runtime_venv"' in compose_text
-    assert 'set -- "$$runtime_venv/bin/arbiter-server"' in compose_text
-    assert 'exec "$$@"' in compose_text
+    assert 'config check "$$@"' in compose_text
+    assert (
+        "fatal configuration error; stopping container without Docker restart"
+        in compose_text
+    )
+    assert (
+        'exec "$$runtime_venv/bin/arbiter-server" --config-dir /config '
+        '--config-name "$$ARBITER_CONFIG_NAME" serve "$$@"'
+    ) in compose_text
     assert (
         '"${ARBITER_HOST_BIND:-127.0.0.1}:'
         '${ARBITER_HOST_PORT:-18025}:${ARBITER_CONTAINER_PORT:-8025}"'
@@ -1342,6 +1420,7 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
     assert not (deploy_dir / "config.yaml").exists()
     assert (deploy_dir / "conf").is_dir()
     assert (deploy_dir / "data" / "plugins").is_dir()
+    _assert_posix_mode(deploy_dir / "data" / "plugins", 0o700)
     assert not (deploy_dir / "conf" / ".env").exists()
     docker_env = (deploy_dir / "docker.env").read_text(encoding="utf-8")
     assert "ARBITER_DEPLOYMENT_SCOPE" not in docker_env
@@ -2185,6 +2264,11 @@ def test_cli_deploy_docker_generated_helper_bundle_upgrade_updates_roots_and_pre
         == 0
     )
     capsys.readouterr()
+    (deploy_dir / "conf" / "arbiter-server.yaml").write_text(
+        "arbiter: {}\n",
+        encoding="utf-8",
+    )
+    (deploy_dir / "conf" / ".env").write_text("", encoding="utf-8")
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     docker_calls = tmp_path / "docker-calls"
@@ -2277,6 +2361,11 @@ def test_cli_deploy_docker_generated_helper_bundle_upgrade_builds_repo_wheels(
         == 0
     )
     capsys.readouterr()
+    (deploy_dir / "conf" / "arbiter-server.yaml").write_text(
+        "arbiter: {}\n",
+        encoding="utf-8",
+    )
+    (deploy_dir / "conf" / ".env").write_text("", encoding="utf-8")
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     docker_calls = tmp_path / "docker-calls"
@@ -3159,6 +3248,124 @@ def test_cli_deploy_docker_generated_helper_up_reports_docker_permission_error(
     assert "docker said: permission denied" in result.stderr
 
 
+def test_cli_deploy_docker_generated_helper_up_creates_plugin_data_dir(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    config_dir = deploy_dir / "conf"
+    (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
+    (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
+    shutil.rmtree(deploy_dir / "data")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker_calls = tmp_path / "docker-calls"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env sh\n"
+        f'printf "%s\\n" "$*" >> "{docker_calls}"\n'
+        'if [ "$1" = info ]; then exit 0; fi\n'
+        'if [ "$1" = inspect ]; then exit 1; fi\n'
+        'if [ "$1" = compose ]; then exit 0; fi\n'
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "up"],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert (deploy_dir / "data" / "plugins").is_dir()
+    _assert_posix_mode(deploy_dir / "data" / "plugins", 0o700)
+    assert "compose --env-file" in docker_calls.read_text(encoding="utf-8")
+
+
+def test_cli_deploy_docker_generated_helper_up_rejects_unwritable_plugin_data_dir(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    config_dir = deploy_dir / "conf"
+    (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
+    (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
+    docker_env = deploy_dir / "docker.env"
+    docker_env.write_text(
+        docker_env.read_text(encoding="utf-8").replace(
+            f"ARBITER_CONTAINER_USER={_default_container_user()}\n",
+            "ARBITER_CONTAINER_USER=12345:12345\n",
+        ),
+        encoding="utf-8",
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker_calls = tmp_path / "docker-calls"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env sh\n"
+        f'printf "%s\\n" "$*" >> "{docker_calls}"\n'
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "up"],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert (
+        "error: plugin data directory is not writable by container user: 12345:12345"
+        in result.stderr
+    )
+    assert not docker_calls.exists()
+
+
 def test_cli_deploy_docker_generated_helper_up_prints_mcp_url(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -3631,10 +3838,7 @@ def test_cli_deploy_docker_generated_helper_doctor_rejects_unpinned_requirements
         capture_output=True,
     )
     assert valid_result.returncode == 0
-    assert (
-        "ok: requirements file uses exact pins or absolute container paths"
-        in valid_result.stdout
-    )
+    assert "ok: requirements file entries are syntactically valid" in valid_result.stdout
 
     (deploy_dir / "requirements.txt").write_text("arbiter-suite\n", encoding="utf-8")
     result = subprocess.run(
@@ -3722,6 +3926,169 @@ def test_cli_deploy_docker_generated_helper_doctor_rejects_raw_meta_override(
         "fail: requirements file contains unpinned package requirements"
         in result.stdout
     )
+
+
+def test_cli_deploy_docker_generated_helper_doctor_rejects_missing_plugin_data_mount(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    config_dir = deploy_dir / "conf"
+    (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
+    (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
+    compose_file = deploy_dir / "compose.yaml"
+    compose_file.write_text(
+        compose_file.read_text(encoding="utf-8")
+        .replace(
+            "      - ${ARBITER_PLUGIN_DATA_DIR:-./data/plugins}:/data/plugins\n",
+            "",
+        )
+        .replace(
+            ' "arbiter.storage.plugin_data_dir=/data/plugins"',
+            "",
+        ),
+        encoding="utf-8",
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env sh\n"
+        'if [ "$1" = info ]; then exit 0; fi\n'
+        'if [ "$1" = compose ] && [ "$2" = version ]; then\n'
+        "  printf 'Docker Compose version v2.fake\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "doctor"],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert (
+        "fail: compose file does not mount plugin data directory at /data/plugins"
+        in result.stdout
+    )
+    assert (
+        "fail: compose file does not configure "
+        "arbiter.storage.plugin_data_dir=/data/plugins"
+    ) in result.stdout
+
+
+def test_cli_deploy_docker_generated_helper_preinstall_rejects_unwritable_plugin_data_dir(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    config_dir = deploy_dir / "conf"
+    (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
+    (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
+    docker_env = deploy_dir / "docker.env"
+    docker_env.write_text(
+        docker_env.read_text(encoding="utf-8").replace(
+            f"ARBITER_CONTAINER_USER={_default_container_user()}\n",
+            "ARBITER_CONTAINER_USER=12345:12345\n",
+        ),
+        encoding="utf-8",
+    )
+    (deploy_dir / "data" / "plugins").chmod(0o755)
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "doctor", "--preinstall"],
+        check=False,
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert (
+        "fail: plugin data directory is not writable by container user: "
+        "12345:12345"
+    ) in result.stdout
+    assert "ok: preinstall checks passed\n" not in result.stdout
+
+
+def test_cli_deploy_docker_generated_helper_preinstall_rejects_open_plugin_data_dir(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    config_dir = deploy_dir / "conf"
+    (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
+    (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
+    (deploy_dir / "data" / "plugins").chmod(0o755)
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "doctor", "--preinstall"],
+        check=False,
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert (
+        "fail: plugin data directory is accessible outside its owner:"
+        in result.stdout
+    )
+    assert "ok: preinstall checks passed\n" not in result.stdout
 
 
 def test_cli_deploy_docker_generated_helper_doctor_can_color_status_prefixes(
@@ -4229,26 +4596,285 @@ def test_cli_deploy_docker_generated_helper_preinstall_rejects_source_override(
 
     assert result.returncode == 1
     assert (
-        "fail: install requires package or wheel requirements, but this file "
-        "uses the local checkout: "
+        "fail: preinstall found local checkout requirements: "
         f"{deploy_dir / 'requirements.txt'}\n"
     ) in result.stdout
     assert (
-        "      edit requirements.txt to use exact package pins such as "
-        "arbiter-server==VERSION, arbiter-smtp==VERSION, and "
-        "arbiter-imap==VERSION\n"
+        "      direct doctor --preinstall expects an already install-ready "
+        "deployment directory\n"
     ) in result.stdout
     assert (
-        "      alternatively, use absolute container wheel paths such as "
-        "/wheels/arbiter_server-VERSION-py3-none-any.whl\n"
+        f"      run {deploy_dir / 'arbiter-docker'} install to promote editable "
+        "requirements to local wheels automatically\n"
     ) in result.stdout
     assert (
-        "fail: install cannot keep the local checkout mounted into the container: "
+        "fail: preinstall found local checkout compose override: "
         f"{deploy_dir / 'compose.override.yaml'}\n"
     ) in result.stdout
     assert (
-        "      after switching requirements away from /source/arbiter, remove "
-        "compose.override.yaml or delete the /source/arbiter volume from it\n"
+        "      direct doctor --preinstall expects no /source/arbiter checkout mount\n"
+    ) in result.stdout
+    assert (
+        f"      run {deploy_dir / 'arbiter-docker'} install to move the local "
+        "checkout override aside during promotion\n"
+    ) in result.stdout
+
+
+def test_cli_deploy_docker_generated_helper_install_promotes_source_checkout(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo_dir = tmp_path / "repo"
+    deploy_dir = repo_dir / "arbiter-docker"
+    install_dir = tmp_path / "opt" / "arbiter"
+    systemd_dir = tmp_path / "systemd"
+    package_dir = repo_dir / "server"
+    package_dir.mkdir(parents=True)
+    (package_dir / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+    for plugin_dir in (repo_dir / "plugins" / "imap", repo_dir / "plugins" / "smtp"):
+        plugin_dir.mkdir(parents=True)
+        (plugin_dir / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=/source/arbiter/server",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    config_dir = deploy_dir / "conf"
+    (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
+    (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
+    assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
+        "/source/arbiter/server\n"
+    )
+    (deploy_dir / "compose.override.yaml").write_text(
+        "services:\n"
+        "  arbiter:\n"
+        "    volumes:\n"
+        f"      - {repo_dir}:/source/arbiter:ro\n",
+        encoding="utf-8",
+    )
+    assert "/source/arbiter" in (deploy_dir / "compose.override.yaml").read_text(
+        encoding="utf-8"
+    )
+    plugin_data_dir = deploy_dir / "data" / "plugins"
+    smtp_state_dir = plugin_data_dir / "smtp"
+    smtp_state_dir.mkdir(parents=True)
+    (smtp_state_dir / "idempotency.sqlite").write_text("state\n", encoding="utf-8")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "id").write_text(
+        "#!/usr/bin/env sh\n"
+        'if [ "$1" = -u ] && [ "$#" = 1 ]; then printf "0\\n"; exit 0; fi\n'
+        'if [ "$1" = -g ] && [ "$#" = 1 ]; then printf "0\\n"; exit 0; fi\n'
+        'if [ "$1" = -u ] && [ "$2" = arbiter ]; then printf "123\\n"; exit 0; fi\n'
+        'if [ "$1" = -g ] && [ "$2" = arbiter ]; then printf "123\\n"; exit 0; fi\n'
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "getent").write_text(
+        "#!/usr/bin/env sh\n"
+        'if [ "$1" = group ] && [ "$2" = arbiter ]; then exit 0; fi\n'
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    docker_calls = tmp_path / "docker-calls"
+    (fake_bin / "docker").write_text(
+        "#!/usr/bin/env sh\n" f'printf "%s\\n" "$*" >> "{docker_calls}"\n' "exit 0\n",
+        encoding="utf-8",
+    )
+    systemctl_calls = tmp_path / "systemctl-calls"
+    (fake_bin / "systemctl").write_text(
+        "#!/usr/bin/env sh\n"
+        'if [ "$1" = cat ] && [ "$2" = docker.service ]; then exit 1; fi\n'
+        f'printf "%s\\n" "$*" >> "{systemctl_calls}"\n'
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    python_calls = tmp_path / "python-calls"
+    (fake_bin / "python").write_text(
+        "#!/usr/bin/env sh\n"
+        f'printf "%s\\n" "$*" >> "{python_calls}"\n'
+        'wheel_dir=""\n'
+        'while [ "$#" -gt 0 ]; do\n'
+        '  if [ "$1" = "--wheel-dir" ]; then shift; wheel_dir="$1"; fi\n'
+        "  shift\n"
+        "done\n"
+        'printf "wheel\\n" > "$wheel_dir/arbiter_server-0.9.0.dev2-py3-none-any.whl"\n'
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "arbiter").write_text("#!/usr/bin/env sh\nexit 0\n", encoding="utf-8")
+    (fake_bin / "chown").write_text("#!/usr/bin/env sh\nexit 0\n", encoding="utf-8")
+    for fake_command in (
+        "id",
+        "getent",
+        "docker",
+        "systemctl",
+        "python",
+        "arbiter",
+        "chown",
+    ):
+        (fake_bin / fake_command).chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+    env["ARBITER_SYSTEMD_DIR"] = str(systemd_dir)
+
+    result = subprocess.run(
+        [
+            deploy_dir / "arbiter-docker",
+            "install",
+            "--to",
+            str(install_dir),
+            "--user",
+            "arbiter",
+            "--no-start",
+        ],
+        check=False,
+        cwd=repo_dir,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert (
+        f"promoted local checkout requirements to wheels: {deploy_dir / 'requirements.txt'}\n"
+        in result.stdout
+    )
+    assert (
+        "disabled local checkout compose override: "
+        f"{deploy_dir / 'compose.override.yaml'} -> "
+        f"{deploy_dir / 'compose.override.yaml.local-source.bak'}\n"
+    ) in result.stdout
+    assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
+        "/wheels/arbiter_server-0.9.0.dev2-py3-none-any.whl\n"
+    )
+    assert not (deploy_dir / "compose.override.yaml").exists()
+    assert (deploy_dir / "compose.override.yaml.local-source.bak").exists()
+    assert (install_dir / "requirements.txt").read_text(encoding="utf-8") == (
+        "/wheels/arbiter_server-0.9.0.dev2-py3-none-any.whl\n"
+    )
+    assert not (install_dir / "compose.override.yaml").exists()
+    assert (
+        install_dir / "wheels" / "arbiter_server-0.9.0.dev2-py3-none-any.whl"
+    ).exists()
+    _assert_posix_mode(install_dir / "data" / "plugins", 0o700)
+    _assert_posix_mode(install_dir / "data" / "plugins" / "smtp", 0o700)
+    _assert_posix_mode(
+        install_dir / "data" / "plugins" / "smtp" / "idempotency.sqlite",
+        0o600,
+    )
+    assert " pip --disable-pip-version-check wheel " in python_calls.read_text(
+        encoding="utf-8"
+    )
+    assert "service: arbiter.service enabled but not started\n" in result.stdout
+
+
+def test_cli_deploy_docker_generated_helper_install_disables_source_override_without_source_requirements(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "arbiter-docker"
+    install_dir = tmp_path / "opt" / "arbiter"
+    systemd_dir = tmp_path / "systemd"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    config_dir = deploy_dir / "conf"
+    (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
+    (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
+    (deploy_dir / "compose.override.yaml").write_text(
+        "services:\n"
+        "  arbiter:\n"
+        "    volumes:\n"
+        "      - /tmp/arbiter:/source/arbiter:ro\n",
+        encoding="utf-8",
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "id").write_text(
+        "#!/usr/bin/env sh\n"
+        'if [ "$1" = -u ] && [ "$#" = 1 ]; then printf "0\\n"; exit 0; fi\n'
+        'if [ "$1" = -g ] && [ "$#" = 1 ]; then printf "0\\n"; exit 0; fi\n'
+        'if [ "$1" = -u ] && [ "$2" = arbiter ]; then printf "123\\n"; exit 0; fi\n'
+        'if [ "$1" = -g ] && [ "$2" = arbiter ]; then printf "123\\n"; exit 0; fi\n'
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "getent").write_text(
+        "#!/usr/bin/env sh\n"
+        'if [ "$1" = group ] && [ "$2" = arbiter ]; then exit 0; fi\n'
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    docker_calls = tmp_path / "docker-calls"
+    (fake_bin / "docker").write_text(
+        "#!/usr/bin/env sh\n" f'printf "%s\\n" "$*" >> "{docker_calls}"\n' "exit 0\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "systemctl").write_text("#!/usr/bin/env sh\nexit 0\n", encoding="utf-8")
+    (fake_bin / "arbiter").write_text("#!/usr/bin/env sh\nexit 0\n", encoding="utf-8")
+    (fake_bin / "chown").write_text("#!/usr/bin/env sh\nexit 0\n", encoding="utf-8")
+    for fake_command in ("id", "getent", "docker", "systemctl", "arbiter", "chown"):
+        (fake_bin / fake_command).chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+    env["ARBITER_SYSTEMD_DIR"] = str(systemd_dir)
+    env["ARBITER_PYTHON"] = str(tmp_path / "missing-python")
+
+    result = subprocess.run(
+        [
+            deploy_dir / "arbiter-docker",
+            "install",
+            "--to",
+            str(install_dir),
+            "--user",
+            "arbiter",
+            "--no-start",
+        ],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
+        "arbiter-suite==1.2.3\n"
+    )
+    assert not (deploy_dir / "compose.override.yaml").exists()
+    assert (deploy_dir / "compose.override.yaml.local-source.bak").exists()
+    assert not (install_dir / "compose.override.yaml").exists()
+    assert (install_dir / "requirements.txt").read_text(encoding="utf-8") == (
+        "arbiter-suite==1.2.3\n"
+    )
+    assert "promoted local checkout requirements to wheels" not in result.stdout
+    assert (
+        "disabled local checkout compose override: "
+        f"{deploy_dir / 'compose.override.yaml'} -> "
+        f"{deploy_dir / 'compose.override.yaml.local-source.bak'}\n"
     ) in result.stdout
 
 
@@ -5729,6 +6355,56 @@ def test_cli_deploy_docker_helper_down_removes_orphans_only_for_managed_compose(
         "not removing orphan containers automatically: compose.yaml has local edits\n"
         "pass --remove-orphans to down if you want to remove stale services\n"
     )
+
+
+def test_cli_deploy_docker_helper_logs_include_timestamps(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    (deploy_dir / "conf" / "arbiter-server.yaml").write_text(
+        "arbiter: {}\n",
+        encoding="utf-8",
+    )
+    (deploy_dir / "conf" / ".env").write_text("", encoding="utf-8")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker_log = tmp_path / "docker-args.log"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n" 'printf "%s\\n" "$*" >> "$DOCKER_ARGS_LOG"\n',
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    env = {
+        **os.environ,
+        "DOCKER_ARGS_LOG": str(docker_log),
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+    }
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "logs"],
+        check=False,
+        text=True,
+        capture_output=True,
+        env=env,
+    )
+
+    assert result.returncode == 0
+    assert "logs --timestamps -f\n" in docker_log.read_text(encoding="utf-8")
 
 
 def test_cli_deploy_docker_reports_unknown_override(

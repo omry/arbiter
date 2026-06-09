@@ -150,15 +150,20 @@ Mount the checkout explicitly with a local Compose override:
 services:
   arbiter:
     volumes:
-      - /home/example/arbiter:/source/arbiter:ro
+      - /home/example/arbiter:/source/arbiter
 ```
 
-At container startup, the deployment copies the mounted checkout to temporary
-storage, builds wheels from the referenced source paths, then installs those
-wheels.
+At container startup, the deployment installs the referenced source paths in
+editable mode. This keeps staging tied to the local checkout without rebuilding
+package wheels on each start. The checkout is mounted read-write because Python
+editable build backends can update source-tree package metadata.
 
-Switch to pinned packages or `/wheels/*.whl` entries before Linux install, then
-remove the `/source/arbiter` mount from `compose.override.yaml`.
+Linux install promotes this testing state automatically: it builds local wheels,
+rewrites the installed `requirements.txt` to `/wheels/*.whl` entries, and moves
+the `/source/arbiter` Compose override aside before copying the deployment into
+place. Direct `doctor --preinstall` still reports local checkout requirements as
+not install-ready because that command only checks the current directory; run
+`install` to perform the promotion.
 
 </details>
 

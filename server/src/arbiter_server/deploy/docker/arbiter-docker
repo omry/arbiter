@@ -140,6 +140,29 @@ requirements_has_absolute_paths() {
   ' "$path"
 }
 
+requirements_has_source_paths() {
+  local path="$1"
+
+  awk '
+    {
+      line = $0
+      sub(/^[[:space:]]+/, "", line)
+      sub(/[[:space:]]+$/, "", line)
+      if (line == "" || line ~ /^#/) {
+        next
+      }
+      sub(/[[:space:]]+#.*$/, "", line)
+      sub(/[[:space:]]+$/, "", line)
+      if (line ~ /^\/source\/arbiter(\/|$)/) {
+        found = 1
+      }
+    }
+    END {
+      exit found ? 0 : 1
+    }
+  ' "$path"
+}
+
 edit_requirements() {
   local edited_requirements
 
@@ -1773,6 +1796,9 @@ compose() {
   require_file "$compose_env_file"
   require_file "$requirements_file"
   validate_requirements_file "$requirements_file"
+  if [[ "${1:-}" == up ]]; then
+    ensure_plugin_data_dir_ready
+  fi
   require_docker_access
   if [[ "${1:-}" == up ]]; then
     ensure_staging_subnet_available
@@ -2173,6 +2199,133 @@ doctor_check_dir() {
   fi
 }
 
+container_user_write_digit() {
+  local path="$1"
+  local container_user
+  local container_uid
+  local container_gid
+  local owner_uid
+  local owner_gid
+  local mode
+  local perms
+
+  [[ -d "$path" ]] || return 1
+  container_user="$(env_file_value "$compose_env_file" ARBITER_CONTAINER_USER || true)"
+  [[ "$container_user" =~ ^[0-9]+:[0-9]+$ ]] || return 1
+  container_uid="${container_user%%:*}"
+  container_gid="${container_user#*:}"
+
+  read -r owner_uid owner_gid mode < <(stat_owner_group_mode "$path")
+  perms="${mode: -3}"
+  if [[ "$container_uid" == "$owner_uid" ]]; then
+    printf '%s\n' "${perms:0:1}"
+  elif [[ "$container_gid" == "$owner_gid" ]]; then
+    printf '%s\n' "${perms:1:1}"
+  else
+    printf '%s\n' "${perms:2:1}"
+  fi
+}
+
+container_user_can_write_dir() {
+  local path="$1"
+  local digit
+
+  digit="$(container_user_write_digit "$path")" || return 1
+  (( (10#$digit & 2) != 0 && (10#$digit & 1) != 0 ))
+}
+
+ensure_plugin_data_dir_ready() {
+  local path
+  local container_user
+  local write_check
+
+  path="$(plugin_data_dir_path)"
+  container_user="$(env_file_value "$compose_env_file" ARBITER_CONTAINER_USER || true)"
+
+  if ! mkdir -p "$path"; then
+    printf 'error: could not create plugin data directory: %s\n' "$path" >&2
+    return 1
+  fi
+  if ! chmod 700 "$path"; then
+    printf 'error: could not secure plugin data directory: %s\n' "$path" >&2
+    printf '       chown it to the deployment helper user or run this command as root\n' >&2
+    return 1
+  fi
+
+  write_check="$path/.arbiter-write-check.$$"
+  if ! : >"$write_check" 2>/dev/null; then
+    printf 'error: plugin data directory is not writable: %s\n' "$path" >&2
+    printf '       chown or chmod it so the deployment helper can prepare plugin state\n' >&2
+    return 1
+  fi
+  rm -f "$write_check"
+
+  if container_user_can_write_dir "$path"; then
+    return 0
+  fi
+
+  if [[ "$(id -u)" == "0" && "$container_user" =~ ^[0-9]+:[0-9]+$ ]]; then
+    chown "$container_user" "$path"
+    chmod 700 "$path"
+  fi
+
+  if ! container_user_can_write_dir "$path"; then
+    printf 'error: plugin data directory is not writable by container user: %s\n' "$container_user" >&2
+    printf '       plugin data dir: %s\n' "$path" >&2
+    printf '       chown or chmod it so the container user can create plugin state\n' >&2
+    return 1
+  fi
+}
+
+doctor_check_plugin_data_permissions() {
+  local path="$1"
+  local mode
+  local perms
+
+  [[ -d "$path" ]] || return
+  mode="$(stat_mode "$path")"
+  perms="${mode: -3}"
+  if (( (10#${perms:1:1} & 7) != 0 || (10#${perms:2:1} & 7) != 0 )); then
+    doctor_fail "plugin data directory is accessible outside its owner: $path"
+    doctor_detail "run $deploy_dir/arbiter-docker up or chmod 700 $path"
+  else
+    doctor_ok "plugin data directory is only accessible by its owner"
+  fi
+}
+
+doctor_check_plugin_data_compose_wiring() {
+  if grep -Eq '^[[:space:]]*-[[:space:]]*\$\{ARBITER_PLUGIN_DATA_DIR:-\./data/plugins\}:/data/plugins[[:space:]]*$' "$compose_file"; then
+    doctor_ok "compose mounts plugin data directory at /data/plugins"
+  else
+    doctor_fail "compose file does not mount plugin data directory at /data/plugins"
+    doctor_detail "run $deploy_dir/arbiter-docker update to refresh generated Docker files"
+  fi
+
+  if grep -Fq '"arbiter.storage.plugin_data_dir=/data/plugins"' "$compose_file"; then
+    doctor_ok "server config points plugin data storage at /data/plugins"
+  else
+    doctor_fail "compose file does not configure arbiter.storage.plugin_data_dir=/data/plugins"
+    doctor_detail "run $deploy_dir/arbiter-docker update to refresh generated Docker files"
+  fi
+}
+
+doctor_check_container_user_can_write_dir() {
+  local path="$1"
+  local description="$2"
+  local container_user
+
+  [[ -d "$path" ]] || return
+  container_user="$(env_file_value "$compose_env_file" ARBITER_CONTAINER_USER || true)"
+  [[ "$container_user" =~ ^[0-9]+:[0-9]+$ ]] || return
+
+  if container_user_can_write_dir "$path"; then
+    doctor_ok "$description is writable by container user: $container_user"
+  else
+    doctor_fail "$description is not writable by container user: $container_user"
+    doctor_detail "chown or chmod $path so $container_user can create plugin state"
+  fi
+}
+
 doctor_check_env_file() {
   local path="$1"
   local description="$2"
@@ -2311,7 +2464,7 @@ doctor_check_requirements_file() {
   fi
 
   if validate_requirements_file "$path"; then
-    doctor_ok "requirements file uses exact pins or absolute container paths"
+    doctor_ok "requirements file entries are syntactically valid"
   else
     doctor_fail "requirements file contains unpinned package requirements"
   fi
@@ -2457,13 +2610,15 @@ doctor_check_preinstall_ready() {
   doctor_check_install_deploy_path "$(compose_env_value ARBITER_WHEELS_DIR ./wheels)" "wheels directory" "ARBITER_WHEELS_DIR"
   doctor_check_install_deploy_path "$(compose_env_value ARBITER_PLUGIN_DATA_DIR ./data/plugins)" "plugin data directory" "ARBITER_PLUGIN_DATA_DIR"
   doctor_check_dir "$active_plugin_data_dir" "plugin data directory"
+  doctor_check_plugin_data_permissions "$active_plugin_data_dir"
+  doctor_check_plugin_data_compose_wiring
+  doctor_check_container_user_can_write_dir "$active_plugin_data_dir" "plugin data directory"
   doctor_check_file "$active_requirements_file" "runtime requirements file"
-  doctor_check_requirements_file "$active_requirements_file"
 
   if [[ -f "$active_requirements_file" ]] && grep -Eq '^[[:space:]]*/source/arbiter(/|$)' "$active_requirements_file"; then
-    doctor_fail "install requires package or wheel requirements, but this file uses the local checkout: $active_requirements_file"
-    printf '      edit requirements.txt to use exact package pins such as arbiter-server==VERSION, arbiter-smtp==VERSION, and arbiter-imap==VERSION\n'
-    printf '      alternatively, use absolute container wheel paths such as /wheels/arbiter_server-VERSION-py3-none-any.whl\n'
+    doctor_fail "preinstall found local checkout requirements: $active_requirements_file"
+    printf '      direct doctor --preinstall expects an already install-ready deployment directory\n'
+    printf '      run %s install to promote editable requirements to local wheels automatically\n' "$deploy_dir/arbiter-docker"
   fi
 
   while IFS= read -r wheel_requirement; do
@@ -2490,8 +2645,9 @@ doctor_check_preinstall_ready() {
   )
 
   if [[ -f "$compose_override_file" ]] && grep -q '/source/arbiter' "$compose_override_file"; then
-    doctor_fail "install cannot keep the local checkout mounted into the container: $compose_override_file"
-    printf '      after switching requirements away from /source/arbiter, remove compose.override.yaml or delete the /source/arbiter volume from it\n'
+    doctor_fail "preinstall found local checkout compose override: $compose_override_file"
+    printf '      direct doctor --preinstall expects no /source/arbiter checkout mount\n'
+    printf '      run %s install to move the local checkout override aside during promotion\n' "$deploy_dir/arbiter-docker"
   fi
 
   if [[ "$doctor_status" -eq 0 ]]; then
@@ -2598,6 +2754,7 @@ doctor() {
   local active_config_dir
   local active_config_file
   local active_app_env
+  local active_plugin_data_dir
 
   doctor_status=0
   doctor_agent_uid=""
@@ -2665,9 +2822,12 @@ doctor() {
   doctor_check_file "$deploy_dir/arbiter-docker" "helper script"
   doctor_check_env_file "$active_app_env" "app env file"
   doctor_check_env_file "$compose_env_file" "docker env file"
+  doctor_check_plugin_data_permissions "$active_plugin_data_dir"
   doctor_check_config_file_permissions "$active_config_dir" "$active_app_env"
   doctor_check_app_env_permissions "$active_app_env"
   doctor_check_container_user_config
+  doctor_check_plugin_data_compose_wiring
+  doctor_check_container_user_can_write_dir "$active_plugin_data_dir" "plugin data directory"
   doctor_check_requirements_file "$requirements_file"
 
   if [[ "$doctor_preinstall" -eq 1 ]]; then
@@ -2778,6 +2938,204 @@ install_target_requirements_file_path() {
 install_target_wheels_dir_path() {
   install_target_path_from_compose_value \
     "$(compose_env_value ARBITER_WHEELS_DIR ./wheels)"
+}
+
+install_local_wheel_python() {
+  local repo_root="$1"
+  local python_bin="${ARBITER_PYTHON:-}"
+
+  if [[ -n "$python_bin" ]]; then
+    printf '%s\n' "$python_bin"
+    return 0
+  fi
+  if [[ -x "$repo_root/.venv/bin/python" ]]; then
+    printf '%s\n' "$repo_root/.venv/bin/python"
+    return 0
+  fi
+  if command -v python >/dev/null; then
+    printf 'python\n'
+    return 0
+  fi
+  if command -v python3 >/dev/null; then
+    printf 'python3\n'
+    return 0
+  fi
+  return 1
+}
+
+install_chown_to_invoking_user() {
+  [[ -n "${SUDO_UID:-}" && -n "${SUDO_GID:-}" ]] || return 0
+  [[ "$#" -gt 0 ]] || return 0
+  chown "$SUDO_UID:$SUDO_GID" "$@"
+}
+
+install_chown_wheelhouse_to_invoking_user() {
+  local target_wheels_dir="$1"
+  local wheel
+  local -a paths=()
+
+  [[ -n "${SUDO_UID:-}" && -n "${SUDO_GID:-}" ]] || return 0
+  [[ -d "$target_wheels_dir" ]] || return 0
+  paths+=("$target_wheels_dir")
+  shopt -s nullglob
+  for wheel in "$target_wheels_dir"/*.whl; do
+    paths+=("$wheel")
+  done
+  shopt -u nullglob
+  install_chown_to_invoking_user "${paths[@]}"
+}
+
+install_build_source_wheel() {
+  local python_bin="$1"
+  local source_dir="$2"
+  local target_wheels_dir="$3"
+  local build_dir
+  local output_file
+  local built_wheels
+  local wheel
+
+  build_dir="$(mktemp -d "${TMPDIR:-/tmp}/arbiter-install-wheel.XXXXXX")"
+  output_file="$build_dir/pip-wheel.out"
+  if ! "$python_bin" -m pip --disable-pip-version-check wheel --no-deps --no-build-isolation --wheel-dir "$build_dir" "$source_dir" >"$output_file" 2>&1; then
+    cat "$output_file" >&2
+    printf 'error: failed to build install wheel from local source: %s\n' "$source_dir" >&2
+    rm -rf "$build_dir"
+    return 1
+  fi
+
+  built_wheels=("$build_dir"/*.whl)
+  if [[ "${#built_wheels[@]}" -ne 1 || ! -f "${built_wheels[0]}" ]]; then
+    printf 'error: expected one wheel from local source, got %s: %s\n' "${#built_wheels[@]}" "$source_dir" >&2
+    rm -rf "$build_dir"
+    return 1
+  fi
+
+  wheel="${built_wheels[0]}"
+  mkdir -p "$target_wheels_dir"
+  cp "$wheel" "$target_wheels_dir/${wheel##*/}"
+  install_chown_to_invoking_user "$target_wheels_dir/${wheel##*/}"
+  printf '%s\n' "${wheel##*/}"
+  rm -rf "$build_dir"
+}
+
+install_promote_local_checkout() {
+  local active_requirements_file
+  local active_wheels_dir
+  local repo_root
+  local python_bin
+  local tmp_requirements=""
+  local raw_line
+  local line
+  local source_suffix
+  local source_dir
+  local wheel_name
+  local promoted=0
+  local has_source_requirements=0
+  local has_source_override=0
+  local override_backup
+  local image
+  local docker_user
+
+  active_requirements_file="$(deploy_path_from_compose_value "$(compose_env_value ARBITER_REQUIREMENTS_FILE ./requirements.txt)")"
+  active_wheels_dir="$(wheels_dir_path)"
+
+  if [[ -f "$active_requirements_file" ]] && requirements_has_source_paths "$active_requirements_file"; then
+    has_source_requirements=1
+  fi
+  if [[ -f "$compose_override_file" ]] && grep -q '/source/arbiter' "$compose_override_file"; then
+    has_source_override=1
+  fi
+  if [[ "$has_source_requirements" -eq 0 && "$has_source_override" -eq 0 ]]; then
+    return 0
+  fi
+
+  if [[ "${install_dry_run:-0}" -eq 1 ]]; then
+    printf 'would promote local checkout deployment to wheel-backed install\n'
+    return 0
+  fi
+
+  require_file "$active_requirements_file"
+  validate_requirements_file "$active_requirements_file"
+
+  if [[ "$has_source_requirements" -eq 1 ]]; then
+    if ! repo_root="$(find_repo_root)"; then
+      printf 'error: cannot promote local checkout deployment: Arbiter repo root not found\n' >&2
+      return 1
+    fi
+    if ! python_bin="$(install_local_wheel_python "$repo_root")"; then
+      printf 'error: cannot promote local checkout deployment: python command not found\n' >&2
+      printf '       set ARBITER_PYTHON to the Python interpreter for building local wheels\n' >&2
+      return 1
+    fi
+
+    tmp_requirements="$(mktemp "${TMPDIR:-/tmp}/arbiter-install-requirements.XXXXXX")"
+    while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+      line="$raw_line"
+      line="${line#"${line%%[![:space:]]*}"}"
+      line="${line%"${line##*[![:space:]]}"}"
+      line="${line%%[[:space:]]#*}"
+      line="${line%"${line##*[![:space:]]}"}"
+      if [[ -z "$line" || "$line" == \#* ]]; then
+        printf '%s\n' "$raw_line" >>"$tmp_requirements"
+        continue
+      fi
+      if [[ "$line" == /source/arbiter || "$line" == /source/arbiter/* ]]; then
+        source_suffix="${line#/source/arbiter}"
+        source_suffix="${source_suffix#/}"
+        source_dir="$repo_root"
+        if [[ -n "$source_suffix" ]]; then
+          source_dir="$repo_root/$source_suffix"
+        fi
+        if [[ ! -d "$source_dir" || ! -f "$source_dir/pyproject.toml" ]]; then
+          printf 'error: cannot map local checkout requirement to package source: %s\n' "$line" >&2
+          printf '       expected pyproject.toml at %s\n' "$source_dir" >&2
+          rm -f "$tmp_requirements"
+          return 1
+        fi
+        wheel_name="$(install_build_source_wheel "$python_bin" "$source_dir" "$active_wheels_dir")" || {
+          rm -f "$tmp_requirements"
+          return 1
+        }
+        printf '/wheels/%s\n' "$wheel_name" >>"$tmp_requirements"
+        promoted=1
+        continue
+      fi
+      printf '%s\n' "$raw_line" >>"$tmp_requirements"
+    done <"$active_requirements_file"
+  fi
+
+  if [[ "$promoted" -eq 1 ]]; then
+    if ! validate_requirements_file "$tmp_requirements"; then
+      printf 'error: promoted requirements are invalid; requirements unchanged: %s\n' "$active_requirements_file" >&2
+      rm -f "$tmp_requirements"
+      return 1
+    fi
+    image="$(compose_env_value ARBITER_IMAGE python:3.11-slim)"
+    docker_user="$(id -u):$(id -g)"
+    if ! prepare_dependency_wheelhouse "$tmp_requirements" "$active_wheels_dir" "$docker_user" "$image" 1 0; then
+      rm -f "$tmp_requirements"
+      return 1
+    fi
+    if ! validate_dependency_wheelhouse "$tmp_requirements" "$active_wheels_dir" "$docker_user" "$image" 1; then
+      rm -f "$tmp_requirements"
+      return 1
+    fi
+    mv "$tmp_requirements" "$active_requirements_file"
+    install_chown_to_invoking_user "$active_requirements_file"
+    install_chown_wheelhouse_to_invoking_user "$active_wheels_dir"
+    printf 'promoted local checkout requirements to wheels: %s\n' "$active_requirements_file"
+  else
+    if [[ -n "$tmp_requirements" ]]; then
+      rm -f "$tmp_requirements"
+    fi
+  fi
+
+  if [[ -f "$compose_override_file" ]] && grep -q '/source/arbiter' "$compose_override_file"; then
+    override_backup="$compose_override_file.local-source.bak"
+    mv "$compose_override_file" "$override_backup"
+    install_chown_to_invoking_user "$override_backup"
+    printf 'disabled local checkout compose override: %s -> %s\n' "$compose_override_file" "$override_backup"
+  fi
 }
 
 install_target_app_env_path() {
@@ -3164,6 +3522,7 @@ EOF
 
 install_apply_permissions() {
   local app_env_target
+  local plugin_data_target
 
   if [[ "${install_dry_run:-0}" -eq 1 ]]; then
     printf 'would chown/chmod deployment for %s:%s: %s\n' \
@@ -3177,6 +3536,11 @@ install_apply_permissions() {
   chmod 0750 "$install_target_dir/arbiter-docker"
   if [[ -d "$install_target_dir/backup" ]]; then
     find "$install_target_dir/backup" -type f -exec chmod 0600 {} +
+  fi
+  plugin_data_target="$(install_target_path_from_compose_value "$(compose_env_value ARBITER_PLUGIN_DATA_DIR ./data/plugins)")"
+  if [[ -d "$plugin_data_target" ]]; then
+    find "$plugin_data_target" -type d -exec chmod 0700 {} +
+    find "$plugin_data_target" -type f -exec chmod 0600 {} +
   fi
 
   app_env_target="$(install_target_app_env_path)"
@@ -3869,6 +4233,7 @@ install_deployment() {
   printf 'installing Arbiter to %s as %s:%s (service: %s.service)\n' \
     "$install_target_dir" "$install_user" "$install_group" "$install_service"
 
+  install_promote_local_checkout
   doctor --preinstall --quiet
 
   if [[ "$install_dry_run" -ne 1 ]]; then
@@ -3945,7 +4310,7 @@ case "$command" in
     compose ps
     ;;
   logs)
-    compose logs -f
+    compose logs --timestamps -f
     ;;
   info)
     info

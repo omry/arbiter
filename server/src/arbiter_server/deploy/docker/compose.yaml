@@ -41,23 +41,24 @@ services:
       mkdir -p "$$HOME" &&
       python -m venv "$$runtime_venv" &&
       venv_python="$$runtime_venv/bin/python" &&
-      if grep -q "/source/arbiter" /requirements.txt; then
-        rm -rf /tmp/arbiter-source &&
-        rm -rf /tmp/arbiter-wheels &&
-        mkdir -p /tmp/arbiter-source &&
-        mkdir -p /tmp/arbiter-wheels &&
-        cp -a /source/arbiter/. /tmp/arbiter-source/ &&
-        find /tmp/arbiter-source -type d \( -name "*.egg-info" -o -name "__pycache__" \) -prune -exec rm -rf {} + &&
-        sed "s#/source/arbiter#/tmp/arbiter-source#g" /requirements.txt > /tmp/requirements.txt &&
-        awk "!/^[[:space:]]*(#|$)/ && !/^[[:space:]]*\\/tmp\\/arbiter-source\\// { print }" /tmp/requirements.txt > /tmp/requirements.pinned &&
-        awk "/^[[:space:]]*\\/tmp\\/arbiter-source\\// { print }" /tmp/requirements.txt | while IFS= read -r requirement; do
-          "$$venv_python" -m pip --disable-pip-version-check wheel --no-cache-dir --no-deps --wheel-dir /tmp/arbiter-wheels "$$requirement";
-        done &&
-        if [ -d /wheels ] && find /wheels -maxdepth 1 -name "*.whl" -print -quit | grep -q .; then
-          "$$venv_python" -m pip --disable-pip-version-check install --no-cache-dir --no-index --find-links /wheels -r /tmp/requirements.pinned /tmp/arbiter-wheels/*.whl;
-        else
-          "$$venv_python" -m pip --disable-pip-version-check install --no-cache-dir -r /tmp/requirements.pinned /tmp/arbiter-wheels/*.whl;
-        fi;
+      if grep -Eq "^[[:space:]]*/source/arbiter(/|$)" /requirements.txt; then
+        cp /requirements.txt /tmp/requirements.txt &&
+        awk "!/^[[:space:]]*(#|$)/ && !/^[[:space:]]*\\/source\\/arbiter(\\/|$)/ { print }" /tmp/requirements.txt > /tmp/requirements.pinned &&
+        awk "/^[[:space:]]*\\/source\\/arbiter(\\/|$)/ { print }" /tmp/requirements.txt > /tmp/requirements.editable &&
+        if [ -s /tmp/requirements.pinned ]; then
+          if [ -d /wheels ] && find /wheels -maxdepth 1 -name "*.whl" -print -quit | grep -q .; then
+            "$$venv_python" -m pip --disable-pip-version-check install --no-cache-dir --no-index --find-links /wheels -r /tmp/requirements.pinned;
+          else
+            "$$venv_python" -m pip --disable-pip-version-check install --no-cache-dir -r /tmp/requirements.pinned;
+          fi;
+        fi &&
+        while IFS= read -r requirement; do
+          if [ -d /wheels ] && find /wheels -maxdepth 1 -name "*.whl" -print -quit | grep -q .; then
+            "$$venv_python" -m pip --disable-pip-version-check install --no-cache-dir --find-links /wheels -e "$$requirement" || exit 1;
+          else
+            "$$venv_python" -m pip --disable-pip-version-check install --no-cache-dir -e "$$requirement" || exit 1;
+          fi;
+        done < /tmp/requirements.editable;
       elif [ -d /wheels ] && find /wheels -maxdepth 1 -name "*.whl" -print -quit | grep -q .; then
         "$$venv_python" -m pip --disable-pip-version-check install --no-cache-dir --no-index --find-links /wheels -r /requirements.txt;
       else
@@ -65,9 +66,13 @@ services:
       fi &&
       public_host="$${ARBITER_HOST_BIND:-127.0.0.1}" &&
       case "$$public_host" in 0.0.0.0) public_host=127.0.0.1;; *:*) public_host="[$$public_host]";; esac &&
-      set -- "$$runtime_venv/bin/arbiter-server" --config-dir /config --config-name "$$ARBITER_CONFIG_NAME" serve "arbiter.server.bind.host=$$ARBITER_SERVER_HOST" "arbiter.server.bind.port=$$ARBITER_CONTAINER_PORT" "arbiter.server.public.scheme=$${ARBITER_PUBLIC_SCHEME:-http}" "arbiter.server.public.host=$$public_host" "arbiter.server.public.port=$${ARBITER_HOST_PORT:-18025}" "arbiter.storage.plugin_data_dir=/data/plugins" "arbiter.deployment_scope=staged" &&
+      set -- "arbiter.server.bind.host=$$ARBITER_SERVER_HOST" "arbiter.server.bind.port=$$ARBITER_CONTAINER_PORT" "arbiter.server.public.scheme=$${ARBITER_PUBLIC_SCHEME:-http}" "arbiter.server.public.host=$$public_host" "arbiter.server.public.port=$${ARBITER_HOST_PORT:-18025}" "arbiter.storage.plugin_data_dir=/data/plugins" "arbiter.deployment_scope=staged" &&
       if [ -n "$${ARBITER_PUBLIC_BASE_URL:-}" ]; then set -- "$$@" "arbiter.server.public.base_url=$$ARBITER_PUBLIC_BASE_URL"; fi &&
-      exec "$$@"'
+      if ! "$$runtime_venv/bin/arbiter-server" --config-dir /config --config-name "$$ARBITER_CONFIG_NAME" config check "$$@"; then
+        echo "fatal configuration error; stopping container without Docker restart" >&2;
+        exit 0;
+      fi &&
+      exec "$$runtime_venv/bin/arbiter-server" --config-dir /config --config-name "$$ARBITER_CONFIG_NAME" serve "$$@"'
 
 networks:
   arbiter:
