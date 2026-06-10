@@ -95,17 +95,6 @@ This file is the day-to-day queue for design and implementation gaps.
       allowlisting so local Arbiter MCP and artifact URLs such as
       `http://127.0.0.1:8025/...` do not require per-command escalation.
 
-- [ ] `P1` Add complete client CLI help coverage.
-      Every top-level client command and nested subcommand should accept
-      `--help` and print short, agent-friendly usage plus a brief description of
-      each available subcommand and important option. Acceptance checks:
-      `arbiter --help`, `arbiter artifact --help`, `arbiter artifact get --help`,
-      `arbiter artifact save --help`, `arbiter artifact with-temp --help`,
-      `arbiter artifact with-stdin --help`, and equivalent help paths for
-      config, info, op, and mcp do not report
-      "unknown command"; output is concise enough for agent context and names the
-      safety behavior of text-only stdout and binary-safe artifact helpers.
-
 - [ ] `P1` Complete the website documentation readiness pass.
       The Docusaurus site is the user-facing documentation home, but it still
       needs a release-readiness pass across operator and plugin-author

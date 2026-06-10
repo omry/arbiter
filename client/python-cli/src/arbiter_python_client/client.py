@@ -259,6 +259,32 @@ def _format_capability(
     return template.format_map(_capability_format_values(capability))
 
 
+def _add_output_renderer_arguments(parser: argparse.ArgumentParser) -> None:
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--json",
+        dest="output",
+        action="store_const",
+        const="json",
+        default="json",
+        help="print structured JSON (default)",
+    )
+    group.add_argument(
+        "--yaml",
+        dest="output",
+        action="store_const",
+        const="yaml",
+        help="print structured YAML",
+    )
+    group.add_argument(
+        "--plain",
+        dest="output",
+        action="store_const",
+        const="plain",
+        help="print compact text",
+    )
+
+
 def _capabilities_with_plugin_versions(
     capabilities: Sequence[object],
     version_info: object,
@@ -1136,11 +1162,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     info_subcommands.add_parser(
         "plugins",
-        help="list installed service plugins",
+        help="list installed plugins",
     )
     info_plugin = info_subcommands.add_parser(
         "plugin",
-        help="describe one service plugin",
+        help="describe one plugin",
     )
     info_plugin.add_argument("plugin", help="plugin name, such as smtp")
 
@@ -1242,11 +1268,25 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="operation_command",
         required=True,
     )
+    operation_list = operation_subcommands.add_parser(
+        "list",
+        help="list plugins or operation summaries for one plugin",
+    )
+    operation_list.add_argument(
+        "plugin",
+        nargs="?",
+        help="plugin to list operations for; omit to list plugins",
+    )
+    _add_output_renderer_arguments(operation_list)
     operation_describe = operation_subcommands.add_parser(
         "desc",
-        help="describe one operation (alias: describe)",
+        help="describe one plugin or operation (alias: describe)",
     )
-    operation_describe.add_argument("id", help="operation id, such as smtp:send_email")
+    operation_describe.add_argument(
+        "id",
+        help="plugin id such as smtp, or operation id such as smtp:send_email",
+    )
+    _add_output_renderer_arguments(operation_describe)
     operation_run = operation_subcommands.add_parser(
         "run",
         help="run one operation",
@@ -1593,6 +1633,122 @@ def _short_info_accounts(plugins: object) -> list[dict[str, str]]:
     return accounts
 
 
+def _plugin_ids_from_info_payload(payload: object) -> list[str]:
+    if not isinstance(payload, Mapping):
+        raise ToolCallError("unexpected info plugins payload")
+    raw_plugins = payload.get("plugins")
+    if not isinstance(raw_plugins, list):
+        raise ToolCallError("unexpected info plugins payload")
+    plugins: list[str] = []
+    for raw_plugin in raw_plugins:
+        if not isinstance(raw_plugin, Mapping):
+            raise ToolCallError("unexpected info plugins payload")
+        plugin_id = raw_plugin.get("id")
+        if not isinstance(plugin_id, str) or not plugin_id:
+            raise ToolCallError("unexpected info plugins payload")
+        plugins.append(plugin_id)
+    return sorted(plugins)
+
+
+def _operation_ids_from_info_payload(payload: object) -> list[str]:
+    _, operation_ids = _operations_by_id_from_info_payload(payload)
+    return operation_ids
+
+
+def _operations_by_id_from_info_payload(
+    payload: object,
+) -> tuple[dict[str, dict[str, object]], list[str]]:
+    if not isinstance(payload, Mapping):
+        raise ToolCallError("unexpected info ops payload")
+    raw_operations = payload.get("operations")
+    if not isinstance(raw_operations, list):
+        raise ToolCallError("unexpected info ops payload")
+    operations_by_id: dict[str, dict[str, object]] = {}
+    operation_ids: list[str] = []
+    for raw_operation in raw_operations:
+        if not isinstance(raw_operation, Mapping):
+            raise ToolCallError("unexpected info ops payload")
+        operation_id = raw_operation.get("id")
+        if not isinstance(operation_id, str) or not operation_id:
+            raise ToolCallError("unexpected info ops payload")
+        operations_by_id[operation_id] = {
+            str(key): value for key, value in raw_operation.items() if key != "id"
+        }
+        operation_ids.append(operation_id)
+    operation_ids = sorted(operation_ids)
+    return {operation_id: operations_by_id[operation_id] for operation_id in operation_ids}, operation_ids
+
+
+def _operation_list_structured_payload(payload: object) -> tuple[object, list[str]]:
+    if not isinstance(payload, Mapping):
+        raise ToolCallError("unexpected info ops payload")
+    operations_by_id, operation_ids = _operations_by_id_from_info_payload(payload)
+    structured: dict[str, object] = {}
+    if "kind" in payload:
+        structured["kind"] = payload["kind"]
+    structured["operations"] = operations_by_id
+    if "plugin" in payload:
+        structured["plugin"] = payload["plugin"]
+    for key, value in payload.items():
+        if key not in structured and key != "operations":
+            structured[str(key)] = value
+    return structured, operation_ids
+
+
+async def _operation_ids_for_plugin(url: str, plugin: str) -> list[str]:
+    result = await call_tool(url, "info", {"kind": "ops", "plugin": plugin})
+    return sorted(_operation_ids_from_info_payload(_tool_result_payload(result)))
+
+
+async def _operation_list_payload(
+    url: str,
+    plugin: str | None,
+) -> tuple[object, list[str]]:
+    if plugin is not None:
+        result = await call_tool(url, "info", {"kind": "ops", "plugin": plugin})
+        payload = _tool_result_payload(result)
+        return _operation_list_structured_payload(payload)
+
+    result = await call_tool(url, "info", {"kind": "plugins"})
+    plugin_ids = _plugin_ids_from_info_payload(_tool_result_payload(result))
+    return {"plugins": plugin_ids}, plugin_ids
+
+
+def _operation_desc_plain_lines(payload: object) -> list[str]:
+    if not isinstance(payload, Mapping):
+        return [str(payload)]
+    lines: list[str] = []
+    item_id = payload.get("id")
+    if isinstance(item_id, str) and item_id:
+        lines.append(item_id)
+    description = payload.get("description")
+    if isinstance(description, str) and description:
+        lines.append(description)
+    operations = payload.get("operations")
+    if isinstance(operations, list):
+        for operation in operations:
+            if not isinstance(operation, Mapping):
+                continue
+            operation_id = operation.get("id")
+            if isinstance(operation_id, str) and operation_id:
+                lines.append(operation_id)
+    return lines or [str(payload)]
+
+
+def _render_operation_payload(
+    payload: object,
+    output: str,
+    plain_lines: Sequence[str],
+) -> None:
+    if output == "plain":
+        for line in plain_lines:
+            print(line)
+    elif output == "yaml":
+        _print_yaml(payload)
+    else:
+        _print_json(payload)
+
+
 def _tool_error_message_for_cli(
     exc: ToolCallError,
     namespace: argparse.Namespace,
@@ -1725,16 +1881,38 @@ async def _run_async(namespace: argparse.Namespace) -> int:
             )
         _print_json(_tool_result_payload(result))
         return 0
+    if (
+        namespace.command in {"operation", "op"}
+        and namespace.operation_command == "list"
+    ):
+        payload, plain_lines = await _operation_list_payload(
+            namespace.mcp_url,
+            namespace.plugin,
+        )
+        _render_operation_payload(payload, namespace.output, plain_lines)
+        return 0
     if namespace.command in {"operation", "op"} and namespace.operation_command in {
         "describe",
         "desc",
     }:
-        result = await call_tool(
-            namespace.mcp_url,
-            "describe_op",
-            {"id": namespace.id},
+        if ":" in namespace.id:
+            result = await call_tool(
+                namespace.mcp_url,
+                "describe_op",
+                {"id": namespace.id},
+            )
+        else:
+            result = await call_tool(
+                namespace.mcp_url,
+                "info",
+                {"kind": "plugin", "plugin": namespace.id},
+            )
+        payload = _tool_result_payload(result)
+        _render_operation_payload(
+            payload,
+            namespace.output,
+            _operation_desc_plain_lines(payload),
         )
-        _print_json(_tool_result_payload(result))
         return 0
     if (
         namespace.command in {"operation", "op"}

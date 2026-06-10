@@ -25,6 +25,221 @@ func TestMainPrintsVersion(t *testing.T) {
 	}
 }
 
+func TestGoClientHelp(t *testing.T) {
+	tests := []struct {
+		name       string
+		args       []string
+		expected   []string
+		unexpected []string
+	}{
+		{
+			name: "top-level",
+			args: []string{"--help"},
+			expected: []string{
+				"usage: arbiter",
+				"primary commands:",
+				"info",
+				"op",
+				"artifact",
+				"--help --extended",
+			},
+			unexpected: []string{
+				"bootstrap",
+				"config",
+				"mcp",
+			},
+		},
+		{
+			name: "top-level extended",
+			args: []string{"--help", "--extended"},
+			expected: []string{
+				"usage: arbiter",
+				"primary commands:",
+				"setup:",
+				"bootstrap",
+				"config",
+				"advanced:",
+				"mcp",
+			},
+		},
+		{
+			name: "bootstrap",
+			args: []string{"bootstrap", "--help"},
+			expected: []string{
+				"usage: arbiter bootstrap",
+				"client",
+			},
+		},
+		{
+			name: "bootstrap client",
+			args: []string{"bootstrap", "client", "--help"},
+			expected: []string{
+				"usage: arbiter bootstrap client",
+				"--force",
+			},
+		},
+		{
+			name: "config",
+			args: []string{"config", "--help"},
+			expected: []string{
+				"usage: arbiter config",
+				"mcp-url",
+			},
+		},
+		{
+			name: "config mcp-url",
+			args: []string{"config", "mcp-url", "--help"},
+			expected: []string{
+				"usage: arbiter config mcp-url",
+				"MCP URL resolved",
+			},
+		},
+		{
+			name: "info",
+			args: []string{"info", "--help"},
+			expected: []string{
+				"usage: arbiter info",
+				"--short",
+				"--yaml",
+				"plugins",
+				"accounts",
+				"ops",
+			},
+		},
+		{
+			name: "info plugin",
+			args: []string{"info", "plugin", "--help"},
+			expected: []string{
+				"usage: arbiter info plugin",
+				"<plugin>",
+			},
+		},
+		{
+			name: "info account",
+			args: []string{"info", "account", "--help"},
+			expected: []string{
+				"usage: arbiter info account",
+				"<plugin>",
+				"<account>",
+			},
+		},
+		{
+			name: "op",
+			args: []string{"op", "--help"},
+			expected: []string{
+				"usage: arbiter op",
+				"list",
+				"<plugin>:<operation>",
+				"desc",
+				"run",
+			},
+		},
+		{
+			name: "op list",
+			args: []string{"op", "list", "--help"},
+			expected: []string{
+				"usage: arbiter op list",
+				"[plugin]",
+				"--plain",
+			},
+		},
+		{
+			name: "op desc",
+			args: []string{"op", "desc", "--help"},
+			expected: []string{
+				"usage: arbiter op desc",
+				"<plugin-or-operation-id>",
+				"imap:get_message",
+				"--yaml",
+			},
+		},
+		{
+			name: "op describe",
+			args: []string{"op", "describe", "--help"},
+			expected: []string{
+				"usage: arbiter op describe",
+				"<plugin-or-operation-id>",
+				"imap:get_message",
+				"--yaml",
+			},
+		},
+		{
+			name: "op run",
+			args: []string{"op", "run", "--help"},
+			expected: []string{
+				"usage: arbiter op run",
+				"arbiter op list <plugin>",
+				"--args",
+			},
+		},
+		{
+			name: "mcp",
+			args: []string{"mcp", "--help"},
+			expected: []string{
+				"usage: arbiter mcp",
+				"tools",
+				"call",
+			},
+		},
+		{
+			name: "mcp tools",
+			args: []string{"mcp", "tools", "--help"},
+			expected: []string{
+				"usage: arbiter mcp tools",
+				"--json",
+			},
+		},
+		{
+			name: "mcp call",
+			args: []string{"mcp", "call", "--help"},
+			expected: []string{
+				"usage: arbiter mcp call",
+				"--args",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := testutil.RunCLI(t, nil, tt.args...)
+
+			if result.Code != 0 {
+				t.Fatalf("expected exit code 0, got %d stderr=%q", result.Code, result.Stderr)
+			}
+			if result.Stderr != "" {
+				t.Fatalf("unexpected stderr: %q", result.Stderr)
+			}
+			for _, expected := range tt.expected {
+				if !strings.Contains(result.Stdout, expected) {
+					t.Fatalf("expected stdout to contain %q, got %q", expected, result.Stdout)
+				}
+			}
+			for _, unexpected := range tt.unexpected {
+				if strings.Contains(result.Stdout, unexpected) {
+					t.Fatalf("expected stdout not to contain %q, got %q", unexpected, result.Stdout)
+				}
+			}
+		})
+	}
+}
+
+func TestGoClientInvalidSubcommandSuggestsHelp(t *testing.T) {
+	result := testutil.RunCLI(t, nil, "info", "aa")
+
+	if result.Code != 2 {
+		t.Fatalf("expected exit code 2, got %d", result.Code)
+	}
+	if result.Stdout != "" {
+		t.Fatalf("unexpected stdout: %q", result.Stdout)
+	}
+	if !strings.Contains(result.Stderr, "unknown info command: aa") {
+		t.Fatalf("expected unknown command error, got %q", result.Stderr)
+	}
+	if !strings.Contains(result.Stderr, "Run 'arbiter info --help' for help.") {
+		t.Fatalf("expected help hint, got %q", result.Stderr)
+	}
+}
+
 func TestVersionMatchesArbiterServerPackage(t *testing.T) {
 	serverVersion := serverPyprojectVersion(t)
 

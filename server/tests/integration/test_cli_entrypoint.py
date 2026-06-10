@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Mapping, Protocol
 
 import pytest
+from omegaconf import OmegaConf
 
 _GO_CLIENT_SMOKE_OUTDIR_ENV = "ARBITER_GO_CLIENT_SMOKE_OUTDIR"
 _GO_CLIENT_SMOKE_REUSE_ENV = "ARBITER_GO_CLIENT_SMOKE_REUSE"
@@ -106,6 +107,10 @@ def _run_client_command(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
+
+
+def _yaml_payload(text: str) -> object:
+    return OmegaConf.to_container(OmegaConf.create(text), resolve=True)
 
 
 def _repo_root() -> Path:
@@ -346,6 +351,7 @@ def test_arbiter_console_script_help(
         (("cap", "describe", "--help"), "usage: arbiter-py cap desc "),
         (("op", "--help"), "usage: arbiter-py op "),
         (("operation", "--help"), "usage: arbiter-py op "),
+        (("op", "list", "--help"), "usage: arbiter-py op list "),
         (("op", "desc", "--help"), "usage: arbiter-py op desc "),
         (("op", "describe", "--help"), "usage: arbiter-py op desc "),
         (("op", "run", "--help"), "usage: arbiter-py op run "),
@@ -369,6 +375,35 @@ def test_arbiter_client_console_script_help(
 
     assert result.returncode == 0
     assert expected in result.stdout
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        (("--help",), ("usage:", "info", "op", "artifact")),
+        (("bootstrap", "--help"), ("usage:", "bootstrap", "client")),
+        (("bootstrap", "client", "--help"), ("usage:", "bootstrap client")),
+        (("info", "--help"), ("usage:", "info", "--yaml")),
+        (("op", "--help"), ("usage:", "op", "list", "desc", "run")),
+        (("op", "list", "--help"), ("usage:", "op list", "[plugin]")),
+        (("op", "desc", "--help"), ("usage:", "op desc")),
+        (("op", "run", "--help"), ("usage:", "op run", "--args")),
+        (("mcp", "--help"), ("usage:", "mcp", "tools", "call")),
+        (("mcp", "tools", "--help"), ("usage:", "mcp tools")),
+        (("mcp", "call", "--help"), ("usage:", "mcp call", "--args")),
+    ],
+)
+def test_arbiter_clients_shared_help(
+    arbiter_client_command: ClientCommand,
+    args: tuple[str, ...],
+    expected: tuple[str, ...],
+) -> None:
+    result = _run_client_command(arbiter_client_command.command, *args)
+
+    assert result.returncode == 0
+    for fragment in expected:
+        assert fragment in result.stdout
     assert result.stderr == ""
 
 
@@ -764,6 +799,105 @@ def test_arbiter_clients_info_short(
     assert "kind: overview_short\n" in yaml_result.stdout
     assert f"server_url: {server.mcp_url}\n" in yaml_result.stdout
     assert "id: smtp:primary\n" in yaml_result.stdout
+
+
+def test_arbiter_clients_op_list(
+    arbiter_client_command: ClientCommand,
+    local_arbiter_server_factory: LocalArbiterServerFactory,
+) -> None:
+    server = local_arbiter_server_factory.start()
+
+    all_result = server.run_client(
+        "op",
+        "list",
+        command=arbiter_client_command.command,
+    )
+
+    assert all_result.returncode == 0
+    assert all_result.stderr == ""
+    assert json.loads(all_result.stdout) == {"plugins": ["smtp"]}
+
+    all_plain_result = server.run_client(
+        "op",
+        "list",
+        "--plain",
+        command=arbiter_client_command.command,
+    )
+
+    assert all_plain_result.returncode == 0
+    assert all_plain_result.stderr == ""
+    assert all_plain_result.stdout.splitlines() == ["smtp"]
+
+    all_yaml_result = server.run_client(
+        "op",
+        "list",
+        "--yaml",
+        command=arbiter_client_command.command,
+    )
+
+    assert all_yaml_result.returncode == 0
+    assert all_yaml_result.stderr == ""
+    assert _yaml_payload(all_yaml_result.stdout) == {"plugins": ["smtp"]}
+
+    smtp_desc_result = server.run_client(
+        "op",
+        "desc",
+        "smtp",
+        command=arbiter_client_command.command,
+    )
+
+    assert smtp_desc_result.returncode == 0
+    assert smtp_desc_result.stderr == ""
+    smtp_desc = json.loads(smtp_desc_result.stdout)
+    assert smtp_desc["kind"] == "plugin"
+    assert smtp_desc["id"] == "smtp"
+    assert [operation["id"] for operation in smtp_desc["operations"]] == [
+        "smtp:send_email"
+    ]
+
+    smtp_result = server.run_client(
+        "op",
+        "list",
+        "smtp",
+        command=arbiter_client_command.command,
+    )
+
+    assert smtp_result.returncode == 0
+    assert smtp_result.stderr == ""
+    smtp_ops = json.loads(smtp_result.stdout)
+    assert smtp_ops["kind"] == "ops"
+    assert smtp_ops["plugin"] == "smtp"
+    assert list(smtp_ops["operations"]) == ["smtp:send_email"]
+    assert "id" not in smtp_ops["operations"]["smtp:send_email"]
+
+    smtp_yaml_result = server.run_client(
+        "op",
+        "list",
+        "smtp",
+        "--yaml",
+        command=arbiter_client_command.command,
+    )
+
+    assert smtp_yaml_result.returncode == 0
+    assert smtp_yaml_result.stderr == ""
+    smtp_yaml = _yaml_payload(smtp_yaml_result.stdout)
+    assert isinstance(smtp_yaml, dict)
+    assert smtp_yaml["kind"] == "ops"
+    assert smtp_yaml["plugin"] == "smtp"
+    assert list(smtp_yaml["operations"]) == ["smtp:send_email"]
+    assert "id: smtp:send_email\n" not in smtp_yaml_result.stdout
+
+    smtp_plain_result = server.run_client(
+        "op",
+        "list",
+        "smtp",
+        "--plain",
+        command=arbiter_client_command.command,
+    )
+
+    assert smtp_plain_result.returncode == 0
+    assert smtp_plain_result.stderr == ""
+    assert smtp_plain_result.stdout.splitlines() == ["smtp:send_email"]
 
 
 def test_arbiter_clients_require_explicit_stdout_for_artifacts(

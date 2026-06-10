@@ -206,6 +206,266 @@ func TestOperationRunCallsRunOp(t *testing.T) {
 	}
 }
 
+func TestOperationDescForPluginCallsInfo(t *testing.T) {
+	fake := installFakeMCPClient(t)
+	fake.callResult = mcp.ToolCallResult{
+		StructuredContent: map[string]any{
+			"kind":        "plugin",
+			"id":          "imap",
+			"description": "Read mail",
+		},
+	}
+
+	result := runTestCLI("op", "desc", "imap")
+
+	if result.code != 0 {
+		t.Fatalf("expected exit code 0, got %d stderr=%q", result.code, result.stderr)
+	}
+	if len(fake.calls) != 1 {
+		t.Fatalf("expected one MCP call, got %#v", fake.calls)
+	}
+	if fake.calls[0].name != "info" {
+		t.Fatalf("unexpected tool: %q", fake.calls[0].name)
+	}
+	if fake.calls[0].arguments["kind"] != "plugin" || fake.calls[0].arguments["plugin"] != "imap" {
+		t.Fatalf("unexpected arguments: %#v", fake.calls[0].arguments)
+	}
+	if result.stdout != `{"description":"Read mail","id":"imap","kind":"plugin"}`+"\n" {
+		t.Fatalf("unexpected stdout: %q", result.stdout)
+	}
+}
+
+func TestOperationDescForPluginPrintsPlain(t *testing.T) {
+	fake := installFakeMCPClient(t)
+	fake.callResult = mcp.ToolCallResult{
+		StructuredContent: map[string]any{
+			"kind":        "plugin",
+			"id":          "imap",
+			"description": "Read mail",
+			"operations": []any{
+				map[string]any{"id": "imap:get_message"},
+			},
+		},
+	}
+
+	result := runTestCLI("op", "desc", "imap", "--plain")
+
+	if result.code != 0 {
+		t.Fatalf("expected exit code 0, got %d stderr=%q", result.code, result.stderr)
+	}
+	if result.stdout != "imap\nRead mail\nimap:get_message\n" {
+		t.Fatalf("unexpected stdout: %q", result.stdout)
+	}
+}
+
+func TestOperationDescForPluginPrintsYAML(t *testing.T) {
+	fake := installFakeMCPClient(t)
+	fake.callResult = mcp.ToolCallResult{
+		StructuredContent: map[string]any{
+			"kind":        "plugin",
+			"id":          "imap",
+			"description": "Read mail",
+		},
+	}
+
+	result := runTestCLI("op", "desc", "imap", "--yaml")
+
+	if result.code != 0 {
+		t.Fatalf("expected exit code 0, got %d stderr=%q", result.code, result.stderr)
+	}
+	if !strings.Contains(result.stdout, "description: Read mail\n") ||
+		!strings.Contains(result.stdout, "id: imap\n") ||
+		!strings.Contains(result.stdout, "kind: plugin\n") {
+		t.Fatalf("expected YAML output, got:\n%s", result.stdout)
+	}
+}
+
+func TestOperationDescForOperationCallsDescribeOp(t *testing.T) {
+	fake := installFakeMCPClient(t)
+	fake.callResult = mcp.ToolCallResult{
+		StructuredContent: map[string]any{"id": "imap:get_message"},
+	}
+
+	result := runTestCLI("op", "desc", "imap:get_message")
+
+	if result.code != 0 {
+		t.Fatalf("expected exit code 0, got %d stderr=%q", result.code, result.stderr)
+	}
+	if len(fake.calls) != 1 {
+		t.Fatalf("expected one MCP call, got %#v", fake.calls)
+	}
+	if fake.calls[0].name != "describe_op" {
+		t.Fatalf("unexpected tool: %q", fake.calls[0].name)
+	}
+	if fake.calls[0].arguments["id"] != "imap:get_message" {
+		t.Fatalf("unexpected arguments: %#v", fake.calls[0].arguments)
+	}
+	if result.stdout != `{"id":"imap:get_message"}`+"\n" {
+		t.Fatalf("unexpected stdout: %q", result.stdout)
+	}
+}
+
+func TestOperationListForPluginPrintsJSONByDefault(t *testing.T) {
+	fake := installFakeMCPClient(t)
+	fake.callResult = mcp.ToolCallResult{
+		StructuredContent: map[string]any{
+			"kind":   "ops",
+			"plugin": "smtp",
+			"operations": []any{
+				map[string]any{"id": "smtp:send_email"},
+				map[string]any{"id": "smtp:verify_connection"},
+			},
+		},
+	}
+
+	result := runTestCLI("op", "list", "smtp")
+
+	if result.code != 0 {
+		t.Fatalf("expected exit code 0, got %d stderr=%q", result.code, result.stderr)
+	}
+	if len(fake.calls) != 1 {
+		t.Fatalf("expected one MCP call, got %#v", fake.calls)
+	}
+	if fake.calls[0].name != "info" {
+		t.Fatalf("unexpected tool: %q", fake.calls[0].name)
+	}
+	if fake.calls[0].arguments["kind"] != "ops" || fake.calls[0].arguments["plugin"] != "smtp" {
+		t.Fatalf("unexpected arguments: %#v", fake.calls[0].arguments)
+	}
+	expected := `{"kind":"ops","operations":{"smtp:send_email":{},"smtp:verify_connection":{}},"plugin":"smtp"}` + "\n"
+	if result.stdout != expected {
+		t.Fatalf("unexpected stdout: %q", result.stdout)
+	}
+}
+
+func TestOperationListForPluginPrintsPlainOperationIDs(t *testing.T) {
+	fake := installFakeMCPClient(t)
+	fake.callResult = mcp.ToolCallResult{
+		StructuredContent: map[string]any{
+			"kind":   "ops",
+			"plugin": "smtp",
+			"operations": []any{
+				map[string]any{"id": "smtp:send_email"},
+				map[string]any{"id": "smtp:verify_connection"},
+			},
+		},
+	}
+
+	result := runTestCLI("op", "list", "smtp", "--plain")
+
+	if result.code != 0 {
+		t.Fatalf("expected exit code 0, got %d stderr=%q", result.code, result.stderr)
+	}
+	if result.stdout != "smtp:send_email\nsmtp:verify_connection\n" {
+		t.Fatalf("unexpected stdout: %q", result.stdout)
+	}
+}
+
+func TestOperationListForPluginPrintsYAML(t *testing.T) {
+	fake := installFakeMCPClient(t)
+	fake.callResult = mcp.ToolCallResult{
+		StructuredContent: map[string]any{
+			"kind":   "ops",
+			"plugin": "smtp",
+			"operations": []any{
+				map[string]any{
+					"description": "Send one email.",
+					"id":          "smtp:send_email",
+					"name":        "send_email",
+				},
+			},
+		},
+	}
+
+	result := runTestCLI("op", "list", "smtp", "--yaml")
+
+	if result.code != 0 {
+		t.Fatalf("expected exit code 0, got %d stderr=%q", result.code, result.stderr)
+	}
+	expected := "" +
+		"kind: ops\n" +
+		"operations:\n" +
+		"  smtp:send_email:\n" +
+		"    description: Send one email.\n" +
+		"    name: send_email\n" +
+		"plugin: smtp\n"
+	if result.stdout != expected {
+		t.Fatalf("unexpected stdout: %q", result.stdout)
+	}
+}
+
+func TestOperationListPrintsPluginsJSONByDefault(t *testing.T) {
+	fake := installFakeMCPClient(t)
+	fake.callResult = mcp.ToolCallResult{
+		StructuredContent: map[string]any{
+			"kind": "plugins",
+			"plugins": []any{
+				map[string]any{"id": "smtp"},
+				map[string]any{"id": "imap"},
+			},
+		},
+	}
+
+	result := runTestCLI("op", "list")
+
+	if result.code != 0 {
+		t.Fatalf("expected exit code 0, got %d stderr=%q", result.code, result.stderr)
+	}
+	if len(fake.calls) != 1 {
+		t.Fatalf("expected one MCP call, got %#v", fake.calls)
+	}
+	if fake.calls[0].arguments["kind"] != "plugins" {
+		t.Fatalf("unexpected first call arguments: %#v", fake.calls[0].arguments)
+	}
+	if result.stdout != `{"plugins":["imap","smtp"]}`+"\n" {
+		t.Fatalf("unexpected stdout: %q", result.stdout)
+	}
+}
+
+func TestOperationListPrintsPlainPlugins(t *testing.T) {
+	fake := installFakeMCPClient(t)
+	fake.callResult = mcp.ToolCallResult{
+		StructuredContent: map[string]any{
+			"kind": "plugins",
+			"plugins": []any{
+				map[string]any{"id": "smtp"},
+				map[string]any{"id": "imap"},
+			},
+		},
+	}
+
+	result := runTestCLI("op", "list", "--plain")
+
+	if result.code != 0 {
+		t.Fatalf("expected exit code 0, got %d stderr=%q", result.code, result.stderr)
+	}
+	if result.stdout != "imap\nsmtp\n" {
+		t.Fatalf("unexpected stdout: %q", result.stdout)
+	}
+}
+
+func TestOperationListPrintsPluginsYAML(t *testing.T) {
+	fake := installFakeMCPClient(t)
+	fake.callResult = mcp.ToolCallResult{
+		StructuredContent: map[string]any{
+			"kind": "plugins",
+			"plugins": []any{
+				map[string]any{"id": "smtp"},
+				map[string]any{"id": "imap"},
+			},
+		},
+	}
+
+	result := runTestCLI("op", "list", "--yaml")
+
+	if result.code != 0 {
+		t.Fatalf("expected exit code 0, got %d stderr=%q", result.code, result.stderr)
+	}
+	if result.stdout != "plugins:\n  - imap\n  - smtp\n" {
+		t.Fatalf("unexpected stdout: %q", result.stdout)
+	}
+}
+
 func TestMCPToolsPrintsToolNames(t *testing.T) {
 	fake := installFakeMCPClient(t)
 	fake.tools = []mcp.Tool{{Name: "info"}, {Name: "run_op"}}

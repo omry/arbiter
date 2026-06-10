@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -53,6 +54,14 @@ type globalOptions struct {
 	Overrides  []string
 }
 
+type outputFormat string
+
+const (
+	outputJSON  outputFormat = "json"
+	outputYAML  outputFormat = "yaml"
+	outputPlain outputFormat = "plain"
+)
+
 func Main(
 	args []string,
 	stdout io.Writer,
@@ -78,7 +87,11 @@ func Main(
 
 	switch remaining[0] {
 	case "-h", "--help":
-		printHelp(stdout)
+		if helpArgsIncludeExtended(remaining[1:]) {
+			printExtendedHelp(stdout)
+		} else {
+			printHelp(stdout)
+		}
 		return 0
 	case "--version":
 		fmt.Fprintf(stdout, "arbiter-go %s\n", Version)
@@ -177,7 +190,7 @@ func runArtifact(
 		}
 		return 0
 	default:
-		fmt.Fprintf(stderr, "Arbiter usage error: unknown artifact command: %s\n", args[0])
+		printUsageError(stderr, fmt.Sprintf("unknown artifact command: %s", args[0]), "arbiter artifact")
 		return 2
 	}
 }
@@ -190,15 +203,23 @@ func runBootstrap(
 	lookupEnv EnvLookup,
 	homeDir HomeDirFunc,
 ) int {
+	if len(args) == 1 && isHelpFlag(args[0]) {
+		printBootstrapHelp(stdout)
+		return 0
+	}
+	if len(args) == 2 && args[0] == "client" && isHelpFlag(args[1]) {
+		printBootstrapClientHelp(stdout)
+		return 0
+	}
 	if len(args) == 0 || args[0] != "client" {
-		fmt.Fprintln(stderr, "Arbiter usage error: expected: arbiter bootstrap client [--force]")
+		printUsageError(stderr, "expected: arbiter bootstrap client [--force]", "arbiter bootstrap")
 		return 2
 	}
 	force := false
 	if len(args) == 2 && args[1] == "--force" {
 		force = true
 	} else if len(args) != 1 {
-		fmt.Fprintln(stderr, "Arbiter usage error: expected: arbiter bootstrap client [--force]")
+		printUsageError(stderr, "expected: arbiter bootstrap client [--force]", "arbiter bootstrap")
 		return 2
 	}
 	configPath, err := clientConfigPath(options, homeDir)
@@ -240,8 +261,16 @@ func runConfig(
 	lookupEnv EnvLookup,
 	homeDir HomeDirFunc,
 ) int {
+	if len(args) == 1 && isHelpFlag(args[0]) {
+		printConfigHelp(stdout)
+		return 0
+	}
+	if len(args) == 2 && args[0] == "mcp-url" && isHelpFlag(args[1]) {
+		printConfigMCPURLHelp(stdout)
+		return 0
+	}
 	if len(args) != 1 || args[0] != "mcp-url" {
-		fmt.Fprintln(stderr, "Arbiter usage error: expected: arbiter config mcp-url")
+		printUsageError(stderr, "expected: arbiter config mcp-url", "arbiter config")
 		return 2
 	}
 
@@ -262,6 +291,10 @@ func runInfo(
 	lookupEnv EnvLookup,
 	homeDir HomeDirFunc,
 ) int {
+	if len(args) == 1 && isHelpFlag(args[0]) {
+		printInfoHelp(stdout)
+		return 0
+	}
 	yaml := false
 	short := false
 	for len(args) > 0 {
@@ -276,13 +309,21 @@ func runInfo(
 		args = args[1:]
 	}
 parsedFlags:
+	if len(args) == 1 && isHelpFlag(args[0]) {
+		printInfoHelp(stdout)
+		return 0
+	}
+	if len(args) == 2 && isHelpFlag(args[1]) {
+		printInfoSubcommandHelp(stdout, args[0])
+		return 0
+	}
 	if short && len(args) > 0 {
 		fmt.Fprintln(stderr, "Arbiter usage error: info --short is only valid for overview")
 		return 2
 	}
 	arguments, err := infoArguments(args)
 	if err != nil {
-		fmt.Fprintf(stderr, "Arbiter usage error: %v\n", err)
+		printUsageError(stderr, err.Error(), "arbiter info")
 		return 2
 	}
 	payload, err := callToolPayload("info", arguments, options, lookupEnv, homeDir)
@@ -310,26 +351,64 @@ func runOperation(
 	lookupEnv EnvLookup,
 	homeDir HomeDirFunc,
 ) int {
+	if len(args) == 1 && isHelpFlag(args[0]) {
+		printOperationHelp(stdout)
+		return 0
+	}
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "Arbiter usage error: expected: arbiter op {desc,run} ...")
+		printUsageError(stderr, "expected: arbiter op {list,desc,run} ...", "arbiter op")
 		return 2
 	}
 	switch args[0] {
-	case "desc", "describe":
-		if len(args) != 2 {
-			fmt.Fprintln(stderr, "Arbiter usage error: expected: arbiter op desc <operation-id>")
+	case "list":
+		if len(args) == 2 && isHelpFlag(args[1]) {
+			printOperationListHelp(stdout)
+			return 0
+		}
+		positionals, format, err := parseOutputFormatArgs(args[1:], 1)
+		if err != nil {
+			printUsageError(stderr, err.Error(), "arbiter op list")
 			return 2
 		}
-		payload, err := callToolPayload("describe_op", map[string]any{"id": args[1]}, options, lookupEnv, homeDir)
+		if len(positionals) > 1 {
+			printUsageError(stderr, "expected: arbiter op list [plugin]", "arbiter op list")
+			return 2
+		}
+		payload, plainItems, err := listOperationPayload(positionals, options, lookupEnv, homeDir)
 		if err != nil {
 			fmt.Fprintf(stderr, "Arbiter tool error: %s\n", err)
 			return 1
 		}
-		printJSON(stdout, payload)
+		renderOperationPayload(stdout, payload, plainItems, format)
+		return 0
+	case "desc", "describe":
+		if len(args) == 2 && isHelpFlag(args[1]) {
+			printOperationDescHelp(stdout, args[0])
+			return 0
+		}
+		positionals, format, err := parseOutputFormatArgs(args[1:], 1)
+		if err != nil {
+			printUsageError(stderr, err.Error(), "arbiter op "+args[0])
+			return 2
+		}
+		if len(positionals) != 1 {
+			printUsageError(stderr, "expected: arbiter op desc <plugin-or-operation-id>", "arbiter op desc")
+			return 2
+		}
+		payload, err := describeOperationTarget(positionals[0], options, lookupEnv, homeDir)
+		if err != nil {
+			fmt.Fprintf(stderr, "Arbiter tool error: %s\n", err)
+			return 1
+		}
+		renderOperationPayload(stdout, payload, operationDescPlainLines(payload), format)
 		return 0
 	case "run":
+		if len(args) == 2 && isHelpFlag(args[1]) {
+			printOperationRunHelp(stdout)
+			return 0
+		}
 		if len(args) < 2 {
-			fmt.Fprintln(stderr, "Arbiter usage error: expected: arbiter op run <operation-id> [--args <json-object>]")
+			printUsageError(stderr, "expected: arbiter op run <operation-id> [--args <json-object>]", "arbiter op run")
 			return 2
 		}
 		operationID := args[1]
@@ -352,9 +431,49 @@ func runOperation(
 		printJSON(stdout, payload)
 		return 0
 	default:
-		fmt.Fprintf(stderr, "Arbiter usage error: unknown op command: %s\n", args[0])
+		printUsageError(stderr, fmt.Sprintf("unknown op command: %s", args[0]), "arbiter op")
 		return 2
 	}
+}
+
+func describeOperationTarget(
+	target string,
+	options globalOptions,
+	lookupEnv EnvLookup,
+	homeDir HomeDirFunc,
+) (any, error) {
+	if strings.Contains(target, ":") {
+		return callToolPayload("describe_op", map[string]any{"id": target}, options, lookupEnv, homeDir)
+	}
+	return callToolPayload("info", map[string]any{"kind": "plugin", "plugin": target}, options, lookupEnv, homeDir)
+}
+
+func listOperationPayload(
+	args []string,
+	options globalOptions,
+	lookupEnv EnvLookup,
+	homeDir HomeDirFunc,
+) (any, []string, error) {
+	if len(args) == 1 {
+		payload, err := callToolPayload("info", map[string]any{"kind": "ops", "plugin": args[0]}, options, lookupEnv, homeDir)
+		if err != nil {
+			return nil, nil, err
+		}
+		structuredPayload, operationIDs, err := operationListStructuredPayload(payload)
+		if err != nil {
+			return nil, nil, err
+		}
+		return structuredPayload, operationIDs, nil
+	}
+	payload, err := callToolPayload("info", map[string]any{"kind": "plugins"}, options, lookupEnv, homeDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	pluginIDs, err := pluginIDsFromInfoPayload(payload)
+	if err != nil {
+		return nil, nil, err
+	}
+	return map[string]any{"plugins": pluginIDs}, pluginIDs, nil
 }
 
 func runMCP(
@@ -365,14 +484,22 @@ func runMCP(
 	lookupEnv EnvLookup,
 	homeDir HomeDirFunc,
 ) int {
+	if len(args) == 1 && isHelpFlag(args[0]) {
+		printMCPHelp(stdout)
+		return 0
+	}
 	if len(args) == 0 {
 		args = []string{"tools"}
 	}
 	switch args[0] {
 	case "tools":
+		if len(args) == 2 && isHelpFlag(args[1]) {
+			printMCPToolsHelp(stdout)
+			return 0
+		}
 		jsonOutput := len(args) > 1 && args[1] == "--json"
 		if len(args) > 1 && !jsonOutput {
-			fmt.Fprintln(stderr, "Arbiter usage error: expected: arbiter mcp tools [--json]")
+			printUsageError(stderr, "expected: arbiter mcp tools [--json]", "arbiter mcp tools")
 			return 2
 		}
 		client, err := newInitializedMCPClient(options, lookupEnv, homeDir)
@@ -394,8 +521,12 @@ func runMCP(
 		}
 		return 0
 	case "call":
+		if len(args) == 2 && isHelpFlag(args[1]) {
+			printMCPCallHelp(stdout)
+			return 0
+		}
 		if len(args) < 2 {
-			fmt.Fprintln(stderr, "Arbiter usage error: expected: arbiter mcp call <tool-name> [--args <json-object>]")
+			printUsageError(stderr, "expected: arbiter mcp call <tool-name> [--args <json-object>]", "arbiter mcp call")
 			return 2
 		}
 		toolName := args[1]
@@ -416,7 +547,7 @@ func runMCP(
 		}
 		return 0
 	default:
-		fmt.Fprintf(stderr, "Arbiter usage error: unknown mcp command: %s\n", args[0])
+		printUsageError(stderr, fmt.Sprintf("unknown mcp command: %s", args[0]), "arbiter mcp")
 		return 2
 	}
 }
@@ -594,6 +725,160 @@ func infoArguments(args []string) (map[string]any, error) {
 	default:
 		return nil, fmt.Errorf("unknown info command: %s", args[0])
 	}
+}
+
+func pluginIDsFromInfoPayload(payload any) ([]string, error) {
+	mapping, ok := payload.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("unexpected info plugins payload")
+	}
+	pluginItems, ok := mapping["plugins"].([]any)
+	if !ok {
+		return nil, fmt.Errorf("unexpected info plugins payload")
+	}
+	plugins := []string{}
+	for _, pluginItem := range pluginItems {
+		plugin, ok := pluginItem.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("unexpected info plugins payload")
+		}
+		pluginID, ok := plugin["id"].(string)
+		if !ok || pluginID == "" {
+			return nil, fmt.Errorf("unexpected info plugins payload")
+		}
+		plugins = append(plugins, pluginID)
+	}
+	sort.Strings(plugins)
+	return plugins, nil
+}
+
+func operationIDsFromInfoPayload(payload any) ([]string, error) {
+	_, operationIDs, err := operationsByIDFromInfoPayload(payload)
+	return operationIDs, err
+}
+
+func operationListStructuredPayload(payload any) (any, []string, error) {
+	mapping, ok := payload.(map[string]any)
+	if !ok {
+		return nil, nil, fmt.Errorf("unexpected info ops payload")
+	}
+	operationsByID, operationIDs, err := operationsByIDFromInfoPayload(payload)
+	if err != nil {
+		return nil, nil, err
+	}
+	structured := make(map[string]any, len(mapping))
+	for key, value := range mapping {
+		structured[key] = value
+	}
+	structured["operations"] = operationsByID
+	return structured, operationIDs, nil
+}
+
+func operationsByIDFromInfoPayload(payload any) (map[string]any, []string, error) {
+	mapping, ok := payload.(map[string]any)
+	if !ok {
+		return nil, nil, fmt.Errorf("unexpected info ops payload")
+	}
+	operationItems, ok := mapping["operations"].([]any)
+	if !ok {
+		return nil, nil, fmt.Errorf("unexpected info ops payload")
+	}
+	operationsByID := map[string]any{}
+	operationIDs := []string{}
+	for _, operationItem := range operationItems {
+		operation, ok := operationItem.(map[string]any)
+		if !ok {
+			return nil, nil, fmt.Errorf("unexpected info ops payload")
+		}
+		operationID, ok := operation["id"].(string)
+		if !ok || operationID == "" {
+			return nil, nil, fmt.Errorf("unexpected info ops payload")
+		}
+		operationSummary := make(map[string]any, len(operation))
+		for key, value := range operation {
+			if key != "id" {
+				operationSummary[key] = value
+			}
+		}
+		operationsByID[operationID] = operationSummary
+		operationIDs = append(operationIDs, operationID)
+	}
+	sort.Strings(operationIDs)
+	return operationsByID, operationIDs, nil
+}
+
+func parseOutputFormatArgs(args []string, maxPositionals int) ([]string, outputFormat, error) {
+	format := outputJSON
+	selected := ""
+	positionals := []string{}
+	for _, arg := range args {
+		switch arg {
+		case "--json", "--yaml", "--plain":
+			if selected != "" && selected != arg {
+				return nil, "", fmt.Errorf("choose only one output format: --json, --yaml, or --plain")
+			}
+			selected = arg
+			switch arg {
+			case "--json":
+				format = outputJSON
+			case "--yaml":
+				format = outputYAML
+			case "--plain":
+				format = outputPlain
+			}
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return nil, "", fmt.Errorf("unknown output option: %s", arg)
+			}
+			positionals = append(positionals, arg)
+			if len(positionals) > maxPositionals {
+				return positionals, format, nil
+			}
+		}
+	}
+	return positionals, format, nil
+}
+
+func renderOperationPayload(w io.Writer, payload any, plainLines []string, format outputFormat) {
+	switch format {
+	case outputPlain:
+		for _, line := range plainLines {
+			fmt.Fprintln(w, line)
+		}
+	case outputYAML:
+		printYAML(w, payload)
+	default:
+		printJSON(w, payload)
+	}
+}
+
+func operationDescPlainLines(payload any) []string {
+	mapping, ok := payload.(map[string]any)
+	if !ok {
+		return []string{fmt.Sprint(payload)}
+	}
+	lines := []string{}
+	if id, ok := mapping["id"].(string); ok && id != "" {
+		lines = append(lines, id)
+	}
+	if description, ok := mapping["description"].(string); ok && description != "" {
+		lines = append(lines, description)
+	}
+	if operationItems, ok := mapping["operations"].([]any); ok {
+		for _, operationItem := range operationItems {
+			operation, ok := operationItem.(map[string]any)
+			if !ok {
+				continue
+			}
+			if operationID, ok := operation["id"].(string); ok && operationID != "" {
+				lines = append(lines, operationID)
+			}
+		}
+	}
+	if len(lines) == 0 {
+		lines = append(lines, fmt.Sprint(payload))
+	}
+	return lines
 }
 
 func shortInfoPayload(payload any) any {
@@ -1328,17 +1613,99 @@ func writeYAML(w io.Writer, value any, indent int) {
 			}
 		}
 	case []any:
-		for _, item := range typed {
-			if isScalar(item) {
-				fmt.Fprintf(w, "%s- %v\n", prefix, item)
-			} else {
-				fmt.Fprintf(w, "%s-\n", prefix)
-				writeYAML(w, item, indent+2)
-			}
-		}
+		writeYAMLList(w, typed, indent)
 	default:
+		if writeReflectedYAML(w, value, indent) {
+			return
+		}
 		fmt.Fprintf(w, "%s%v\n", prefix, typed)
 	}
+}
+
+func writeYAMLList(w io.Writer, items []any, indent int) {
+	prefix := strings.Repeat(" ", indent)
+	for _, item := range items {
+		if isScalar(item) {
+			fmt.Fprintf(w, "%s- %v\n", prefix, item)
+		} else if mapping, ok := yamlStringMap(item); ok {
+			writeYAMLMapListItem(w, mapping, indent)
+		} else {
+			fmt.Fprintf(w, "%s-\n", prefix)
+			writeYAML(w, item, indent+2)
+		}
+	}
+}
+
+func writeYAMLMapListItem(w io.Writer, mapping map[string]any, indent int) {
+	prefix := strings.Repeat(" ", indent)
+	if len(mapping) == 0 {
+		fmt.Fprintf(w, "%s- {}\n", prefix)
+		return
+	}
+	keys := make([]string, 0, len(mapping))
+	for key := range mapping {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for index, key := range keys {
+		child := mapping[key]
+		keyPrefix := prefix + "  "
+		if index == 0 {
+			keyPrefix = prefix + "- "
+		}
+		if isScalar(child) {
+			fmt.Fprintf(w, "%s%s: %v\n", keyPrefix, key, child)
+		} else {
+			fmt.Fprintf(w, "%s%s:\n", keyPrefix, key)
+			writeYAML(w, child, indent+4)
+		}
+	}
+}
+
+func writeReflectedYAML(w io.Writer, value any, indent int) bool {
+	if value == nil {
+		return false
+	}
+	reflected := reflect.ValueOf(value)
+	switch reflected.Kind() {
+	case reflect.Slice, reflect.Array:
+		items := make([]any, 0, reflected.Len())
+		for index := 0; index < reflected.Len(); index++ {
+			items = append(items, reflected.Index(index).Interface())
+		}
+		writeYAMLList(w, items, indent)
+		return true
+	case reflect.Map:
+		if reflected.Type().Key().Kind() != reflect.String {
+			return false
+		}
+		mapping := make(map[string]any, reflected.Len())
+		for _, key := range reflected.MapKeys() {
+			mapping[key.String()] = reflected.MapIndex(key).Interface()
+		}
+		writeYAML(w, mapping, indent)
+		return true
+	default:
+		return false
+	}
+}
+
+func yamlStringMap(value any) (map[string]any, bool) {
+	if mapping, ok := value.(map[string]any); ok {
+		return mapping, true
+	}
+	if value == nil {
+		return nil, false
+	}
+	reflected := reflect.ValueOf(value)
+	if reflected.Kind() != reflect.Map || reflected.Type().Key().Kind() != reflect.String {
+		return nil, false
+	}
+	mapping := make(map[string]any, reflected.Len())
+	for _, key := range reflected.MapKeys() {
+		mapping[key.String()] = reflected.MapIndex(key).Interface()
+	}
+	return mapping, true
 }
 
 func isScalar(value any) bool {
@@ -1476,24 +1843,231 @@ func parseConfigStringScalar(value string, path string) (string, error) {
 }
 
 func printShortUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: arbiter {bootstrap,config,info,op,artifact,mcp} ...")
-	fmt.Fprintln(w, "Run 'arbiter --help' for full help.")
+	fmt.Fprintln(w, "usage: arbiter {info,op,artifact} ...")
+	fmt.Fprintln(w, "Run 'arbiter --help' for help, or 'arbiter --help --extended' for setup and advanced commands.")
+}
+
+func printUsageError(w io.Writer, message string, helpCommand string) {
+	fmt.Fprintf(w, "Arbiter usage error: %s\n", message)
+	if helpCommand != "" {
+		fmt.Fprintf(w, "Run '%s --help' for help.\n", helpCommand)
+	}
 }
 
 func printHelp(w io.Writer) {
-	fmt.Fprintln(w, "usage: arbiter [--version] {bootstrap,config,info,op,artifact,mcp} ...")
+	fmt.Fprintln(w, "usage: arbiter [--version] {info,op,artifact} ...")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Native Arbiter client.")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "commands:")
-	fmt.Fprintln(w, "  bootstrap client  create the Arbiter client config")
-	fmt.Fprintln(w, "  config mcp-url  print the resolved MCP URL")
-	fmt.Fprintln(w, "  info [--short]  discover Arbiter server identity and services")
+	fmt.Fprintln(w, "primary commands:")
+	fmt.Fprintln(w, "  info [--short]  discover Arbiter server identity and plugins")
 	fmt.Fprintln(w, "  op              inspect or run Arbiter operations")
-	fmt.Fprintln(w, "  artifact        explicitly fetch Arbiter artifacts")
-	fmt.Fprintln(w, "  mcp             inspect or call raw MCP tools")
+	fmt.Fprintln(w, "  artifact        safely read, process, or explicitly save artifacts")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Run 'arbiter --help --extended' for setup and advanced commands.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "The Go client is experimental.")
+}
+
+func printExtendedHelp(w io.Writer) {
+	fmt.Fprintln(w, "usage: arbiter [--version] {info,op,artifact,bootstrap,config,mcp} ...")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Native Arbiter client.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "primary commands:")
+	fmt.Fprintln(w, "  info [--short]   discover Arbiter server identity and plugins")
+	fmt.Fprintln(w, "  op               inspect or run Arbiter operations")
+	fmt.Fprintln(w, "  artifact         safely read, process, or explicitly save artifacts")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "setup:")
+	fmt.Fprintln(w, "  bootstrap client create the Arbiter client config")
+	fmt.Fprintln(w, "  config mcp-url   print the resolved MCP URL")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "advanced:")
+	fmt.Fprintln(w, "  mcp              inspect or call raw MCP tools")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "The Go client is experimental.")
+}
+
+func helpArgsIncludeExtended(args []string) bool {
+	for _, arg := range args {
+		if arg == "--extended" {
+			return true
+		}
+	}
+	return false
+}
+
+func isHelpFlag(arg string) bool {
+	return arg == "-h" || arg == "--help"
+}
+
+func printBootstrapHelp(w io.Writer) {
+	fmt.Fprintln(w, "usage: arbiter bootstrap {client} ...")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Create Arbiter bootstrap files.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "commands:")
+	fmt.Fprintln(w, "  client  write the Arbiter client config")
+}
+
+func printBootstrapClientHelp(w io.Writer) {
+	fmt.Fprintln(w, "usage: arbiter bootstrap client [--force]")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Write the Arbiter client config file.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "options:")
+	fmt.Fprintln(w, "  --force  overwrite an existing client config")
+}
+
+func printConfigHelp(w io.Writer) {
+	fmt.Fprintln(w, "usage: arbiter config {mcp-url} ...")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Inspect Arbiter client configuration.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "commands:")
+	fmt.Fprintln(w, "  mcp-url  print the resolved MCP URL")
+}
+
+func printConfigMCPURLHelp(w io.Writer) {
+	fmt.Fprintln(w, "usage: arbiter config mcp-url")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Print the MCP URL resolved from overrides, environment, config, or default.")
+}
+
+func printInfoHelp(w io.Writer) {
+	fmt.Fprintln(w, "usage: arbiter info [--short] [--yaml] [subcommand ...]")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Discover Arbiter server identity, plugins, accounts, tests, and operations.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "options:")
+	fmt.Fprintln(w, "  --short  print compact overview account summary only")
+	fmt.Fprintln(w, "  --yaml   print YAML-like output instead of JSON")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "subcommands:")
+	fmt.Fprintln(w, "  plugins                    list plugins")
+	fmt.Fprintln(w, "  plugin <plugin>            describe one plugin")
+	fmt.Fprintln(w, "  accounts <plugin>          list plugin accounts")
+	fmt.Fprintln(w, "  account <plugin> <account> describe one account")
+	fmt.Fprintln(w, "  tests                      list plugin tests")
+	fmt.Fprintln(w, "  test <plugin> [account]    describe plugin tests")
+	fmt.Fprintln(w, "  ops <plugin>               list plugin operations")
+	fmt.Fprintln(w, "  op <plugin> <operation>    describe one operation")
+}
+
+func printInfoSubcommandHelp(w io.Writer, commandName string) {
+	switch commandName {
+	case "plugins":
+		fmt.Fprintln(w, "usage: arbiter info plugins [--yaml]")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "List configured Arbiter plugins.")
+	case "plugin":
+		fmt.Fprintln(w, "usage: arbiter info plugin <plugin> [--yaml]")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Describe one configured plugin.")
+	case "accounts":
+		fmt.Fprintln(w, "usage: arbiter info accounts <plugin> [--yaml]")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "List accounts for one plugin.")
+	case "account":
+		fmt.Fprintln(w, "usage: arbiter info account <plugin> <account> [--yaml]")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Describe one plugin account.")
+	case "tests":
+		fmt.Fprintln(w, "usage: arbiter info tests [--yaml]")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "List plugin tests.")
+	case "test":
+		fmt.Fprintln(w, "usage: arbiter info test <plugin> [account] [--yaml]")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Describe tests for one plugin or account.")
+	case "ops":
+		fmt.Fprintln(w, "usage: arbiter info ops <plugin> [--yaml]")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "List operations for one plugin.")
+	case "op":
+		fmt.Fprintln(w, "usage: arbiter info op <plugin> <operation> [--yaml]")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Describe one plugin operation.")
+	default:
+		printInfoHelp(w)
+	}
+}
+
+func printOperationHelp(w io.Writer) {
+	fmt.Fprintln(w, "usage: arbiter op {list,desc,run} ...")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Discover, inspect, or run Arbiter operations.")
+	fmt.Fprintln(w, "Operation ids use <plugin>:<operation> syntax.")
+	fmt.Fprintln(w, "Discovery and inspection commands print JSON by default.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "commands:")
+	fmt.Fprintln(w, "  list                            list plugins")
+	fmt.Fprintln(w, "  list <plugin>                   list operations for one plugin")
+	fmt.Fprintln(w, "  desc <plugin>                   describe one plugin's operation surface")
+	fmt.Fprintln(w, "  desc <operation-id>             describe one operation")
+	fmt.Fprintln(w, "  run <operation-id> [--args JSON] run one operation")
+}
+
+func printOperationListHelp(w io.Writer) {
+	fmt.Fprintln(w, "usage: arbiter op list [plugin] [--json|--yaml|--plain]")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "List plugins. Pass a plugin to list operation summaries keyed by operation id.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "options:")
+	fmt.Fprintln(w, "  --json   print structured JSON (default)")
+	fmt.Fprintln(w, "  --yaml   print structured YAML")
+	fmt.Fprintln(w, "  --plain  print one id per line")
+}
+
+func printOperationDescHelp(w io.Writer, commandName string) {
+	fmt.Fprintf(w, "usage: arbiter op %s <plugin-or-operation-id> [--json|--yaml|--plain]\n", commandName)
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Describe a plugin's operation surface or one Arbiter operation.")
+	fmt.Fprintln(w, "Use a plugin id such as imap, or an operation id such as imap:get_message.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "options:")
+	fmt.Fprintln(w, "  --json   print structured JSON (default)")
+	fmt.Fprintln(w, "  --yaml   print structured YAML")
+	fmt.Fprintln(w, "  --plain  print compact text")
+}
+
+func printOperationRunHelp(w io.Writer) {
+	fmt.Fprintln(w, "usage: arbiter op run <operation-id> [--args <json-object>]")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Run one Arbiter operation.")
+	fmt.Fprintln(w, "Discover plugins with 'arbiter op list', then operation ids with 'arbiter op list <plugin>'.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "options:")
+	fmt.Fprintln(w, "  --args JSON  operation arguments as a JSON object")
+}
+
+func printMCPHelp(w io.Writer) {
+	fmt.Fprintln(w, "usage: arbiter mcp {tools,call} ...")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Inspect or call raw MCP tools.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "commands:")
+	fmt.Fprintln(w, "  tools [--json]              list MCP tools")
+	fmt.Fprintln(w, "  call <tool-name> [--args JSON] call one MCP tool")
+}
+
+func printMCPToolsHelp(w io.Writer) {
+	fmt.Fprintln(w, "usage: arbiter mcp tools [--json]")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "List raw MCP tool names.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "options:")
+	fmt.Fprintln(w, "  --json  print full tool metadata as JSON")
+}
+
+func printMCPCallHelp(w io.Writer) {
+	fmt.Fprintln(w, "usage: arbiter mcp call <tool-name> [--args <json-object>]")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Call one raw MCP tool.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "options:")
+	fmt.Fprintln(w, "  --args JSON  tool arguments as a JSON object")
 }
 
 func printArtifactHelp(w io.Writer) {

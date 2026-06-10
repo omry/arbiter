@@ -1498,6 +1498,253 @@ def test_client_op_desc_alias_describes_operation(
     assert capsys.readouterr().out == '{"id": "smtp:send_email"}\n'
 
 
+def test_client_op_desc_plugin_describes_plugin(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        assert url == "http://127.0.0.1:8000/mcp"
+        assert name == "info"
+        assert arguments == {"kind": "plugin", "plugin": "imap"}
+        return SimpleNamespace(
+            structuredContent={
+                "kind": "plugin",
+                "id": "imap",
+                "description": "Read mail",
+            }
+        )
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert client.main(["op", "desc", "imap"]) == 0
+
+    assert capsys.readouterr().out == (
+        '{"description": "Read mail", "id": "imap", "kind": "plugin"}\n'
+    )
+
+
+def test_client_op_desc_plugin_prints_plain(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        assert url == "http://127.0.0.1:8000/mcp"
+        assert name == "info"
+        assert arguments == {"kind": "plugin", "plugin": "imap"}
+        return SimpleNamespace(
+            structuredContent={
+                "kind": "plugin",
+                "id": "imap",
+                "description": "Read mail",
+                "operations": [{"id": "imap:get_message"}],
+            }
+        )
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert client.main(["op", "desc", "imap", "--plain"]) == 0
+
+    assert capsys.readouterr().out == "imap\nRead mail\nimap:get_message\n"
+
+
+def test_client_op_desc_plugin_prints_yaml(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        assert url == "http://127.0.0.1:8000/mcp"
+        assert name == "info"
+        assert arguments == {"kind": "plugin", "plugin": "imap"}
+        return SimpleNamespace(
+            structuredContent={
+                "kind": "plugin",
+                "id": "imap",
+                "description": "Read mail",
+            }
+        )
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert client.main(["op", "desc", "imap", "--yaml"]) == 0
+
+    output = capsys.readouterr().out
+    assert "description: Read mail\n" in output
+    assert "id: imap\n" in output
+    assert "kind: plugin\n" in output
+
+
+def test_client_op_list_plugin_prints_operation_ids(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        assert url == "http://127.0.0.1:8000/mcp"
+        assert name == "info"
+        assert arguments == {"kind": "ops", "plugin": "smtp"}
+        return SimpleNamespace(
+            structuredContent={
+                "kind": "ops",
+                "plugin": "smtp",
+                "operations": [
+                    {"id": "smtp:verify_connection"},
+                    {"id": "smtp:send_email"},
+                ],
+            }
+        )
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert client.main(["op", "list", "smtp", "--plain"]) == 0
+
+    assert capsys.readouterr().out == "smtp:send_email\nsmtp:verify_connection\n"
+
+
+def test_client_op_list_plugin_prints_yaml(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        assert url == "http://127.0.0.1:8000/mcp"
+        assert name == "info"
+        assert arguments == {"kind": "ops", "plugin": "smtp"}
+        return SimpleNamespace(
+            structuredContent={
+                "kind": "ops",
+                "plugin": "smtp",
+                "operations": [
+                    {
+                        "description": "Send one email.",
+                        "id": "smtp:send_email",
+                        "name": "send_email",
+                    }
+                ],
+            }
+        )
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert client.main(["op", "list", "smtp", "--yaml"]) == 0
+
+    assert capsys.readouterr().out == (
+        "kind: ops\n"
+        "operations:\n"
+        "  smtp:send_email:\n"
+        "    description: Send one email.\n"
+        "    name: send_email\n"
+        "plugin: smtp\n"
+    )
+
+
+def test_client_op_list_plugin_prints_json_by_default(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        assert url == "http://127.0.0.1:8000/mcp"
+        assert name == "info"
+        assert arguments == {"kind": "ops", "plugin": "smtp"}
+        return SimpleNamespace(
+            structuredContent={
+                "kind": "ops",
+                "plugin": "smtp",
+                "operations": [
+                    {"id": "smtp:send_email"},
+                    {"id": "smtp:verify_connection"},
+                ],
+            }
+        )
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert client.main(["op", "list", "smtp"]) == 0
+
+    assert capsys.readouterr().out == (
+        '{"kind": "ops", "operations": {"smtp:send_email": {}, '
+        '"smtp:verify_connection": {}}, "plugin": "smtp"}\n'
+    )
+
+
+def test_client_op_list_prints_plugins_json_by_default(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, Mapping[str, Any]]] = []
+
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        assert url == "http://127.0.0.1:8000/mcp"
+        assert name == "info"
+        calls.append((name, arguments))
+        return SimpleNamespace(
+            structuredContent={
+                "kind": "plugins",
+                "plugins": [{"id": "smtp"}, {"id": "imap"}],
+            }
+        )
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert client.main(["op", "list"]) == 0
+
+    assert calls == [
+        ("info", {"kind": "plugins"}),
+    ]
+    assert capsys.readouterr().out == '{"plugins": ["imap", "smtp"]}\n'
+
+
+def test_client_op_list_prints_plain_plugins(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_tool(
+        url: str,
+        name: str,
+        arguments: Mapping[str, Any],
+    ) -> object:
+        assert url == "http://127.0.0.1:8000/mcp"
+        assert name == "info"
+        assert arguments == {"kind": "plugins"}
+        return SimpleNamespace(
+            structuredContent={
+                "kind": "plugins",
+                "plugins": [{"id": "smtp"}, {"id": "imap"}],
+            }
+        )
+
+    monkeypatch.setattr(client, "call_tool", fake_call_tool)
+
+    assert client.main(["op", "list", "--plain"]) == 0
+
+    assert capsys.readouterr().out == "imap\nsmtp\n"
+
+
 def test_client_op_alias_runs_operation(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
