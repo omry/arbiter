@@ -1,0 +1,264 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+import venv
+from dataclasses import dataclass
+from pathlib import Path
+
+
+@dataclass(frozen=True)
+class PublishSpec:
+    name: str
+    version: str
+
+    @property
+    def text(self) -> str:
+        return f"{self.name}=={self.version}"
+
+
+def parse_publish_specs(value: str) -> tuple[PublishSpec, ...]:
+    specs: list[PublishSpec] = []
+    for raw_spec in value.split(","):
+        text = raw_spec.strip()
+        if not text:
+            continue
+        name, separator, version = text.partition("==")
+        if separator != "==" or not name or not version:
+            raise ValueError(f"publish spec must be NAME==VERSION: {text!r}")
+        specs.append(PublishSpec(name=name, version=version))
+    if not specs:
+        raise ValueError("at least one publish spec is required")
+    return tuple(specs)
+
+
+def _run(
+    command: list[str],
+    *,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(command, check=True, env=env)
+
+
+def _venv_python(venv_dir: Path) -> Path:
+    if os.name == "nt":
+        return venv_dir / "Scripts" / "python.exe"
+    return venv_dir / "bin" / "python"
+
+
+def _venv_executable(venv_dir: Path, name: str) -> Path:
+    if os.name == "nt":
+        suffix = ".exe" if not name.endswith(".exe") else ""
+        return venv_dir / "Scripts" / f"{name}{suffix}"
+    return venv_dir / "bin" / name
+
+
+def _create_venv(venv_dir: Path, *, clean: bool) -> Path:
+    if clean and venv_dir.exists():
+        shutil.rmtree(venv_dir)
+    venv.EnvBuilder(with_pip=True, clear=False).create(venv_dir)
+    return _venv_python(venv_dir)
+
+
+def _install_publish_specs(
+    *,
+    python: Path,
+    dist_dir: Path,
+    specs: tuple[PublishSpec, ...],
+    no_index: bool,
+) -> None:
+    if not no_index:
+        _run([str(python), "-m", "pip", "install", "--upgrade", "pip"])
+    pip_install = [
+        str(python),
+        "-m",
+        "pip",
+        "install",
+        "--find-links",
+        str(dist_dir),
+    ]
+    if no_index:
+        pip_install.append("--no-index")
+    _run(
+        [
+            *pip_install,
+            *(spec.text for spec in specs),
+        ]
+    )
+
+
+def _normalized_distribution_name(name: str) -> str:
+    return name.replace("-", "_")
+
+
+def _skill_wheel(dist_dir: Path, spec: PublishSpec) -> Path:
+    filename = (
+        f"{_normalized_distribution_name(spec.name)}-{spec.version}-py3-none-any.whl"
+    )
+    wheel = dist_dir / filename
+    if not wheel.is_file():
+        raise FileNotFoundError(f"expected built skill wheel is missing: {wheel}")
+    return wheel
+
+
+def _asi_env(*, dist_dir: Path, no_index: bool) -> dict[str, str]:
+    env = os.environ.copy()
+    existing = env.get("PIP_FIND_LINKS", "").strip()
+    env["PIP_FIND_LINKS"] = f"{dist_dir} {existing}" if existing else str(dist_dir)
+    if no_index:
+        env["PIP_NO_INDEX"] = "1"
+    return env
+
+
+def _smoke_arbiter_client(*, venv_dir: Path) -> None:
+    _run([str(_venv_executable(venv_dir, "arbiter")), "--help"])
+
+
+def _smoke_server(*, venv_dir: Path) -> None:
+    _run([str(_venv_executable(venv_dir, "arbiter-server")), "version", "--json"])
+
+
+def _smoke_arbiter_skill(
+    *,
+    dist_dir: Path,
+    spec: PublishSpec,
+    target_dir: Path,
+    asi_python: Path,
+    no_index: bool,
+) -> None:
+    skill_wheel = _skill_wheel(dist_dir, spec)
+    _run(
+        [
+            str(asi_python),
+            "-m",
+            "agent_skill_installer",
+            "--no-ui",
+            "install",
+            "--wheel-file",
+            str(skill_wheel),
+            "--agent",
+            "codex",
+            "--scope",
+            "dir",
+            "--target-dir",
+            str(target_dir),
+            "--force",
+        ],
+        env=_asi_env(dist_dir=dist_dir, no_index=no_index),
+    )
+
+    skill_dir = target_dir / ".codex" / "skills" / "arbiter"
+    skill_file = skill_dir / "SKILL.md"
+    arbiter = skill_dir / "bin" / "arbiter"
+    hook_file = target_dir / "AGENTS.md"
+    if not skill_file.is_file():
+        raise FileNotFoundError(f"ASI did not install {skill_file}")
+    if not hook_file.is_file():
+        raise FileNotFoundError(f"ASI did not install {hook_file}")
+    if not arbiter.is_file():
+        raise FileNotFoundError(f"ASI did not install {arbiter}")
+    if os.name != "nt" and not os.access(arbiter, os.X_OK):
+        raise PermissionError(
+            f"ASI installed a non-executable Arbiter client: {arbiter}"
+        )
+    _run([str(arbiter), "--version"])
+
+
+def smoke_release_install(
+    *,
+    dist_dir: Path,
+    venv_dir: Path,
+    asi_target_dir: Path,
+    asi_python: Path,
+    specs: tuple[PublishSpec, ...],
+    clean: bool,
+    no_index: bool,
+) -> None:
+    python = _create_venv(venv_dir, clean=clean)
+    _install_publish_specs(
+        python=python,
+        dist_dir=dist_dir,
+        specs=specs,
+        no_index=no_index,
+    )
+
+    run_server_smoke = False
+    for spec in specs:
+        if spec.name == "arbiter-client":
+            _smoke_arbiter_client(venv_dir=venv_dir)
+        elif spec.name == "arbiter-skill":
+            _smoke_arbiter_skill(
+                dist_dir=dist_dir,
+                spec=spec,
+                target_dir=asi_target_dir,
+                asi_python=asi_python,
+                no_index=no_index,
+            )
+        else:
+            run_server_smoke = True
+
+    if run_server_smoke:
+        _smoke_server(venv_dir=venv_dir)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Smoke install built Arbiter dists.")
+    parser.add_argument(
+        "--publish-specs",
+        default=os.environ.get("PUBLISH_SPECS", ""),
+        help="comma-separated NAME==VERSION specs, default: PUBLISH_SPECS",
+    )
+    parser.add_argument(
+        "--dist-dir",
+        default="dist",
+        help="directory containing built distributions, default: dist",
+    )
+    parser.add_argument(
+        "--venv-dir",
+        default=".release-smoke",
+        help="temporary virtualenv path, default: .release-smoke",
+    )
+    parser.add_argument(
+        "--asi-target-dir",
+        default=".release-smoke-asi",
+        help="temporary ASI directory-scope install target, default: .release-smoke-asi",
+    )
+    parser.add_argument(
+        "--asi-python",
+        default=sys.executable,
+        help="Python with agent_skill_installer available, default: current Python",
+    )
+    parser.add_argument(
+        "--no-clean",
+        action="store_true",
+        help="reuse existing smoke directories instead of deleting them first",
+    )
+    parser.add_argument(
+        "--no-index",
+        action="store_true",
+        help="install only from --dist-dir and pass PIP_NO_INDEX=1 to ASI",
+    )
+    namespace = parser.parse_args(argv)
+
+    try:
+        smoke_release_install(
+            dist_dir=Path(namespace.dist_dir).resolve(),
+            venv_dir=Path(namespace.venv_dir).resolve(),
+            asi_target_dir=Path(namespace.asi_target_dir).resolve(),
+            asi_python=Path(namespace.asi_python),
+            specs=parse_publish_specs(namespace.publish_specs),
+            clean=not namespace.no_clean,
+            no_index=namespace.no_index,
+        )
+    except (OSError, subprocess.CalledProcessError, ValueError) as exc:
+        print(f"smoke_release_install: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

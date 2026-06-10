@@ -321,7 +321,11 @@ jobs:
           go-version-file: client/go-cli/go.mod
 
       - name: Install build tools
-        run: python -m pip install "nox[pbs]>=2024.10,<2026.0" build
+        run: >-
+          python -m pip install
+          "nox[pbs]>=2024.10,<2026.0"
+          build
+          "agent-skill-installer>=0.2.0,<0.3.0"
 
       - name: Run lint
         run: nox -s lint
@@ -340,30 +344,9 @@ jobs:
         run: tools/plan_pypi_publish --prepare-output-dir --packages "$PUBLISH_PACKAGES"
 
       - name: Smoke install built release
-        shell: bash
         env:
           PUBLISH_SPECS: ${{ needs.validate.outputs.publish_specs }}
-        run: |
-          set -euo pipefail
-          python -m venv .release-smoke
-          .release-smoke/bin/python -m pip install --upgrade pip
-          IFS=',' read -ra publish_specs <<< "$PUBLISH_SPECS"
-          .release-smoke/bin/python -m pip install --find-links dist "${publish_specs[@]}"
-          run_server_smoke=false
-          for spec in "${publish_specs[@]}"; do
-            package_name="${spec%%==*}"
-            if [[ "$package_name" == arbiter-client ]]; then
-              .release-smoke/bin/arbiter --help > /dev/null
-            elif [[ "$package_name" == arbiter-skill* ]]; then
-              module_name="${package_name//-/_}"
-              .release-smoke/bin/python -c "__import__('$module_name')"
-            else
-              run_server_smoke=true
-            fi
-          done
-          if [[ "$run_server_smoke" == true ]]; then
-            .release-smoke/bin/arbiter-server version --json
-          fi
+        run: tools/smoke_release_install --publish-specs "$PUBLISH_SPECS" --dist-dir dist --asi-python python
 
       - name: Upload distributions
         uses: actions/upload-artifact@v4

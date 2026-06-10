@@ -22,11 +22,13 @@ BLACK_TARGETS = [
     "examples/plugins/echo/src",
     "examples/plugins/echo/tests",
     "noxfile.py",
+    "skill/arbiter_skill_build.py",
     "tools/build_release_dists",
     "tools/extract_release_notes",
     "tools/plan_pypi_publish",
     "tools/release_packages.py",
     "tools/sl_precommit_lint",
+    "tools/smoke_release_install",
     "tools/upgrade_release_line",
 ]
 TEST_TARGETS = [
@@ -67,6 +69,8 @@ PYREFLY_TARGETS = [
     "examples/plugins/echo/src",
     "examples/plugins/echo/tests",
     "noxfile.py",
+    "skill/arbiter_skill_build.py",
+    "tools/smoke_release_install",
 ]
 
 

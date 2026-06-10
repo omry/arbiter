@@ -20,6 +20,8 @@ PYREFLY_TARGETS = [
     "examples/plugins/echo/src",
     "examples/plugins/echo/tests",
     "noxfile.py",
+    "skill/arbiter_skill_build.py",
+    "tools/smoke_release_install",
 ]
 
 
