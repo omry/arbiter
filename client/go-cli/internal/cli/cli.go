@@ -1,27 +1,32 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/omry/arbiter/client/go-cli/internal/mcp"
 )
 
 const (
-	DefaultMCPURL           = "http://127.0.0.1:8000/mcp"
-	MCPURLEnvVar            = "ARBITER_MCP_URL"
-	DefaultConfigDir        = ".arbiter"
-	DefaultClientConfigName = "arbiter-client.yaml"
-	DefaultArtifactMaxBytes = 16 * 1024
+	DefaultMCPURL                             = "http://127.0.0.1:8000/mcp"
+	MCPURLEnvVar                              = "ARBITER_MCP_URL"
+	DefaultConfigDir                          = ".arbiter"
+	DefaultClientConfigName                   = "arbiter-client.yaml"
+	DefaultArtifactMaxBytes                   = 16 * 1024
+	DefaultArtifactCommandMaxChildStdoutBytes = 256 * 1024
 )
 
 type EnvLookup func(string) (string, bool)
@@ -103,17 +108,70 @@ func runArtifact(
 	stderr io.Writer,
 ) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "Arbiter usage error: expected: arbiter artifact get <url> (--stdout [--max-bytes N] | --output PATH)")
+		fmt.Fprintln(stderr, "Arbiter usage error: expected: arbiter artifact {get,save,with-temp,with-stdin} ...")
+		fmt.Fprintln(stderr, "Run 'arbiter artifact --help' for artifact help.")
 		return 2
 	}
 	switch args[0] {
+	case "-h", "--help":
+		printArtifactHelp(stdout)
+		return 0
 	case "get":
+		if len(args) == 2 && (args[1] == "-h" || args[1] == "--help") {
+			printArtifactGetHelp(stdout)
+			return 0
+		}
 		options, err := parseArtifactGetArgs(args[1:])
 		if err != nil {
 			fmt.Fprintf(stderr, "Arbiter usage error: %v\n", err)
 			return 2
 		}
 		if err := fetchArtifact(context.Background(), options, stdout); err != nil {
+			fmt.Fprintf(stderr, "Arbiter artifact error: %s\n", err)
+			return 1
+		}
+		return 0
+	case "save":
+		if len(args) == 2 && (args[1] == "-h" || args[1] == "--help") {
+			printArtifactSaveHelp(stdout)
+			return 0
+		}
+		options, err := parseArtifactSaveArgs(args[1:])
+		if err != nil {
+			fmt.Fprintf(stderr, "Arbiter usage error: %v\n", err)
+			return 2
+		}
+		if err := saveArtifactToFile(context.Background(), options.URL, options.OutputPath); err != nil {
+			fmt.Fprintf(stderr, "Arbiter artifact error: %s\n", err)
+			return 1
+		}
+		return 0
+	case "with-temp":
+		if len(args) == 2 && (args[1] == "-h" || args[1] == "--help") {
+			printArtifactWithTempHelp(stdout)
+			return 0
+		}
+		options, err := parseArtifactCommandArgs(args[0], args[1:], true)
+		if err != nil {
+			fmt.Fprintf(stderr, "Arbiter usage error: %v\n", err)
+			return 2
+		}
+		if err := runArtifactWithTemp(context.Background(), options, stdout, stderr); err != nil {
+			fmt.Fprintf(stderr, "Arbiter artifact error: %s\n", err)
+			return 1
+		}
+		return 0
+	case "with-stdin":
+		if len(args) == 2 && (args[1] == "-h" || args[1] == "--help") {
+			printArtifactWithStdinHelp(stdout, args[0])
+			return 0
+		}
+		options, err := parseArtifactCommandArgs(args[0], args[1:], false)
+		if err != nil {
+			fmt.Fprintf(stderr, "Arbiter usage error: %v\n", err)
+			return 2
+		}
+		if err := runArtifactWithStdin(context.Background(), options, stdout, stderr); err != nil {
 			fmt.Fprintf(stderr, "Arbiter artifact error: %s\n", err)
 			return 1
 		}
@@ -607,19 +665,29 @@ func parseArgsFlag(args []string) (map[string]any, error) {
 }
 
 type artifactGetOptions struct {
+	URL      string
+	Stdout   bool
+	MaxBytes int64
+}
+
+type artifactSaveOptions struct {
 	URL        string
-	Stdout     bool
 	OutputPath string
-	MaxBytes   int64
+}
+
+type artifactCommandOptions struct {
+	URL                 string
+	Command             []string
+	MaxChildStdoutBytes int64
 }
 
 func parseArtifactGetArgs(args []string) (artifactGetOptions, error) {
 	options := artifactGetOptions{MaxBytes: int64(DefaultArtifactMaxBytes)}
 	if len(args) < 2 {
 		if len(args) == 1 && strings.TrimSpace(args[0]) != "" {
-			return options, fmt.Errorf("artifact get requires exactly one of --stdout or --output PATH")
+			return options, fmt.Errorf("artifact get requires --stdout")
 		}
-		return options, fmt.Errorf("expected: arbiter artifact get <url> (--stdout [--max-bytes N] | --output PATH)")
+		return options, fmt.Errorf("expected: arbiter artifact get <url> --stdout [--max-bytes N]")
 	}
 	artifactURL := args[0]
 	if strings.TrimSpace(artifactURL) == "" {
@@ -630,15 +698,6 @@ func parseArtifactGetArgs(args []string) (artifactGetOptions, error) {
 		switch args[index] {
 		case "--stdout":
 			options.Stdout = true
-		case "--output":
-			if index+1 >= len(args) {
-				return options, fmt.Errorf("--output requires a value")
-			}
-			if strings.TrimSpace(args[index+1]) == "" {
-				return options, fmt.Errorf("--output path must be non-empty")
-			}
-			options.OutputPath = args[index+1]
-			index++
 		case "--max-bytes":
 			if index+1 >= len(args) {
 				return options, fmt.Errorf("--max-bytes requires a value")
@@ -653,12 +712,27 @@ func parseArtifactGetArgs(args []string) (artifactGetOptions, error) {
 			return options, fmt.Errorf("unknown artifact get argument: %s", args[index])
 		}
 	}
-	if options.Stdout == (options.OutputPath != "") {
-		return options, fmt.Errorf("artifact get requires exactly one of --stdout or --output PATH")
+	if !options.Stdout {
+		return options, fmt.Errorf("artifact get requires --stdout")
 	}
-	if !options.Stdout && options.MaxBytes != int64(DefaultArtifactMaxBytes) {
-		return options, fmt.Errorf("--max-bytes is only valid with --stdout")
+	return options, nil
+}
+
+func parseArtifactSaveArgs(args []string) (artifactSaveOptions, error) {
+	options := artifactSaveOptions{}
+	if len(args) != 2 {
+		return options, fmt.Errorf("expected: arbiter artifact save <url> <path>")
 	}
+	artifactURL := args[0]
+	if strings.TrimSpace(artifactURL) == "" {
+		return options, fmt.Errorf("artifact URL must be non-empty")
+	}
+	outputPath := args[1]
+	if strings.TrimSpace(outputPath) == "" {
+		return options, fmt.Errorf("output path must be non-empty")
+	}
+	options.URL = artifactURL
+	options.OutputPath = outputPath
 	return options, nil
 }
 
@@ -670,7 +744,367 @@ func fetchArtifact(
 	if options.Stdout {
 		return writeArtifactToStdout(ctx, options.URL, options.MaxBytes, stdout)
 	}
-	return saveArtifactToFile(ctx, options.URL, options.OutputPath)
+	return fmt.Errorf("artifact get requires --stdout")
+}
+
+func parseArtifactCommandArgs(
+	commandName string,
+	args []string,
+	requirePathPlaceholder bool,
+) (artifactCommandOptions, error) {
+	options := artifactCommandOptions{
+		MaxChildStdoutBytes: int64(DefaultArtifactCommandMaxChildStdoutBytes),
+	}
+	expected := fmt.Sprintf(
+		"expected: arbiter artifact %s <url> [--max-child-stdout-bytes N] -- <argv...>",
+		commandName,
+	)
+	if len(args) < 3 {
+		return options, fmt.Errorf("%s", expected)
+	}
+	artifactURL := args[0]
+	if strings.TrimSpace(artifactURL) == "" {
+		return options, fmt.Errorf("artifact URL must be non-empty")
+	}
+	options.URL = artifactURL
+	separatorIndex := -1
+	for index := 1; index < len(args); index++ {
+		if args[index] == "--" {
+			separatorIndex = index
+			break
+		}
+		switch args[index] {
+		case "--max-child-stdout-bytes":
+			if index+1 >= len(args) {
+				return options, fmt.Errorf("--max-child-stdout-bytes requires a value")
+			}
+			parsed, err := strconv.ParseInt(args[index+1], 10, 64)
+			if err != nil || parsed < 1 {
+				return options, fmt.Errorf("--max-child-stdout-bytes must be a positive integer")
+			}
+			options.MaxChildStdoutBytes = parsed
+			index++
+		default:
+			return options, fmt.Errorf("unknown artifact %s argument before --: %s", commandName, args[index])
+		}
+	}
+	if separatorIndex < 0 || separatorIndex == len(args)-1 {
+		return options, fmt.Errorf("%s", expected)
+	}
+	options.Command = args[separatorIndex+1:]
+	if requirePathPlaceholder && !commandContainsPathPlaceholder(options.Command) {
+		return options, fmt.Errorf("artifact %s command must contain a {} path placeholder", commandName)
+	}
+	return options, nil
+}
+
+func commandContainsPathPlaceholder(command []string) bool {
+	for _, arg := range command {
+		if strings.Contains(arg, "{}") {
+			return true
+		}
+	}
+	return false
+}
+
+func replacePathPlaceholder(command []string, path string) []string {
+	replaced := make([]string, len(command))
+	for index, arg := range command {
+		replaced[index] = strings.ReplaceAll(arg, "{}", path)
+	}
+	return replaced
+}
+
+func runArtifactWithTemp(
+	ctx context.Context,
+	options artifactCommandOptions,
+	stdout io.Writer,
+	stderr io.Writer,
+) error {
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	getReq, err := http.NewRequestWithContext(ctx, http.MethodGet, options.URL, nil)
+	if err != nil {
+		return err
+	}
+	getResp, err := httpClient.Do(getReq)
+	if err != nil {
+		return err
+	}
+	defer getResp.Body.Close()
+	if getResp.StatusCode < 200 || getResp.StatusCode >= 300 {
+		return fmt.Errorf("artifact fetch failed: HTTP %d", getResp.StatusCode)
+	}
+
+	tempDir, err := os.MkdirTemp("", "arbiter-artifact-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tempDir)
+
+	artifactPath := filepath.Join(tempDir, artifactTempFilename(getResp.Header))
+	output, err := os.OpenFile(artifactPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(output, getResp.Body); err != nil {
+		output.Close()
+		return err
+	}
+	if err := output.Close(); err != nil {
+		return err
+	}
+	command := replacePathPlaceholder(options.Command, artifactPath)
+	return runArtifactCommand(ctx, command, nil, stdout, stderr, options.MaxChildStdoutBytes)
+}
+
+func artifactTempFilename(headers http.Header) string {
+	name := ""
+	if contentDisposition := headers.Get("Content-Disposition"); contentDisposition != "" {
+		if _, params, err := mime.ParseMediaType(contentDisposition); err == nil {
+			name = params["filename"]
+		}
+	}
+	name = sanitizeArtifactFilename(name)
+	if name == "" {
+		name = "artifact"
+	}
+	if filepath.Ext(name) == "" {
+		if extension := artifactExtensionForContentType(headers.Get("Content-Type")); extension != "" {
+			name += extension
+		}
+	}
+	return name
+}
+
+func sanitizeArtifactFilename(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	name = strings.ReplaceAll(name, "\\", "/")
+	name = filepath.Base(name)
+	var builder strings.Builder
+	for _, char := range name {
+		switch {
+		case char >= 'a' && char <= 'z',
+			char >= 'A' && char <= 'Z',
+			char >= '0' && char <= '9',
+			char == '.', char == '_', char == '-':
+			builder.WriteRune(char)
+		default:
+			builder.WriteRune('_')
+		}
+	}
+	sanitized := strings.Trim(builder.String(), ".")
+	if sanitized == "" {
+		return ""
+	}
+	return sanitized
+}
+
+func artifactExtensionForContentType(contentType string) string {
+	mediaType := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+	switch mediaType {
+	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+		return ".docx"
+	case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+		return ".xlsx"
+	case "application/vnd.openxmlformats-officedocument.presentationml.presentation":
+		return ".pptx"
+	case "application/msword":
+		return ".doc"
+	case "application/vnd.ms-excel":
+		return ".xls"
+	case "application/vnd.ms-powerpoint":
+		return ".ppt"
+	case "application/vnd.oasis.opendocument.text":
+		return ".odt"
+	case "application/vnd.oasis.opendocument.spreadsheet":
+		return ".ods"
+	case "application/vnd.oasis.opendocument.presentation":
+		return ".odp"
+	case "application/pdf":
+		return ".pdf"
+	case "application/rtf":
+		return ".rtf"
+	case "application/zip":
+		return ".zip"
+	case "application/json":
+		return ".json"
+	case "application/xml":
+		return ".xml"
+	case "application/yaml", "application/x-yaml":
+		return ".yaml"
+	case "text/plain":
+		return ".txt"
+	case "text/csv":
+		return ".csv"
+	case "text/html":
+		return ".html"
+	case "text/markdown":
+		return ".md"
+	case "image/jpeg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	case "image/svg+xml":
+		return ".svg"
+	case "audio/mpeg":
+		return ".mp3"
+	case "audio/wav", "audio/x-wav":
+		return ".wav"
+	case "video/mp4":
+		return ".mp4"
+	}
+	extensions, err := mime.ExtensionsByType(mediaType)
+	if err != nil || len(extensions) == 0 {
+		return ""
+	}
+	return extensions[0]
+}
+
+func runArtifactWithStdin(
+	ctx context.Context,
+	options artifactCommandOptions,
+	stdout io.Writer,
+	stderr io.Writer,
+) error {
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	getReq, err := http.NewRequestWithContext(ctx, http.MethodGet, options.URL, nil)
+	if err != nil {
+		return err
+	}
+	getResp, err := httpClient.Do(getReq)
+	if err != nil {
+		return err
+	}
+	defer getResp.Body.Close()
+	if getResp.StatusCode < 200 || getResp.StatusCode >= 300 {
+		return fmt.Errorf("artifact fetch failed: HTTP %d", getResp.StatusCode)
+	}
+	return runArtifactCommand(
+		ctx,
+		options.Command,
+		getResp.Body,
+		stdout,
+		stderr,
+		options.MaxChildStdoutBytes,
+	)
+}
+
+func runArtifactCommand(
+	ctx context.Context,
+	command []string,
+	stdin io.Reader,
+	stdout io.Writer,
+	stderr io.Writer,
+	maxStdoutBytes int64,
+) error {
+	if len(command) == 0 || strings.TrimSpace(command[0]) == "" {
+		return fmt.Errorf("artifact command must be non-empty")
+	}
+	commandCtx, cancelCommand := context.WithCancel(ctx)
+	defer cancelCommand()
+	cmd := exec.CommandContext(commandCtx, command[0], command[1:]...)
+	cmd.Stdin = stdin
+	childStdout := newCappedOutputBuffer(maxStdoutBytes, cancelCommand)
+	childStderr := newCappedOutputBuffer(maxStdoutBytes, cancelCommand)
+	cmd.Stdout = childStdout
+	cmd.Stderr = childStderr
+
+	commandErr := cmd.Run()
+	writeCapturedStderr(stderr, childStderr)
+	if childStdout.Exceeded() {
+		return fmt.Errorf("refusing to write child stdout larger than %d bytes", maxStdoutBytes)
+	}
+	stdoutBytes := childStdout.Bytes()
+	if !isTextOutput(stdoutBytes) {
+		return fmt.Errorf("refusing to write non-text child stdout")
+	}
+	if len(stdoutBytes) > 0 {
+		if _, err := stdout.Write(stdoutBytes); err != nil {
+			return err
+		}
+	}
+	if commandErr != nil {
+		return fmt.Errorf("command failed: %w", commandErr)
+	}
+	return nil
+}
+
+type cappedOutputBuffer struct {
+	buffer   bytes.Buffer
+	limit    int64
+	exceeded bool
+	onExceed func()
+}
+
+func newCappedOutputBuffer(limit int64, onExceed func()) *cappedOutputBuffer {
+	return &cappedOutputBuffer{limit: limit, onExceed: onExceed}
+}
+
+func (buffer *cappedOutputBuffer) Write(data []byte) (int, error) {
+	if buffer.limit < 1 {
+		buffer.markExceeded()
+		return len(data), nil
+	}
+	remaining := buffer.limit + 1 - int64(buffer.buffer.Len())
+	if remaining > 0 {
+		toWrite := data
+		if int64(len(toWrite)) > remaining {
+			toWrite = toWrite[:remaining]
+			buffer.markExceeded()
+		}
+		_, _ = buffer.buffer.Write(toWrite)
+		if int64(buffer.buffer.Len()) > buffer.limit {
+			buffer.markExceeded()
+		}
+	} else if len(data) > 0 {
+		buffer.markExceeded()
+	}
+	return len(data), nil
+}
+
+func (buffer *cappedOutputBuffer) markExceeded() {
+	buffer.exceeded = true
+	if buffer.onExceed != nil {
+		buffer.onExceed()
+	}
+}
+
+func (buffer *cappedOutputBuffer) Bytes() []byte {
+	data := buffer.buffer.Bytes()
+	if int64(len(data)) > buffer.limit {
+		return data[:buffer.limit]
+	}
+	return data
+}
+
+func (buffer *cappedOutputBuffer) Exceeded() bool {
+	return buffer.exceeded || int64(buffer.buffer.Len()) > buffer.limit
+}
+
+func writeCapturedStderr(stderr io.Writer, childStderr *cappedOutputBuffer) {
+	data := childStderr.Bytes()
+	if len(data) == 0 {
+		return
+	}
+	if !isTextOutput(data) {
+		fmt.Fprintln(stderr, "Arbiter artifact warning: child stderr omitted because it was not text")
+		return
+	}
+	_, _ = stderr.Write(data)
+	if childStderr.Exceeded() {
+		fmt.Fprintf(stderr, "\nArbiter artifact warning: child stderr truncated at %d bytes\n", childStderr.limit)
+	}
+}
+
+func isTextOutput(data []byte) bool {
+	return !bytes.Contains(data, []byte{0}) && utf8.Valid(data)
 }
 
 func writeArtifactToStdout(
@@ -736,18 +1170,6 @@ func saveArtifactToFile(
 	outputPath string,
 ) error {
 	httpClient := &http.Client{Timeout: 30 * time.Second}
-	output, err := os.OpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return err
-	}
-	removeOutput := true
-	defer func() {
-		output.Close()
-		if removeOutput {
-			os.Remove(outputPath)
-		}
-	}()
-
 	getReq, err := http.NewRequestWithContext(ctx, http.MethodGet, artifactURL, nil)
 	if err != nil {
 		return err
@@ -760,7 +1182,19 @@ func saveArtifactToFile(
 	if getResp.StatusCode < 200 || getResp.StatusCode >= 300 {
 		return fmt.Errorf("artifact fetch failed: HTTP %d", getResp.StatusCode)
 	}
+
+	output, err := os.OpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	removeOutput := true
+	defer func() {
+		if removeOutput {
+			_ = os.Remove(outputPath)
+		}
+	}()
 	if _, err := io.Copy(output, getResp.Body); err != nil {
+		_ = output.Close()
 		return err
 	}
 	if err := output.Close(); err != nil {
@@ -1060,4 +1494,61 @@ func printHelp(w io.Writer) {
 	fmt.Fprintln(w, "  mcp             inspect or call raw MCP tools")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "The Go client is experimental.")
+}
+
+func printArtifactHelp(w io.Writer) {
+	fmt.Fprintln(w, "usage: arbiter artifact {get,save,with-temp,with-stdin} ...")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Explicitly access Arbiter artifacts.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "commands:")
+	fmt.Fprintln(w, "  get         write a small textual artifact to stdout")
+	fmt.Fprintln(w, "  save        save an artifact to a file only on explicit user request")
+	fmt.Fprintln(w, "  with-temp   run a command with the artifact as a private temporary file")
+	fmt.Fprintln(w, "  with-stdin  run a command with the artifact bytes on stdin")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Safety:")
+	fmt.Fprintln(w, "  get --stdout is text-only and size-bounded.")
+	fmt.Fprintln(w, "  save is only for when the user explicitly asks to save a file.")
+	fmt.Fprintln(w, "  with-temp and with-stdin never write raw artifact bytes to stdout.")
+}
+
+func printArtifactGetHelp(w io.Writer) {
+	fmt.Fprintln(w, "usage: arbiter artifact get <url> --stdout [--max-bytes N]")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Fetch one small textual artifact URL to stdout.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "options:")
+	fmt.Fprintln(w, "  --stdout       write a small textual artifact to stdout")
+	fmt.Fprintln(w, "  --max-bytes N  maximum bytes to write with --stdout")
+}
+
+func printArtifactSaveHelp(w io.Writer) {
+	fmt.Fprintln(w, "usage: arbiter artifact save <url> <path>")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Save one artifact URL to a local file.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Use only when the user explicitly requests saving the artifact to a file.")
+	fmt.Fprintln(w, "This command never writes artifact bytes to stdout.")
+	fmt.Fprintln(w, "The output path must not already exist.")
+}
+
+func printArtifactWithTempHelp(w io.Writer) {
+	fmt.Fprintln(w, "usage: arbiter artifact with-temp <url> [--max-child-stdout-bytes N] -- <argv...>")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Run a command with the artifact downloaded to a private temporary file.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Use {} in argv where the temporary path should be substituted.")
+	fmt.Fprintln(w, "The command is executed directly, without a shell.")
+	fmt.Fprintln(w, "Only bounded textual child stdout is written back.")
+}
+
+func printArtifactWithStdinHelp(w io.Writer, commandName string) {
+	fmt.Fprintf(w, "usage: arbiter artifact %s <url> [--max-child-stdout-bytes N] -- <argv...>\n", commandName)
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Run a command with the artifact bytes streamed to child stdin.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "The command is executed directly, without a shell.")
+	fmt.Fprintln(w, "Raw artifact bytes are never written to stdout by Arbiter.")
+	fmt.Fprintln(w, "Only bounded textual child stdout is written back.")
 }

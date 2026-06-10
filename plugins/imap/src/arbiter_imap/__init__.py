@@ -395,15 +395,24 @@ class IMAPRuntime:
                 **artifact.to_dict(),
                 "handling": {
                     "prefer_inline": False,
-                    "save_locally": True,
+                    "execute_locally": True,
                     "requires_explicit_user_request": True,
-                    "save_interface": "arbiter artifact get <url> --output <path>",
+                    "path_interface": (
+                        "arbiter artifact with-temp <url> -- <argv...{}...>"
+                    ),
+                    "stdin_interface": "arbiter artifact with-stdin <url> -- <argv...>",
+                    "save_interface": "arbiter artifact save <url> <path>",
+                    "save_requires_explicit_user_request": True,
                     "instructions": (
                         "Use the one-time URL only through an explicit artifact "
                         "reader such as `arbiter artifact get --stdout` for small "
-                        "textual attachments. If the user explicitly asks to save "
-                        "the attachment to a local file, use "
-                        "`arbiter artifact get <url> --output <path>`. Do not "
+                        "textual attachments. For binary attachments, prefer "
+                        "`arbiter artifact with-temp <url> -- <argv...{}...>` "
+                        "for path-based tools or "
+                        "`arbiter artifact with-stdin <url> -- <argv...>` for "
+                        "stdin-based tools. If the user explicitly asks to save "
+                        "the attachment, use "
+                        "`arbiter artifact save <url> <path>`. Do not "
                         "otherwise save, copy, or persist the file."
                     ),
                 },

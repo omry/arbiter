@@ -16,9 +16,16 @@ Python CLI remains available. For explicit small textual artifacts:
 arbiter-py artifact get "$ARBITER_ARTIFACT_URL" --stdout
 ```
 
-For explicit local saves, such as when a user asks to save an attachment to a
-file:
+For binary artifacts, run an explicit reader command so raw artifact bytes do
+not pass through stdout:
 
 ```bash
-arbiter-py artifact get "$ARBITER_ARTIFACT_URL" --output ./attachment.pdf
+arbiter-py artifact with-temp "$ARBITER_ARTIFACT_URL" -- pandoc '{}' -t plain
+arbiter-py artifact with-stdin "$ARBITER_ARTIFACT_URL" -- pandoc -f docx -t plain -
+```
+
+When the user explicitly asks to save the artifact to a file:
+
+```bash
+arbiter-py artifact save "$ARBITER_ARTIFACT_URL" ./attachment.pdf
 ```

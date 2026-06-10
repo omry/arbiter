@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import mimetypes
 import os
 import re
 import string
+import subprocess
 import sys
-from collections.abc import Mapping, Sequence
+import tempfile
+import threading
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from email.message import Message
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +32,7 @@ MCP_URL_ENV_VAR = "ARBITER_MCP_URL"
 DEFAULT_CONFIG_DIR = "~/.arbiter"
 DEFAULT_CLIENT_CONFIG_NAME = "arbiter-client"
 DEFAULT_ARTIFACT_MAX_BYTES = 16 * 1024
+DEFAULT_ARTIFACT_COMMAND_MAX_CHILD_STDOUT_BYTES = 256 * 1024
 BOOTSTRAP_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 _STAGED_DEPLOYMENT_WARNING_EMITTED = False
 _CAPABILITY_FIELD_ALIASES = {
@@ -39,6 +45,37 @@ _CAPABILITY_FIELD_ALIASES = {
     "account_count": "account_count",
     "num_ops": "operation_count",
     "operation_count": "operation_count",
+}
+_ARTIFACT_CONTENT_TYPE_EXTENSIONS = {
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+    "application/msword": ".doc",
+    "application/vnd.ms-excel": ".xls",
+    "application/vnd.ms-powerpoint": ".ppt",
+    "application/vnd.oasis.opendocument.text": ".odt",
+    "application/vnd.oasis.opendocument.spreadsheet": ".ods",
+    "application/vnd.oasis.opendocument.presentation": ".odp",
+    "application/pdf": ".pdf",
+    "application/rtf": ".rtf",
+    "application/zip": ".zip",
+    "application/json": ".json",
+    "application/xml": ".xml",
+    "application/yaml": ".yaml",
+    "application/x-yaml": ".yaml",
+    "text/plain": ".txt",
+    "text/csv": ".csv",
+    "text/html": ".html",
+    "text/markdown": ".md",
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+    "image/svg+xml": ".svg",
+    "audio/mpeg": ".mp3",
+    "audio/wav": ".wav",
+    "audio/x-wav": ".wav",
+    "video/mp4": ".mp4",
 }
 
 
@@ -417,63 +454,353 @@ def _fetch_artifact_stdout_bytes(artifact_url: str, max_bytes: int) -> bytes:
     return b"".join(chunks)
 
 
-def _save_artifact_to_file(artifact_url: str, output_path: Path) -> None:
-    fd = os.open(output_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    try:
-        output = os.fdopen(fd, "wb")
-    except Exception:
-        os.close(fd)
-        output_path.unlink(missing_ok=True)
-        raise
-    try:
-        with httpx.Client(timeout=30.0) as http_client:
-            with http_client.stream("GET", artifact_url) as get_response:
-                if not 200 <= get_response.status_code < 300:
-                    raise ValueError(
-                        f"artifact fetch failed: HTTP {get_response.status_code}"
-                    )
-                for chunk in get_response.iter_bytes():
-                    output.write(chunk)
-        try:
-            output.close()
-        except Exception:
-            if not getattr(output, "closed", True):
-                try:
-                    output.close()
-                except Exception:
-                    pass
-            output = None
-            raise
-        output = None
-    except Exception:
-        if output is not None:
-            try:
-                output.close()
-            except Exception:
-                pass
-        output_path.unlink(missing_ok=True)
-        raise
-
-
 def _run_artifact_get(namespace: argparse.Namespace) -> int:
-    output_path = namespace.output
-    if namespace.stdout == (output_path is not None):
-        print_cli_error(
-            "artifact get requires exactly one of --stdout or --output PATH",
-            area="usage",
-        )
-        return 2
-    if output_path is not None and namespace.max_bytes != DEFAULT_ARTIFACT_MAX_BYTES:
-        print_cli_error("--max-bytes is only valid with --stdout", area="usage")
+    if not namespace.stdout:
+        print_cli_error("artifact get requires --stdout", area="usage")
         return 2
     try:
-        if output_path is not None:
-            _save_artifact_to_file(namespace.url, output_path)
-            return 0
         data = _fetch_artifact_stdout_bytes(namespace.url, namespace.max_bytes)
     except (OSError, httpx.HTTPError, ValueError) as exc:
         print_cli_error(str(exc), area="artifact")
         return 1
+    _write_stdout_bytes(data)
+    return 0
+
+
+def _run_artifact_save(namespace: argparse.Namespace) -> int:
+    try:
+        _save_artifact_to_file(namespace.url, namespace.output)
+    except (OSError, httpx.HTTPError, ValueError) as exc:
+        print_cli_error(str(exc), area="artifact")
+        return 1
+    return 0
+
+
+def _save_artifact_to_file(artifact_url: str, output_path: Path) -> None:
+    with httpx.Client(timeout=30.0) as http_client:
+        with http_client.stream("GET", artifact_url) as get_response:
+            if not 200 <= get_response.status_code < 300:
+                raise ValueError(
+                    f"artifact fetch failed: HTTP {get_response.status_code}"
+                )
+            fd = os.open(output_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            try:
+                with os.fdopen(fd, "wb") as output:
+                    for chunk in get_response.iter_bytes():
+                        output.write(chunk)
+            except Exception:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+                output_path.unlink(missing_ok=True)
+                raise
+
+
+def _run_artifact_with_temp(namespace: argparse.Namespace) -> int:
+    try:
+        max_child_stdout_bytes, command = _artifact_command_options(
+            namespace.child_argv,
+            namespace.max_child_stdout_bytes,
+        )
+    except ValueError as exc:
+        print_cli_error(str(exc), area="usage")
+        return 2
+    if not _artifact_command_has_separator(namespace):
+        command = None
+    if command is None:
+        print_cli_error(
+            "expected: arbiter-py artifact with-temp <url> "
+            "[--max-child-stdout-bytes N] -- <argv...>",
+            area="usage",
+        )
+        return 2
+    if not any("{}" in arg for arg in command):
+        print_cli_error(
+            "artifact with-temp command must contain a {} path placeholder",
+            area="usage",
+        )
+        return 2
+    try:
+        with tempfile.TemporaryDirectory(prefix="arbiter-artifact-") as temp_dir:
+            with httpx.Client(timeout=30.0) as http_client:
+                with http_client.stream("GET", namespace.url) as get_response:
+                    if not 200 <= get_response.status_code < 300:
+                        raise ValueError(
+                            f"artifact fetch failed: HTTP {get_response.status_code}"
+                        )
+                    artifact_path = Path(temp_dir) / _artifact_temp_filename(
+                        get_response.headers
+                    )
+                    fd = os.open(
+                        artifact_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+                    )
+                    with os.fdopen(fd, "wb") as output:
+                        for chunk in get_response.iter_bytes():
+                            output.write(chunk)
+            replaced_command = [
+                arg.replace("{}", str(artifact_path)) for arg in command
+            ]
+            _run_artifact_command(
+                replaced_command,
+                stdin=None,
+                max_child_stdout_bytes=max_child_stdout_bytes,
+            )
+    except (OSError, httpx.HTTPError, ValueError) as exc:
+        print_cli_error(str(exc), area="artifact")
+        return 1
+    return 0
+
+
+def _run_artifact_with_stdin(namespace: argparse.Namespace) -> int:
+    try:
+        max_child_stdout_bytes, command = _artifact_command_options(
+            namespace.child_argv,
+            namespace.max_child_stdout_bytes,
+        )
+    except ValueError as exc:
+        print_cli_error(str(exc), area="usage")
+        return 2
+    if not _artifact_command_has_separator(namespace):
+        command = None
+    if command is None:
+        print_cli_error(
+            "expected: arbiter-py artifact with-stdin <url> "
+            "[--max-child-stdout-bytes N] -- <argv...>",
+            area="usage",
+        )
+        return 2
+    try:
+        with httpx.Client(timeout=30.0) as http_client:
+            with http_client.stream("GET", namespace.url) as get_response:
+                if not 200 <= get_response.status_code < 300:
+                    raise ValueError(
+                        f"artifact fetch failed: HTTP {get_response.status_code}"
+                    )
+                _run_artifact_command(
+                    command,
+                    stdin=get_response.iter_bytes(),
+                    max_child_stdout_bytes=max_child_stdout_bytes,
+                )
+    except (OSError, httpx.HTTPError, ValueError) as exc:
+        print_cli_error(str(exc), area="artifact")
+        return 1
+    return 0
+
+
+def _artifact_command_options(
+    command: Sequence[str],
+    max_child_stdout_bytes: int,
+) -> tuple[int, list[str] | None]:
+    normalized = list(command)
+    if normalized and normalized[0] == "--max-child-stdout-bytes":
+        if len(normalized) < 2 or normalized[1] == "--":
+            raise ValueError("--max-child-stdout-bytes requires a value")
+        try:
+            max_child_stdout_bytes = int(normalized[1])
+        except ValueError as exc:
+            raise ValueError(
+                "--max-child-stdout-bytes must be a positive integer"
+            ) from exc
+        if max_child_stdout_bytes < 1:
+            raise ValueError("--max-child-stdout-bytes must be a positive integer")
+        normalized = normalized[2:]
+    if normalized and normalized[0] == "--":
+        normalized = normalized[1:]
+    if not normalized or not normalized[0].strip():
+        return max_child_stdout_bytes, None
+    return max_child_stdout_bytes, normalized
+
+
+def _artifact_command_has_separator(namespace: argparse.Namespace) -> bool:
+    raw_args = getattr(namespace, "_raw_args", ())
+    if not isinstance(raw_args, Sequence):
+        return False
+    try:
+        command_index = list(raw_args).index(namespace.artifact_command)
+    except ValueError:
+        return False
+    return "--" in raw_args[command_index + 1 :]
+
+
+def _artifact_temp_filename(headers: httpx.Headers) -> str:
+    filename = ""
+    content_disposition = headers.get("content-disposition", "")
+    if content_disposition:
+        message = Message()
+        message["content-disposition"] = content_disposition
+        filename = message.get_filename() or ""
+    filename = _sanitize_artifact_filename(filename)
+    if not filename:
+        filename = "artifact"
+    if not Path(filename).suffix:
+        extension = _artifact_extension_for_content_type(
+            headers.get("content-type", "")
+        )
+        if extension:
+            filename += extension
+    return filename
+
+
+def _sanitize_artifact_filename(filename: str) -> str:
+    filename = filename.strip()
+    if not filename:
+        return ""
+    filename = Path(filename.replace("\\", "/")).name
+    sanitized = "".join(
+        char if char.isascii() and (char.isalnum() or char in "._-") else "_"
+        for char in filename
+    ).strip(".")
+    return sanitized
+
+
+def _artifact_extension_for_content_type(content_type: str) -> str:
+    media_type = content_type.split(";", 1)[0].strip().lower()
+    if media_type in _ARTIFACT_CONTENT_TYPE_EXTENSIONS:
+        return _ARTIFACT_CONTENT_TYPE_EXTENSIONS[media_type]
+    return mimetypes.guess_extension(media_type) or ""
+
+
+def _run_artifact_command(
+    command: Sequence[str],
+    *,
+    stdin: Iterable[bytes] | None,
+    max_child_stdout_bytes: int,
+) -> None:
+    process = subprocess.Popen(
+        command,
+        stdin=subprocess.PIPE if stdin is not None else None,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert process.stdout is not None
+    assert process.stderr is not None
+    captured: dict[str, bytes] = {}
+    errors: list[ValueError] = []
+    stop_event = threading.Event()
+
+    stdout_reader = threading.Thread(
+        target=_read_capped_child_pipe,
+        args=(
+            process,
+            process.stdout,
+            "child stdout",
+            max_child_stdout_bytes,
+            captured,
+            errors,
+            stop_event,
+        ),
+    )
+    stderr_reader = threading.Thread(
+        target=_read_capped_child_pipe,
+        args=(
+            process,
+            process.stderr,
+            "child stderr",
+            max_child_stdout_bytes,
+            captured,
+            errors,
+            stop_event,
+        ),
+    )
+    stdout_reader.start()
+    stderr_reader.start()
+    stdin_writer: threading.Thread | None = None
+    try:
+        if stdin is not None:
+            assert process.stdin is not None
+            stdin_writer = threading.Thread(
+                target=_write_child_stdin,
+                args=(process.stdin, stdin, stop_event),
+            )
+            stdin_writer.start()
+        returncode = process.wait()
+    except Exception:
+        process.kill()
+        process.wait()
+        raise
+    finally:
+        if stdin_writer is not None:
+            stdin_writer.join()
+        stdout_reader.join()
+        stderr_reader.join()
+
+    if errors:
+        raise errors[0]
+    stderr_data = _validated_text_output(
+        captured.get("child stderr", b""), "child stderr"
+    )
+    if stderr_data:
+        _write_stderr_bytes(stderr_data)
+    stdout_data = _validated_text_output(
+        captured.get("child stdout", b""), "child stdout"
+    )
+    if stdout_data:
+        _write_stdout_bytes(stdout_data)
+    if returncode != 0:
+        raise ValueError(f"command failed with exit code {returncode}")
+
+
+def _read_capped_child_pipe(
+    process: subprocess.Popen[bytes],
+    pipe: Any,
+    label: str,
+    max_bytes: int,
+    captured: dict[str, bytes],
+    errors: list[ValueError],
+    stop_event: threading.Event,
+) -> None:
+    data = bytearray()
+    try:
+        while True:
+            chunk = pipe.read(8192)
+            if not chunk:
+                break
+            if len(data) + len(chunk) > max_bytes:
+                errors.append(
+                    ValueError(
+                        f"refusing to write {label} larger than {max_bytes} bytes"
+                    )
+                )
+                stop_event.set()
+                process.kill()
+                break
+            data.extend(chunk)
+    finally:
+        pipe.close()
+        captured[label] = bytes(data)
+
+
+def _write_child_stdin(
+    stdin_pipe: Any,
+    stdin: Iterable[bytes],
+    stop_event: threading.Event,
+) -> None:
+    try:
+        for chunk in stdin:
+            if stop_event.is_set():
+                break
+            stdin_pipe.write(chunk)
+    except (BrokenPipeError, OSError):
+        pass
+    finally:
+        try:
+            stdin_pipe.close()
+        except OSError:
+            pass
+
+
+def _validated_text_output(data: bytes, label: str) -> bytes:
+    if b"\x00" in data:
+        raise ValueError(f"refusing to write non-text {label}")
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"refusing to write non-text {label}") from exc
+    return data
+
+
+def _write_stdout_bytes(data: bytes) -> None:
     stdout_buffer = getattr(sys.stdout, "buffer", None)
     if stdout_buffer is not None:
         stdout_buffer.write(data)
@@ -481,7 +808,16 @@ def _run_artifact_get(namespace: argparse.Namespace) -> int:
     else:
         sys.stdout.write(data.decode("utf-8"))
         sys.stdout.flush()
-    return 0
+
+
+def _write_stderr_bytes(data: bytes) -> None:
+    stderr_buffer = getattr(sys.stderr, "buffer", None)
+    if stderr_buffer is not None:
+        stderr_buffer.write(data)
+        stderr_buffer.flush()
+    else:
+        sys.stderr.write(data.decode("utf-8"))
+        sys.stderr.flush()
 
 
 def _client_config_path(config_dir: str, config_name: str) -> Path:
@@ -942,15 +1278,66 @@ def _build_parser() -> argparse.ArgumentParser:
         help="write the artifact bytes to stdout",
     )
     artifact_get.add_argument(
-        "--output",
-        type=Path,
-        help="save the artifact bytes to a local file",
-    )
-    artifact_get.add_argument(
         "--max-bytes",
         default=DEFAULT_ARTIFACT_MAX_BYTES,
         type=_parse_positive_int,
         help=f"maximum bytes to write to stdout (default: {DEFAULT_ARTIFACT_MAX_BYTES})",
+    )
+    artifact_save = artifact_subcommands.add_parser(
+        "save",
+        description=(
+            "Save one artifact URL to a local file. Use only when the user "
+            "explicitly requests saving the artifact to a file. This command "
+            "never writes artifact bytes to stdout."
+        ),
+        help="save an artifact to a file only on explicit user request",
+    )
+    artifact_save.add_argument("url", help="one-time artifact URL")
+    artifact_save.add_argument(
+        "output",
+        type=Path,
+        help=(
+            "file path; use only when the user explicitly requests saving the "
+            "artifact"
+        ),
+    )
+    artifact_with_temp = artifact_subcommands.add_parser(
+        "with-temp",
+        help="run a command with the artifact as a temporary file",
+    )
+    artifact_with_temp.add_argument("url", help="one-time artifact URL")
+    artifact_with_temp.add_argument(
+        "--max-child-stdout-bytes",
+        default=DEFAULT_ARTIFACT_COMMAND_MAX_CHILD_STDOUT_BYTES,
+        type=_parse_positive_int,
+        help=(
+            "maximum child stdout bytes to write "
+            f"(default: {DEFAULT_ARTIFACT_COMMAND_MAX_CHILD_STDOUT_BYTES})"
+        ),
+    )
+    artifact_with_temp.add_argument(
+        "child_argv",
+        nargs=argparse.REMAINDER,
+        help="command argv after --; use {} where the temp path should go",
+    )
+    artifact_with_stdin = artifact_subcommands.add_parser(
+        "with-stdin",
+        help="run a command with the artifact bytes on stdin",
+    )
+    artifact_with_stdin.add_argument("url", help="one-time artifact URL")
+    artifact_with_stdin.add_argument(
+        "--max-child-stdout-bytes",
+        default=DEFAULT_ARTIFACT_COMMAND_MAX_CHILD_STDOUT_BYTES,
+        type=_parse_positive_int,
+        help=(
+            "maximum child stdout bytes to write "
+            f"(default: {DEFAULT_ARTIFACT_COMMAND_MAX_CHILD_STDOUT_BYTES})"
+        ),
+    )
+    artifact_with_stdin.add_argument(
+        "child_argv",
+        nargs=argparse.REMAINDER,
+        help="command argv after --",
     )
 
     accounts = subcommands.add_parser("accounts", help="inspect configured accounts")
@@ -981,6 +1368,9 @@ def _extract_global_config_args(args: Sequence[str]) -> list[str]:
     index = 0
     while index < len(args):
         arg = args[index]
+        if arg == "--":
+            remaining.extend(args[index:])
+            break
         if arg in {"--config-dir", "--config-name"}:
             if index + 1 < len(args):
                 extracted.extend([arg, args[index + 1]])
@@ -1002,19 +1392,28 @@ def _extract_client_overrides(args: Sequence[str]) -> tuple[list[str], list[str]
     overrides: list[str] = []
     remaining: list[str] = []
     skip_next = False
-    for arg in args:
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == "--":
+            remaining.extend(args[index:])
+            break
         if skip_next:
             remaining.append(arg)
             skip_next = False
+            index += 1
             continue
         if arg == "--args":
             remaining.append(arg)
             skip_next = True
+            index += 1
             continue
         if arg.startswith("arbiter.mcp_url="):
             overrides.append(arg)
+            index += 1
             continue
         remaining.append(arg)
+        index += 1
     return remaining, overrides
 
 
@@ -1429,7 +1828,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _normalize_info_output_flags(args)
     args = _normalize_command_aliases(args)
     namespace, overrides = parser.parse_known_args(args)
+    namespace._raw_args = args
     namespace.overrides = [*extracted_overrides, *overrides]
+    if namespace.command == "artifact" and overrides:
+        print_cli_error(f"unknown artifact argument: {overrides[0]}", area="usage")
+        return 2
     try:
         _apply_capability_query(namespace)
     except ValueError as exc:
@@ -1439,6 +1842,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_bootstrap_client(namespace)
     if namespace.command == "artifact" and namespace.artifact_command == "get":
         return _run_artifact_get(namespace)
+    if namespace.command == "artifact" and namespace.artifact_command == "save":
+        return _run_artifact_save(namespace)
+    if namespace.command == "artifact" and namespace.artifact_command == "with-temp":
+        return _run_artifact_with_temp(namespace)
+    if namespace.command == "artifact" and namespace.artifact_command == "with-stdin":
+        return _run_artifact_with_stdin(namespace)
     try:
         _apply_resolved_mcp_url(namespace, _resolve_mcp_url(namespace))
     except (FileNotFoundError, ValueError) as exc:

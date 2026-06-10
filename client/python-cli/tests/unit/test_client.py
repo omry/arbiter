@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 import stat
+import sys
 from types import SimpleNamespace
 from typing import Any
 
@@ -245,12 +246,10 @@ def test_client_artifact_get_requires_explicit_destination(
 
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert (
-        "artifact get requires exactly one of --stdout or --output PATH" in captured.err
-    )
+    assert "artifact get requires --stdout" in captured.err
 
 
-def test_client_artifact_get_saves_binary_artifact_to_output(
+def test_client_artifact_save_saves_binary_artifact_to_explicit_output(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -283,9 +282,8 @@ def test_client_artifact_get_saves_binary_artifact_to_output(
         client.main(
             [
                 "artifact",
-                "get",
+                "save",
                 "http://artifact.test/file",
-                "--output",
                 str(output_path),
             ]
         )
@@ -301,7 +299,7 @@ def test_client_artifact_get_saves_binary_artifact_to_output(
     assert captured.err == ""
 
 
-def test_client_artifact_get_removes_output_when_close_fails(
+def test_client_artifact_save_removes_output_when_close_fails(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -326,6 +324,12 @@ def test_client_artifact_get_removes_output_when_close_fails(
                 self.closed = True
             raise OSError("simulated close failure")
 
+        def __enter__(self) -> FailingClose:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            self.close()
+
     transport = httpx.MockTransport(handler)
     original_client = httpx.Client
     original_fdopen = client.os.fdopen
@@ -344,9 +348,8 @@ def test_client_artifact_get_removes_output_when_close_fails(
         client.main(
             [
                 "artifact",
-                "get",
+                "save",
                 "http://artifact.test/file",
-                "--output",
                 str(output_path),
             ]
         )
@@ -358,6 +361,298 @@ def test_client_artifact_get_removes_output_when_close_fails(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "simulated close failure" in captured.err
+
+
+def test_client_artifact_get_rejects_output_option(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    assert (
+        client.main(
+            [
+                "artifact",
+                "get",
+                "http://artifact.test/file",
+                "--output",
+                str(tmp_path / "attachment.pdf"),
+            ]
+        )
+        == 2
+    )
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "unknown artifact argument: --output" in captured.err
+
+
+def test_client_artifact_pipe_alias_is_not_accepted(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        client.main(["artifact", "pipe", "--help"])
+
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "invalid choice: 'pipe'" in captured.err
+
+
+def test_client_artifact_child_argv_preserves_global_like_arguments() -> None:
+    args = [
+        "artifact",
+        "with-stdin",
+        "http://artifact.test/file",
+        "--",
+        "reader",
+        "--config-dir",
+        "/tmp/child-config",
+        "--config-name",
+        "child-name",
+        "arbiter.mcp_url=http://child-value",
+    ]
+
+    assert client._extract_global_config_args(args) == args
+    assert client._extract_client_overrides(args) == (args, [])
+
+
+def test_client_artifact_with_temp_runs_command_and_removes_temp_file(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[tuple[str, str]] = []
+    body = b"hello temp\n"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((request.method, str(request.url)))
+        assert request.method == "GET"
+        return httpx.Response(
+            200,
+            content=body,
+            headers={
+                "content-type": "application/octet-stream",
+                "content-disposition": 'attachment; filename="sample.docx"',
+                "content-length": str(len(body)),
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    original_client = httpx.Client
+
+    def fake_http_client(*args: Any, **kwargs: Any) -> httpx.Client:
+        return original_client(*args, transport=transport, **kwargs)
+
+    monkeypatch.setattr(httpx, "Client", fake_http_client)
+
+    assert (
+        client.main(
+            [
+                "artifact",
+                "with-temp",
+                "http://artifact.test/file",
+                "--",
+                sys.executable,
+                "-c",
+                "import pathlib, sys; path = pathlib.Path(sys.argv[1]); "
+                "assert path.read_bytes() == b'hello temp\\n'; print(path)",
+                "{}",
+            ]
+        )
+        == 0
+    )
+
+    assert requests == [("GET", "http://artifact.test/file")]
+    captured = capsys.readouterr()
+    temp_path = Path(captured.out.strip())
+    assert temp_path.suffix == ".docx"
+    assert not temp_path.exists()
+    assert captured.err == ""
+
+
+def test_client_artifact_temp_filename_uses_common_mime_extension() -> None:
+    headers = httpx.Headers(
+        {
+            "content-type": (
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        }
+    )
+
+    assert client._artifact_temp_filename(headers) == "artifact.xlsx"
+
+
+def test_client_artifact_with_stdin_streams_binary_to_command(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[tuple[str, str]] = []
+    body = b"%PDF\x00\xff"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((request.method, str(request.url)))
+        assert request.method == "GET"
+        return httpx.Response(
+            200,
+            content=body,
+            headers={
+                "content-type": "application/pdf",
+                "content-length": str(len(body)),
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    original_client = httpx.Client
+
+    def fake_http_client(*args: Any, **kwargs: Any) -> httpx.Client:
+        return original_client(*args, transport=transport, **kwargs)
+
+    monkeypatch.setattr(httpx, "Client", fake_http_client)
+
+    assert (
+        client.main(
+            [
+                "artifact",
+                "with-stdin",
+                "http://artifact.test/file",
+                "--",
+                sys.executable,
+                "-c",
+                "import sys; data = sys.stdin.buffer.read(); "
+                "print(f'stdin:{len(data)}')",
+            ]
+        )
+        == 0
+    )
+
+    assert requests == [("GET", "http://artifact.test/file")]
+    captured = capsys.readouterr()
+    assert captured.out == "stdin:6\n"
+    assert captured.err == ""
+
+
+def test_client_artifact_with_stdin_rejects_non_text_child_stdout(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"hello")
+
+    transport = httpx.MockTransport(handler)
+    original_client = httpx.Client
+
+    def fake_http_client(*args: Any, **kwargs: Any) -> httpx.Client:
+        return original_client(*args, transport=transport, **kwargs)
+
+    monkeypatch.setattr(httpx, "Client", fake_http_client)
+
+    assert (
+        client.main(
+            [
+                "artifact",
+                "with-stdin",
+                "http://artifact.test/file",
+                "--",
+                sys.executable,
+                "-c",
+                "import sys; sys.stdout.buffer.write(b'\\x00\\xff')",
+            ]
+        )
+        == 1
+    )
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "non-text child stdout" in captured.err
+
+
+def test_client_artifact_with_stdin_rejects_oversized_child_stdout(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"hello")
+
+    transport = httpx.MockTransport(handler)
+    original_client = httpx.Client
+
+    def fake_http_client(*args: Any, **kwargs: Any) -> httpx.Client:
+        return original_client(*args, transport=transport, **kwargs)
+
+    monkeypatch.setattr(httpx, "Client", fake_http_client)
+
+    assert (
+        client.main(
+            [
+                "artifact",
+                "with-stdin",
+                "http://artifact.test/file",
+                "--max-child-stdout-bytes",
+                "4",
+                "--",
+                sys.executable,
+                "-c",
+                "import sys; sys.stdout.write('hello')",
+            ]
+        )
+        == 1
+    )
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "child stdout larger than 4 bytes" in captured.err
+
+
+def test_client_artifact_with_stdin_requires_command_separator_before_fetch(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_http_client(*args: Any, **kwargs: Any) -> httpx.Client:
+        raise AssertionError("artifact fetch should not run for usage errors")
+
+    monkeypatch.setattr(httpx, "Client", fake_http_client)
+
+    assert (
+        client.main(
+            [
+                "artifact",
+                "with-stdin",
+                "http://artifact.test/file",
+                sys.executable,
+                "-c",
+                "print('should not run')",
+            ]
+        )
+        == 2
+    )
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "expected: arbiter-py artifact with-stdin" in captured.err
+
+
+def test_client_artifact_with_stdin_rejects_missing_child_stdout_cap_value(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_http_client(*args: Any, **kwargs: Any) -> httpx.Client:
+        raise AssertionError("artifact fetch should not run for usage errors")
+
+    monkeypatch.setattr(httpx, "Client", fake_http_client)
+
+    assert (
+        client.main(
+            [
+                "artifact",
+                "with-stdin",
+                "http://artifact.test/file",
+                "--max-child-stdout-bytes",
+            ]
+        )
+        == 2
+    )
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "--max-child-stdout-bytes requires a value" in captured.err
 
 
 def test_client_info_plugin_subcommand_calls_info_tool(

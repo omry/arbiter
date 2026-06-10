@@ -29,6 +29,7 @@ class ArtifactHTTPState:
     head_content_type: str = "text/plain; charset=utf-8"
     head_content_length: int = 12
     get_content_type: str = "text/plain; charset=utf-8"
+    get_content_disposition: str | None = None
     body: bytes = b"hello world\n"
     head_calls: int = 0
     get_calls: int = 0
@@ -213,6 +214,8 @@ class _ArtifactRequestHandler(BaseHTTPRequestHandler):
         state.get_calls += 1
         self.send_response(200)
         self.send_header("Content-Type", state.get_content_type)
+        if state.get_content_disposition is not None:
+            self.send_header("Content-Disposition", state.get_content_disposition)
         self.send_header("Content-Length", str(len(state.body)))
         self.end_headers()
         self.wfile.write(state.body)
@@ -348,6 +351,7 @@ def test_arbiter_console_script_help(
         (("op", "run", "--help"), "usage: arbiter-py op run "),
         (("artifact", "--help"), "usage: arbiter-py artifact "),
         (("artifact", "get", "--help"), "usage: arbiter-py artifact get "),
+        (("artifact", "save", "--help"), "usage: arbiter-py artifact save "),
         (("accounts", "--help"), "usage: arbiter-py accounts "),
         (("accounts", "list", "--help"), "usage: arbiter-py accounts list "),
         (("accounts", "desc", "--help"), "usage: arbiter-py accounts desc "),
@@ -365,6 +369,44 @@ def test_arbiter_client_console_script_help(
 
     assert result.returncode == 0
     assert expected in result.stdout
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        (
+            ("artifact", "--help"),
+            ("usage:", "artifact", "get", "save", "with-temp", "with-stdin"),
+        ),
+        (
+            ("artifact", "get", "--help"),
+            ("usage:", "artifact get", "--stdout", "--max-bytes"),
+        ),
+        (
+            ("artifact", "save", "--help"),
+            ("usage:", "artifact save", "explicit", "stdout"),
+        ),
+        (
+            ("artifact", "with-temp", "--help"),
+            ("usage:", "artifact with-temp", "--max-child-stdout-bytes"),
+        ),
+        (
+            ("artifact", "with-stdin", "--help"),
+            ("usage:", "artifact with-stdin", "--max-child-stdout-bytes"),
+        ),
+    ],
+)
+def test_arbiter_clients_artifact_help(
+    arbiter_client_command: ClientCommand,
+    args: tuple[str, ...],
+    expected: tuple[str, ...],
+) -> None:
+    result = _run_client_command(arbiter_client_command.command, *args)
+
+    assert result.returncode == 0
+    for fragment in expected:
+        assert fragment in result.stdout
     assert result.stderr == ""
 
 
@@ -736,7 +778,7 @@ def test_arbiter_clients_require_explicit_stdout_for_artifacts(
 
     assert result.returncode == 2
     assert result.stdout == ""
-    assert "requires exactly one of --stdout or --output PATH" in result.stderr
+    assert "requires --stdout" in result.stderr
 
 
 def test_arbiter_clients_write_small_text_artifact_to_stdout(
@@ -761,7 +803,77 @@ def test_arbiter_clients_write_small_text_artifact_to_stdout(
     assert server.state.get_calls == 1
 
 
-def test_arbiter_clients_save_binary_artifact_to_output_file(
+def test_arbiter_clients_run_with_temp_artifact_command(
+    arbiter_client_command: ClientCommand,
+) -> None:
+    body = b"hello temp\n"
+    server = _start_artifact_http_server(
+        ArtifactHTTPState(
+            head_content_type="application/octet-stream",
+            head_content_length=len(body),
+            get_content_type="application/octet-stream",
+            get_content_disposition='attachment; filename="sample.docx"',
+            body=body,
+        )
+    )
+    try:
+        result = _run_client_command(
+            arbiter_client_command.command,
+            "artifact",
+            "with-temp",
+            server.url,
+            "--",
+            sys.executable,
+            "-c",
+            "import pathlib, sys; path = pathlib.Path(sys.argv[1]); "
+            "assert path.read_bytes() == b'hello temp\\n'; print(path)",
+            "{}",
+        )
+    finally:
+        server.close()
+
+    assert result.returncode == 0
+    temp_path = Path(result.stdout.strip())
+    assert temp_path.suffix == ".docx"
+    assert not temp_path.exists()
+    assert result.stderr == ""
+    assert server.state.get_calls == 1
+
+
+def test_arbiter_clients_stream_binary_artifact_to_stdin_command(
+    arbiter_client_command: ClientCommand,
+) -> None:
+    body = b"%PDF\x00\xff"
+    server = _start_artifact_http_server(
+        ArtifactHTTPState(
+            head_content_type="application/pdf",
+            head_content_length=len(body),
+            get_content_type="application/pdf",
+            body=body,
+        )
+    )
+    try:
+        result = _run_client_command(
+            arbiter_client_command.command,
+            "artifact",
+            "with-stdin",
+            server.url,
+            "--",
+            sys.executable,
+            "-c",
+            "import sys; data = sys.stdin.buffer.read(); "
+            "print(f'stdin:{len(data)}')",
+        )
+    finally:
+        server.close()
+
+    assert result.returncode == 0
+    assert result.stdout == "stdin:6\n"
+    assert result.stderr == ""
+    assert server.state.get_calls == 1
+
+
+def test_arbiter_clients_save_binary_artifact_to_explicit_output_file(
     arbiter_client_command: ClientCommand,
     tmp_path: Path,
 ) -> None:
@@ -779,9 +891,8 @@ def test_arbiter_clients_save_binary_artifact_to_output_file(
         result = _run_client_command(
             arbiter_client_command.command,
             "artifact",
-            "get",
+            "save",
             server.url,
-            "--output",
             str(output_path),
         )
     finally:

@@ -155,14 +155,32 @@ arbiter artifact get 'http://127.0.0.1:8000/_arbiter/artifacts/...' --stdout
 The client checks artifact metadata first and refuses stdout for non-text,
 unknown-size, or over-limit artifacts.
 
-When the user explicitly asks to save an attachment to a local file, an agent
-can save the artifact bytes to a chosen path instead:
+For binary attachments, run an explicit reader command through the client so the
+raw artifact bytes never enter stdout. Path-based tools can use a private temp
+file that the client removes when the command exits:
 
 ```bash
-arbiter artifact get 'http://127.0.0.1:8000/_arbiter/artifacts/...' --output ./attachment.pdf
+arbiter artifact with-temp 'http://127.0.0.1:8000/_arbiter/artifacts/...' -- pandoc '{}' -t plain
 ```
 
-Local saves are explicit and do not use the stdout text-only guardrails.
+Stdin-based tools can receive the artifact bytes directly:
+
+```bash
+arbiter artifact with-stdin 'http://127.0.0.1:8000/_arbiter/artifacts/...' -- pandoc -f docx -t plain -
+```
+
+The client executes the command argv directly, without a shell. Only bounded,
+textual child stdout is written back.
+
+When the user explicitly asks to save an attachment to a local file, use the
+explicit save command:
+
+```bash
+arbiter artifact save 'http://127.0.0.1:8000/_arbiter/artifacts/...' ./attachment.pdf
+```
+
+Do not use persistent saves as the default agent inspection path; prefer
+`with-temp` or `with-stdin` for tool processing.
 
 ## Policy checks
 
