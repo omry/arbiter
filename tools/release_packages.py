@@ -121,3 +121,27 @@ def package_key_by_name(root: Path) -> dict[str, str]:
 
 def package_keys(root: Path) -> tuple[str, ...]:
     return tuple(package_by_key(root))
+
+
+def parse_package_keys(value: str, *, root: Path | None = None) -> tuple[Package, ...]:
+    value = value.strip()
+    root = root or Path.cwd()
+    if value == "all":
+        return release_packages(root)
+
+    known_keys = package_keys(root)
+    packages_by_key = package_by_key(root)
+    keys = tuple(dict.fromkeys(key.strip() for key in value.split(",") if key.strip()))
+    if not keys:
+        raise ValueError("--packages must be 'all' or a comma-separated key list")
+    if "all" in keys:
+        raise ValueError("--packages cannot combine 'all' with package keys")
+
+    unknown = sorted(set(keys) - set(known_keys))
+    if unknown:
+        expected = ", ".join(("all", *known_keys))
+        raise ValueError(
+            f"unknown package key in --packages: {', '.join(unknown)} "
+            f"(expected one or more of: {expected})"
+        )
+    return tuple(packages_by_key[key] for key in keys)

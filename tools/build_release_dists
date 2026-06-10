@@ -13,34 +13,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from release_packages import (  # noqa: E402
     CLIENT_TARGETS,
     Package,
-    package_by_key,
-    package_keys,
-    release_packages,
+    parse_package_keys as _parse_package_keys,
 )
-
-
-def _parse_package_keys(value: str, *, root: Path | None = None) -> tuple[Package, ...]:
-    value = value.strip()
-    root = root or Path.cwd()
-    if value == "all":
-        return release_packages(root)
-
-    known_keys = package_keys(root)
-    packages_by_key = package_by_key(root)
-    keys = tuple(dict.fromkeys(key.strip() for key in value.split(",") if key.strip()))
-    if not keys:
-        raise ValueError("--packages must be 'all' or a comma-separated key list")
-    if "all" in keys:
-        raise ValueError("--packages cannot combine 'all' with package keys")
-
-    unknown = sorted(set(keys) - set(known_keys))
-    if unknown:
-        expected = ", ".join(("all", *known_keys))
-        raise ValueError(
-            f"unknown package key in --packages: {', '.join(unknown)} "
-            f"(expected one or more of: {expected})"
-        )
-    return tuple(packages_by_key[key] for key in keys)
 
 
 def _run(

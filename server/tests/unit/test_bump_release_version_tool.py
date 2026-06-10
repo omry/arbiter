@@ -1,0 +1,507 @@
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+SCRIPT = REPO_ROOT / "tools" / "bump_release_version"
+SUITE_PYPROJECT = Path("meta/arbiter-suite/pyproject.toml")
+SUITE_PYPROJECT_TEXT = str(SUITE_PYPROJECT)
+SKILL_PYPROJECT = Path("skill/pyproject.toml")
+SKILL_PYPROJECT_TEXT = str(SKILL_PYPROJECT)
+
+
+FIXTURE_FILES = {
+    SUITE_PYPROJECT_TEXT: """[project]
+name = "arbiter-suite"
+version = "0.9.0"
+dependencies = [
+  "arbiter-server==0.9.0",
+  "arbiter-client==0.9.0",
+  "arbiter-smtp==0.9.0",
+  "arbiter-imap==0.9.0",
+]
+""",
+    "server/pyproject.toml": """[project]
+name = "arbiter-server"
+version = "0.9.0"
+""",
+    SKILL_PYPROJECT_TEXT: """[project]
+name = "arbiter-skill"
+version = "0.9.0"
+""",
+    "plugins/smtp/pyproject.toml": """[project]
+name = "arbiter-smtp"
+version = "0.9.0"
+dependencies = [
+  "arbiter-server>=0.9.0,<0.10.0",
+]
+""",
+    "plugins/imap/pyproject.toml": """[project]
+name = "arbiter-imap"
+version = "0.9.0"
+dependencies = [
+  "arbiter-server>=0.9.0,<0.10.0",
+]
+""",
+    "plugins/smtp/src/arbiter_smtp/__init__.py": 'SERVER_API_VERSION = "0.9"\n',
+    "plugins/imap/src/arbiter_imap/__init__.py": 'SERVER_API_VERSION = "0.9"\n',
+}
+
+
+def _write_fixture(root: Path) -> None:
+    for relative_path, content in FIXTURE_FILES.items():
+        path = root / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+
+def _replace_package_text(root: Path, replacements: dict[str, str]) -> None:
+    for relative_path in (
+        SUITE_PYPROJECT,
+        Path("server/pyproject.toml"),
+        SKILL_PYPROJECT,
+        Path("plugins/imap/pyproject.toml"),
+        Path("plugins/smtp/pyproject.toml"),
+    ):
+        path = root / relative_path
+        text = path.read_text(encoding="utf-8")
+        for before, after in replacements.items():
+            text = text.replace(before, after)
+        path.write_text(text, encoding="utf-8")
+
+
+def _run_tool(
+    root: Path,
+    *args: str,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    process_env = os.environ.copy()
+    if env is not None:
+        process_env.update(env)
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), "--root", str(root), *args],
+        check=False,
+        env=process_env,
+        text=True,
+        capture_output=True,
+    )
+
+
+def _assert_success_status(output: str, message: str) -> None:
+    assert any(
+        f"{marker} {message}" in output
+        for marker in ("\x1b[32m✓\x1b[0m", "\x1b[32mOK\x1b[0m")
+    )
+
+
+def _assert_error_status(output: str, message: str) -> None:
+    assert any(
+        f"{marker} {message}" in output
+        for marker in ("\x1b[31m✗\x1b[0m", "\x1b[31mERROR\x1b[0m")
+    )
+
+
+def test_bump_release_version_dry_run_prints_patch_without_writing(
+    tmp_path: Path,
+) -> None:
+    _write_fixture(tmp_path)
+    before = (tmp_path / SUITE_PYPROJECT).read_text(encoding="utf-8")
+
+    result = _run_tool(tmp_path, "--dry-run", "--next-patch-dev")
+
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / SUITE_PYPROJECT).read_text(encoding="utf-8") == before
+    assert '+version = "0.9.1.dev1"' in result.stdout
+    assert '+  "arbiter-server==0.9.1.dev1"' in result.stdout
+    assert '+  "arbiter-server>=0.9.1.dev1,<0.10.0"' in result.stdout
+    _assert_success_status(result.stdout, "would update 5 file(s)")
+
+
+def test_bump_release_version_can_bump_patch_component(
+    tmp_path: Path,
+) -> None:
+    _write_fixture(tmp_path)
+
+    result = _run_tool(tmp_path, "--bump", "patch")
+
+    assert result.returncode == 0, result.stderr
+    assert 'version = "0.9.1.dev1"' in (tmp_path / SUITE_PYPROJECT).read_text(
+        encoding="utf-8"
+    )
+
+
+def test_bump_release_version_can_bump_dev_component(
+    tmp_path: Path,
+) -> None:
+    _write_fixture(tmp_path)
+    _replace_package_text(tmp_path, {"0.9.0": "0.9.0.dev2"})
+
+    result = _run_tool(tmp_path, "--bump", "dev")
+
+    assert result.returncode == 0, result.stderr
+    suite_text = (tmp_path / SUITE_PYPROJECT).read_text(encoding="utf-8")
+    assert 'version = "0.9.0.dev3"' in suite_text
+    assert '"arbiter-server==0.9.0.dev3"' in suite_text
+    assert '"arbiter-imap==0.9.0.dev3"' in suite_text
+    assert '"arbiter-server>=0.9.0.dev3,<0.10.0"' in (
+        tmp_path / "plugins/imap/pyproject.toml"
+    ).read_text(encoding="utf-8")
+
+
+def test_bump_release_version_can_bump_minor_component_for_all_packages(
+    tmp_path: Path,
+) -> None:
+    _write_fixture(tmp_path)
+
+    result = _run_tool(tmp_path, "--bump", "minor")
+
+    assert result.returncode == 0, result.stderr
+    suite_text = (tmp_path / SUITE_PYPROJECT).read_text(encoding="utf-8")
+    assert 'version = "0.10.0.dev1"' in suite_text
+    assert '"arbiter-server==0.10.0.dev1"' in suite_text
+    assert '"arbiter-imap==0.10.0.dev1"' in suite_text
+    assert '"arbiter-server>=0.10.0.dev1,<0.11.0"' in (
+        tmp_path / "plugins/imap/pyproject.toml"
+    ).read_text(encoding="utf-8")
+    assert 'SERVER_API_VERSION = "0.10"' in (
+        tmp_path / "plugins/imap/src/arbiter_imap/__init__.py"
+    ).read_text(encoding="utf-8")
+
+
+def test_bump_release_version_updates_packages_but_not_api_line(
+    tmp_path: Path,
+) -> None:
+    _write_fixture(tmp_path)
+
+    result = _run_tool(tmp_path, "--next-patch-dev")
+
+    assert result.returncode == 0, result.stderr
+    assert 'version = "0.9.1.dev1"' in (tmp_path / SUITE_PYPROJECT).read_text(
+        encoding="utf-8",
+    )
+    assert 'version = "0.9.1.dev1"' in (tmp_path / SKILL_PYPROJECT).read_text(
+        encoding="utf-8",
+    )
+    assert '"arbiter-imap==0.9.1.dev1"' in (tmp_path / SUITE_PYPROJECT).read_text(
+        encoding="utf-8"
+    )
+    assert '"arbiter-server>=0.9.1.dev1,<0.10.0"' in (
+        tmp_path / "plugins/smtp/pyproject.toml"
+    ).read_text(encoding="utf-8")
+    assert 'SERVER_API_VERSION = "0.9"' in (
+        tmp_path / "plugins/imap/src/arbiter_imap/__init__.py"
+    ).read_text(encoding="utf-8")
+    _assert_success_status(result.stdout, "release versions bumped")
+
+
+def test_bump_release_version_discovers_new_plugin_package(
+    tmp_path: Path,
+) -> None:
+    _write_fixture(tmp_path)
+    suite_path = tmp_path / SUITE_PYPROJECT
+    suite_path.write_text(
+        suite_path.read_text(encoding="utf-8").replace(
+            '  "arbiter-imap==0.9.0",\n',
+            '  "arbiter-imap==0.9.0",\n  "arbiter-pop==0.9.0",\n',
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "plugins/pop/src/arbiter_pop").mkdir(parents=True)
+    (tmp_path / "plugins/pop/pyproject.toml").write_text(
+        """[project]
+name = "arbiter-pop"
+version = "0.9.0"
+dependencies = [
+  "arbiter-server>=0.9.0,<0.10.0",
+]
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "plugins/pop/src/arbiter_pop/__init__.py").write_text(
+        'SERVER_API_VERSION = "0.9"\n',
+        encoding="utf-8",
+    )
+
+    result = _run_tool(tmp_path, "--next-patch-dev")
+
+    assert result.returncode == 0, result.stderr
+    assert '"arbiter-pop==0.9.1.dev1"' in suite_path.read_text(encoding="utf-8")
+    assert '"arbiter-server>=0.9.1.dev1,<0.10.0"' in (
+        tmp_path / "plugins/pop/pyproject.toml"
+    ).read_text(encoding="utf-8")
+    assert 'SERVER_API_VERSION = "0.9"' in (
+        tmp_path / "plugins/pop/src/arbiter_pop/__init__.py"
+    ).read_text(encoding="utf-8")
+
+
+def test_bump_release_version_accepts_existing_same_line_lower_bound(
+    tmp_path: Path,
+) -> None:
+    _write_fixture(tmp_path)
+    _replace_package_text(
+        tmp_path,
+        {
+            "0.9.0": "0.9.0.dev2",
+            "arbiter-server>=0.9.0.dev2,<0.10.0": (
+                "arbiter-server>=0.9.0.dev1,<0.10.0"
+            ),
+        },
+    )
+
+    result = _run_tool(tmp_path, "--next-patch-dev")
+
+    assert result.returncode == 0, result.stderr
+    assert '"arbiter-server>=0.9.1.dev1,<0.10.0"' in (
+        tmp_path / "plugins/imap/pyproject.toml"
+    ).read_text(encoding="utf-8")
+
+
+def test_bump_release_version_rejects_partial_minor_bump(
+    tmp_path: Path,
+) -> None:
+    _write_fixture(tmp_path)
+
+    result = _run_tool(tmp_path, "--packages", "smtp", "--bump", "minor")
+
+    assert result.returncode == 1
+    assert "minor bumps must select all packages" in result.stderr
+
+
+def test_bump_release_version_rejects_dev_bump_from_final_version(
+    tmp_path: Path,
+) -> None:
+    _write_fixture(tmp_path)
+
+    result = _run_tool(tmp_path, "--bump", "dev")
+
+    assert result.returncode == 1
+    assert "cannot bump dev component of final version 0.9.0" in result.stderr
+
+
+def test_bump_release_version_rejects_combined_bump_modes(
+    tmp_path: Path,
+) -> None:
+    _write_fixture(tmp_path)
+
+    result = _run_tool(tmp_path, "--bump", "patch", "--next-patch-dev")
+
+    assert result.returncode == 1
+    assert "pass either --bump or --next-patch-dev" in result.stderr
+
+
+def test_bump_release_version_can_select_one_plugin(
+    tmp_path: Path,
+) -> None:
+    _write_fixture(tmp_path)
+
+    result = _run_tool(tmp_path, "--packages", "smtp", "--next-patch-dev")
+
+    assert result.returncode == 0, result.stderr
+    suite_text = (tmp_path / SUITE_PYPROJECT).read_text(encoding="utf-8")
+    assert 'version = "0.9.0"' in suite_text
+    assert '"arbiter-smtp==0.9.1.dev1"' in suite_text
+    assert '"arbiter-imap==0.9.0"' in suite_text
+    smtp_text = (tmp_path / "plugins/smtp/pyproject.toml").read_text(encoding="utf-8")
+    assert 'version = "0.9.1.dev1"' in smtp_text
+    assert '"arbiter-server>=0.9.0,<0.10.0"' in smtp_text
+    assert 'version = "0.9.0"' in (tmp_path / "plugins/imap/pyproject.toml").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_bump_release_version_can_select_server_and_plugin(
+    tmp_path: Path,
+) -> None:
+    _write_fixture(tmp_path)
+
+    result = _run_tool(tmp_path, "--packages", "server,smtp", "--next-patch-dev")
+
+    assert result.returncode == 0, result.stderr
+    suite_text = (tmp_path / SUITE_PYPROJECT).read_text(encoding="utf-8")
+    assert 'version = "0.9.0"' in suite_text
+    assert '"arbiter-server==0.9.1.dev1"' in suite_text
+    assert '"arbiter-client==0.9.1.dev1"' in suite_text
+    assert '"arbiter-smtp==0.9.1.dev1"' in suite_text
+    assert '"arbiter-imap==0.9.0"' in suite_text
+    assert 'version = "0.9.1.dev1"' in (tmp_path / "server/pyproject.toml").read_text(
+        encoding="utf-8"
+    )
+    assert 'version = "0.9.1.dev1"' in (tmp_path / SKILL_PYPROJECT).read_text(
+        encoding="utf-8"
+    )
+    smtp_text = (tmp_path / "plugins/smtp/pyproject.toml").read_text(encoding="utf-8")
+    assert 'version = "0.9.1.dev1"' in smtp_text
+    assert '"arbiter-server>=0.9.1.dev1,<0.10.0"' in smtp_text
+
+
+def test_bump_release_version_expands_server_version_family(
+    tmp_path: Path,
+) -> None:
+    _write_fixture(tmp_path)
+
+    result = _run_tool(tmp_path, "--packages", "skill", "--next-patch-dev")
+
+    assert result.returncode == 0, result.stderr
+    suite_text = (tmp_path / SUITE_PYPROJECT).read_text(encoding="utf-8")
+    assert 'version = "0.9.0"' in suite_text
+    assert '"arbiter-server==0.9.1.dev1"' in suite_text
+    assert '"arbiter-client==0.9.1.dev1"' in suite_text
+    assert '"arbiter-smtp==0.9.0"' in suite_text
+    assert '"arbiter-imap==0.9.0"' in suite_text
+    assert 'version = "0.9.1.dev1"' in (tmp_path / "server/pyproject.toml").read_text(
+        encoding="utf-8"
+    )
+    assert 'version = "0.9.1.dev1"' in (tmp_path / SKILL_PYPROJECT).read_text(
+        encoding="utf-8"
+    )
+    assert 'version = "0.9.0"' in (tmp_path / "plugins/smtp/pyproject.toml").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_bump_release_version_can_select_meta_package_only(
+    tmp_path: Path,
+) -> None:
+    _write_fixture(tmp_path)
+
+    result = _run_tool(tmp_path, "--packages", "meta:all", "--next-patch-dev")
+
+    assert result.returncode == 0, result.stderr
+    suite_text = (tmp_path / SUITE_PYPROJECT).read_text(encoding="utf-8")
+    assert 'version = "0.9.1.dev1"' in suite_text
+    assert '"arbiter-server==0.9.0"' in suite_text
+    assert 'version = "0.9.0"' in (tmp_path / "server/pyproject.toml").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_bump_release_version_check_accepts_matching_version(
+    tmp_path: Path,
+) -> None:
+    _write_fixture(tmp_path)
+    result = _run_tool(tmp_path, "0.9.1.dev1")
+    assert result.returncode == 0, result.stderr
+
+    result = _run_tool(tmp_path, "--check", "0.9.1.dev1")
+
+    assert result.returncode == 0, result.stderr
+    _assert_success_status(
+        result.stdout,
+        "release version check passed: 0.9.1.dev1",
+    )
+
+
+def test_bump_release_version_check_rejects_stale_selected_plugin_server_range(
+    tmp_path: Path,
+) -> None:
+    _write_fixture(tmp_path)
+    result = _run_tool(tmp_path, "--packages", "server,smtp", "--next-patch-dev")
+    assert result.returncode == 0, result.stderr
+    smtp_path = tmp_path / "plugins/smtp/pyproject.toml"
+    smtp_path.write_text(
+        smtp_path.read_text(encoding="utf-8").replace(
+            "arbiter-server>=0.9.1.dev1,<0.10.0",
+            "arbiter-server>=0.9.0,<0.10.0",
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_tool(
+        tmp_path,
+        "--packages",
+        "server,smtp",
+        "--check",
+        "0.9.1.dev1",
+    )
+
+    assert result.returncode == 1
+    assert 'plugins/smtp/pyproject.toml is missing dependency "arbiter-server>=' in (
+        result.stderr
+    )
+
+
+def test_bump_release_version_check_rejects_stale_runtime_api_line(
+    tmp_path: Path,
+) -> None:
+    _write_fixture(tmp_path)
+    result = _run_tool(tmp_path, "--bump", "minor")
+    assert result.returncode == 0, result.stderr
+    imap_runtime = tmp_path / "plugins/imap/src/arbiter_imap/__init__.py"
+    imap_runtime.write_text(
+        imap_runtime.read_text(encoding="utf-8").replace(
+            'SERVER_API_VERSION = "0.10"',
+            'SERVER_API_VERSION = "0.9"',
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_tool(tmp_path, "--check", "0.10.0.dev1")
+
+    assert result.returncode == 1
+    assert (
+        "plugins/imap/src/arbiter_imap/__init__.py does not declare API line 0.10"
+        in (result.stderr)
+    )
+
+
+def test_bump_release_version_requires_target_or_next_mode(
+    tmp_path: Path,
+) -> None:
+    _write_fixture(tmp_path)
+
+    result = _run_tool(tmp_path)
+
+    assert result.returncode == 1
+    assert "pass a target version, --bump, or --next-patch-dev" in result.stderr
+
+
+def test_bump_release_version_rejects_check_with_next_mode(
+    tmp_path: Path,
+) -> None:
+    _write_fixture(tmp_path)
+
+    result = _run_tool(tmp_path, "--check", "--next-patch-dev")
+
+    assert result.returncode == 1
+    assert "--check requires an explicit target version" in result.stderr
+
+
+def test_bump_release_version_rejects_target_on_different_line(
+    tmp_path: Path,
+) -> None:
+    _write_fixture(tmp_path)
+
+    result = _run_tool(tmp_path, "0.10.0.dev1")
+
+    assert result.returncode == 1
+    _assert_error_status(result.stderr, "bump_release_version:")
+    assert "use upgrade_release_line for line changes from 0.9" in result.stderr
+
+
+def test_bump_release_version_rejects_same_or_older_version(
+    tmp_path: Path,
+) -> None:
+    _write_fixture(tmp_path)
+
+    result = _run_tool(tmp_path, "0.9.0")
+
+    assert result.returncode == 1
+    _assert_error_status(result.stderr, "bump_release_version:")
+    assert "target version 0.9.0 must be greater than current version 0.9.0" in (
+        result.stderr
+    )
+
+
+def test_bump_release_version_error_uses_ascii_status_for_limited_stream_encoding(
+    tmp_path: Path,
+) -> None:
+    _write_fixture(tmp_path)
+
+    result = _run_tool(tmp_path, "0.9.0", env={"PYTHONIOENCODING": "cp1252"})
+
+    assert result.returncode == 1
+    assert "\x1b[31mERROR\x1b[0m bump_release_version:" in result.stderr

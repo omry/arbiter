@@ -1,0 +1,633 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import difflib
+import re
+import sys
+from dataclasses import dataclass
+from functools import total_ordering
+from pathlib import Path
+from typing import Literal, TextIO
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from release_packages import (  # noqa: E402
+    Package,
+    parse_package_keys,
+    plugin_packages,
+    release_packages,
+)
+
+
+SUITE_PYPROJECT = Path("meta/arbiter-suite/pyproject.toml")
+SKILL_PYPROJECT = Path("skill/pyproject.toml")
+GREEN = "\033[32m"
+RED = "\033[31m"
+RESET = "\033[0m"
+BumpKind = Literal["minor", "patch", "dev"]
+SERVER_VERSION_FAMILY = frozenset(("server", "client", "skill"))
+
+
+@dataclass(frozen=True, order=True)
+class ReleaseLine:
+    major: int
+    minor: int
+
+    @property
+    def text(self) -> str:
+        return f"{self.major}.{self.minor}"
+
+    @property
+    def next_version(self) -> str:
+        return f"{self.major}.{self.minor + 1}.0"
+
+
+@total_ordering
+@dataclass(frozen=True)
+class PackageVersion:
+    major: int
+    minor: int
+    patch: int
+    dev: int | None = None
+
+    @classmethod
+    def parse(cls, value: str) -> "PackageVersion":
+        match = re.fullmatch(
+            r"([0-9]+)\.([0-9]+)\.([0-9]+)(?:[.-]dev([0-9]+))?",
+            value,
+        )
+        if match is None:
+            raise ValueError(
+                "target version must be MAJOR.MINOR.PATCH or " "MAJOR.MINOR.PATCH.devN"
+            )
+        return cls(
+            major=int(match.group(1)),
+            minor=int(match.group(2)),
+            patch=int(match.group(3)),
+            dev=int(match.group(4)) if match.group(4) is not None else None,
+        )
+
+    @property
+    def line(self) -> ReleaseLine:
+        return ReleaseLine(major=self.major, minor=self.minor)
+
+    @property
+    def text(self) -> str:
+        version = f"{self.major}.{self.minor}.{self.patch}"
+        if self.dev is not None:
+            version = f"{version}.dev{self.dev}"
+        return version
+
+    @property
+    def next_patch_dev(self) -> "PackageVersion":
+        return self.bump("patch")
+
+    def bump(self, kind: BumpKind) -> "PackageVersion":
+        if kind == "minor":
+            return PackageVersion(
+                major=self.major,
+                minor=self.minor + 1,
+                patch=0,
+                dev=1,
+            )
+        if kind == "patch":
+            return PackageVersion(
+                major=self.major,
+                minor=self.minor,
+                patch=self.patch + 1,
+                dev=1,
+            )
+        if self.dev is None:
+            raise ValueError(f"cannot bump dev component of final version {self.text}")
+        return PackageVersion(
+            major=self.major,
+            minor=self.minor,
+            patch=self.patch,
+            dev=self.dev + 1,
+        )
+
+    def _sort_key(self) -> tuple[int, int, int, int, int]:
+        return (
+            self.major,
+            self.minor,
+            self.patch,
+            1 if self.dev is None else 0,
+            self.dev or 0,
+        )
+
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, PackageVersion):
+            return NotImplemented
+        return self._sort_key() < other._sort_key()
+
+
+@dataclass(frozen=True)
+class Change:
+    path: Path
+    before: str
+    after: str
+
+
+def _read(root: Path, path: Path) -> str:
+    full_path = root / path
+    if not full_path.exists():
+        raise FileNotFoundError(f"expected release file is missing: {path}")
+    return full_path.read_text(encoding="utf-8")
+
+
+def _plugin_package_files(root: Path) -> tuple[Path, ...]:
+    return tuple(
+        package.path / "pyproject.toml"
+        for package in plugin_packages(root)
+        if package.path is not None
+    )
+
+
+def _package_files(root: Path) -> tuple[Path, ...]:
+    return (
+        SUITE_PYPROJECT,
+        Path("server/pyproject.toml"),
+        SKILL_PYPROJECT,
+        *_plugin_package_files(root),
+    )
+
+
+def _meta_package_dependencies(root: Path) -> tuple[str, ...]:
+    return (
+        "arbiter-server",
+        "arbiter-client",
+        *(package.name for package in plugin_packages(root)),
+    )
+
+
+def _package_file_by_distribution(root: Path) -> dict[str, Path]:
+    package_files = {
+        "arbiter-server": Path("server/pyproject.toml"),
+        "arbiter-client": Path("server/pyproject.toml"),
+        "arbiter-skill": SKILL_PYPROJECT,
+    }
+    package_files.update(
+        {
+            package.name: package.path / "pyproject.toml"
+            for package in plugin_packages(root)
+            if package.path is not None
+        }
+    )
+    return package_files
+
+
+def _release_package_file(package: Package) -> Path:
+    if package.path is None:
+        raise ValueError(f"{package.name} does not have a pyproject path")
+    return package.path / "pyproject.toml"
+
+
+def _expand_version_family(
+    root: Path,
+    packages: tuple[Package, ...],
+) -> tuple[Package, ...]:
+    selected_keys = {package.key for package in packages}
+    if not selected_keys & SERVER_VERSION_FAMILY:
+        return packages
+
+    expanded_keys = selected_keys | SERVER_VERSION_FAMILY
+    return tuple(
+        package for package in release_packages(root) if package.key in expanded_keys
+    )
+
+
+def _package_files_by_key(root: Path) -> dict[str, Path]:
+    return {
+        package.key: _release_package_file(package)
+        for package in release_packages(root)
+    }
+
+
+def _plugin_runtime_file(root: Path, plugin_path: Path, package_name: str) -> Path:
+    module_name = package_name.replace("-", "_")
+    candidate = plugin_path / "src" / module_name / "__init__.py"
+    if (root / candidate).exists():
+        return candidate
+
+    for path in sorted((root / plugin_path / "src").glob("*/__init__.py")):
+        relative_path = path.relative_to(root)
+        if "SERVER_API_VERSION" in _read(root, relative_path):
+            return relative_path
+    return candidate
+
+
+def _plugin_runtime_files(root: Path) -> tuple[Path, ...]:
+    return tuple(
+        _plugin_runtime_file(root, package.path, package.name)
+        for package in plugin_packages(root)
+        if package.path is not None
+    )
+
+
+def _update_runtime_file(
+    text: str,
+    path: Path,
+    target: ReleaseLine,
+) -> str:
+    return _replace_one(
+        text,
+        r'^SERVER_API_VERSION = "[0-9]+\.[0-9]+"$',
+        f'SERVER_API_VERSION = "{target.text}"',
+        path,
+    )
+
+
+def _extract_version(text: str, path: Path) -> str:
+    match = re.search(
+        r'^version = "([0-9]+\.[0-9]+\.[0-9]+(?:[.-]dev[0-9]+)?)"$',
+        text,
+        re.MULTILINE,
+    )
+    if match is None:
+        raise ValueError(f"could not find project version in {path}")
+    return match.group(1)
+
+
+def _extract_server_dependency_range(text: str, path: Path) -> tuple[str, str]:
+    match = re.search(
+        r'"arbiter-server>=([0-9]+\.[0-9]+\.[0-9]+'
+        r'(?:[.-]dev[0-9]+)?),<([0-9]+\.[0-9]+\.[0-9]+)"',
+        text,
+    )
+    if match is None:
+        raise ValueError(f"{path} is missing an arbiter-server dependency range")
+    return match.group(1), match.group(2)
+
+
+def _validate_current_state(root: Path) -> dict[Path, str]:
+    suite_pyproject = _read(root, SUITE_PYPROJECT)
+    suite_version_text = _extract_version(suite_pyproject, SUITE_PYPROJECT)
+    current_line = PackageVersion.parse(suite_version_text).line
+    expected_next = current_line.next_version
+
+    versions: dict[Path, str] = {}
+    for path in _package_files(root):
+        text = _read(root, path)
+        found = _extract_version(text, path)
+        found_line = PackageVersion.parse(found).line
+        if found_line != current_line:
+            raise ValueError(
+                f"{path} version line {found_line.text} does not match "
+                f"suite line {current_line.text}"
+            )
+        versions[path] = found
+
+    package_file_by_distribution = _package_file_by_distribution(root)
+    for package_name in _meta_package_dependencies(root):
+        package_version = versions[package_file_by_distribution[package_name]]
+        dependency = f'"{package_name}=={package_version}"'
+        if dependency not in suite_pyproject:
+            raise ValueError(f"{SUITE_PYPROJECT} is missing dependency {dependency}")
+
+    for path in _plugin_package_files(root):
+        text = _read(root, path)
+        lower_bound, upper_bound = _extract_server_dependency_range(text, path)
+        lower_bound_line = PackageVersion.parse(lower_bound).line
+        if lower_bound_line != current_line or upper_bound != expected_next:
+            raise ValueError(
+                f"{path} arbiter-server dependency must stay on line "
+                f"{current_line.text} with upper bound <{expected_next}"
+            )
+
+    for path in _plugin_runtime_files(root):
+        text = _read(root, path)
+        if f'SERVER_API_VERSION = "{current_line.text}"' not in text:
+            raise ValueError(f"{path} does not declare API line {current_line.text}")
+
+    return versions
+
+
+def _replace_one(text: str, pattern: str, replacement: str, path: Path) -> str:
+    updated, count = re.subn(pattern, replacement, text, count=1, flags=re.MULTILINE)
+    if count != 1:
+        raise ValueError(f"expected exactly one match in {path}: {pattern}")
+    return updated
+
+
+def _update_pyproject(
+    text: str,
+    path: Path,
+    *,
+    root: Path,
+    version_target: PackageVersion | None = None,
+    dependency_targets: dict[str, PackageVersion] | None = None,
+    server_dependency_target: PackageVersion | None = None,
+) -> str:
+    updated = text
+    if version_target is not None:
+        updated = _replace_one(
+            updated,
+            r'^version = "[0-9]+\.[0-9]+\.[0-9]+(?:[.-]dev[0-9]+)?"$',
+            f'version = "{version_target.text}"',
+            path,
+        )
+    if path == SUITE_PYPROJECT:
+        for package_name, dependency_target in (dependency_targets or {}).items():
+            updated = re.sub(
+                rf'"{re.escape(package_name)}==[0-9]+\.[0-9]+\.[0-9]+'
+                r'(?:[.-]dev[0-9]+)?"',
+                f'"{package_name}=={dependency_target.text}"',
+                updated,
+            )
+    if path in _plugin_package_files(root) and server_dependency_target is not None:
+        updated = re.sub(
+            r'"arbiter-server>=[0-9]+\.[0-9]+\.[0-9]+'
+            r'(?:[.-]dev[0-9]+)?,<[0-9]+\.[0-9]+\.[0-9]+"',
+            (
+                f'"arbiter-server>={server_dependency_target.text},'
+                f'<{server_dependency_target.line.next_version}"'
+            ),
+            updated,
+        )
+    return updated
+
+
+def _selected_dependency_targets(
+    root: Path,
+    target_by_path: dict[Path, PackageVersion],
+) -> dict[str, PackageVersion]:
+    package_file_by_distribution = _package_file_by_distribution(root)
+    dependency_targets: dict[str, PackageVersion] = {}
+    for package_name in _meta_package_dependencies(root):
+        package_path = package_file_by_distribution[package_name]
+        if package_path in target_by_path:
+            dependency_targets[package_name] = target_by_path[package_path]
+    return dependency_targets
+
+
+def _target_by_path(
+    versions: dict[Path, str],
+    *,
+    selected_paths: set[Path],
+    explicit_target: PackageVersion | None,
+    bump_kind: BumpKind | None,
+) -> dict[Path, PackageVersion]:
+    target_by_path: dict[Path, PackageVersion] = {}
+    for path in selected_paths:
+        current = PackageVersion.parse(versions[path])
+        target = explicit_target or current.bump(bump_kind or "patch")
+        if target.line != current.line and bump_kind != "minor":
+            raise ValueError(
+                f"target version {target.text} is on line {target.line.text}; "
+                f"use upgrade_release_line for line changes from {current.line.text}"
+            )
+        if target <= current:
+            raise ValueError(
+                f"target version {target.text} must be greater than "
+                f"current version {current.text} in {path}"
+            )
+        target_by_path[path] = target
+    return target_by_path
+
+
+def build_changes(
+    root: Path,
+    *,
+    packages: tuple[Package, ...],
+    target: PackageVersion | None,
+    bump_kind: BumpKind | None,
+) -> list[Change]:
+    versions = _validate_current_state(root)
+    selected_paths = {_release_package_file(package) for package in packages}
+    target_by_path = _target_by_path(
+        versions,
+        selected_paths=selected_paths,
+        explicit_target=target,
+        bump_kind=bump_kind,
+    )
+    dependency_targets = _selected_dependency_targets(root, target_by_path)
+    package_files_by_key = _package_files_by_key(root)
+    server_selected = any(
+        package_files_by_key[key] in selected_paths for key in ("server", "client")
+    )
+
+    changes: list[Change] = []
+    for path in _package_files(root):
+        before = _read(root, path)
+        server_dependency_target = (
+            target_by_path[package_files_by_key["server"]]
+            if (
+                server_selected
+                and path in selected_paths
+                and path in _plugin_package_files(root)
+            )
+            else None
+        )
+        after = _update_pyproject(
+            before,
+            path,
+            root=root,
+            version_target=target_by_path.get(path),
+            dependency_targets=dependency_targets,
+            server_dependency_target=server_dependency_target,
+        )
+        if after != before:
+            changes.append(Change(path=path, before=before, after=after))
+
+    if bump_kind == "minor":
+        runtime_target = next(iter(target_by_path.values())).line
+        for path in _plugin_runtime_files(root):
+            before = _read(root, path)
+            after = _update_runtime_file(before, path, runtime_target)
+            if after != before:
+                changes.append(Change(path=path, before=before, after=after))
+    return changes
+
+
+def _uses_all_packages(root: Path, packages: tuple[Package, ...]) -> bool:
+    return {package.key for package in packages} == {
+        package.key for package in release_packages(root)
+    }
+
+
+def check_release_state(
+    root: Path,
+    target: PackageVersion,
+    *,
+    packages: tuple[Package, ...],
+) -> None:
+    versions = _validate_current_state(root)
+    selected_paths = {_release_package_file(package) for package in packages}
+    target_by_path = {path: target for path in selected_paths}
+    package_files_by_key = _package_files_by_key(root)
+    plugin_paths = set(_plugin_package_files(root))
+    server_selected = any(
+        package_files_by_key[key] in selected_paths for key in ("server", "client")
+    )
+    for path in selected_paths:
+        version = versions[path]
+        if version != target.text:
+            raise ValueError(f"{path} version is {version}, expected {target.text}")
+
+    suite_pyproject = _read(root, SUITE_PYPROJECT)
+    for package_name, dependency_target in _selected_dependency_targets(
+        root,
+        target_by_path,
+    ).items():
+        dependency = f'"{package_name}=={dependency_target.text}"'
+        if dependency not in suite_pyproject:
+            raise ValueError(f"{SUITE_PYPROJECT} is missing dependency {dependency}")
+
+    if server_selected:
+        expected_range = f'"arbiter-server>={target.text},<{target.line.next_version}"'
+        for path in selected_paths & plugin_paths:
+            if expected_range not in _read(root, path):
+                raise ValueError(f"{path} is missing dependency {expected_range}")
+
+    if _uses_all_packages(root, packages):
+        expected_api = f'SERVER_API_VERSION = "{target.line.text}"'
+        for path in _plugin_runtime_files(root):
+            if expected_api not in _read(root, path):
+                raise ValueError(f"{path} does not declare API line {target.line.text}")
+
+
+def _print_diff(changes: list[Change]) -> None:
+    for change in changes:
+        diff = difflib.unified_diff(
+            change.before.splitlines(keepends=True),
+            change.after.splitlines(keepends=True),
+            fromfile=str(change.path),
+            tofile=str(change.path),
+        )
+        sys.stdout.writelines(diff)
+
+
+def _write_changes(root: Path, changes: list[Change]) -> None:
+    for change in changes:
+        (root / change.path).write_text(change.after, encoding="utf-8")
+
+
+def _can_encode(text: str, stream: TextIO) -> bool:
+    encoding = stream.encoding or "utf-8"
+    try:
+        text.encode(encoding)
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _success(message: str) -> str:
+    symbol = "✓" if _can_encode("✓", sys.stdout) else "OK"
+    return f"{GREEN}{symbol}{RESET} {message}"
+
+
+def _failure(message: str) -> str:
+    symbol = "✗" if _can_encode("✗", sys.stderr) else "ERROR"
+    return f"{RED}{symbol}{RESET} {message}"
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Bump selected Arbiter package versions in the current release set."
+        )
+    )
+    parser.add_argument(
+        "version",
+        nargs="?",
+        help="target version, for example 0.9.1.dev1",
+    )
+    parser.add_argument(
+        "--next-patch-dev",
+        action="store_true",
+        help="alias for --bump patch",
+    )
+    parser.add_argument(
+        "--bump",
+        choices=("minor", "patch", "dev"),
+        help=(
+            "infer the next version by bumping the Y, Z, or D component of "
+            "X.Y.Z.devD"
+        ),
+    )
+    parser.add_argument(
+        "--packages",
+        default="all",
+        metavar="KEYS",
+        help=(
+            "limit version bumps to 'all' or comma-separated package keys "
+            "(same keys as release build/publish tooling)"
+        ),
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print the patch without changing files",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="verify files already match the requested package version",
+    )
+    parser.add_argument(
+        "--root",
+        default=".",
+        help=argparse.SUPPRESS,
+    )
+    namespace = parser.parse_args(argv)
+
+    try:
+        root = Path(namespace.root).resolve()
+        packages = _expand_version_family(
+            root,
+            parse_package_keys(namespace.packages, root=root),
+        )
+        bump_kind = namespace.bump
+        if namespace.next_patch_dev:
+            if namespace.version is not None:
+                raise ValueError("pass either a target version or --next-patch-dev")
+            if bump_kind is not None:
+                raise ValueError("pass either --bump or --next-patch-dev")
+            if namespace.check:
+                raise ValueError("--check requires an explicit target version")
+            bump_kind = "patch"
+        if bump_kind == "minor" and not _uses_all_packages(root, packages):
+            raise ValueError("minor bumps must select all packages")
+        if bump_kind is not None:
+            if namespace.version is not None:
+                raise ValueError("pass either a target version or --bump")
+            if namespace.check:
+                raise ValueError("--check requires an explicit target version")
+            target = None
+        else:
+            if namespace.version is None:
+                raise ValueError("pass a target version, --bump, or --next-patch-dev")
+            target = PackageVersion.parse(namespace.version)
+        if namespace.check:
+            assert target is not None
+            check_release_state(root, target, packages=packages)
+            print(_success(f"release version check passed: {target.text}"))
+            return 0
+        changes = build_changes(
+            root,
+            packages=packages,
+            target=target,
+            bump_kind=bump_kind,
+        )
+    except (FileNotFoundError, OSError, ValueError) as exc:
+        print(_failure(f"bump_release_version: {exc}"), file=sys.stderr)
+        return 1
+
+    if namespace.dry_run:
+        _print_diff(changes)
+        print(_success(f"would update {len(changes)} file(s)"))
+        return 0
+
+    _write_changes(root, changes)
+    for change in changes:
+        print(f"updated {change.path}")
+    if target is None:
+        print(_success("release versions bumped"))
+    else:
+        print(_success(f"release version is now {target.text}"))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

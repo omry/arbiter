@@ -158,6 +158,40 @@ Use **Publish** manual workflow dispatch for dev package releases such as
 Dev releases do not require release notes and do not create or update GitHub
 releases.
 
+Use `tools/bump_release_version` before publishing when package versions need
+to move. The command updates package `version` fields and the matching
+`arbiter-suite` exact dependency pins. It accepts the same package keys as the
+release build and publish tooling: `all`, `server`, plugin keys such as `smtp`
+or `imap`, `meta:all`, `client`, and `skill`.
+
+```bash
+tools/bump_release_version --bump patch
+tools/bump_release_version --packages smtp --bump patch
+tools/bump_release_version --bump dev
+tools/bump_release_version --bump minor
+tools/bump_release_version 0.9.1.dev1 --check
+```
+
+`--bump dev` increments only the dev component, such as `0.9.0.dev2` to
+`0.9.0.dev3`. `--bump patch` advances to the next patch dev release, such as
+`0.9.0.dev2` to `0.9.1.dev1`. `--bump minor` advances to the next minor dev
+line, such as `0.9.0.dev2` to `0.10.0.dev1`; minor bumps must select all
+packages because they also update plugin `SERVER_API_VERSION` declarations.
+
+Version bumps keep the server version family together. Selecting any of
+`server`, `client`, or `skill` updates the shared server/client/skill version
+state and the suite pins for `arbiter-server` and `arbiter-client`. Build,
+publish, and publish planning still use the package keys literally, so
+`--packages skill` can publish only the skill wheel after the shared version
+files have been prepared.
+
+Selective patch and dev bumps are for independent package releases. For a
+plugin-only bump, the tool updates that plugin's version and the suite pin, but
+does not raise the plugin's `arbiter-server` lower bound. If the server and a
+plugin are selected together, the selected plugin's server lower bound moves to
+the new server version. `--check` verifies an explicit target version and does
+not infer a bump.
+
 ## Final releases
 
 For new release lines where all package versions follow the suite meta
