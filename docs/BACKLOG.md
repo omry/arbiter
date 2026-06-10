@@ -169,6 +169,18 @@ This file is the day-to-day queue for design and implementation gaps.
       statuses with operator-useful messages; and document how deployment smoke
       checks can call the aggregate endpoint.
 
+- [ ] `P2` Add IMAP message flag read/write support.
+      Agents need a controlled way to inspect and update message flags such as
+      `\Seen`, `\Flagged`, and custom provider flags without dropping to raw
+      IMAP behavior. Use the existing IMAP policy model as inspiration for
+      which flag reads are always safe, which writes require allowlisting, and
+      which writes need confirmation. Acceptance checks: expose operations to
+      read flags for one message and update flags by adding, removing, or
+      replacing an explicit set; scope operations by account, folder, and UID;
+      validate system versus custom flag names; apply policy gates for mutating
+      flags; document provider-specific caveats; and test that disallowed or
+      confirmation-required flag mutations cannot silently change mailbox state.
+
 - [ ] `P2` Let Hydra own server logging configuration.
       Arbiter is a server process, so operators need proper logging
       without a parallel Arbiter-specific logging surface. Hydra should remain
