@@ -4,6 +4,12 @@ If `LOCAL-AGENTS.md` exists at the repository root, treat it as additional
 local instructions for this checkout. Use it for machine- or user-specific
 preferences that should not be committed to the repository.
 
+## Tooling
+
+When running Black, force single-worker mode with `--workers 1` or
+`BLACK_NUM_WORKERS=1`. Black's default worker count can hang under sandboxed
+agent runners and wastes time when it does.
+
 ## Release Notes
 
 For user-facing changes, add towncrier news fragments for the affected
