@@ -10,6 +10,18 @@ When running Black, force single-worker mode with `--workers 1` or
 `BLACK_NUM_WORKERS=1`. Black's default worker count can hang under sandboxed
 agent runners and wastes time when it does.
 
+## Fresh Chat Handover
+
+When a handover says `mode: passive`, treat it as context transfer only. Do not
+start executing the handover's `next-step`, modify files, run tests, call
+services, or otherwise continue the prior task merely because a next step is
+present. First wait for an explicit user request in the new chat, or ask what
+they want done with the transferred context.
+
+Only treat a handover as permission to continue work when the user explicitly
+asks for active continuation, or when the handover says `mode: active` and the
+current user message also asks you to proceed.
+
 ## Release Notes
 
 For user-facing changes, add towncrier news fragments for the affected
