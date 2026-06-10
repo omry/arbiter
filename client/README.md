@@ -11,12 +11,13 @@ path across platform wheels.
 For local development from the repository root:
 
 ```bash
-tools/build_go_client --target linux-amd64
 python -m pip install -e client
 arbiter --version
 ```
 
-Use the matching `GOOS-GOARCH` target for your platform, such as
-`darwin-arm64` or `windows-amd64`. Editable installs use a small launcher that
-execs the binary in `client/go-cli/dist`, so rebuilding the Go client updates
-the installed `arbiter` command without reinstalling the package.
+The package build infers the host `GOOS-GOARCH` target and runs
+`tools/build_go_client` if the matching binary is missing. Set
+`ARBITER_CLIENT_TARGET` to build a specific target, such as `darwin-arm64` or
+`windows-amd64`. Editable installs use a small launcher that execs the binary in
+`client/go-cli/dist`, so rebuilding the Go client updates the installed
+`arbiter` command without reinstalling the package.

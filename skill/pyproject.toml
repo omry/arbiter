@@ -1,0 +1,33 @@
+[build-system]
+requires = []
+build-backend = "arbiter_skill_build"
+backend-path = ["."]
+
+[project]
+name = "arbiter-skill"
+version = "0.9.0.dev2"
+description = "Agent skill for Arbiter MCP access"
+requires-python = ">=3.10,<3.15"
+license = "MIT"
+authors = [
+  { name = "Omry Yadan", email = "omry@yadan.net" },
+]
+maintainers = [
+  { name = "Omry Yadan", email = "omry@yadan.net" },
+]
+keywords = ["agent", "skill", "mcp", "access-control", "arbiter"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Software Development",
+]
+
+[project.urls]
+Homepage = "https://github.com/omry/arbiter"
+Repository = "https://github.com/omry/arbiter"

@@ -80,16 +80,14 @@ arbiter_client/bin/arbiter
 
 The wheel script installs the normal `arbiter` executable onto `PATH`. The
 stable `arbiter_client/bin/arbiter` copy is for Agent Skill Installer, which
-copies it into the platform-neutral `arbiter-skill` package as an external
-companion wheel.
+copies it into the installed `arbiter` skill from the external companion wheel.
 
-Package the skill local directory and wheel from the repo root:
+Package the platform-neutral skill wheel from the repo root:
 
 ```bash
-tools/package_arbiter_skill --clean
+tools/build_release_dists --packages skill
 ```
 
-This writes local install directories under `dist/arbiter-skill/local/` and
-wheels under `dist/arbiter-skill/wheels/`. The skill package declares
-`arbiter-client==${package.version}` in `agent-skill-installer.yaml`, so ASI
-lets pip select the correct native client wheel for the installing platform.
+This writes the `arbiter-skill` wheel under `dist/`. The skill package declares
+`arbiter-client==${package.version}` in `agent-skill-installer.yaml`, so ASI lets
+pip select the correct native client wheel for the installing platform.

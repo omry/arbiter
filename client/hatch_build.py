@@ -5,6 +5,7 @@ import platform
 from pathlib import Path
 import re
 import shlex
+import subprocess
 import sys
 from typing import Any
 
@@ -117,6 +118,35 @@ def _script_for_build(
     return binary, binary_name
 
 
+def _build_client_binary(*, repo_root: Path, target: str) -> None:
+    subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "tools" / "build_go_client"),
+            "--root",
+            str(repo_root),
+            "--target",
+            target,
+        ],
+        check=True,
+    )
+
+
+def _ensure_client_binary(*, repo_root: Path, target: str, binary_name: str) -> Path:
+    binary = repo_root / "client/go-cli" / "dist" / target / binary_name
+    if binary.is_file():
+        return binary
+
+    _build_client_binary(repo_root=repo_root, target=target)
+    if binary.is_file():
+        return binary
+
+    raise RuntimeError(
+        f"missing Arbiter client binary for {target}: {binary}; "
+        f"automatic tools/build_go_client --target {target} did not create it"
+    )
+
+
 class ArbiterClientBuildHook(BuildHookInterface):
     def initialize(self, version: str, build_data: dict[str, Any]) -> None:
         target = os.environ.get("ARBITER_CLIENT_TARGET", "").strip()
@@ -133,13 +163,16 @@ class ArbiterClientBuildHook(BuildHookInterface):
         binary_override = os.environ.get("ARBITER_CLIENT_BINARY")
         if binary_override:
             binary = Path(binary_override).resolve()
+            if not binary.is_file():
+                raise RuntimeError(
+                    f"ARBITER_CLIENT_BINARY does not exist or is not a file: {binary}"
+                )
         else:
             repo_root = _repo_root(self.root)
-            binary = repo_root / "client/go-cli" / "dist" / target / binary_name
-        if not binary.is_file():
-            raise RuntimeError(
-                f"missing Arbiter client binary for {target}: {binary}; "
-                f"run tools/build_go_client --target {target} first"
+            binary = _ensure_client_binary(
+                repo_root=repo_root,
+                target=target,
+                binary_name=binary_name,
             )
 
         build_data["pure_python"] = False

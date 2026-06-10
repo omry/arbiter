@@ -76,12 +76,11 @@ linux-arm64`; pass `--debug` to keep debug symbols.
 
 Package the platform-neutral agent skill with:
 
-- `tools/package_arbiter_skill --clean`
+- `tools/build_release_dists --packages skill`
 
-This writes the platform-neutral `arbiter-skill` artifact under
-`dist/arbiter-skill/`, with local directories and wheels generated side by side.
-The skill declares `arbiter-client` as an Agent Skill Installer companion wheel;
-ASI lets pip select the current platform's native client wheel during install.
+This writes the platform-neutral `arbiter-skill` wheel under `dist/`. The skill
+declares `arbiter-client` as an Agent Skill Installer companion wheel; ASI lets
+pip select the current platform's native client wheel during install.
 
 The native client can also be packaged as the `arbiter-client` PyPI project:
 

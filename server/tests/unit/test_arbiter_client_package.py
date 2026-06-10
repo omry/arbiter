@@ -185,6 +185,56 @@ def test_standard_build_uses_native_binary(tmp_path: Path) -> None:
     assert name == "arbiter"
 
 
+def test_build_hook_auto_builds_missing_native_binary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hatch_build = _load_hatch_build()
+    repo_root = tmp_path / "repo"
+    binary = repo_root / "client/go-cli/dist/linux-amd64/arbiter"
+    build_requests: list[tuple[Path, str]] = []
+
+    def fake_build_client_binary(*, repo_root: Path, target: str) -> None:
+        build_requests.append((repo_root, target))
+        binary.parent.mkdir(parents=True)
+        binary.write_text("binary\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        hatch_build,
+        "_build_client_binary",
+        fake_build_client_binary,
+    )
+
+    assert (
+        hatch_build._ensure_client_binary(
+            repo_root=repo_root,
+            target="linux-amd64",
+            binary_name="arbiter",
+        )
+        == binary
+    )
+    assert build_requests == [(repo_root, "linux-amd64")]
+
+
+def test_build_hook_reports_failed_auto_build(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hatch_build = _load_hatch_build()
+    monkeypatch.setattr(
+        hatch_build,
+        "_build_client_binary",
+        lambda *, repo_root, target: None,
+    )
+
+    with pytest.raises(RuntimeError, match="automatic tools/build_go_client"):
+        hatch_build._ensure_client_binary(
+            repo_root=tmp_path,
+            target="linux-amd64",
+            binary_name="arbiter",
+        )
+
+
 def test_client_version_prefers_environment_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

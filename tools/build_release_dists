@@ -6,7 +6,6 @@ import os
 import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -69,10 +68,6 @@ def _run(
         raise subprocess.CalledProcessError(result.returncode, command)
 
 
-def _distribution_name(package_name: str) -> str:
-    return package_name.replace("-", "_")
-
-
 def _server_version(root: Path) -> str:
     in_project = False
     for line in (root / "server" / "pyproject.toml").read_text().splitlines():
@@ -98,26 +93,6 @@ def _build_go_client(*, root: Path, verbose: bool) -> None:
     )
 
 
-def _copy_skill_wheels(
-    *,
-    source_dir: Path,
-    outdir: Path,
-    packages: tuple[Package, ...],
-) -> None:
-    selected_distributions = {
-        _distribution_name(package.name)
-        for package in packages
-        if package.kind == "skill"
-    }
-    for wheel in sorted((source_dir / "wheels").glob("arbiter_skill*.whl")):
-        distribution = wheel.name.split("-", 1)[0]
-        if distribution not in selected_distributions:
-            continue
-        target = outdir / wheel.name
-        shutil.copy2(wheel, target)
-        print(f"build: {target.name}")
-
-
 def _build_skill_distributions(
     *,
     root: Path,
@@ -125,25 +100,23 @@ def _build_skill_distributions(
     packages: tuple[Package, ...],
     verbose: bool,
 ) -> None:
-    with tempfile.TemporaryDirectory(
-        prefix="arbiter-skill-release-", dir=outdir.parent
-    ) as tmp:
-        skill_outdir = Path(tmp)
-        print("build: arbiter skill wheels")
+    for package in packages:
+        if package.kind != "skill":
+            continue
+        assert package.path is not None
+        print(f"build: {package.name}")
         _run(
             [
-                str(root / "tools" / "package_arbiter_skill"),
-                "--root",
-                str(root),
-                "--clean",
-                "--format",
-                "wheel",
+                sys.executable,
+                "-m",
+                "build",
+                "--wheel",
                 "--outdir",
-                str(skill_outdir),
+                str(outdir),
+                str(root / package.path),
             ],
             verbose=verbose,
         )
-        _copy_skill_wheels(source_dir=skill_outdir, outdir=outdir, packages=packages)
 
 
 def _build_client_distributions(

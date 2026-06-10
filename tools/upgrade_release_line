@@ -16,6 +16,7 @@ from release_packages import plugin_packages  # noqa: E402
 
 
 SUITE_PYPROJECT = Path("meta/arbiter-suite/pyproject.toml")
+SKILL_PYPROJECT = Path("skill/pyproject.toml")
 DOC_FILES = (
     Path("website/docs/operate/deployment/3-bundle-deep-dive.md"),
     Path("website/docs/operate/server-reference.md"),
@@ -149,6 +150,7 @@ def _package_files(root: Path) -> tuple[Path, ...]:
     return (
         SUITE_PYPROJECT,
         Path("server/pyproject.toml"),
+        SKILL_PYPROJECT,
         *_plugin_package_files(root),
     )
 
@@ -165,6 +167,7 @@ def _package_file_by_distribution(root: Path) -> dict[str, Path]:
     package_files = {
         "arbiter-server": Path("server/pyproject.toml"),
         "arbiter-client": Path("server/pyproject.toml"),
+        "arbiter-skill": SKILL_PYPROJECT,
     }
     package_files.update(
         {

@@ -10,6 +10,8 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "tools" / "upgrade_release_line"
 SUITE_PYPROJECT = Path("meta/arbiter-suite/pyproject.toml")
 SUITE_PYPROJECT_TEXT = str(SUITE_PYPROJECT)
+SKILL_PYPROJECT = Path("skill/pyproject.toml")
+SKILL_PYPROJECT_TEXT = str(SKILL_PYPROJECT)
 
 
 FIXTURE_FILES = {
@@ -25,6 +27,10 @@ dependencies = [
 """,
     "server/pyproject.toml": """[project]
 name = "arbiter-server"
+version = "0.8.0"
+""",
+    SKILL_PYPROJECT_TEXT: """[project]
+name = "arbiter-skill"
 version = "0.8.0"
 """,
     "plugins/smtp/pyproject.toml": """[project]
@@ -83,6 +89,10 @@ dependencies = [
 """,
         "server/pyproject.toml": """[project]
 name = "arbiter-server"
+version = "0.9.0.dev1"
+""",
+        SKILL_PYPROJECT_TEXT: """[project]
+name = "arbiter-skill"
 version = "0.9.0.dev1"
 """,
         "plugins/smtp/pyproject.toml": """[project]
@@ -195,7 +205,7 @@ def test_upgrade_release_line_dry_run_prints_patch_without_writing(
     assert (tmp_path / SUITE_PYPROJECT).read_text(encoding="utf-8") == before
     assert '+  "arbiter-server==0.9.0"' in result.stdout
     assert '+  "arbiter-server>=0.9.0,<0.10.0"' in result.stdout
-    _assert_success_status(result.stdout, "would update 9 file(s)")
+    _assert_success_status(result.stdout, "would update 10 file(s)")
 
 
 def test_upgrade_release_line_updates_packages_runtime_and_docs(
@@ -207,6 +217,9 @@ def test_upgrade_release_line_updates_packages_runtime_and_docs(
 
     assert result.returncode == 0, result.stderr
     assert 'version = "0.9.0"' in (tmp_path / SUITE_PYPROJECT).read_text(
+        encoding="utf-8",
+    )
+    assert 'version = "0.9.0"' in (tmp_path / SKILL_PYPROJECT).read_text(
         encoding="utf-8",
     )
     assert '"arbiter-imap==0.9.0"' in (tmp_path / SUITE_PYPROJECT).read_text(

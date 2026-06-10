@@ -78,8 +78,7 @@ def skill_packages() -> tuple[Package, ...]:
             key="skill",
             kind="skill",
             name="arbiter-skill",
-            path=Path("server"),
-            project_name="arbiter-server",
+            path=Path("skill"),
             artifacts=("wheel",),
         ),
     )

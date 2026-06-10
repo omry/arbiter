@@ -138,7 +138,7 @@ def test_build_distributions_discovers_new_plugin_package(
     assert [call[0][-1] for call in calls] == [str(tmp_path / "plugins" / "pop")]
 
 
-def test_build_distributions_copies_only_selected_skill_wheels(
+def test_build_distributions_builds_selected_skill_wheel(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
@@ -147,13 +147,6 @@ def test_build_distributions_copies_only_selected_skill_wheels(
 
     def fake_run(command: list[str], *, verbose: bool) -> None:
         calls.append(command)
-        if command[0].endswith("package_arbiter_skill"):
-            skill_outdir = Path(command[command.index("--outdir") + 1])
-            wheels = skill_outdir / "wheels"
-            wheels.mkdir(parents=True)
-            (wheels / "arbiter_skill-1.2.3-py3-none-any.whl").write_text(
-                "wheel\n", encoding="utf-8"
-            )
 
     monkeypatch.setattr(tool, "_run", fake_run)
 
@@ -165,9 +158,16 @@ def test_build_distributions_copies_only_selected_skill_wheels(
         verbose=False,
     )
 
-    assert [Path(call[0]).name for call in calls] == ["package_arbiter_skill"]
-    assert sorted(path.name for path in (tmp_path / "dist").iterdir()) == [
-        "arbiter_skill-1.2.3-py3-none-any.whl",
+    assert calls == [
+        [
+            sys.executable,
+            "-m",
+            "build",
+            "--wheel",
+            "--outdir",
+            str(tmp_path / "dist"),
+            str(tmp_path / "skill"),
+        ],
     ]
 
 
