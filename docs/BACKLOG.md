@@ -195,6 +195,32 @@ This file is the day-to-day queue for design and implementation gaps.
       flags; document provider-specific caveats; and test that disallowed or
       confirmation-required flag mutations cannot silently change mailbox state.
 
+- [ ] `P2` Add IMAP folder management APIs.
+      Bot accounts need a controlled way to create, rename, and delete mailbox
+      folders without requiring operators to pre-create every workflow-specific
+      folder manually. Acceptance checks: expose folder create, rename, and
+      delete operations scoped by account; require explicit policy allowlisting
+      for mutating folder operations, with stricter defaults for non-bot
+      accounts; validate folder names against configured account conventions and
+      reject unsafe roots such as INBOX unless explicitly allowed; define how
+      runtime folder mutations relate to the static configured folder allowlist;
+      return clear provider errors for unsupported or protected mailbox
+      operations; and document recovery expectations for accidental deletes or
+      provider-side rename semantics.
+
+- [ ] `P2` Support IMAP folder allow-list and deny-list access models.
+      Operators should be able to configure either a deny-all-by-default
+      allow-list model or an allow-all-by-default deny-list model for folder
+      visibility and operations. Acceptance checks: define the config shape and
+      defaults for both modes; support exact names and wildcard patterns using
+      the account's mailbox naming conventions; apply the same access decision
+      consistently to folder listing, search, message reads, message moves,
+      flag updates, sent-copy append targets, and future folder management
+      operations; return clear policy errors when a folder is hidden or denied;
+      expose enough policy summary in discovery for agents to understand the
+      available surface without leaking denied folders; and document safe
+      defaults for personal versus bot accounts.
+
 - [ ] `P2` Let Hydra own server logging configuration.
       Arbiter is a server process, so operators need proper logging
       without a parallel Arbiter-specific logging surface. Hydra should remain
