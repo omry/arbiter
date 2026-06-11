@@ -12,6 +12,7 @@ SUITE_PYPROJECT = Path("meta/arbiter-suite/pyproject.toml")
 SUITE_PYPROJECT_TEXT = str(SUITE_PYPROJECT)
 SKILL_PYPROJECT = Path("skill/pyproject.toml")
 SKILL_PYPROJECT_TEXT = str(SKILL_PYPROJECT)
+PYTHON_CLIENT_PYPROJECT = Path("client/python-cli/pyproject.toml")
 GO_CLIENT_VERSION = Path("client/go-cli/internal/cli/version_generated.go")
 
 
@@ -32,6 +33,12 @@ version = "0.9.0"
 """,
     SKILL_PYPROJECT_TEXT: """[project]
 name = "arbiter-skill"
+version = "0.9.0"
+""",
+    str(
+        PYTHON_CLIENT_PYPROJECT
+    ): """[project]
+name = "arbiter-python-client"
 version = "0.9.0"
 """,
     "plugins/smtp/pyproject.toml": """[project]
@@ -73,6 +80,7 @@ def _replace_package_text(root: Path, replacements: dict[str, str]) -> None:
         SUITE_PYPROJECT,
         Path("server/pyproject.toml"),
         SKILL_PYPROJECT,
+        PYTHON_CLIENT_PYPROJECT,
         GO_CLIENT_VERSION,
         Path("plugins/imap/pyproject.toml"),
         Path("plugins/smtp/pyproject.toml"),
@@ -133,7 +141,8 @@ def test_bump_release_version_dry_run_prints_patch_without_writing(
     assert '+  "arbiter-server==0.9.1.dev1"' in result.stdout
     assert '+  "arbiter-server>=0.9.1.dev1,<0.10.0"' in result.stdout
     assert '+const serverVersion = "0.9.1.dev1"' in result.stdout
-    _assert_success_status(result.stdout, "would update 6 file(s)")
+    assert str(PYTHON_CLIENT_PYPROJECT) in result.stdout
+    _assert_success_status(result.stdout, "would update 7 file(s)")
 
 
 def test_bump_release_version_can_bump_patch_component(
@@ -165,6 +174,9 @@ def test_bump_release_version_can_bump_dev_component(
     assert 'const serverVersion = "0.9.0.dev3"' in (
         tmp_path / GO_CLIENT_VERSION
     ).read_text(encoding="utf-8")
+    assert 'version = "0.9.0.dev3"' in (tmp_path / PYTHON_CLIENT_PYPROJECT).read_text(
+        encoding="utf-8"
+    )
     assert '"arbiter-server>=0.9.0.dev3,<0.10.0"' in (
         tmp_path / "plugins/imap/pyproject.toml"
     ).read_text(encoding="utf-8")
@@ -188,6 +200,9 @@ def test_bump_release_version_can_bump_minor_component_for_all_packages(
     assert 'const serverVersion = "0.10.0.dev1"' in (
         tmp_path / GO_CLIENT_VERSION
     ).read_text(encoding="utf-8")
+    assert 'version = "0.10.0.dev1"' in (tmp_path / PYTHON_CLIENT_PYPROJECT).read_text(
+        encoding="utf-8"
+    )
     assert 'SERVER_API_VERSION = "0.10"' in (
         tmp_path / "plugins/imap/src/arbiter_imap/__init__.py"
     ).read_text(encoding="utf-8")
@@ -216,6 +231,9 @@ def test_bump_release_version_updates_packages_but_not_api_line(
     assert 'const serverVersion = "0.9.1.dev1"' in (
         tmp_path / GO_CLIENT_VERSION
     ).read_text(encoding="utf-8")
+    assert 'version = "0.9.1.dev1"' in (tmp_path / PYTHON_CLIENT_PYPROJECT).read_text(
+        encoding="utf-8"
+    )
     assert 'SERVER_API_VERSION = "0.9"' in (
         tmp_path / "plugins/imap/src/arbiter_imap/__init__.py"
     ).read_text(encoding="utf-8")
@@ -429,7 +447,7 @@ def test_bump_release_version_check_accepts_matching_version(
     ) in result.stdout
     assert (
         "checked derived artifacts: arbiter-client dynamic version, "
-        "Go CLI embedded version"
+        "Go CLI embedded version, Python CLI version"
     ) in result.stdout
     assert (
         "checked plugin bounds: imap, smtp require "
@@ -465,7 +483,7 @@ def test_bump_release_version_check_reports_expanded_server_family_scope(
     ) in result.stdout
     assert (
         "checked derived artifacts: arbiter-client dynamic version, "
-        "Go CLI embedded version"
+        "Go CLI embedded version, Python CLI version"
     ) in result.stdout
     assert (
         "checked plugin bounds: smtp require " "arbiter-server>=0.9.1.dev1,<0.10.0"
@@ -523,6 +541,29 @@ def test_bump_release_version_check_rejects_stale_go_client_version(
     assert (
         "client/go-cli/internal/cli/version_generated.go version is 0.9.0, "
         "expected 0.9.1.dev1"
+    ) in _normalize_path_separators(result.stderr)
+
+
+def test_bump_release_version_check_rejects_stale_python_client_version(
+    tmp_path: Path,
+) -> None:
+    _write_fixture(tmp_path)
+    result = _run_tool(tmp_path, "--next-patch-dev")
+    assert result.returncode == 0, result.stderr
+    python_client_path = tmp_path / PYTHON_CLIENT_PYPROJECT
+    python_client_path.write_text(
+        python_client_path.read_text(encoding="utf-8").replace(
+            'version = "0.9.1.dev1"',
+            'version = "0.9.0"',
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_tool(tmp_path, "--check", "0.9.1.dev1")
+
+    assert result.returncode == 1
+    assert (
+        "client/python-cli/pyproject.toml version is 0.9.0, " "expected 0.9.1.dev1"
     ) in _normalize_path_separators(result.stderr)
 
 

@@ -12,6 +12,7 @@ SUITE_PYPROJECT = Path("meta/arbiter-suite/pyproject.toml")
 SUITE_PYPROJECT_TEXT = str(SUITE_PYPROJECT)
 SKILL_PYPROJECT = Path("skill/pyproject.toml")
 SKILL_PYPROJECT_TEXT = str(SKILL_PYPROJECT)
+PYTHON_CLIENT_PYPROJECT = Path("client/python-cli/pyproject.toml")
 
 
 FIXTURE_FILES = {
@@ -31,6 +32,12 @@ version = "0.8.0"
 """,
     SKILL_PYPROJECT_TEXT: """[project]
 name = "arbiter-skill"
+version = "0.8.0"
+""",
+    str(
+        PYTHON_CLIENT_PYPROJECT
+    ): """[project]
+name = "arbiter-python-client"
 version = "0.8.0"
 """,
     "plugins/smtp/pyproject.toml": """[project]
@@ -93,6 +100,12 @@ version = "0.9.0.dev1"
 """,
         SKILL_PYPROJECT_TEXT: """[project]
 name = "arbiter-skill"
+version = "0.9.0.dev1"
+""",
+        str(
+            PYTHON_CLIENT_PYPROJECT
+        ): """[project]
+name = "arbiter-python-client"
 version = "0.9.0.dev1"
 """,
         "plugins/smtp/pyproject.toml": """[project]
@@ -209,7 +222,8 @@ def test_upgrade_release_line_dry_run_prints_patch_without_writing(
     assert (tmp_path / SUITE_PYPROJECT).read_text(encoding="utf-8") == before
     assert '+  "arbiter-server==0.9.0"' in result.stdout
     assert '+  "arbiter-server>=0.9.0,<0.10.0"' in result.stdout
-    _assert_success_status(result.stdout, "would update 10 file(s)")
+    assert str(PYTHON_CLIENT_PYPROJECT) in result.stdout
+    _assert_success_status(result.stdout, "would update 11 file(s)")
 
 
 def test_upgrade_release_line_updates_packages_runtime_and_docs(
@@ -224,6 +238,9 @@ def test_upgrade_release_line_updates_packages_runtime_and_docs(
         encoding="utf-8",
     )
     assert 'version = "0.9.0"' in (tmp_path / SKILL_PYPROJECT).read_text(
+        encoding="utf-8",
+    )
+    assert 'version = "0.9.0"' in (tmp_path / PYTHON_CLIENT_PYPROJECT).read_text(
         encoding="utf-8",
     )
     assert '"arbiter-imap==0.9.0"' in (tmp_path / SUITE_PYPROJECT).read_text(
@@ -309,6 +326,9 @@ def test_upgrade_release_line_promotes_dev_version_to_final_same_line(
 
     assert result.returncode == 0, result.stderr
     assert 'version = "0.9.0"' in (tmp_path / SUITE_PYPROJECT).read_text(
+        encoding="utf-8",
+    )
+    assert 'version = "0.9.0"' in (tmp_path / PYTHON_CLIENT_PYPROJECT).read_text(
         encoding="utf-8",
     )
     assert '"arbiter-imap==0.9.0"' in (tmp_path / SUITE_PYPROJECT).read_text(
@@ -398,6 +418,28 @@ def test_upgrade_release_line_check_requires_docs_for_final_release_line(
     assert (
         "website/docs/operate/deployment/3-bundle-deep-dive.md "
         "is missing release text: arbiter-suite==0.8.0"
+    ) in _normalize_path_separators(result.stderr)
+
+
+def test_upgrade_release_line_check_rejects_stale_python_client_version(
+    tmp_path: Path,
+) -> None:
+    _write_fixture(tmp_path)
+    python_client_path = tmp_path / PYTHON_CLIENT_PYPROJECT
+    python_client_path.write_text(
+        python_client_path.read_text(encoding="utf-8").replace(
+            'version = "0.8.0"',
+            'version = "0.9.0"',
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_tool(tmp_path, "--check", "0.8")
+
+    assert result.returncode == 1
+    assert (
+        "client/python-cli/pyproject.toml version line 0.9 "
+        "does not match root line 0.8"
     ) in _normalize_path_separators(result.stderr)
 
 
