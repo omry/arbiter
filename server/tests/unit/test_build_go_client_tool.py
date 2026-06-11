@@ -181,7 +181,7 @@ def test_main_writes_portable_skill_launcher_for_current_platform(
     launcher_text = launcher.read_text(encoding="utf-8")
     assert binary.read_text(encoding="utf-8") == "new"
     assert launcher_text.startswith("#!/usr/bin/env python3")
-    assert "client\" / \"go-cli\" / \"dist\"" in launcher_text
+    assert 'client" / "go-cli" / "dist"' in launcher_text
     assert "tools/build_go_client --target" in launcher_text
     assert launcher.stat().st_ino != binary.stat().st_ino
     assert not (skill_bin / ".arbiter.tmp-launcher").exists()

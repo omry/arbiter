@@ -1676,7 +1676,9 @@ def _operations_by_id_from_info_payload(
         }
         operation_ids.append(operation_id)
     operation_ids = sorted(operation_ids)
-    return {operation_id: operations_by_id[operation_id] for operation_id in operation_ids}, operation_ids
+    return {
+        operation_id: operations_by_id[operation_id] for operation_id in operation_ids
+    }, operation_ids
 
 
 def _operation_list_structured_payload(payload: object) -> tuple[object, list[str]]:

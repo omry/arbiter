@@ -14,7 +14,12 @@ from typing import Any, cast
 import pytest
 from omegaconf import OmegaConf
 
-from arbiter_server.config import AppConfig, ArbiterConfig, DiscoveryConfig, StorageConfig
+from arbiter_server.config import (
+    AppConfig,
+    ArbiterConfig,
+    DiscoveryConfig,
+    StorageConfig,
+)
 from arbiter_server.app import SERVER_TOOL_NAMES
 from arbiter_server.file_protection.windows import (
     _WindowsAccessAce,
@@ -1354,7 +1359,9 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
         '"$$venv_python" -m pip --disable-pip-version-check install --no-cache-dir '
         "-r /tmp/requirements.pinned"
     ) in compose_text
-    assert 'grep -Eq "^[[:space:]]*/source/arbiter(/|$)" /requirements.txt' in compose_text
+    assert (
+        'grep -Eq "^[[:space:]]*/source/arbiter(/|$)" /requirements.txt' in compose_text
+    )
     assert (
         'awk "!/^[[:space:]]*(#|$)/ && '
         '!/^[[:space:]]*\\\\/source\\\\/arbiter(\\\\/|$)/ { print }" '
@@ -3340,9 +3347,7 @@ def test_cli_deploy_docker_generated_helper_up_rejects_unwritable_plugin_data_di
     docker_calls = tmp_path / "docker-calls"
     fake_docker = fake_bin / "docker"
     fake_docker.write_text(
-        "#!/usr/bin/env sh\n"
-        f'printf "%s\\n" "$*" >> "{docker_calls}"\n'
-        "exit 0\n",
+        "#!/usr/bin/env sh\n" f'printf "%s\\n" "$*" >> "{docker_calls}"\n' "exit 0\n",
         encoding="utf-8",
     )
     fake_docker.chmod(0o755)
@@ -3885,7 +3890,9 @@ def test_cli_deploy_docker_generated_helper_doctor_rejects_unpinned_requirements
         capture_output=True,
     )
     assert valid_result.returncode == 0
-    assert "ok: requirements file entries are syntactically valid" in valid_result.stdout
+    assert (
+        "ok: requirements file entries are syntactically valid" in valid_result.stdout
+    )
 
     (deploy_dir / "requirements.txt").write_text("arbiter-suite\n", encoding="utf-8")
     result = subprocess.run(
@@ -4091,8 +4098,7 @@ def test_cli_deploy_docker_generated_helper_preinstall_rejects_unwritable_plugin
 
     assert result.returncode == 1
     assert (
-        "fail: plugin data directory is not writable by container user: "
-        "12345:12345"
+        "fail: plugin data directory is not writable by container user: " "12345:12345"
     ) in result.stdout
     assert "ok: preinstall checks passed\n" not in result.stdout
 
@@ -4132,8 +4138,7 @@ def test_cli_deploy_docker_generated_helper_preinstall_rejects_open_plugin_data_
 
     assert result.returncode == 1
     assert (
-        "fail: plugin data directory is accessible outside its owner:"
-        in result.stdout
+        "fail: plugin data directory is accessible outside its owner:" in result.stdout
     )
     assert "ok: preinstall checks passed\n" not in result.stdout
 

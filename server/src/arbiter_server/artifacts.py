@@ -195,7 +195,10 @@ class ArtifactStore:
     ) -> tuple[Path, dict[str, object]]:
         artifact_dir = self._artifact_dir(artifact_id)
         metadata = self._read_metadata(artifact_dir)
-        if metadata.get("consumed") is True or (artifact_dir / CONSUMED_MARKER).exists():
+        if (
+            metadata.get("consumed") is True
+            or (artifact_dir / CONSUMED_MARKER).exists()
+        ):
             raise ArtifactConsumed(f"artifact already consumed: {artifact_id}")
         if self._is_expired(metadata, time.time()):
             shutil.rmtree(artifact_dir, ignore_errors=True)
