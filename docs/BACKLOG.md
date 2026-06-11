@@ -26,24 +26,6 @@ This file is the day-to-day queue for design and implementation gaps.
 
 ## Now
 
-- [ ] `P1` Add real OS/process isolation for plugin writable storage.
-      The server now gives each plugin a scoped storage capability, but
-      same-process Python plugins still run as the same OS user and can bypass
-      path-capability conventions. Process isolation is valuable even before it
-      becomes a complete security boundary because it can also support live
-      plugin add/remove, crash containment, and plugin config reload without
-      restarting the main server. Acceptance checks: define a portable plugin
-      worker model and an isolation-provider abstraction with capability
-      reporting, such as crash containment, live reload, filesystem isolation,
-      network isolation, and process-tree isolation; evaluate process,
-      container, or OS-user isolation providers for plugins; ensure one plugin
-      cannot read another plugin's data directory through ordinary filesystem
-      access where the platform supports strong enforcement; document Linux as
-      the recommended production platform and most capable provider target for
-      stronger isolation; keep Windows and macOS isolation easy and ergonomic
-      without overclaiming equivalent security guarantees; and document the
-      threat model for trusted versus isolated plugins.
-
 - [ ] `P1` Prepare release packaging and version readiness.
       The service plugin/config reroute is in place, so the package/release
       surface needs one explicit readiness pass before initial release.
@@ -104,6 +86,24 @@ This file is the day-to-day queue for design and implementation gaps.
       and security claims; stale examples are fixed or removed.
 
 ## Post-v1
+
+- [ ] `P2` Add real OS/process isolation for plugin writable storage.
+      The server now gives each plugin a scoped storage capability, but
+      same-process Python plugins still run as the same OS user and can bypass
+      path-capability conventions. Process isolation is valuable even before it
+      becomes a complete security boundary because it can also support live
+      plugin add/remove, crash containment, and plugin config reload without
+      restarting the main server. Acceptance checks: define a portable plugin
+      worker model and an isolation-provider abstraction with capability
+      reporting, such as crash containment, live reload, filesystem isolation,
+      network isolation, and process-tree isolation; evaluate process,
+      container, or OS-user isolation providers for plugins; ensure one plugin
+      cannot read another plugin's data directory through ordinary filesystem
+      access where the platform supports strong enforcement; document Linux as
+      the recommended production platform and most capable provider target for
+      stronger isolation; keep Windows and macOS isolation easy and ergonomic
+      without overclaiming equivalent security guarantees; and document the
+      threat model for trusted versus isolated plugins.
 
 - [ ] `P2` Decide the long-term config and policy shape.
       The MCP discovery surface is moving toward capability-first drill-down,
