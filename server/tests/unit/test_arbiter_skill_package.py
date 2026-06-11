@@ -80,9 +80,7 @@ def test_skill_wheel_contains_only_asi_metadata_payload(tmp_path: Path) -> None:
         == f'__version__ = "{_project_version(SKILL_ROOT / "pyproject.toml")}"\n'
     )
     assert skill_bytes == (SKILL_ROOT / "SKILL.md").read_bytes()
-    assert metadata_bytes == (
-        SKILL_ROOT / "agent-skill-installer.yaml"
-    ).read_bytes()
+    assert metadata_bytes == (SKILL_ROOT / "agent-skill-installer.yaml").read_bytes()
     assert "arbiter_skill/skill/SKILL.md" in names
     assert "arbiter_skill/skill/agent-skill-installer.yaml" in names
     assert "arbiter_skill/skill/bin/arbiter" not in names
