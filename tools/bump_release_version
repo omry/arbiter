@@ -523,6 +523,59 @@ def check_release_state(
                 raise ValueError(f"{path} does not declare API line {target.line.text}")
 
 
+def _package_keys(packages: tuple[Package, ...]) -> str:
+    return ", ".join(package.key for package in packages)
+
+
+def _check_summary_lines(
+    root: Path,
+    target: PackageVersion,
+    *,
+    packages: tuple[Package, ...],
+) -> list[str]:
+    selected_paths = {_release_package_file(package) for package in packages}
+    package_files_by_key = _package_files_by_key(root)
+    plugin_paths = set(_plugin_package_files(root))
+    dependency_targets = _selected_dependency_targets(
+        root,
+        {path: target for path in selected_paths},
+    )
+    server_selected = any(
+        package_files_by_key[key] in selected_paths for key in ("server", "client")
+    )
+
+    lines = [
+        _success(f"release version check passed: {target.text}"),
+        f"checked package keys: {_package_keys(packages)}",
+    ]
+    if dependency_targets:
+        lines.append(
+            "checked suite pins: arbiter-suite -> "
+            + ", ".join(sorted(dependency_targets))
+        )
+    if server_selected:
+        lines.append(
+            "checked derived artifacts: arbiter-client dynamic version, "
+            "Go CLI embedded version"
+        )
+        selected_plugins = sorted(
+            package.key
+            for package in packages
+            if package.path is not None
+            and package.path / "pyproject.toml" in plugin_paths
+        )
+        if selected_plugins:
+            lines.append(
+                "checked plugin bounds: "
+                + ", ".join(selected_plugins)
+                + f" require arbiter-server>={target.text},"
+                f"<{target.line.next_version}"
+            )
+    if _uses_all_packages(root, packages):
+        lines.append(f"checked plugin API line: {target.line.text}")
+    return lines
+
+
 def _print_diff(changes: list[Change]) -> None:
     for change in changes:
         diff = difflib.unified_diff(
@@ -638,7 +691,11 @@ def main(argv: list[str] | None = None) -> int:
         if namespace.check:
             assert target is not None
             check_release_state(root, target, packages=packages)
-            print(_success(f"release version check passed: {target.text}"))
+            print(
+                "\n".join(
+                    _check_summary_lines(root, target, packages=packages),
+                )
+            )
             return 0
         changes = build_changes(
             root,

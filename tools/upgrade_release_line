@@ -302,7 +302,8 @@ def check_release_state(root: Path, target: ReleaseLine) -> str:
         _read(root, SUITE_PYPROJECT),
         SUITE_PYPROJECT,
     )
-    _validate_docs(root, target, current_version)
+    if PackageVersion.parse(current_version).dev is None:
+        _validate_docs(root, target, current_version)
     return current_version
 
 

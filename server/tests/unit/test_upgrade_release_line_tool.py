@@ -381,6 +381,22 @@ def test_upgrade_release_line_check_accepts_matching_release_line(
     _assert_success_status(result.stdout, "release line check passed: 0.8 (0.8.0)")
 
 
+def test_upgrade_release_line_check_requires_docs_for_final_release_line(
+    tmp_path: Path,
+) -> None:
+    _write_fixture(tmp_path)
+    docs = tmp_path / "website/docs/operate/deployment/3-bundle-deep-dive.md"
+    docs.write_text("stale docs\n", encoding="utf-8")
+
+    result = _run_tool(tmp_path, "--check", "0.8")
+
+    assert result.returncode == 1
+    assert (
+        "website/docs/operate/deployment/3-bundle-deep-dive.md "
+        "is missing release text: arbiter-suite==0.8.0"
+    ) in result.stderr
+
+
 def test_upgrade_release_line_check_uses_ascii_status_for_limited_stream_encoding(
     tmp_path: Path,
 ) -> None:
@@ -396,6 +412,26 @@ def test_upgrade_release_line_check_accepts_matching_dev_release_line(
     tmp_path: Path,
 ) -> None:
     _write_dev_fixture(tmp_path)
+
+    result = _run_tool(tmp_path, "--check", "0.9")
+
+    assert result.returncode == 0, result.stderr
+    _assert_success_status(
+        result.stdout,
+        "release line check passed: 0.9 (0.9.0.dev1)",
+    )
+
+
+def test_upgrade_release_line_check_skips_docs_for_dev_release_line(
+    tmp_path: Path,
+) -> None:
+    _write_dev_fixture(tmp_path)
+    for path in (
+        "website/docs/operate/deployment/3-bundle-deep-dive.md",
+        "website/docs/operate/server-reference.md",
+        "website/docs/extend/plugins.md",
+    ):
+        (tmp_path / path).write_text("stale docs\n", encoding="utf-8")
 
     result = _run_tool(tmp_path, "--check", "0.9")
 
