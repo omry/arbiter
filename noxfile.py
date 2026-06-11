@@ -83,6 +83,7 @@ def install_project(session: nox.Session) -> None:
         "aiosmtpd>=1.4.6,<2.0",
         "black>=25.0,<26.0",
         "build>=1.2,<2.0",
+        "editables>=0.5,<1.0",
         "hatchling>=1.24,<2.0",
         "nox>=2024.10,<2026.0",
         "pyrefly>=0.39,<0.40",
