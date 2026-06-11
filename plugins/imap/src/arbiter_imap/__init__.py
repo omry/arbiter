@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Callable, Protocol, cast
 
 from hydra.core.config_store import ConfigStore
@@ -18,6 +19,7 @@ from .config import (
     IMAPAccessPolicyConfig,
     IMAPConfig,
     IMAPFlagMode,
+    IMAPFolderConfig,
     register_configs as register_imap_configs,
     resolve_imap_flag_mode,
     resolve_system_flag_key,
@@ -63,6 +65,14 @@ class IMAPClientProtocol(Protocol):
 
     def delete_message(self, *, folder: str, uid: str) -> None: ...
 
+    def append_message(
+        self,
+        *,
+        folder: str,
+        message_bytes: bytes,
+        flags: Sequence[str] = (r"\Seen",),
+    ) -> None: ...
+
 
 IMAPClientFactory = Callable[[IMAPConfig], IMAPClientProtocol]
 
@@ -87,6 +97,26 @@ FOLDER_PROPERTY = {
     "type": "string",
     "description": "Configured IMAP folder name. Defaults to the account default folder.",
 }
+ROOT_FOLDER_PROPERTY = {
+    "type": "string",
+    "description": (
+        "Optional configured folder prefix to browse or search beneath. "
+        "Omit to start at the account root."
+    ),
+}
+FOLDER_LIMIT_PROPERTY = {
+    "type": "integer",
+    "minimum": 1,
+    "maximum": 100,
+    "description": (
+        "Maximum number of folders to return. Results include truncated=true "
+        "when more folders match."
+    ),
+}
+RECURSIVE_PROPERTY = {
+    "type": "boolean",
+    "description": "Whether to include all configured descendants under root.",
+}
 MESSAGE_ID_PROPERTY = {
     "type": "string",
     "description": "IMAP UID scoped to the selected account and folder.",
@@ -102,6 +132,22 @@ LIMIT_PROPERTY = {
     "description": "Maximum number of messages to return.",
 }
 IMAP_OPERATION_DESCRIPTORS = (
+    OperationDescriptor(
+        name="list_folders",
+        description=(
+            "List configured IMAP folders for the selected account, optionally "
+            "beneath a folder prefix."
+        ),
+        input_schema=_object_schema(
+            {
+                "account": ACCOUNT_PROPERTY,
+                "root": ROOT_FOLDER_PROPERTY,
+                "recursive": RECURSIVE_PROPERTY,
+                "limit": FOLDER_LIMIT_PROPERTY,
+            },
+            ["account"],
+        ),
+    ),
     OperationDescriptor(
         name="list_messages",
         description=(
@@ -204,6 +250,26 @@ IMAP_OPERATION_DESCRIPTORS = (
         ),
     ),
     OperationDescriptor(
+        name="search_folders",
+        description=(
+            "Search configured IMAP folders for the selected account by folder "
+            "name, description, or kind."
+        ),
+        input_schema=_object_schema(
+            {
+                "account": ACCOUNT_PROPERTY,
+                "query": {
+                    "type": "string",
+                    "description": "Text to match against configured folder metadata.",
+                },
+                "root": ROOT_FOLDER_PROPERTY,
+                "recursive": RECURSIVE_PROPERTY,
+                "limit": FOLDER_LIMIT_PROPERTY,
+            },
+            ["account", "query"],
+        ),
+    ),
+    OperationDescriptor(
         name="delete_message",
         description=(
             "Delete one message by IMAP UID from a configured folder on the selected "
@@ -219,6 +285,12 @@ IMAP_OPERATION_DESCRIPTORS = (
         ),
     ),
 )
+
+
+@dataclass(frozen=True)
+class _FolderItems:
+    items: list[dict[str, object]]
+    truncated: bool
 
 
 class IMAPRuntime:
@@ -311,6 +383,31 @@ class IMAPRuntime:
                 self._message_to_dict(message, imap_policy, include_body=False)
                 for message in messages
             ],
+        }
+
+    def list_folders(
+        self,
+        account: str,
+        root: str | None = None,
+        recursive: bool = False,
+        limit: int = 50,
+    ) -> dict[str, object]:
+        imap_config = self._resolve_account_config("list_folders", account)
+        normalized_root = self._normalize_folder_root(root)
+        normalized_limit = self._normalize_folder_limit(limit)
+        folder_items = self._folder_items(
+            imap_config,
+            root=normalized_root,
+            recursive=recursive,
+            limit=normalized_limit,
+        )
+        return {
+            "account": account,
+            "root": normalized_root,
+            "recursive": recursive,
+            "limit": normalized_limit,
+            "truncated": folder_items.truncated,
+            "folders": folder_items.items,
         }
 
     def get_message(
@@ -455,6 +552,38 @@ class IMAPRuntime:
             ],
         }
 
+    def search_folders(
+        self,
+        account: str,
+        query: str,
+        root: str | None = None,
+        recursive: bool = True,
+        limit: int = 20,
+    ) -> dict[str, object]:
+        imap_config = self._resolve_account_config("search_folders", account)
+        normalized_query = query.strip()
+        if not normalized_query:
+            raise ValueError("search_folders requires a non-empty query")
+        normalized_root = self._normalize_folder_root(root)
+        normalized_limit = self._normalize_folder_limit(limit)
+        query_text = normalized_query.casefold()
+        folder_items = self._folder_items(
+            imap_config,
+            root=normalized_root,
+            recursive=recursive,
+            limit=normalized_limit,
+            query=query_text,
+        )
+        return {
+            "account": account,
+            "query": normalized_query,
+            "root": normalized_root,
+            "recursive": recursive,
+            "limit": normalized_limit,
+            "truncated": folder_items.truncated,
+            "folders": folder_items.items,
+        }
+
     def move_message(
         self,
         account: str,
@@ -538,18 +667,32 @@ class IMAPRuntime:
             "message_id": uid,
         }
 
+    def append_sent_message(
+        self,
+        *,
+        account: str,
+        folder: str,
+        message_bytes: bytes,
+    ) -> None:
+        imap_config = self._resolve_account_config("append_sent_message", account)
+        folder_name = self._resolve_folder(
+            "append_sent_message",
+            imap_config,
+            folder,
+        )
+        self._make_client(imap_config).append_message(
+            folder=folder_name,
+            message_bytes=message_bytes,
+            flags=(r"\Seen",),
+        )
+
     def _resolve_context(
         self,
         tool_name: str,
         account_name: str,
         folder: str | None,
     ) -> tuple[IMAPConfig, IMAPAccessPolicyConfig, str]:
-        imap_config = self._accounts.get(account_name)
-        if imap_config is None:
-            raise ValueError(
-                f"{tool_name} requires an IMAP-enabled account: {account_name}"
-            )
-
+        imap_config = self._resolve_account_config(tool_name, account_name)
         folder_name = self._resolve_optional_folder(tool_name, imap_config, folder)
         imap_policy = self._policies.get(imap_config.policy)
         if imap_policy is None:
@@ -557,6 +700,14 @@ class IMAPRuntime:
                 f"{tool_name} account references an unknown IMAP policy: {account_name}"
             )
         return imap_config, imap_policy, folder_name
+
+    def _resolve_account_config(self, tool_name: str, account_name: str) -> IMAPConfig:
+        imap_config = self._accounts.get(account_name)
+        if imap_config is None:
+            raise ValueError(
+                f"{tool_name} requires an IMAP-enabled account: {account_name}"
+            )
+        return imap_config
 
     def _validate_policy_references(self) -> None:
         for account_name, imap_config in sorted(self._accounts.items()):
@@ -646,6 +797,87 @@ class IMAPRuntime:
         if limit > 100:
             raise ValueError("IMAP message limit must be at most 100")
         return limit
+
+    def _normalize_folder_limit(self, limit: int) -> int:
+        if limit < 1:
+            raise ValueError("IMAP folder limit must be at least 1")
+        if limit > 100:
+            raise ValueError("IMAP folder limit must be at most 100")
+        return limit
+
+    def _normalize_folder_root(self, root: str | None) -> str | None:
+        if root is None:
+            return None
+        normalized = root.strip().strip("/")
+        return normalized or None
+
+    def _folder_items(
+        self,
+        imap_config: IMAPConfig,
+        *,
+        root: str | None,
+        recursive: bool,
+        limit: int,
+        query: str | None = None,
+    ) -> _FolderItems:
+        items: list[dict[str, object]] = []
+        for folder_name, folder_config in sorted(imap_config.folders.items()):
+            if not self._folder_matches_root(folder_name, root, recursive=recursive):
+                continue
+            item = self._folder_to_dict(
+                folder_name,
+                folder_config,
+                default_folder=imap_config.default_folder,
+            )
+            if query is not None and not self._folder_matches_query(item, query):
+                continue
+            items.append(item)
+            if len(items) > limit:
+                return _FolderItems(items=items[:limit], truncated=True)
+        return _FolderItems(items=items, truncated=False)
+
+    def _folder_matches_root(
+        self,
+        folder_name: str,
+        root: str | None,
+        *,
+        recursive: bool,
+    ) -> bool:
+        if root is None:
+            relative = folder_name
+        elif folder_name == root:
+            return False
+        elif folder_name.startswith(f"{root}/"):
+            relative = folder_name[len(root) + 1 :]
+        else:
+            return False
+        if recursive:
+            return True
+        return "/" not in relative
+
+    def _folder_to_dict(
+        self,
+        folder_name: str,
+        folder_config: IMAPFolderConfig,
+        *,
+        default_folder: str | None,
+    ) -> dict[str, object]:
+        return {
+            "name": folder_name,
+            "description": folder_config.description,
+            "kind": (
+                folder_config.kind.value if folder_config.kind is not None else None
+            ),
+            "default": folder_name == default_folder,
+        }
+
+    def _folder_matches_query(self, folder: dict[str, object], query: str) -> bool:
+        searchable = [
+            cast(str, folder["name"]),
+            cast(str, folder["description"]),
+            cast(str | None, folder["kind"]) or "",
+        ]
+        return any(query in value.casefold() for value in searchable)
 
     def _normalize_message_uid(self, message_id: str) -> str:
         uid = message_id.strip()
@@ -752,6 +984,9 @@ default_folder: INBOX
 folders:
   INBOX:
     description: Primary inbox.
+    # Optional folder kind: all, archive, drafts, flagged, junk, sent, or trash.
+    # These map to IMAP special-use mailbox attributes.
+    kind:
 """
 
 
@@ -860,6 +1095,13 @@ class IMAPServicePlugin:
                 folder=cast(str | None, arguments.get("folder")),
                 limit=cast(int, arguments.get("limit", 20)),
             )
+        if operation == "list_folders":
+            return runtime.list_folders(
+                account=cast(str, arguments.get("account")),
+                root=cast(str | None, arguments.get("root")),
+                recursive=cast(bool, arguments.get("recursive", False)),
+                limit=cast(int, arguments.get("limit", 50)),
+            )
         if operation == "get_message":
             return runtime.get_message(
                 account=cast(str, arguments.get("account")),
@@ -878,6 +1120,14 @@ class IMAPServicePlugin:
                 account=cast(str, arguments.get("account")),
                 query=cast(str, arguments.get("query")),
                 folder=cast(str | None, arguments.get("folder")),
+                limit=cast(int, arguments.get("limit", 20)),
+            )
+        if operation == "search_folders":
+            return runtime.search_folders(
+                account=cast(str, arguments.get("account")),
+                query=cast(str, arguments.get("query")),
+                root=cast(str | None, arguments.get("root")),
+                recursive=cast(bool, arguments.get("recursive", True)),
                 limit=cast(int, arguments.get("limit", 20)),
             )
         if operation == "move_message":

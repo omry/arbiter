@@ -22,11 +22,13 @@ from arbiter_imap.config import (
     IMAPConfig,
     IMAPFlagMode,
     IMAPFolderConfig,
+    IMAPFolderKind,
     register_configs as register_imap_configs,
 )
 from arbiter_smtp.config import (
     MailTlsMode as SMTPMailTlsMode,
     SMTPConfig,
+    SMTPSentCopyFailureMode,
     SMTPServicePolicyConfig,
     register_configs as register_smtp_configs,
 )
@@ -63,6 +65,36 @@ arbiter:
         )
         with initialize_config_dir(version_base=None, config_dir=str(config_dir)):
             return compose(config_name="config", overrides=overrides or [])
+
+
+def _compose_imap_folder_config(*, kind: str) -> DictConfig:
+    _register_all_configs()
+    with TemporaryDirectory() as tmp_dir:
+        config_dir = Path(tmp_dir)
+        (config_dir / "config.yaml").write_text(
+            f"""
+defaults:
+  - arbiter_app_config_schema
+  - /arbiter/account/imap/schema@arbiter.account.imap.primary
+  - _self_
+
+arbiter:
+  server:
+    name: arbiter
+  account:
+    imap:
+      primary:
+        folders:
+          Sent:
+            description: Sent mail.
+            kind: {kind}
+  policy: {{}}
+  etc: {{}}
+""",
+            encoding="utf-8",
+        )
+        with initialize_config_dir(version_base=None, config_dir=str(config_dir)):
+            return compose(config_name="config")
 
 
 def test_compose_config_returns_hydra_config() -> None:
@@ -301,13 +333,33 @@ def test_hydra_rejects_invalid_plugin_enum_values() -> None:
             ]
         )
 
+    with pytest.raises(
+        ConfigCompositionException,
+        match="arbiter.account.imap.primary.folders.Sent.kind",
+    ):
+        _compose_imap_folder_config(kind="bogus")
+
+    with pytest.raises(
+        ConfigCompositionException,
+        match="arbiter.policy.smtp.bot.sent_copy.on_failure",
+    ):
+        _compose_config(
+            [
+                "+arbiter/policy/smtp@arbiter.policy.smtp.bot=schema",
+                "arbiter.policy.smtp.bot.sent_copy.on_failure=bogus",
+            ]
+        )
+
 
 def test_hydra_coerces_plugin_enum_values() -> None:
     cfg = _compose_config(
         [
             "+arbiter/account/smtp@arbiter.account.smtp.primary=schema",
+            "+arbiter/policy/smtp@arbiter.policy.smtp.bot=schema",
             "+arbiter/policy/imap@arbiter.policy.imap.bot=schema",
             "arbiter.account.smtp.primary.tls=implicit",
+            "arbiter.account.smtp.primary.sent_copy.folder=Sent",
+            "arbiter.policy.smtp.bot.sent_copy.on_failure=fail",
             "arbiter.policy.imap.bot.system_flags.seen=read_write",
             "+arbiter.policy.imap.bot.user_flags.bot_followed_up=read_only",
             "+arbiter.policy.imap.bot.confirmation_required=[read]",
@@ -315,6 +367,14 @@ def test_hydra_coerces_plugin_enum_values() -> None:
     )
 
     assert cfg.arbiter.account.smtp.primary.tls == SMTPMailTlsMode.implicit
+    assert cfg.arbiter.account.smtp.primary.sent_copy.folder == "Sent"
+    assert (
+        cfg.arbiter.policy.smtp.bot.sent_copy.on_failure == SMTPSentCopyFailureMode.fail
+    )
+    folder_cfg = _compose_imap_folder_config(kind="sent")
+    assert (
+        folder_cfg.arbiter.account.imap.primary.folders.Sent.kind == IMAPFolderKind.sent
+    )
     assert cfg.arbiter.policy.imap.bot.system_flags.seen == IMAPFlagMode.read_write
     assert (
         cfg.arbiter.policy.imap.bot.user_flags.bot_followed_up == IMAPFlagMode.read_only

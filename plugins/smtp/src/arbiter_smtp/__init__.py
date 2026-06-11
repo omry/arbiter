@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from email import policy as email_policy
 from email.message import EmailMessage
-from email.utils import formataddr, make_msgid
+from email.utils import format_datetime, formataddr, make_msgid
 import hashlib
 import json
 import secrets
@@ -37,7 +39,20 @@ class SendEmailResult:
     tool: str
     message_id: str
     recipient_count: int
+    sent_copy: dict[str, object] | None = None
     idempotency_replayed: bool = False
+
+
+@dataclass(frozen=True)
+class SentCopyDestination:
+    account: str
+    folder: str
+
+
+class SMTPSentCopyError(RuntimeError):
+    def __init__(self, message: str, *, result: SendEmailResult) -> None:
+        super().__init__(message)
+        self.result = result
 
 
 class SMTPClientProtocol(Protocol):
@@ -45,9 +60,26 @@ class SMTPClientProtocol(Protocol):
 
     def send(
         self,
-        message: EmailMessage,
+        message_bytes: bytes,
         sender: str,
         recipients: list[str],
+    ) -> None: ...
+
+
+class SentMessageAppender(Protocol):
+    def resolve_destination(
+        self,
+        *,
+        account: str,
+        folder: str | None,
+    ) -> SentCopyDestination: ...
+
+    def append_sent_message(
+        self,
+        *,
+        account: str,
+        folder: str,
+        message_bytes: bytes,
     ) -> None: ...
 
 
@@ -117,6 +149,7 @@ class SMTPRuntime:
         time_provider: TimeProvider = monotonic,
         idempotency_store_factory: SMTPIdempotencyStoreFactory = SMTPIdempotencyStore,
         plugin_storage: PluginStorage | None = None,
+        sent_message_appender: SentMessageAppender | None = None,
     ) -> None:
         self._accounts = cast(Mapping[str, SMTPConfig], accounts)
         self._policies = cast(
@@ -127,9 +160,16 @@ class SMTPRuntime:
         self._time_provider = time_provider
         self._idempotency_store_factory = idempotency_store_factory
         self._plugin_storage = plugin_storage
+        self._sent_message_appender = sent_message_appender
         self._idempotency_stores: dict[str, SMTPIdempotencyStore] = {}
         self._attempt_timestamps: dict[str, list[float]] = {}
         self._validate_config()
+
+    def configure_sent_message_appender(
+        self,
+        sent_message_appender: SentMessageAppender,
+    ) -> None:
+        self._sent_message_appender = sent_message_appender
 
     def account_summaries(self) -> dict[str, object]:
         return {
@@ -149,13 +189,23 @@ class SMTPRuntime:
     def test_accounts(self) -> dict[str, object]:
         results: dict[str, object] = {}
         for account_name, smtp_config in sorted(self._accounts.items()):
+            smtp_policy = self._policies[smtp_config.policy]
+            stage = "connect_auth_noop_idempotency"
+            strict_sent_copy = self._sent_copy_requires_readiness_check(smtp_policy)
             try:
                 self._smtp_client_factory(smtp_config).test_connection()
-                self._test_idempotency_storage(self._policies[smtp_config.policy])
+                self._test_idempotency_storage(smtp_policy)
+                if strict_sent_copy:
+                    stage = "connect_auth_noop_idempotency_sent_copy"
+                    self._test_sent_copy_destination(
+                        account=account_name,
+                        smtp_config=smtp_config,
+                        smtp_policy=smtp_policy,
+                    )
             except Exception as exc:
                 results[account_name] = {
                     "status": "failed",
-                    "stage": "connect_auth_noop_idempotency",
+                    "stage": stage,
                     "error_type": type(exc).__name__,
                     "message": str(exc),
                 }
@@ -166,9 +216,11 @@ class SMTPRuntime:
             if smtp_config.authenticate:
                 checks.append("authenticate")
             checks.append("idempotency_storage")
+            if strict_sent_copy:
+                checks.append("sent_copy_destination")
             results[account_name] = {
                 "status": "ok",
-                "stage": "connect_auth_noop_idempotency",
+                "stage": stage,
                 "checks": checks,
                 "delivery": "skipped",
                 "reason": "read-only SMTP account test does not send mail",
@@ -205,6 +257,7 @@ class SMTPRuntime:
         if recipients_cc:
             message["Cc"] = ", ".join(recipients_cc)
         message["Subject"] = normalized_subject
+        message["Date"] = format_datetime(datetime.now(timezone.utc))
         message["Message-ID"] = make_msgid(domain=self._sender_domain(smtp_config))
 
         if text_body:
@@ -213,6 +266,7 @@ class SMTPRuntime:
                 message.add_alternative(html_body, subtype="html")
         else:
             message.set_content(html_body or "", subtype="html")
+        message_bytes = message.as_bytes(policy=email_policy.SMTP)
 
         envelope_recipients = recipients_to + recipients_cc + recipients_bcc
         self._enforce_policy(account, smtp_policy, envelope_recipients)
@@ -239,17 +293,28 @@ class SMTPRuntime:
             )
             replayed_result = self._reserve_or_replay_idempotency(
                 smtp_policy,
+                account=account,
+                smtp_config=smtp_config,
                 cache_key=cache_key,
                 payload_hash=payload_hash,
             )
             if replayed_result is not None:
                 return replayed_result
 
+        sent_copy_destination: SentCopyDestination | None = None
+        sent_copy_result: dict[str, object] | None = None
         try:
+            sent_copy_destination, sent_copy_result = (
+                self._resolve_sent_copy_destination(
+                    account=account,
+                    smtp_config=smtp_config,
+                    smtp_policy=smtp_policy,
+                )
+            )
             self._consume_rate_limit(account, smtp_policy)
             smtp_client = self._smtp_client_factory(smtp_config)
             smtp_client.send(
-                message,
+                message_bytes,
                 sender=smtp_config.from_email,
                 recipients=envelope_recipients,
             )
@@ -261,10 +326,23 @@ class SMTPRuntime:
                 self._idempotency_store(smtp_policy).delete(cache_key)
             raise
 
+        if sent_copy_result is None and sent_copy_destination is not None:
+            sent_copy_result = self._append_sent_copy(
+                destination=sent_copy_destination,
+                message_bytes=message_bytes,
+            )
+        if sent_copy_result is None:
+            sent_copy_result = self._sent_copy_outcome(
+                "skipped",
+                account=account,
+                reason="sent copy destination was not resolved",
+            )
+
         result = SendEmailResult(
             tool="send_email",
             message_id=str(message["Message-ID"]),
             recipient_count=len(envelope_recipients),
+            sent_copy=sent_copy_result,
         )
         if cache_key is not None and payload_hash is not None:
             self._idempotency_store(smtp_policy).store_success(
@@ -273,9 +351,15 @@ class SMTPRuntime:
                 result=SMTPIdempotencyResult(
                     message_id=result.message_id,
                     recipient_count=result.recipient_count,
+                    sent_copy=result.sent_copy,
+                    sent_copy_message_bytes=self._sent_copy_retry_message_bytes(
+                        sent_copy_result,
+                        message_bytes,
+                    ),
                 ),
                 expire_seconds=self._idempotency_expire_seconds(smtp_policy),
             )
+        self._raise_if_submitted_sent_copy_required(result, smtp_policy)
         return result
 
     def _resolve_context(
@@ -296,12 +380,204 @@ class SMTPRuntime:
 
         return smtp_config, smtp_policy
 
+    def _resolve_sent_copy_destination(
+        self,
+        *,
+        account: str,
+        smtp_config: SMTPConfig,
+        smtp_policy: SMTPServicePolicyConfig,
+        enforce_required: bool = True,
+    ) -> tuple[SentCopyDestination | None, dict[str, object] | None]:
+        if not smtp_policy.sent_copy.enabled:
+            return None, self._sent_copy_outcome("disabled", account=account)
+
+        folder_override = self._normalize_sent_copy_folder(smtp_config.sent_copy.folder)
+        if self._sent_message_appender is None:
+            result = self._sent_copy_outcome(
+                "skipped",
+                account=account,
+                reason="IMAP sent-copy appender is not configured",
+            )
+            if enforce_required:
+                self._raise_if_sent_copy_required(result, smtp_policy)
+            return None, result
+
+        try:
+            destination = self._sent_message_appender.resolve_destination(
+                account=account,
+                folder=folder_override,
+            )
+        except Exception as exc:
+            result = self._sent_copy_outcome(
+                "skipped",
+                account=account,
+                reason=str(exc),
+                error_type=type(exc).__name__,
+            )
+            if enforce_required:
+                self._raise_if_sent_copy_required(result, smtp_policy)
+            return None, result
+
+        return destination, None
+
+    def _append_sent_copy(
+        self,
+        *,
+        destination: SentCopyDestination,
+        message_bytes: bytes,
+    ) -> dict[str, object]:
+        if self._sent_message_appender is None:
+            return self._sent_copy_outcome(
+                "skipped",
+                account=destination.account,
+                folder=destination.folder,
+                reason="IMAP sent-copy appender is not configured",
+            )
+        try:
+            self._sent_message_appender.append_sent_message(
+                account=destination.account,
+                folder=destination.folder,
+                message_bytes=message_bytes,
+            )
+        except Exception as exc:
+            return self._sent_copy_outcome(
+                "failed",
+                account=destination.account,
+                folder=destination.folder,
+                reason=str(exc),
+                error_type=type(exc).__name__,
+            )
+        return self._sent_copy_outcome(
+            "saved",
+            account=destination.account,
+            folder=destination.folder,
+        )
+
+    def _raise_if_sent_copy_required(
+        self,
+        result: dict[str, object],
+        smtp_policy: SMTPServicePolicyConfig,
+    ) -> None:
+        if smtp_policy.sent_copy.on_failure.value != "fail":
+            return
+        raise RuntimeError(f"send_email sent-copy preflight failed: {result['reason']}")
+
+    def _normalize_sent_copy_folder(self, folder: str | None) -> str | None:
+        if folder is None:
+            return None
+        normalized = folder.strip()
+        if not normalized:
+            raise ValueError("SMTP sent_copy.folder must be non-empty when configured")
+        return normalized
+
+    def _sent_copy_outcome(
+        self,
+        status: str,
+        *,
+        account: str | None = None,
+        folder: str | None = None,
+        reason: str | None = None,
+        error_type: str | None = None,
+    ) -> dict[str, object]:
+        result: dict[str, object] = {"status": status}
+        if account is not None:
+            result["account"] = account
+        if folder is not None:
+            result["folder"] = folder
+        if reason is not None:
+            result["reason"] = reason
+        if error_type is not None:
+            result["error_type"] = error_type
+        return result
+
+    def _sent_copy_retry_message_bytes(
+        self,
+        sent_copy_result: dict[str, object],
+        message_bytes: bytes,
+    ) -> bytes | None:
+        if sent_copy_result.get("status") in {"failed", "skipped"}:
+            return message_bytes
+        return None
+
+    def _sent_copy_needs_idempotent_retry(
+        self,
+        result: SMTPIdempotencyResult,
+    ) -> bool:
+        if result.sent_copy_message_bytes is None:
+            return False
+        if result.sent_copy is None:
+            return True
+        return result.sent_copy.get("status") in {"failed", "skipped"}
+
+    def _retry_sent_copy_from_idempotency(
+        self,
+        *,
+        account: str,
+        smtp_config: SMTPConfig,
+        smtp_policy: SMTPServicePolicyConfig,
+        result: SMTPIdempotencyResult,
+    ) -> SendEmailResult:
+        sent_copy_result = result.sent_copy
+        if result.sent_copy_message_bytes is not None:
+            destination, resolved_result = self._resolve_sent_copy_destination(
+                account=account,
+                smtp_config=smtp_config,
+                smtp_policy=smtp_policy,
+                enforce_required=False,
+            )
+            sent_copy_result = resolved_result
+            if destination is not None:
+                sent_copy_result = self._append_sent_copy(
+                    destination=destination,
+                    message_bytes=result.sent_copy_message_bytes,
+                )
+        if sent_copy_result is None:
+            sent_copy_result = self._sent_copy_outcome(
+                "skipped",
+                account=account,
+                reason="sent copy destination was not resolved",
+            )
+        replayed_result = SendEmailResult(
+            tool="send_email",
+            message_id=result.message_id,
+            recipient_count=result.recipient_count,
+            sent_copy=sent_copy_result,
+            idempotency_replayed=True,
+        )
+        self._raise_if_submitted_sent_copy_required(replayed_result, smtp_policy)
+        return replayed_result
+
+    def _raise_if_submitted_sent_copy_required(
+        self,
+        result: SendEmailResult,
+        smtp_policy: SMTPServicePolicyConfig,
+    ) -> None:
+        if smtp_policy.sent_copy.on_failure.value != "fail":
+            return
+        sent_copy_result = result.sent_copy or {}
+        if sent_copy_result.get("status") in {"saved", "disabled"}:
+            return
+        reason = sent_copy_result.get("reason")
+        suffix = f": {reason}" if reason else ""
+        raise SMTPSentCopyError(
+            "send_email submitted the SMTP message but failed to save "
+            f"a sent copy{suffix}",
+            result=result,
+        )
+
     def _validate_config(self) -> None:
         for account_name, smtp_config in sorted(self._accounts.items()):
             if smtp_config.policy not in self._policies:
                 raise ValueError(
                     "SMTP account references an unknown policy: "
                     f"{account_name} -> {smtp_config.policy}"
+                )
+            if (
+                smtp_config.sent_copy.folder is not None
+                and not smtp_config.sent_copy.folder.strip()
+            ):
+                raise ValueError(
+                    f"SMTP sent_copy.folder must be non-empty: {account_name}"
                 )
         for policy_name, smtp_policy in sorted(self._policies.items()):
             if smtp_policy.idempotency.expiration_days <= 0:
@@ -476,6 +752,8 @@ class SMTPRuntime:
         self,
         smtp_policy: SMTPServicePolicyConfig,
         *,
+        account: str,
+        smtp_config: SMTPConfig,
         cache_key: str,
         payload_hash: str,
     ) -> SendEmailResult | None:
@@ -505,10 +783,33 @@ class SMTPRuntime:
             )
         if record.result is None:
             raise ValueError("send_email idempotency_key is already in progress")
+        if self._sent_copy_needs_idempotent_retry(record.result):
+            replayed_result = self._retry_sent_copy_from_idempotency(
+                account=account,
+                smtp_config=smtp_config,
+                smtp_policy=smtp_policy,
+                result=record.result,
+            )
+            store.store_success(
+                cache_key,
+                payload_hash=payload_hash,
+                result=SMTPIdempotencyResult(
+                    message_id=replayed_result.message_id,
+                    recipient_count=replayed_result.recipient_count,
+                    sent_copy=replayed_result.sent_copy,
+                    sent_copy_message_bytes=self._sent_copy_retry_message_bytes(
+                        replayed_result.sent_copy or {},
+                        record.result.sent_copy_message_bytes or b"",
+                    ),
+                ),
+                expire_seconds=expire_seconds,
+            )
+            return replayed_result
         return SendEmailResult(
             tool="send_email",
             message_id=record.result.message_id,
             recipient_count=record.result.recipient_count,
+            sent_copy=record.result.sent_copy,
             idempotency_replayed=True,
         )
 
@@ -543,6 +844,29 @@ class SMTPRuntime:
                 raise ValueError("SMTP idempotency cache readiness read failed")
         finally:
             store.delete(key)
+
+    def _sent_copy_requires_readiness_check(
+        self,
+        smtp_policy: SMTPServicePolicyConfig,
+    ) -> bool:
+        return (
+            smtp_policy.sent_copy.enabled
+            and smtp_policy.sent_copy.on_failure.value == "fail"
+        )
+
+    def _test_sent_copy_destination(
+        self,
+        *,
+        account: str,
+        smtp_config: SMTPConfig,
+        smtp_policy: SMTPServicePolicyConfig,
+    ) -> None:
+        self._resolve_sent_copy_destination(
+            account=account,
+            smtp_config=smtp_config,
+            smtp_policy=smtp_policy,
+            enforce_required=True,
+        )
 
     def _idempotency_cache_dir(self, smtp_policy: SMTPServicePolicyConfig) -> str:
         configured_cache_dir = smtp_policy.idempotency.cache_dir
@@ -621,6 +945,11 @@ from_name: Arbiter
 tls: starttls
 verify_peer: true
 timeout_seconds: 30
+
+# Optional override for the IMAP sent-copy folder used after successful sends.
+# Leave null to infer the only kind=sent folder on the matching IMAP account.
+sent_copy:
+  folder: null
 """
 
 
@@ -652,6 +981,13 @@ recipient_policy:
   blocked_recipients: []
   allowed_domain_patterns: []
   blocked_domain_patterns: []
+
+# Save submitted messages to the matching IMAP account's Sent folder when one
+# can be resolved. on_failure=warn keeps SMTP success even if IMAP append fails;
+# on_failure=fail treats missing sent-copy audit as an operation failure.
+sent_copy:
+  enabled: true
+  on_failure: warn
 """
 
 
@@ -701,6 +1037,10 @@ class SMTPServicePlugin:
             plugin_storage=cast(
                 PluginStorage | None, context.dependencies.get("plugin_storage")
             ),
+            sent_message_appender=cast(
+                SentMessageAppender | None,
+                context.dependencies.get("sent_message_appender"),
+            ),
         )
 
     def describe_capability(
@@ -748,6 +1088,7 @@ class SMTPServicePlugin:
             "ok": True,
             "message_id": result.message_id,
             "recipient_count": result.recipient_count,
+            "sent_copy": result.sent_copy,
             "idempotency_replayed": result.idempotency_replayed,
         }
 

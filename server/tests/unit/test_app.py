@@ -1,5 +1,4 @@
 from collections.abc import Sequence
-from email.message import EmailMessage
 from typing import cast
 
 import pytest
@@ -11,6 +10,7 @@ from arbiter_imap.config import (
     IMAPConfig,
     IMAPFlagMode,
     IMAPFolderConfig,
+    IMAPFolderKind,
     IMAPSystemFlagsPolicyConfig,
 )
 from arbiter_smtp.config import (
@@ -31,17 +31,17 @@ from arbiter_smtp import SMTPRuntime
 
 class FakeSMTPClient:
     def __init__(self) -> None:
-        self.message: EmailMessage | None = None
+        self.message_bytes: bytes | None = None
         self.sender: str | None = None
         self.recipients: list[str] | None = None
 
     def send(
         self,
-        message: EmailMessage,
+        message_bytes: bytes,
         sender: str,
         recipients: list[str],
     ) -> None:
-        self.message = message
+        self.message_bytes = message_bytes
         self.sender = sender
         self.recipients = recipients
 
@@ -70,6 +70,7 @@ class FakeIMAPClient:
         self.move_calls: list[dict[str, object]] = []
         self.mark_read_calls: list[dict[str, object]] = []
         self.delete_calls: list[dict[str, object]] = []
+        self.append_calls: list[dict[str, object]] = []
         self.messages = [
             FetchedIMAPMessage(
                 uid="42",
@@ -149,6 +150,17 @@ class FakeIMAPClient:
 
     def delete_message(self, *, folder: str, uid: str) -> None:
         self.delete_calls.append({"folder": folder, "uid": uid})
+
+    def append_message(
+        self,
+        *,
+        folder: str,
+        message_bytes: bytes,
+        flags: Sequence[str] = (r"\Seen",),
+    ) -> None:
+        self.append_calls.append(
+            {"folder": folder, "message_bytes": message_bytes, "flags": tuple(flags)}
+        )
 
 
 class RecordingIMAPClientFactory:
@@ -247,7 +259,18 @@ def _imap_config(policy: str = "personal") -> IMAPConfig:
         default_folder="INBOX",
         folders={
             "INBOX": IMAPFolderConfig(description="Inbox"),
-            "Archive": IMAPFolderConfig(description="Archive"),
+            "Archive": IMAPFolderConfig(
+                description="Archive",
+                kind=IMAPFolderKind.archive,
+            ),
+            "Archive/2024": IMAPFolderConfig(
+                description="Archived mail from 2024",
+                kind=IMAPFolderKind.archive,
+            ),
+            "Sent": IMAPFolderConfig(
+                description="Sent mail",
+                kind=IMAPFolderKind.sent,
+            ),
         },
     )
 
@@ -401,8 +424,8 @@ def test_send_email_uses_account_policy() -> None:
         "cc@example.com",
         "bcc@example.com",
     ]
-    assert client.message is not None
-    assert client.message["Subject"] == "Hello"
+    assert client.message_bytes is not None
+    assert b"Subject: Hello" in client.message_bytes
 
 
 def test_send_email_rejects_unconfigured_account() -> None:
@@ -503,6 +526,99 @@ def test_list_messages_uses_account_policy_and_folder_config() -> None:
         }
     ]
     assert factory.clients[0].list_calls == [{"folder": "INBOX", "limit": 1}]
+
+
+def test_list_folders_browses_configured_folders_without_imap_client() -> None:
+    factory = RecordingIMAPClientFactory()
+    runtime = _imap_runtime(imap_client_factory=factory)
+
+    assert runtime.list_folders(account="personal", limit=2) == {
+        "account": "personal",
+        "root": None,
+        "recursive": False,
+        "limit": 2,
+        "truncated": True,
+        "folders": [
+            {
+                "name": "Archive",
+                "description": "Archive",
+                "kind": "archive",
+                "default": False,
+            },
+            {
+                "name": "INBOX",
+                "description": "Inbox",
+                "kind": None,
+                "default": True,
+            },
+        ],
+    }
+    assert runtime.list_folders(account="personal", root="Archive") == {
+        "account": "personal",
+        "root": "Archive",
+        "recursive": False,
+        "limit": 50,
+        "truncated": False,
+        "folders": [
+            {
+                "name": "Archive/2024",
+                "description": "Archived mail from 2024",
+                "kind": "archive",
+                "default": False,
+            },
+        ],
+    }
+    assert factory.clients == []
+
+
+def test_search_folders_matches_name_description_and_kind() -> None:
+    runtime = _imap_runtime()
+
+    assert runtime.search_folders(account="personal", query="sent") == {
+        "account": "personal",
+        "query": "sent",
+        "root": None,
+        "recursive": True,
+        "limit": 20,
+        "truncated": False,
+        "folders": [
+            {
+                "name": "Sent",
+                "description": "Sent mail",
+                "kind": "sent",
+                "default": False,
+            },
+        ],
+    }
+    assert runtime.search_folders(
+        account="personal",
+        query="archive",
+        root="Archive",
+        recursive=True,
+        limit=1,
+    ) == {
+        "account": "personal",
+        "query": "archive",
+        "root": "Archive",
+        "recursive": True,
+        "limit": 1,
+        "truncated": False,
+        "folders": [
+            {
+                "name": "Archive/2024",
+                "description": "Archived mail from 2024",
+                "kind": "archive",
+                "default": False,
+            },
+        ],
+    }
+
+
+def test_search_folders_requires_non_empty_query() -> None:
+    runtime = _imap_runtime()
+
+    with pytest.raises(ValueError, match="search_folders requires a non-empty query"):
+        runtime.search_folders(account="personal", query=" ")
 
 
 def test_imap_runtime_rejects_unknown_policy_reference() -> None:
@@ -706,3 +822,22 @@ def test_imap_mutations_use_configured_account_policy() -> None:
         {"folder": "INBOX", "uid": "42", "read": False}
     ]
     assert factory.clients[2].delete_calls == [{"folder": "INBOX", "uid": "42"}]
+
+
+def test_append_sent_message_uses_configured_folder() -> None:
+    factory = RecordingIMAPClientFactory()
+    runtime = _imap_runtime(imap_client_factory=factory)
+
+    runtime.append_sent_message(
+        account="personal",
+        folder="Sent",
+        message_bytes=b"Subject: Hello\r\n\r\nBody",
+    )
+
+    assert factory.clients[0].append_calls == [
+        {
+            "folder": "Sent",
+            "message_bytes": b"Subject: Hello\r\n\r\nBody",
+            "flags": (r"\Seen",),
+        }
+    ]

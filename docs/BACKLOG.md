@@ -158,6 +158,20 @@ This file is the day-to-day queue for design and implementation gaps.
       the new config only after validation succeeds; failed reloads keep the
       previous runtime active; and logs expose which services changed.
 
+- [ ] `P2` Add a core synchronous service request/reply bus for plugin-to-plugin
+      workflows. SMTP sent-copy saving to IMAP Sent mail is the first use case:
+      SMTP should request an IMAP append and receive a success or failure before
+      returning to the caller, without taking a direct dependency on the IMAP
+      runtime. Acceptance checks: define a core-owned request/reply contract
+      with service name, command name, payload, timeout, correlation id, and
+      structured success/error replies; let plugins register internal handlers
+      that are not exposed as agent operations; route missing service or missing
+      handler cases into structured failures; support in-process dispatch first
+      while keeping the transport boundary compatible with future process
+      isolation; migrate SMTP sent-copy from the temporary server-wired adapter
+      to the bus; and document when plugins should use request/reply versus
+      client-facing operations.
+
 - [ ] `P2` Add per-account service smoke tests. Each service plugin should be
       able to register a quick stateless account test that uses the configured
       credentials and returns a structured status. Arbiter should expose one
@@ -169,7 +183,7 @@ This file is the day-to-day queue for design and implementation gaps.
       statuses with operator-useful messages; and document how deployment smoke
       checks can call the aggregate endpoint.
 
-- [ ] `P2` Add IMAP message flag read/write support.
+- [ ] `P2` Add IMAP message flags APIs.
       Agents need a controlled way to inspect and update message flags such as
       `\Seen`, `\Flagged`, and custom provider flags without dropping to raw
       IMAP behavior. Use the existing IMAP policy model as inspiration for

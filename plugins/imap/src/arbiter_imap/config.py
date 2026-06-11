@@ -27,9 +27,20 @@ class IMAPConfirmationAction(str, Enum):
     delete = "delete"
 
 
+class IMAPFolderKind(str, Enum):
+    all = "all"
+    archive = "archive"
+    drafts = "drafts"
+    flagged = "flagged"
+    junk = "junk"
+    sent = "sent"
+    trash = "trash"
+
+
 @dataclass
 class IMAPFolderConfig:
     description: str = ""
+    kind: IMAPFolderKind | None = None
 
 
 @dataclass

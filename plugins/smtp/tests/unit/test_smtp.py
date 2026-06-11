@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ssl
-from email.message import EmailMessage
 import smtplib
 from typing import Any
 
@@ -13,7 +12,7 @@ from arbiter_smtp.client import SMTPSubmissionClient
 class FakeServer:
     def __init__(self) -> None:
         self.starttls_context: ssl.SSLContext | None = None
-        self.sent_message: EmailMessage | None = None
+        self.sent_message: bytes | None = None
         self.sent_from: str | None = None
         self.sent_to: list[str] | None = None
         self.login_args: tuple[str, str] | None = None
@@ -41,13 +40,13 @@ class FakeServer:
     def noop(self) -> tuple[int, bytes]:
         return 250, b"ok"
 
-    def send_message(
+    def sendmail(
         self,
-        message: EmailMessage,
         from_addr: str,
         to_addrs: list[str],
+        msg: bytes,
     ) -> dict[str, tuple[int, bytes]]:
-        self.sent_message = message
+        self.sent_message = msg
         self.sent_from = from_addr
         self.sent_to = to_addrs
         return self.refused_recipients
@@ -71,6 +70,10 @@ def _smtp_config(
         authenticate = bool(overrides.get("username"))
 
     return SMTPConfig(tls=tls, authenticate=authenticate, **overrides)
+
+
+def _message_bytes() -> bytes:
+    return b"Subject: Hello\r\n\r\nBody"
 
 
 def test_build_ssl_context_disables_verification_when_verify_peer_is_false() -> None:
@@ -112,8 +115,7 @@ def test_send_uses_unverified_context_for_starttls(monkeypatch) -> None:
         )
     )
 
-    message = EmailMessage()
-    message["Subject"] = "Hello"
+    message = _message_bytes()
 
     client.send(message, sender="agent@example.com", recipients=["to@example.com"])
 
@@ -176,8 +178,7 @@ def test_send_uses_smtp_ssl_when_use_ssl_is_enabled(monkeypatch) -> None:
         )
     )
 
-    message = EmailMessage()
-    message["Subject"] = "Hello"
+    message = _message_bytes()
 
     client.send(message, sender="agent@example.com", recipients=["to@example.com"])
 
@@ -197,8 +198,7 @@ def test_send_skips_login_when_username_is_not_configured(monkeypatch) -> None:
     monkeypatch.setattr("arbiter_smtp.client.smtplib.SMTP", fake_smtp)
 
     client = SMTPSubmissionClient(_smtp_config())
-    message = EmailMessage()
-    message["Subject"] = "Hello"
+    message = _message_bytes()
 
     client.send(message, sender="agent@example.com", recipients=["to@example.com"])
 
@@ -212,8 +212,7 @@ def test_send_propagates_connection_errors(monkeypatch) -> None:
     monkeypatch.setattr("arbiter_smtp.client.smtplib.SMTP", fake_smtp)
 
     client = SMTPSubmissionClient(_smtp_config())
-    message = EmailMessage()
-    message["Subject"] = "Hello"
+    message = _message_bytes()
 
     with pytest.raises(OSError, match="connection refused"):
         client.send(message, sender="agent@example.com", recipients=["to@example.com"])
@@ -239,8 +238,7 @@ def test_send_propagates_authentication_errors(monkeypatch) -> None:
     client = SMTPSubmissionClient(
         _smtp_config(authenticate=True, username="user", password="secret")
     )
-    message = EmailMessage()
-    message["Subject"] = "Hello"
+    message = _message_bytes()
 
     with pytest.raises(smtplib.SMTPAuthenticationError):
         client.send(message, sender="agent@example.com", recipients=["to@example.com"])
@@ -258,8 +256,7 @@ def test_send_raises_when_some_recipients_are_refused(monkeypatch) -> None:
     monkeypatch.setattr("arbiter_smtp.client.smtplib.SMTP", fake_smtp)
 
     client = SMTPSubmissionClient(_smtp_config())
-    message = EmailMessage()
-    message["Subject"] = "Hello"
+    message = _message_bytes()
 
     with pytest.raises(smtplib.SMTPRecipientsRefused) as excinfo:
         client.send(

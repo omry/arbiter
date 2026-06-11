@@ -245,7 +245,114 @@ def build_app(
             policies=policies,
             context=runtime_context,
         )
+    _configure_sent_message_appender(cfg, runtimes)
     return ArbiterApp(RuntimeRegistry(runtimes))
+
+
+@dataclass(frozen=True)
+class _SentCopyDestination:
+    account: str
+    folder: str
+
+
+class _IMAPSentMessageAppender:
+    def __init__(
+        self,
+        *,
+        imap_accounts: Mapping[str, object],
+        imap_runtime: object,
+    ) -> None:
+        self._imap_accounts = imap_accounts
+        self._imap_runtime = imap_runtime
+
+    def resolve_destination(
+        self,
+        *,
+        account: str,
+        folder: str | None,
+    ) -> _SentCopyDestination:
+        imap_config = self._imap_accounts.get(account)
+        if imap_config is None:
+            raise ValueError(f"matching IMAP account is not configured: {account}")
+
+        folders = _config_mapping_value(imap_config, "folders")
+        if folder is not None:
+            if folder not in folders:
+                raise ValueError(
+                    f"sent copy folder is not configured for IMAP account "
+                    f"{account}: {folder}"
+                )
+            return _SentCopyDestination(account=account, folder=folder)
+
+        sent_folders = [
+            folder_name
+            for folder_name, folder_config in sorted(folders.items())
+            if _folder_kind_value(folder_config) == "sent"
+        ]
+        if len(sent_folders) == 1:
+            return _SentCopyDestination(account=account, folder=sent_folders[0])
+        if not sent_folders:
+            raise ValueError(
+                f"IMAP account has no folder configured with kind=sent: {account}"
+            )
+        raise ValueError(
+            f"IMAP account has multiple folders configured with kind=sent: {account}"
+        )
+
+    def append_sent_message(
+        self,
+        *,
+        account: str,
+        folder: str,
+        message_bytes: bytes,
+    ) -> None:
+        append_sent_message = getattr(self._imap_runtime, "append_sent_message", None)
+        if not callable(append_sent_message):
+            raise RuntimeError("IMAP runtime does not support sent-copy append")
+        append_sent_message(
+            account=account,
+            folder=folder,
+            message_bytes=message_bytes,
+        )
+
+
+def _configure_sent_message_appender(
+    cfg: HydraConfig,
+    runtimes: Mapping[str, object],
+) -> None:
+    smtp_runtime = runtimes.get("smtp")
+    configure = getattr(smtp_runtime, "configure_sent_message_appender", None)
+    if not callable(configure):
+        return
+    imap_runtime = runtimes.get("imap")
+    imap_accounts = service_accounts_for(cfg, "imap")
+    if imap_runtime is None or imap_accounts is None:
+        return
+    configure(
+        _IMAPSentMessageAppender(
+            imap_accounts=imap_accounts,
+            imap_runtime=imap_runtime,
+        )
+    )
+
+
+def _config_mapping_value(config: object, key: str) -> Mapping[str, object]:
+    value = config.get(key, {}) if isinstance(config, Mapping) else getattr(config, key)
+    if isinstance(value, Mapping):
+        return value
+    raise TypeError(f"config value must be a mapping: {key}")
+
+
+def _folder_kind_value(folder_config: object) -> str | None:
+    kind = (
+        folder_config.get("kind")
+        if isinstance(folder_config, Mapping)
+        else getattr(folder_config, "kind", None)
+    )
+    if kind is None:
+        return None
+    value = getattr(kind, "value", kind)
+    return str(value)
 
 
 def _storage_config(cfg: HydraConfig) -> StorageConfig | Any | None:

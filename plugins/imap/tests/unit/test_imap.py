@@ -228,6 +228,15 @@ def test_runtime_tests_configured_folders_read_only() -> None:
         def delete_message(self, *, folder: str, uid: str) -> None:
             raise AssertionError("delete_message should not be called")
 
+        def append_message(
+            self,
+            *,
+            folder: str,
+            message_bytes: bytes,
+            flags: Sequence[str] = (r"\Seen",),
+        ) -> None:
+            raise AssertionError("append_message should not be called")
+
     clients: list[RecordingIMAPClient] = []
 
     def client_factory(config: IMAPConfig) -> RecordingIMAPClient:
@@ -304,6 +313,15 @@ def test_runtime_skips_folder_probe_when_no_folders_are_configured() -> None:
 
         def delete_message(self, *, folder: str, uid: str) -> None:
             raise AssertionError("delete_message should not be called")
+
+        def append_message(
+            self,
+            *,
+            folder: str,
+            message_bytes: bytes,
+            flags: Sequence[str] = (r"\Seen",),
+        ) -> None:
+            raise AssertionError("append_message should not be called")
 
     runtime = IMAPRuntime(
         accounts={"primary": IMAPConfig(policy="bot")},

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -11,6 +13,8 @@ from diskcache import Cache  # type: ignore[import-untyped]
 class SMTPIdempotencyResult:
     message_id: str
     recipient_count: int
+    sent_copy: dict[str, object] | None = None
+    sent_copy_message_bytes: bytes | None = None
 
 
 @dataclass(frozen=True)
@@ -66,6 +70,14 @@ def _encode_record(record: SMTPIdempotencyRecord) -> str:
                 else {
                     "message_id": record.result.message_id,
                     "recipient_count": record.result.recipient_count,
+                    "sent_copy": record.result.sent_copy,
+                    "sent_copy_message": (
+                        None
+                        if record.result.sent_copy_message_bytes is None
+                        else base64.b64encode(
+                            record.result.sent_copy_message_bytes
+                        ).decode("ascii")
+                    ),
                 }
             ),
         },
@@ -90,12 +102,31 @@ def _decode_record(raw_record: str) -> SMTPIdempotencyRecord:
         raise ValueError("SMTP idempotency cache contains an invalid result")
     message_id = raw_result.get("message_id")
     recipient_count = raw_result.get("recipient_count")
+    sent_copy = raw_result.get("sent_copy")
+    sent_copy_message = raw_result.get("sent_copy_message")
     if not isinstance(message_id, str) or not isinstance(recipient_count, int):
         raise ValueError("SMTP idempotency cache contains an invalid result")
+    if sent_copy is not None and not isinstance(sent_copy, dict):
+        raise ValueError("SMTP idempotency cache contains an invalid sent_copy result")
+    if sent_copy_message is not None and not isinstance(sent_copy_message, str):
+        raise ValueError("SMTP idempotency cache contains an invalid sent_copy message")
+    sent_copy_message_bytes: bytes | None = None
+    if sent_copy_message is not None:
+        try:
+            sent_copy_message_bytes = base64.b64decode(
+                sent_copy_message,
+                validate=True,
+            )
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError(
+                "SMTP idempotency cache contains an invalid sent_copy message"
+            ) from exc
     return SMTPIdempotencyRecord(
         payload_hash=payload_hash,
         result=SMTPIdempotencyResult(
             message_id=message_id,
             recipient_count=recipient_count,
+            sent_copy=sent_copy,
+            sent_copy_message_bytes=sent_copy_message_bytes,
         ),
     )

@@ -53,6 +53,7 @@ from arbiter_imap.config import (
     IMAPAccessPolicyConfig,
     IMAPConfig,
     IMAPFolderConfig,
+    IMAPFolderKind,
 )
 from arbiter_smtp import SendEmailResult, SMTPRuntime, SMTPServicePlugin
 from arbiter_smtp.config import SMTPConfig, SMTPServicePolicyConfig
@@ -2921,6 +2922,58 @@ def test_cli_deploy_docker_generated_helper_prepare_refreshes_repo_wheels(
         "preparing bundle: arbiter-server==0.9.0.dev2 arbiter-smtp==0.9.0.dev2\n"
         f"bundle prepare complete: {wheels_dir}\n"
     )
+
+
+@pytest.mark.parametrize("bundle_command", ["prepare", "check"])
+def test_cli_deploy_docker_generated_helper_rejects_local_source_requirements_for_wheelhouse_commands(
+    bundle_command: str,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-server==0.9.0.dev2",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    (deploy_dir / "requirements.txt").write_text(
+        "/source/arbiter/server\n"
+        "/source/arbiter/plugins/imap\n"
+        "/source/arbiter/plugins/smtp\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "bundle", bundle_command],
+        check=False,
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert (
+        f"error: bundle {bundle_command} does not support local checkout requirements: "
+        f"{deploy_dir / 'requirements.txt'}\n"
+    ) in result.stderr
+    assert (
+        "/source/arbiter/... requirements are installed by Docker Compose "
+        "at container startup\n"
+    ) in result.stderr
+    assert (
+        f"run {deploy_dir / 'arbiter-docker'} restart to recreate staging "
+        "with the local source mount\n"
+    ) in result.stderr
+    assert "Invalid requirement" not in result.stderr
 
 
 def test_cli_deploy_docker_generated_helper_prepare_pypi_only_resolves_index_pins(
@@ -7515,13 +7568,156 @@ def test_artifact_route_forces_attachment_disposition_without_filename(
     assert response.headers["content-type"].startswith("text/html")
 
 
+def test_build_app_wires_smtp_sent_copy_to_matching_imap_account() -> None:
+    smtp_sends: list[dict[str, object]] = []
+    imap_appends: list[dict[str, object]] = []
+    cfg = _app_config_with_smtp_imap()
+    cast(IMAPConfig, cfg.arbiter.account["imap"]["primary"]).folders["Sent"] = (
+        IMAPFolderConfig(description="Sent mail", kind=IMAPFolderKind.sent)
+    )
+
+    class FakeSMTPClient:
+        def send(
+            self,
+            message_bytes: bytes,
+            sender: str,
+            recipients: list[str],
+        ) -> None:
+            smtp_sends.append(
+                {
+                    "message_bytes": message_bytes,
+                    "sender": sender,
+                    "recipients": recipients,
+                }
+            )
+
+        def test_connection(self) -> None:
+            return None
+
+    class FakeIMAPClient:
+        def append_message(
+            self,
+            *,
+            folder: str,
+            message_bytes: bytes,
+            flags: Sequence[str] = (r"\Seen",),
+        ) -> None:
+            imap_appends.append(
+                {
+                    "folder": folder,
+                    "message_bytes": message_bytes,
+                    "flags": tuple(flags),
+                }
+            )
+
+    app = build_app(
+        cfg,
+        service_plugins=_test_service_plugins(),
+        runtime_dependencies={
+            "smtp_client_factory": lambda config: FakeSMTPClient(),
+            "imap_client_factory": lambda config: FakeIMAPClient(),
+        },
+    )
+
+    result = app.runtime_registry.require("smtp", SMTPRuntime).send_email(
+        account="primary",
+        to=["to@example.com"],
+        subject="Hello",
+        text_body="Plain body",
+    )
+
+    assert len(smtp_sends) == 1
+    assert result.sent_copy == {
+        "status": "saved",
+        "account": "primary",
+        "folder": "Sent",
+    }
+    assert len(imap_appends) == 1
+    assert imap_appends[0]["folder"] == "Sent"
+    assert imap_appends[0]["flags"] == (r"\Seen",)
+    assert b"Subject: Hello" in cast(bytes, imap_appends[0]["message_bytes"])
+
+
+def test_build_app_sent_copy_does_not_infer_folder_from_different_account() -> None:
+    smtp_sends: list[dict[str, object]] = []
+    imap_appends: list[dict[str, object]] = []
+    cfg = _app_config_with_smtp_imap()
+    cfg.arbiter.account["imap"]["other"] = IMAPConfig(
+        default_folder="INBOX",
+        folders={
+            "Sent": IMAPFolderConfig(description="Sent mail", kind=IMAPFolderKind.sent)
+        },
+    )
+
+    class FakeSMTPClient:
+        def send(
+            self,
+            message_bytes: bytes,
+            sender: str,
+            recipients: list[str],
+        ) -> None:
+            smtp_sends.append(
+                {
+                    "message_bytes": message_bytes,
+                    "sender": sender,
+                    "recipients": recipients,
+                }
+            )
+
+        def test_connection(self) -> None:
+            return None
+
+    class FakeIMAPClient:
+        def append_message(
+            self,
+            *,
+            folder: str,
+            message_bytes: bytes,
+            flags: Sequence[str] = (r"\Seen",),
+        ) -> None:
+            imap_appends.append(
+                {
+                    "folder": folder,
+                    "message_bytes": message_bytes,
+                    "flags": tuple(flags),
+                }
+            )
+
+    app = build_app(
+        cfg,
+        service_plugins=_test_service_plugins(),
+        runtime_dependencies={
+            "smtp_client_factory": lambda config: FakeSMTPClient(),
+            "imap_client_factory": lambda config: FakeIMAPClient(),
+        },
+    )
+
+    result = app.runtime_registry.require("smtp", SMTPRuntime).send_email(
+        account="primary",
+        to=["to@example.com"],
+        subject="Hello",
+        text_body="Plain body",
+    )
+
+    assert len(smtp_sends) == 1
+    assert imap_appends == []
+    assert result.sent_copy == {
+        "status": "skipped",
+        "account": "primary",
+        "reason": "IMAP account has no folder configured with kind=sent: primary",
+        "error_type": "ValueError",
+    }
+
+
 def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     tools: dict[str, Callable[..., object]] = {}
     list_accounts_calls = 0
     send_email_calls: list[dict[str, object]] = []
+    list_folders_calls: list[dict[str, object]] = []
     list_messages_calls: list[dict[str, object]] = []
     get_message_calls: list[dict[str, object]] = []
     get_attachment_calls: list[dict[str, object]] = []
+    search_folders_calls: list[dict[str, object]] = []
     search_messages_calls: list[dict[str, object]] = []
     move_message_calls: list[dict[str, object]] = []
     mark_message_read_calls: list[dict[str, object]] = []
@@ -7595,6 +7791,30 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
             )
             return {"account": account, "folder": folder or "INBOX", "messages": []}
 
+        def list_folders(
+            self,
+            account: str,
+            root: str | None = None,
+            recursive: bool = False,
+            limit: int = 50,
+        ) -> dict[str, object]:
+            list_folders_calls.append(
+                {
+                    "account": account,
+                    "root": root,
+                    "recursive": recursive,
+                    "limit": limit,
+                }
+            )
+            return {
+                "account": account,
+                "root": root,
+                "recursive": recursive,
+                "limit": limit,
+                "truncated": False,
+                "folders": [],
+            }
+
         def get_message(
             self,
             account: str,
@@ -7654,6 +7874,33 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
                 "folder": folder or "INBOX",
                 "query": query,
                 "messages": [],
+            }
+
+        def search_folders(
+            self,
+            account: str,
+            query: str,
+            root: str | None = None,
+            recursive: bool = True,
+            limit: int = 20,
+        ) -> dict[str, object]:
+            search_folders_calls.append(
+                {
+                    "account": account,
+                    "query": query,
+                    "root": root,
+                    "recursive": recursive,
+                    "limit": limit,
+                }
+            )
+            return {
+                "account": account,
+                "query": query,
+                "root": root,
+                "recursive": recursive,
+                "limit": limit,
+                "truncated": False,
+                "folders": [],
             }
 
         def move_message(
@@ -7779,6 +8026,31 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
             )
             return {"account": account, "folder": folder or "INBOX", "messages": []}
 
+        def list_folders(
+            self,
+            *,
+            account: str,
+            root: str | None = None,
+            recursive: bool = False,
+            limit: int = 50,
+        ) -> dict[str, object]:
+            list_folders_calls.append(
+                {
+                    "account": account,
+                    "root": root,
+                    "recursive": recursive,
+                    "limit": limit,
+                }
+            )
+            return {
+                "account": account,
+                "root": root,
+                "recursive": recursive,
+                "limit": limit,
+                "truncated": False,
+                "folders": [],
+            }
+
         def get_message(
             self,
             *,
@@ -7812,6 +8084,34 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
                 "folder": folder or "INBOX",
                 "query": query,
                 "messages": [],
+            }
+
+        def search_folders(
+            self,
+            *,
+            account: str,
+            query: str,
+            root: str | None = None,
+            recursive: bool = True,
+            limit: int = 20,
+        ) -> dict[str, object]:
+            search_folders_calls.append(
+                {
+                    "account": account,
+                    "query": query,
+                    "root": root,
+                    "recursive": recursive,
+                    "limit": limit,
+                }
+            )
+            return {
+                "account": account,
+                "query": query,
+                "root": root,
+                "recursive": recursive,
+                "limit": limit,
+                "truncated": False,
+                "folders": [],
             }
 
         def move_message(
@@ -7947,7 +8247,7 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
         "description": "Read and manage mail through configured IMAP accounts.",
         "version": IMAPServicePlugin.version,
         "account_count": 1,
-        "operation_count": 7,
+        "operation_count": 9,
         "accounts": [
             {
                 "plugin": "imap",
@@ -8039,17 +8339,18 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
             "account_count": 1,
             "accounts": ["primary"],
             "accounts_truncated": False,
-            "operation_count": 7,
+            "operation_count": 9,
             "operations": [
                 "delete_message",
                 "get_attachment",
                 "get_message",
+                "list_folders",
                 "list_messages",
                 "mark_message_read",
                 "move_message",
-                "search_messages",
+                "search_folders",
             ],
-            "operations_truncated": False,
+            "operations_truncated": True,
         },
         {
             "id": "smtp",
@@ -8136,9 +8437,11 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
         "imap:delete_message",
         "imap:get_attachment",
         "imap:get_message",
+        "imap:list_folders",
         "imap:list_messages",
         "imap:mark_message_read",
         "imap:move_message",
+        "imap:search_folders",
         "imap:search_messages",
     ]
 
@@ -8165,6 +8468,7 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
         "ok": True,
         "message_id": "<message-id@example.com>",
         "recipient_count": 3,
+        "sent_copy": None,
         "idempotency_replayed": False,
     }
     assert send_email_calls == [
@@ -8195,6 +8499,7 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
         "ok": True,
         "message_id": "<message-id@example.com>",
         "recipient_count": 1,
+        "sent_copy": None,
         "idempotency_replayed": False,
     }
     assert send_email_calls[-1] == {
@@ -8207,6 +8512,26 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
         "bcc": None,
         "idempotency_key": "send-1",
     }
+
+    assert tools["run_op"](
+        id="imap:list_folders",
+        arguments={
+            "account": "primary",
+            "root": "Archive",
+            "recursive": True,
+            "limit": 5,
+        },
+    ) == {
+        "account": "primary",
+        "root": "Archive",
+        "recursive": True,
+        "limit": 5,
+        "truncated": False,
+        "folders": [],
+    }
+    assert list_folders_calls == [
+        {"account": "primary", "root": "Archive", "recursive": True, "limit": 5}
+    ]
 
     assert tools["run_op"](
         id="imap:list_messages",
@@ -8311,6 +8636,34 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
             "account": "primary",
             "query": "invoice",
             "folder": "INBOX",
+            "limit": 10,
+        }
+    ]
+
+    assert tools["run_op"](
+        id="imap:search_folders",
+        arguments={
+            "account": "primary",
+            "query": "archive",
+            "root": "Archive",
+            "recursive": False,
+            "limit": 10,
+        },
+    ) == {
+        "account": "primary",
+        "query": "archive",
+        "root": "Archive",
+        "recursive": False,
+        "limit": 10,
+        "truncated": False,
+        "folders": [],
+    }
+    assert search_folders_calls == [
+        {
+            "account": "primary",
+            "query": "archive",
+            "root": "Archive",
+            "recursive": False,
             "limit": 10,
         }
     ]

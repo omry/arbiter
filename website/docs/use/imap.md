@@ -12,7 +12,9 @@ provide arbitrary mailbox access.
 - `imap:list_messages`
 - `imap:get_message`
 - `imap:get_attachment` when HTTP artifact delivery is available
+- `imap:list_folders`
 - `imap:search_messages`
+- `imap:search_folders`
 - `imap:move_message`
 - `imap:mark_message_read`
 - `imap:delete_message`
@@ -23,7 +25,12 @@ Every IMAP operation takes `account`. Operations that target messages also use a
 folder-scoped `message_id`, which is an IMAP UID returned by `imap:list_messages`
 or `imap:search_messages`.
 
-Folders must be configured on the selected account.
+Folders must be configured on the selected account. `imap:list_folders` and
+`imap:search_folders` expose only configured folder metadata; they do not query
+the upstream IMAP server's full mailbox tree. Folder results include `name`,
+`description`, `kind` when configured, and whether the folder is the account
+default. Folder list and search results also include `limit` and `truncated`;
+`truncated: true` means more configured folders matched than were returned.
 
 ## Config schema
 
@@ -42,15 +49,27 @@ class MailTlsMode(str, Enum):
     implicit = "implicit"
 
 
+class IMAPFolderKind(str, Enum):
+    all = "all"
+    archive = "archive"
+    drafts = "drafts"
+    flagged = "flagged"
+    junk = "junk"
+    sent = "sent"
+    trash = "trash"
+
+
 @dataclass
 class IMAPFolderConfig:
     description: str = ""
+    kind: IMAPFolderKind | None = None
 
 
 @dataclass
 class IMAPConfig(Policy):
     policy: str = "bot"
     description: str = ""
+    guidance: str = ""
     host: str = "localhost"
     port: int = 993
     username: str = ""
@@ -60,6 +79,22 @@ class IMAPConfig(Policy):
     timeout_seconds: float = 30.0
     default_folder: str | None = None
     folders: dict[str, IMAPFolderConfig] = field(default_factory=dict)
+```
+
+Folder `kind` values map to IMAP special-use mailbox roles. They are optional
+metadata for clients; they do not grant permissions or discover upstream
+folders.
+
+```yaml
+folders:
+  INBOX:
+    description: Primary inbox.
+  Sent:
+    description: Sent mail.
+    kind: sent
+  Archives/2020-2029/2024:
+    description: Archived mail from 2024.
+    kind: archive
 ```
 
 IMAP policy config is registered as `arbiter/policy/imap/schema`:
@@ -104,6 +139,27 @@ class IMAPAccessPolicyConfig(Policy):
 </details>
 
 ## Example
+
+List configured top-level folders:
+
+```bash
+arbiter op run imap:list_folders --args '{
+  "account": "bot",
+  "recursive": false,
+  "limit": 10
+}'
+```
+
+Search configured folder names, descriptions, and kinds:
+
+```bash
+arbiter op run imap:search_folders --args '{
+  "account": "bot",
+  "query": "archive",
+  "recursive": true,
+  "limit": 10
+}'
+```
 
 ```bash
 arbiter op run imap:list_messages --args '{

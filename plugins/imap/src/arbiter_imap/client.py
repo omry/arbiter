@@ -9,7 +9,7 @@ from email.utils import formataddr, getaddresses
 import imaplib
 import re
 import ssl
-from typing import Any
+from typing import Any, cast
 
 from .config import IMAPConfig, MailTlsMode
 
@@ -125,6 +125,20 @@ class IMAPClient:
             self._select_folder(server, folder, readonly=False)
             self._mark_deleted(server, uid)
             self._expunge_uid(server, uid, "expunge deleted message")
+
+    def append_message(
+        self,
+        *,
+        folder: str,
+        message_bytes: bytes,
+        flags: Sequence[str] = (r"\Seen",),
+    ) -> None:
+        with self._session() as server:
+            date_time: Any = None
+            status, data = server.append(
+                folder, f"({' '.join(flags)})", date_time, message_bytes
+            )
+            self._expect_ok(status, cast(list[Any], data), "append message")
 
     def _session(self) -> IMAPSession:
         return IMAPSession(self._connect())

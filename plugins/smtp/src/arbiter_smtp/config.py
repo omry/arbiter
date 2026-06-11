@@ -13,6 +13,11 @@ class MailTlsMode(str, Enum):
     implicit = "implicit"
 
 
+class SMTPSentCopyFailureMode(str, Enum):
+    warn = "warn"
+    fail = "fail"
+
+
 @dataclass
 class SMTPLimitsConfig:
     max_messages_per_minute: int | None = None
@@ -34,6 +39,17 @@ class SMTPRecipientPolicyConfig:
 
 
 @dataclass
+class SMTPSentCopyAccountConfig:
+    folder: str | None = None
+
+
+@dataclass
+class SMTPSentCopyPolicyConfig:
+    enabled: bool = True
+    on_failure: SMTPSentCopyFailureMode = SMTPSentCopyFailureMode.warn
+
+
+@dataclass
 class SMTPConfig(Policy):
     policy: str = "bot"
     description: str = ""
@@ -48,6 +64,9 @@ class SMTPConfig(Policy):
     tls: MailTlsMode = MailTlsMode.starttls
     verify_peer: bool = True
     timeout_seconds: float = 30.0
+    sent_copy: SMTPSentCopyAccountConfig = field(
+        default_factory=SMTPSentCopyAccountConfig
+    )
 
 
 @dataclass
@@ -57,6 +76,9 @@ class SMTPServicePolicyConfig(Policy):
     idempotency: SMTPIdempotencyConfig = field(default_factory=SMTPIdempotencyConfig)
     recipient_policy: SMTPRecipientPolicyConfig = field(
         default_factory=SMTPRecipientPolicyConfig
+    )
+    sent_copy: SMTPSentCopyPolicyConfig = field(
+        default_factory=SMTPSentCopyPolicyConfig
     )
 
 

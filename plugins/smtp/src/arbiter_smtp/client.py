@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from email.message import EmailMessage
 import smtplib
 import ssl
 
@@ -16,14 +15,10 @@ class SMTPSubmissionClient:
             self._prepare_session(server)
             self._expect_ok(server.noop(), "NOOP")
 
-    def send(self, message: EmailMessage, sender: str, recipients: list[str]) -> None:
+    def send(self, message_bytes: bytes, sender: str, recipients: list[str]) -> None:
         with self._connect() as server:
             self._prepare_session(server)
-            refused_recipients = server.send_message(
-                message,
-                from_addr=sender,
-                to_addrs=recipients,
-            )
+            refused_recipients = server.sendmail(sender, recipients, message_bytes)
             if refused_recipients:
                 raise smtplib.SMTPRecipientsRefused(refused_recipients)
 
