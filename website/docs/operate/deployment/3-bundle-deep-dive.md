@@ -141,6 +141,7 @@ allowed in `requirements.txt` are absolute container source paths:
 
 ```text title="./requirements.txt"
 /source/arbiter/server
+/source/arbiter/plugins/imap
 /source/arbiter/plugins/smtp
 ```
 
@@ -157,6 +158,11 @@ At container startup, the deployment installs the referenced source paths in
 editable mode. This keeps staging tied to the local checkout without rebuilding
 package wheels on each start. The checkout is mounted read-write because Python
 editable build backends can update source-tree package metadata.
+
+Do not run wheelhouse commands such as `bundle prepare` or `bundle check` in
+local checkout mode. Those commands inspect wheel-backed deployments, while
+local checkout requirements are resolved only inside the Compose service that
+mounts `/source/arbiter`.
 
 Linux install promotes this testing state automatically: it builds local wheels,
 rewrites the installed `requirements.txt` to `/wheels/*.whl` entries, and moves

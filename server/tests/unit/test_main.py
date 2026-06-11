@@ -3512,6 +3512,10 @@ def test_cli_deploy_docker_generated_helper_test_calls_version_info(
         "  printf 'Arbiter connection error: could not connect\\n' >&2\n"
         "  exit 1\n"
         "fi\n"
+        'if [ "$count" -lt "${ARBITER_TEST_TRANSIENT_FAILURES:-0}" ]; then\n'
+        "  printf 'transient MCP startup error\\n' >&2\n"
+        "  exit 1\n"
+        "fi\n"
         'exit "${ARBITER_TEST_STATUS:-0}"\n',
         encoding="utf-8",
     )
@@ -3549,11 +3553,31 @@ def test_cli_deploy_docker_generated_helper_test_calls_version_info(
     assert result.stderr == ""
     assert fake_arbiter_count.read_text(encoding="utf-8") == "3\n"
 
+    fake_arbiter_count.write_text("0\n", encoding="utf-8")
     result = subprocess.run(
         [deploy_dir / "arbiter-docker", "test"],
         check=False,
         cwd=tmp_path,
-        env={**env, "ARBITER_COLOR": "always", "ARBITER_TEST_STATUS": "7"},
+        env={**env, "ARBITER_TEST_TRANSIENT_FAILURES": "2"},
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == " ✔ MCP test: http://127.0.0.1:18025/mcp\n"
+    assert result.stderr == ""
+    assert fake_arbiter_count.read_text(encoding="utf-8") == "3\n"
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "test"],
+        check=False,
+        cwd=tmp_path,
+        env={
+            **env,
+            "ARBITER_COLOR": "always",
+            "ARBITER_TEST_STATUS": "7",
+            "ARBITER_TEST_TIMEOUT": "0",
+        },
         text=True,
         capture_output=True,
     )
@@ -4652,28 +4676,28 @@ def test_cli_deploy_docker_generated_helper_preinstall_warns_for_source_override
         f"{deploy_dir / 'requirements.txt'}\n"
     ) in result.stdout
     assert (
-        "      install will promote editable requirements to local wheels "
-        "automatically\n"
+        "      install will build local wheels and write wheel-backed "
+        "requirements only in the install target\n"
     ) in result.stdout
     assert (
-        f"      run {deploy_dir / 'arbiter-docker'} install to promote editable "
-        "requirements to local wheels automatically\n"
+        f"      run {deploy_dir / 'arbiter-docker'} install to install "
+        "wheel-backed artifacts without changing staging requirements\n"
     ) in result.stdout
     assert (
         "warn: preinstall found local checkout compose override: "
         f"{deploy_dir / 'compose.override.yaml'}\n"
     ) in result.stdout
     assert (
-        "      install will move the local checkout override aside during promotion\n"
+        "      install will omit the local checkout override only in the install target\n"
     ) in result.stdout
     assert (
-        f"      run {deploy_dir / 'arbiter-docker'} install to move the local "
-        "checkout override aside during promotion\n"
+        f"      run {deploy_dir / 'arbiter-docker'} install to install without "
+        "changing the staging local checkout override\n"
     ) in result.stdout
     assert "ok: preinstall checks passed\n" in result.stdout
 
 
-def test_cli_deploy_docker_generated_helper_install_promotes_source_checkout(
+def test_cli_deploy_docker_generated_helper_install_keeps_source_checkout_staging(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -4799,24 +4823,29 @@ def test_cli_deploy_docker_generated_helper_install_promotes_source_checkout(
     )
 
     assert result.returncode == 0
-    assert (
-        f"promoted local checkout requirements to wheels: {deploy_dir / 'requirements.txt'}\n"
-        in result.stdout
+    assert "prepared wheel-backed install requirements from local checkout:" in (
+        result.stdout
     )
     assert (
-        "disabled local checkout compose override: "
-        f"{deploy_dir / 'compose.override.yaml'} -> "
-        f"{deploy_dir / 'compose.override.yaml.local-source.bak'}\n"
+        "installed wheel-backed requirements without changing staging: "
+        f"{install_dir / 'requirements.txt'}\n"
+    ) in result.stdout
+    assert (
+        "omitted local checkout compose override from install target: "
+        f"{install_dir / 'compose.override.yaml'}\n"
     ) in result.stdout
     assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
-        "/wheels/arbiter_server-0.9.0.dev2-py3-none-any.whl\n"
+        "/source/arbiter/server\n"
     )
-    assert not (deploy_dir / "compose.override.yaml").exists()
-    assert (deploy_dir / "compose.override.yaml.local-source.bak").exists()
+    assert (deploy_dir / "compose.override.yaml").exists()
+    assert not (deploy_dir / "compose.override.yaml.local-source.bak").exists()
     assert (install_dir / "requirements.txt").read_text(encoding="utf-8") == (
         "/wheels/arbiter_server-0.9.0.dev2-py3-none-any.whl\n"
     )
     assert not (install_dir / "compose.override.yaml").exists()
+    unit_text = (systemd_dir / "arbiter.service").read_text(encoding="utf-8")
+    assert f"-f {install_dir / 'compose.yaml'}" in unit_text
+    assert f"-f {install_dir / 'compose.override.yaml'}" not in unit_text
     assert (
         install_dir / "wheels" / "arbiter_server-0.9.0.dev2-py3-none-any.whl"
     ).exists()
@@ -4917,18 +4946,17 @@ def test_cli_deploy_docker_generated_helper_install_disables_source_override_wit
     assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
         "arbiter-suite==1.2.3\n"
     )
-    assert not (deploy_dir / "compose.override.yaml").exists()
-    assert (deploy_dir / "compose.override.yaml.local-source.bak").exists()
     assert not (install_dir / "compose.override.yaml").exists()
     assert (install_dir / "requirements.txt").read_text(encoding="utf-8") == (
         "arbiter-suite==1.2.3\n"
     )
     assert "promoted local checkout requirements to wheels" not in result.stdout
     assert (
-        "disabled local checkout compose override: "
-        f"{deploy_dir / 'compose.override.yaml'} -> "
-        f"{deploy_dir / 'compose.override.yaml.local-source.bak'}\n"
+        "omitted local checkout compose override from install target: "
+        f"{install_dir / 'compose.override.yaml'}\n"
     ) in result.stdout
+    assert (deploy_dir / "compose.override.yaml").exists()
+    assert not (deploy_dir / "compose.override.yaml.local-source.bak").exists()
 
 
 def test_cli_deploy_docker_generated_helper_install_dry_run_plans_promotion(
@@ -4995,6 +5023,46 @@ def test_cli_deploy_docker_generated_helper_install_dry_run_plans_promotion(
         result.stdout
     )
     assert "would run: systemctl restart arbiter.service\n" in result.stdout
+
+
+def test_cli_deploy_docker_generated_helper_install_replace_env_requires_replace_config(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    result = subprocess.run(
+        [
+            deploy_dir / "arbiter-docker",
+            "install",
+            "--dry-run",
+            "--to",
+            "/opt/arbiter",
+            "--user",
+            "arbiter",
+            "--replace-env",
+        ],
+        check=False,
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 2
+    assert result.stderr == "error: --replace-env requires --replace-config\n"
 
 
 def test_cli_deploy_docker_generated_helper_install_omits_missing_docker_unit(
@@ -5124,9 +5192,15 @@ def test_cli_deploy_docker_generated_helper_install_omits_missing_docker_unit(
         "install --no-cache-dir "
         "--target /tmp/arbiter-wheelhouse-check --no-index --find-links /wheels "
         "-r /requirements.txt\n"
+        f"compose --env-file {install_dir / 'docker.env'} "
+        f"-f {install_dir / 'compose.yaml'} down --remove-orphans\n"
     )
     assert systemctl_calls.read_text(encoding="utf-8") == (
-        "daemon-reload\n" "enable arbiter.service\n" "restart arbiter.service\n"
+        "daemon-reload\n"
+        "enable arbiter.service\n"
+        "stop arbiter.service\n"
+        "reset-failed arbiter.service\n"
+        "restart arbiter.service\n"
     )
 
 
@@ -5648,9 +5722,18 @@ def test_cli_deploy_docker_generated_helper_install_preserves_custom_config_dir(
     assert "ARBITER_APP_ENV_FILE=./prod-conf/.env\n" in installed_docker_env
 
 
+@pytest.mark.parametrize(
+    ("replace_args", "expected_env"),
+    [
+        (("--replace-config",), "SECRET=installed\n"),
+        (("--replace-config", "--replace-env"), "SECRET=staging\n"),
+    ],
+)
 def test_cli_deploy_docker_generated_helper_install_can_replace_existing_config(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    replace_args: tuple[str, ...],
+    expected_env: str,
 ) -> None:
     deploy_dir = tmp_path / "docker"
     install_dir = tmp_path / "opt" / "arbiter"
@@ -5681,6 +5764,10 @@ def test_cli_deploy_docker_generated_helper_install_can_replace_existing_config(
     installed_config_dir.mkdir(parents=True)
     (installed_config_dir / "arbiter-server.yaml").write_text(
         "installed config\n",
+        encoding="utf-8",
+    )
+    (installed_config_dir / "installed-only.yaml").write_text(
+        "stale installed config\n",
         encoding="utf-8",
     )
     (installed_config_dir / ".env").write_text("SECRET=installed\n", encoding="utf-8")
@@ -5728,7 +5815,7 @@ def test_cli_deploy_docker_generated_helper_install_can_replace_existing_config(
             str(install_dir),
             "--user",
             "arbiter",
-            "--replace-config",
+            *replace_args,
             "--no-start",
         ],
         check=False,
@@ -5742,9 +5829,8 @@ def test_cli_deploy_docker_generated_helper_install_can_replace_existing_config(
     assert (installed_config_dir / "arbiter-server.yaml").read_text(
         encoding="utf-8"
     ) == "staging config\n"
-    assert (installed_config_dir / ".env").read_text(encoding="utf-8") == (
-        "SECRET=staging\n"
-    )
+    assert not (installed_config_dir / "installed-only.yaml").exists()
+    assert (installed_config_dir / ".env").read_text(encoding="utf-8") == expected_env
 
 
 def test_cli_deploy_docker_generated_helper_install_aborts_on_bad_wheelhouse(

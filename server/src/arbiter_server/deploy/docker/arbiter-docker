@@ -42,7 +42,8 @@ Install options:
   --group GROUP       Dedicated service config group, default USER
   --service NAME      systemd service name, default arbiter
   --no-start          Install and enable the service without starting it
-  --replace-config    Replace installed config and env from this staging dir
+  --replace-config    Replace installed config from this staging dir
+  --replace-env       With --replace-config, also replace the installed env
   --dry-run           Print the install plan without changing the host
 
 Environment:
@@ -162,6 +163,18 @@ requirements_has_source_paths() {
       exit found ? 0 : 1
     }
   ' "$path"
+}
+
+reject_source_requirements_for_wheelhouse_command() {
+  local command_name="$1"
+
+  if requirements_has_source_paths "$requirements_file"; then
+    printf 'error: bundle %s does not support local checkout requirements: %s\n' "$command_name" "$requirements_file" >&2
+    printf '       /source/arbiter/... requirements are installed by Docker Compose at container startup\n' >&2
+    printf '       run %s restart to recreate staging with the local source mount\n' "$deploy_dir/arbiter-docker" >&2
+    printf '       run %s install to promote local checkout requirements to a wheel-backed install\n' "$deploy_dir/arbiter-docker" >&2
+    return 1
+  fi
 }
 
 edit_requirements() {
@@ -1521,9 +1534,6 @@ test_server_url() {
       printf '\n'
       return 0
     fi
-    if ! grep -Eiq 'connection error|could not connect|connection refused|all connection attempts failed' "$output_file"; then
-      break
-    fi
     if ((SECONDS - start_time >= timeout)); then
       break
     fi
@@ -2637,8 +2647,8 @@ doctor_check_preinstall_ready() {
 
   if [[ -f "$active_requirements_file" ]] && grep -Eq '^[[:space:]]*/source/arbiter(/|$)' "$active_requirements_file"; then
     doctor_warn "preinstall found local checkout requirements: $active_requirements_file"
-    printf '      install will promote editable requirements to local wheels automatically\n'
-    printf '      run %s install to promote editable requirements to local wheels automatically\n' "$deploy_dir/arbiter-docker"
+    printf '      install will build local wheels and write wheel-backed requirements only in the install target\n'
+    printf '      run %s install to install wheel-backed artifacts without changing staging requirements\n' "$deploy_dir/arbiter-docker"
   fi
 
   while IFS= read -r wheel_requirement; do
@@ -2666,8 +2676,8 @@ doctor_check_preinstall_ready() {
 
   if [[ -f "$compose_override_file" ]] && grep -q '/source/arbiter' "$compose_override_file"; then
     doctor_warn "preinstall found local checkout compose override: $compose_override_file"
-    printf '      install will move the local checkout override aside during promotion\n'
-    printf '      run %s install to move the local checkout override aside during promotion\n' "$deploy_dir/arbiter-docker"
+    printf '      install will omit the local checkout override only in the install target\n'
+    printf '      run %s install to install without changing the staging local checkout override\n' "$deploy_dir/arbiter-docker"
   fi
 
   if [[ "$doctor_status" -eq 0 ]]; then
@@ -3005,6 +3015,9 @@ install_chown_wheelhouse_to_invoking_user() {
   install_chown_to_invoking_user "${paths[@]}"
 }
 
+install_local_checkout_requirements_file=""
+install_local_checkout_has_source_override=0
+
 install_build_source_wheel() {
   local python_bin="$1"
   local source_dir="$2"
@@ -3038,7 +3051,7 @@ install_build_source_wheel() {
   rm -rf "$build_dir"
 }
 
-install_promote_local_checkout() {
+install_prepare_local_checkout_wheels() {
   local active_requirements_file
   local active_wheels_dir
   local repo_root
@@ -3052,10 +3065,11 @@ install_promote_local_checkout() {
   local promoted=0
   local has_source_requirements=0
   local has_source_override=0
-  local override_backup
   local image
   local docker_user
 
+  install_local_checkout_requirements_file=""
+  install_local_checkout_has_source_override=0
   active_requirements_file="$(deploy_path_from_compose_value "$(compose_env_value ARBITER_REQUIREMENTS_FILE ./requirements.txt)")"
   active_wheels_dir="$(wheels_dir_path)"
 
@@ -3064,13 +3078,14 @@ install_promote_local_checkout() {
   fi
   if [[ -f "$compose_override_file" ]] && grep -q '/source/arbiter' "$compose_override_file"; then
     has_source_override=1
+    install_local_checkout_has_source_override=1
   fi
   if [[ "$has_source_requirements" -eq 0 && "$has_source_override" -eq 0 ]]; then
     return 0
   fi
 
   if [[ "${install_dry_run:-0}" -eq 1 ]]; then
-    printf 'would promote local checkout deployment to wheel-backed install\n'
+    printf 'would prepare wheel-backed install artifacts from local checkout without changing staging\n'
     return 0
   fi
 
@@ -3126,7 +3141,7 @@ install_promote_local_checkout() {
 
   if [[ "$promoted" -eq 1 ]]; then
     if ! validate_requirements_file "$tmp_requirements"; then
-      printf 'error: promoted requirements are invalid; requirements unchanged: %s\n' "$active_requirements_file" >&2
+      printf 'error: generated install requirements are invalid; staging requirements unchanged: %s\n' "$active_requirements_file" >&2
       rm -f "$tmp_requirements"
       return 1
     fi
@@ -3140,21 +3155,37 @@ install_promote_local_checkout() {
       rm -f "$tmp_requirements"
       return 1
     fi
-    mv "$tmp_requirements" "$active_requirements_file"
-    install_chown_to_invoking_user "$active_requirements_file"
     install_chown_wheelhouse_to_invoking_user "$active_wheels_dir"
-    printf 'promoted local checkout requirements to wheels: %s\n' "$active_requirements_file"
+    install_chown_to_invoking_user "$tmp_requirements"
+    install_local_checkout_requirements_file="$tmp_requirements"
+    printf 'prepared wheel-backed install requirements from local checkout: %s\n' "$install_local_checkout_requirements_file"
   else
     if [[ -n "$tmp_requirements" ]]; then
       rm -f "$tmp_requirements"
     fi
   fi
+}
 
-  if [[ -f "$compose_override_file" ]] && grep -q '/source/arbiter' "$compose_override_file"; then
-    override_backup="$compose_override_file.local-source.bak"
-    mv "$compose_override_file" "$override_backup"
-    install_chown_to_invoking_user "$override_backup"
-    printf 'disabled local checkout compose override: %s -> %s\n' "$compose_override_file" "$override_backup"
+install_apply_local_checkout_install_artifacts() {
+  local target_requirements_file
+  local target_compose_override_file
+
+  if [[ "${install_dry_run:-0}" -eq 1 ]]; then
+    return 0
+  fi
+
+  if [[ -n "$install_local_checkout_requirements_file" ]]; then
+    target_requirements_file="$(install_target_requirements_file_path)"
+    install_copy_file_protected "$install_local_checkout_requirements_file" "$target_requirements_file" 0640
+    rm -f "$install_local_checkout_requirements_file"
+    install_local_checkout_requirements_file=""
+    printf 'installed wheel-backed requirements without changing staging: %s\n' "$target_requirements_file"
+  fi
+
+  target_compose_override_file="$install_target_dir/compose.override.yaml"
+  if [[ "$install_local_checkout_has_source_override" -eq 1 && -f "$target_compose_override_file" ]] && grep -q '/source/arbiter' "$target_compose_override_file"; then
+    rm -f "$target_compose_override_file"
+    printf 'omitted local checkout compose override from install target: %s\n' "$target_compose_override_file"
   fi
 }
 
@@ -3354,6 +3385,9 @@ install_copy_deployment() {
   local staging_app_env
   local preserve_tmp_dir=""
   local preserve_config=0
+  local preserve_env=0
+  local replace_config_dir=0
+  local target_is_source=0
   local preserve_config_dir_real
   local preserve_app_env_real
   local preserve_app_env_config_rel=""
@@ -3367,13 +3401,19 @@ install_copy_deployment() {
     printf 'would copy deployment: %s -> %s\n' "$source_dir" "$target_dir"
     if [[ "$install_replace_config" -eq 0 ]]; then
       printf 'would preserve installed config and env if present: %s\n' "$target_dir"
+    elif [[ "$install_replace_env" -eq 0 ]]; then
+      printf 'would replace installed config from staging and preserve installed env if present\n'
     else
       printf 'would replace installed config and env from staging\n'
     fi
     return
   fi
 
-  if [[ "$(normalize_path_allow_missing "$target_dir")" != "$source_dir" ]]; then
+  if [[ "$(normalize_path_allow_missing "$target_dir")" == "$source_dir" ]]; then
+    target_is_source=1
+  fi
+
+  if [[ "$target_is_source" -eq 0 ]]; then
     install_reject_symlinks "$source_dir"
   fi
 
@@ -3386,7 +3426,7 @@ install_copy_deployment() {
     preserve_plugin_data_dir_env=1
   fi
 
-  if [[ "$install_replace_config" -eq 0 && -e "$target_dir" ]]; then
+  if [[ -e "$target_dir" ]]; then
     if [[ -f "$target_docker_env_file" ]]; then
       preserve_config_dir_value="$(env_file_value "$target_docker_env_file" ARBITER_CONFIG_DIR || printf './conf\n')"
       preserve_app_env_value="$(env_file_value "$target_docker_env_file" ARBITER_APP_ENV_FILE || printf './conf/.env\n')"
@@ -3400,7 +3440,7 @@ install_copy_deployment() {
     if [[ -e "$preserve_app_env" || -L "$preserve_app_env" ]]; then
       install_reject_symlinks "$preserve_app_env"
     fi
-    if [[ -e "$preserve_config_dir" || -e "$preserve_app_env" ]]; then
+    if [[ "$install_replace_config" -eq 0 && ( -e "$preserve_config_dir" || -e "$preserve_app_env" ) ]]; then
       preserve_config=1
       preserve_tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/arbiter-install-config.XXXXXX")"
       if [[ -e "$preserve_app_env" ]]; then
@@ -3422,11 +3462,24 @@ install_copy_deployment() {
           conf \
           "$preserve_app_env_config_rel"
       fi
+    elif [[ "$install_replace_config" -eq 1 ]]; then
+      if [[ "$install_replace_env" -eq 0 && -e "$preserve_app_env" ]]; then
+        preserve_env=1
+        preserve_tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/arbiter-install-config.XXXXXX")"
+        cp -a "$preserve_app_env" "$preserve_tmp_dir/app-env"
+      fi
+      if [[ "$target_is_source" -eq 0 && -e "$preserve_config_dir" ]]; then
+        replace_config_dir=1
+      fi
     fi
   fi
 
+  if [[ "$replace_config_dir" -eq 1 ]]; then
+    rm -rf "$preserve_config_dir"
+  fi
+
   mkdir -p "$target_dir"
-  if [[ "$(normalize_existing_path "$target_dir")" != "$source_dir" ]]; then
+  if [[ "$target_is_source" -eq 0 ]]; then
     staging_app_env_rel="$(install_relative_path "$(app_env_path)")"
     install_copy_tree_protected "$source_dir" "$target_dir" "$staging_app_env_rel"
   fi
@@ -3459,6 +3512,11 @@ install_copy_deployment() {
     set_env_file_value "$target_docker_env_file" ARBITER_CONFIG_DIR "$preserve_config_dir_value"
     set_env_file_value "$target_docker_env_file" ARBITER_APP_ENV_FILE "$preserve_app_env_value"
     set_env_file_value "$target_docker_env_file" ARBITER_CONFIG_NAME "$preserve_config_name_value"
+    rm -rf "$preserve_tmp_dir"
+  elif [[ "$preserve_env" -eq 1 ]]; then
+    mkdir -p "$(dirname -- "$preserve_app_env")"
+    install_copy_file_protected "$preserve_tmp_dir/app-env" "$preserve_app_env" 0600
+    set_env_file_value "$target_docker_env_file" ARBITER_APP_ENV_FILE "$preserve_app_env_value"
     rm -rf "$preserve_tmp_dir"
   fi
   if [[ "$preserve_plugin_data_dir_env" -eq 1 ]]; then
@@ -3961,6 +4019,9 @@ prepare() {
     fi
     return
   fi
+  if ! reject_source_requirements_for_wheelhouse_command prepare; then
+    return 1
+  fi
   print_bundle_prepare_start
   tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/arbiter-bundle-prepare.XXXXXX")"
   if ! bundle_refresh_repo_wheels "$tmp_dir"; then
@@ -3980,6 +4041,9 @@ prepare_quiet() {
 
   require_file "$requirements_file"
   validate_requirements_file "$requirements_file"
+  if ! reject_source_requirements_for_wheelhouse_command prepare; then
+    return 1
+  fi
   target_wheels_dir="$(wheels_dir_path)"
   image="$(compose_env_value ARBITER_IMAGE python:3.11-slim)"
   docker_user="$(id -u):$(id -g)"
@@ -3998,6 +4062,9 @@ check() {
   fi
   require_file "$requirements_file"
   validate_requirements_file "$requirements_file"
+  if ! reject_source_requirements_for_wheelhouse_command check; then
+    return 1
+  fi
   target_wheels_dir="$(wheels_dir_path)"
   image="$(compose_env_value ARBITER_IMAGE python:3.11-slim)"
   docker_user="$(id -u):$(id -g)"
@@ -4124,7 +4191,7 @@ install_write_systemd_unit() {
     exit 1
   fi
   compose_files="-f $install_target_dir/compose.yaml"
-  if [[ -f "$compose_override_file" || -f "$install_target_dir/compose.override.yaml" ]]; then
+  if [[ -f "$install_target_dir/compose.override.yaml" ]]; then
     compose_files="$compose_files -f $install_target_dir/compose.override.yaml"
   fi
   mkdir -p "$systemd_unit_dir"
@@ -4154,6 +4221,52 @@ EOF
   chmod 0644 "$unit_file"
 }
 
+install_stop_service_for_recreate() {
+  if [[ "$install_dry_run" -eq 1 ]]; then
+    print_command systemctl stop "${install_service}.service"
+    return
+  fi
+  systemctl stop "${install_service}.service" >/dev/null 2>&1 || true
+}
+
+install_reset_failed_service_for_recreate() {
+  if [[ "$install_dry_run" -eq 1 ]]; then
+    print_command systemctl reset-failed "${install_service}.service"
+    return
+  fi
+  systemctl reset-failed "${install_service}.service" >/dev/null 2>&1 || true
+}
+
+install_compose_down_for_recreate() {
+  local docker_bin
+
+  if [[ "$install_dry_run" -eq 1 ]]; then
+    print_command docker compose \
+      --env-file "$install_target_dir/docker.env" \
+      -f "$install_target_dir/compose.yaml" \
+      down --remove-orphans
+    return
+  fi
+
+  docker_bin="$(command -v docker || true)"
+  if [[ -z "$docker_bin" ]]; then
+    printf 'error: docker command not found\n' >&2
+    exit 1
+  fi
+  if [[ -f "$install_target_dir/compose.override.yaml" ]]; then
+    run_install_command "$docker_bin" compose \
+      --env-file "$install_target_dir/docker.env" \
+      -f "$install_target_dir/compose.yaml" \
+      -f "$install_target_dir/compose.override.yaml" \
+      down --remove-orphans
+  else
+    run_install_command "$docker_bin" compose \
+      --env-file "$install_target_dir/docker.env" \
+      -f "$install_target_dir/compose.yaml" \
+      down --remove-orphans
+  fi
+}
+
 install_deployment() {
   install_target_dir="/opt/arbiter"
   install_user="arbiter"
@@ -4162,6 +4275,7 @@ install_deployment() {
   install_start=1
   install_dry_run=0
   install_replace_config=0
+  install_replace_env=0
 
   while (($#)); do
     case "$1" in
@@ -4209,6 +4323,10 @@ install_deployment() {
         install_replace_config=1
         shift
         ;;
+      --replace-env)
+        install_replace_env=1
+        shift
+        ;;
       --dry-run)
         install_dry_run=1
         shift
@@ -4227,6 +4345,10 @@ install_deployment() {
 
   if [[ "$install_target_dir" != /* ]]; then
     printf 'error: --to must be an absolute path: %s\n' "$install_target_dir" >&2
+    exit 2
+  fi
+  if [[ "$install_replace_env" -eq 1 && "$install_replace_config" -eq 0 ]]; then
+    printf 'error: --replace-env requires --replace-config\n' >&2
     exit 2
   fi
   if [[ "$install_target_dir" =~ [[:space:]] ]]; then
@@ -4252,7 +4374,7 @@ install_deployment() {
   printf 'installing Arbiter to %s as %s:%s (service: %s.service)\n' \
     "$install_target_dir" "$install_user" "$install_group" "$install_service"
 
-  install_promote_local_checkout
+  install_prepare_local_checkout_wheels
   doctor --preinstall --quiet
 
   if [[ "$install_dry_run" -ne 1 ]]; then
@@ -4261,6 +4383,7 @@ install_deployment() {
 
   install_ensure_identity
   install_copy_deployment
+  install_apply_local_checkout_install_artifacts
   install_mark_deployment_installed
   install_write_target_metadata
   install_apply_permissions
@@ -4271,6 +4394,9 @@ install_deployment() {
   run_install_command systemctl daemon-reload
   run_install_command systemctl enable "${install_service}.service"
   if [[ "$install_start" -eq 1 ]]; then
+    install_stop_service_for_recreate
+    install_reset_failed_service_for_recreate
+    install_compose_down_for_recreate
     run_install_command systemctl restart "${install_service}.service"
   fi
   if [[ "$install_start" -eq 1 ]]; then
