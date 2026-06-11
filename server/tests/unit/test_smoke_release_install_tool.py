@@ -127,7 +127,7 @@ def test_skill_smoke_requires_asi_installed_client(
 
     monkeypatch.setattr(tool, "_run", fake_run)
 
-    with pytest.raises(FileNotFoundError, match="bin/arbiter"):
+    with pytest.raises(FileNotFoundError, match=r"bin[/\\]arbiter"):
         tool._smoke_arbiter_skill(
             dist_dir=dist_dir,
             spec=tool.PublishSpec("arbiter-skill", "1.2.3"),

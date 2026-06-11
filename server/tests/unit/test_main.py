@@ -6505,16 +6505,24 @@ def test_cli_deploy_docker_helper_down_removes_orphans_only_for_managed_compose(
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     docker_log = tmp_path / "docker-args.log"
-    fake_docker = fake_bin / "docker"
-    fake_docker.write_text(
-        "#!/usr/bin/env bash\n" 'printf "%s\\n" "$*" >> "$DOCKER_ARGS_LOG"\n',
-        encoding="utf-8",
-    )
-    fake_docker.chmod(0o755)
+    if os.name == "nt":
+        fake_docker = fake_bin / "docker.cmd"
+        fake_docker.write_text(
+            "@echo off\r\n"
+            "echo %*>>%DOCKER_ARGS_LOG%\r\n",
+            encoding="utf-8",
+        )
+    else:
+        fake_docker = fake_bin / "docker"
+        fake_docker.write_text(
+            "#!/usr/bin/env bash\n" 'printf "%s\\n" "$*" >> "$DOCKER_ARGS_LOG"\n',
+            encoding="utf-8",
+        )
+        fake_docker.chmod(0o755)
     env = {
         **os.environ,
         "DOCKER_ARGS_LOG": str(docker_log),
-        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
     }
 
     result = subprocess.run(

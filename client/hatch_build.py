@@ -88,7 +88,7 @@ def _editable_launcher(
         launcher = launcher_dir / "arbiter.cmd"
         quoted_binary = str(binary).replace('"', '""')
         binary_arg = f'"{quoted_binary}"'
-        launcher.write_text(f"@echo off\r\n{binary_arg} %*\r\n", encoding="utf-8")
+        launcher.write_bytes(f"@echo off\r\n{binary_arg} %*\r\n".encode("utf-8"))
         return launcher, launcher.name
 
     launcher = launcher_dir / binary_name

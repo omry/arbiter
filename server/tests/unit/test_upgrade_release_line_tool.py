@@ -193,6 +193,10 @@ def _assert_error_status(output: str, message: str) -> None:
     )
 
 
+def _normalize_path_separators(output: str) -> str:
+    return output.replace("\\", "/")
+
+
 def test_upgrade_release_line_dry_run_prints_patch_without_writing(
     tmp_path: Path,
 ) -> None:
@@ -394,7 +398,7 @@ def test_upgrade_release_line_check_requires_docs_for_final_release_line(
     assert (
         "website/docs/operate/deployment/3-bundle-deep-dive.md "
         "is missing release text: arbiter-suite==0.8.0"
-    ) in result.stderr
+    ) in _normalize_path_separators(result.stderr)
 
 
 def test_upgrade_release_line_check_uses_ascii_status_for_limited_stream_encoding(

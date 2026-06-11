@@ -147,7 +147,8 @@ def test_editable_linux_build_uses_live_launcher(tmp_path: Path) -> None:
     assert source.read_text(encoding="utf-8") == (
         "#!/usr/bin/env sh\n" f"exec '{binary}' \"$@\"\n"
     )
-    assert source.stat().st_mode & stat.S_IXUSR
+    if os.name != "nt":
+        assert source.stat().st_mode & stat.S_IXUSR
 
 
 def test_editable_windows_build_uses_live_cmd_launcher(tmp_path: Path) -> None:

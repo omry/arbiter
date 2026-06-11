@@ -68,10 +68,8 @@ def test_skill_wheel_contains_only_asi_metadata_payload(tmp_path: Path) -> None:
     with zipfile.ZipFile(wheel_path) as wheel:
         names = set(wheel.namelist())
         init_text = wheel.read("arbiter_skill/__init__.py").decode("utf-8")
-        skill_text = wheel.read("arbiter_skill/skill/SKILL.md").decode("utf-8")
-        metadata_text = wheel.read(
-            "arbiter_skill/skill/agent-skill-installer.yaml"
-        ).decode("utf-8")
+        skill_bytes = wheel.read("arbiter_skill/skill/SKILL.md")
+        metadata_bytes = wheel.read("arbiter_skill/skill/agent-skill-installer.yaml")
         wheel_metadata = wheel.read(
             "arbiter_skill-"
             f"{_project_version(SKILL_ROOT / 'pyproject.toml')}.dist-info/METADATA"
@@ -81,10 +79,10 @@ def test_skill_wheel_contains_only_asi_metadata_payload(tmp_path: Path) -> None:
         init_text
         == f'__version__ = "{_project_version(SKILL_ROOT / "pyproject.toml")}"\n'
     )
-    assert skill_text == (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
-    assert metadata_text == (SKILL_ROOT / "agent-skill-installer.yaml").read_text(
-        encoding="utf-8"
-    )
+    assert skill_bytes == (SKILL_ROOT / "SKILL.md").read_bytes()
+    assert metadata_bytes == (
+        SKILL_ROOT / "agent-skill-installer.yaml"
+    ).read_bytes()
     assert "arbiter_skill/skill/SKILL.md" in names
     assert "arbiter_skill/skill/agent-skill-installer.yaml" in names
     assert "arbiter_skill/skill/bin/arbiter" not in names

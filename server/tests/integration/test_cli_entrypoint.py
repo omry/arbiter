@@ -1002,7 +1002,7 @@ def test_arbiter_clients_stream_binary_artifact_to_stdin_command(
         server.close()
 
     assert result.returncode == 0
-    assert result.stdout == "stdin:6\n"
+    assert result.stdout.splitlines() == ["stdin:6"]
     assert result.stderr == ""
     assert server.state.get_calls == 1
 

@@ -525,7 +525,7 @@ def test_client_artifact_with_stdin_streams_binary_to_command(
 
     assert requests == [("GET", "http://artifact.test/file")]
     captured = capsys.readouterr()
-    assert captured.out == "stdin:6\n"
+    assert captured.out.splitlines() == ["stdin:6"]
     assert captured.err == ""
 
 

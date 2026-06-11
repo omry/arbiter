@@ -115,6 +115,10 @@ def _assert_error_status(output: str, message: str) -> None:
     )
 
 
+def _normalize_path_separators(output: str) -> str:
+    return output.replace("\\", "/")
+
+
 def test_bump_release_version_dry_run_prints_patch_without_writing(
     tmp_path: Path,
 ) -> None:
@@ -494,7 +498,7 @@ def test_bump_release_version_check_rejects_stale_selected_plugin_server_range(
 
     assert result.returncode == 1
     assert 'plugins/smtp/pyproject.toml is missing dependency "arbiter-server>=' in (
-        result.stderr
+        _normalize_path_separators(result.stderr)
     )
 
 
@@ -519,7 +523,7 @@ def test_bump_release_version_check_rejects_stale_go_client_version(
     assert (
         "client/go-cli/internal/cli/version_generated.go version is 0.9.0, "
         "expected 0.9.1.dev1"
-    ) in result.stderr
+    ) in _normalize_path_separators(result.stderr)
 
 
 def test_bump_release_version_check_rejects_stale_runtime_api_line(
@@ -542,7 +546,7 @@ def test_bump_release_version_check_rejects_stale_runtime_api_line(
     assert result.returncode == 1
     assert (
         "plugins/imap/src/arbiter_imap/__init__.py does not declare API line 0.10"
-        in (result.stderr)
+        in _normalize_path_separators(result.stderr)
     )
 
 
