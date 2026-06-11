@@ -151,13 +151,14 @@ Mount the checkout explicitly with a local Compose override:
 services:
   arbiter:
     volumes:
-      - /home/example/arbiter:/source/arbiter
+      - /home/example/arbiter:/source/arbiter:ro
 ```
 
-At container startup, the deployment installs the referenced source paths in
-editable mode. This keeps staging tied to the local checkout without rebuilding
-package wheels on each start. The checkout is mounted read-write because Python
-editable build backends can update source-tree package metadata.
+At container startup, the deployment copies the referenced source paths into a
+writable scratch tree, removes stale package metadata such as `*.egg-info`, and
+installs that scratch copy in editable mode. This keeps staging tied to the
+local checkout without rebuilding package wheels on each start, while allowing
+the checkout mount itself to stay read-only.
 
 Do not run wheelhouse commands such as `bundle prepare` or `bundle check` in
 local checkout mode. Those commands inspect wheel-backed deployments, while

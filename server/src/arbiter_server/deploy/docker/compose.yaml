@@ -44,7 +44,7 @@ services:
       if grep -Eq "^[[:space:]]*/source/arbiter(/|$)" /requirements.txt; then
         cp /requirements.txt /tmp/requirements.txt &&
         awk "!/^[[:space:]]*(#|$)/ && !/^[[:space:]]*\\/source\\/arbiter(\\/|$)/ { print }" /tmp/requirements.txt > /tmp/requirements.pinned &&
-        awk "/^[[:space:]]*\\/source\\/arbiter(\\/|$)/ { print }" /tmp/requirements.txt > /tmp/requirements.editable &&
+        awk "/^[[:space:]]*\\/source\\/arbiter(\\/|$)/ { sub(/^[[:space:]]*/, \"\"); sub(/[[:space:]]*$/, \"\"); print }" /tmp/requirements.txt > /tmp/requirements.editable &&
         if [ -s /tmp/requirements.pinned ]; then
           if [ -d /wheels ] && find /wheels -maxdepth 1 -name "*.whl" -print -quit | grep -q .; then
             "$$venv_python" -m pip --disable-pip-version-check install --no-cache-dir --no-index --find-links /wheels -r /tmp/requirements.pinned;
@@ -52,11 +52,26 @@ services:
             "$$venv_python" -m pip --disable-pip-version-check install --no-cache-dir -r /tmp/requirements.pinned;
           fi;
         fi &&
+        rm -rf /tmp/arbiter-source &&
+        mkdir -p /tmp/arbiter-source &&
         while IFS= read -r requirement; do
-          if [ -d /wheels ] && find /wheels -maxdepth 1 -name "*.whl" -print -quit | grep -q .; then
-            "$$venv_python" -m pip --disable-pip-version-check install --no-cache-dir --find-links /wheels -e "$$requirement" || exit 1;
+          source_suffix="$${requirement#/source/arbiter}" &&
+          local_requirement="/tmp/arbiter-source$$source_suffix" &&
+          if [ -z "$$source_suffix" ]; then
+            cp -a /source/arbiter/. /tmp/arbiter-source || exit 1;
           else
-            "$$venv_python" -m pip --disable-pip-version-check install --no-cache-dir -e "$$requirement" || exit 1;
+            mkdir -p "$${local_requirement%/*}" &&
+            cp -a "$$requirement" "$$local_requirement" || exit 1;
+          fi;
+        done < /tmp/requirements.editable &&
+        find /tmp/arbiter-source -type d \( -name "*.egg-info" -o -name "__pycache__" \) -prune -exec rm -rf {} + &&
+        while IFS= read -r requirement; do
+          source_suffix="$${requirement#/source/arbiter}" &&
+          local_requirement="/tmp/arbiter-source$$source_suffix" &&
+          if [ -d /wheels ] && find /wheels -maxdepth 1 -name "*.whl" -print -quit | grep -q .; then
+            "$$venv_python" -m pip --disable-pip-version-check install --no-cache-dir --find-links /wheels -e "$$local_requirement" || exit 1;
+          else
+            "$$venv_python" -m pip --disable-pip-version-check install --no-cache-dir -e "$$local_requirement" || exit 1;
           fi;
         done < /tmp/requirements.editable;
       elif [ -d /wheels ] && find /wheels -maxdepth 1 -name "*.whl" -print -quit | grep -q .; then

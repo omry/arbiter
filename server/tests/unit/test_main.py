@@ -1354,8 +1354,14 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
     compose_text = (deploy_dir / "compose.yaml").read_text(encoding="utf-8")
     assert (
         '"$$venv_python" -m pip --disable-pip-version-check install --no-cache-dir '
-        '--find-links /wheels -e "$$requirement"'
+        '--find-links /wheels -e "$$local_requirement"'
     ) in compose_text
+    assert "rm -rf /tmp/arbiter-source" in compose_text
+    assert (
+        'find /tmp/arbiter-source -type d \\( -name "*.egg-info" -o '
+        '-name "__pycache__" \\) -prune -exec rm -rf {} +'
+    ) in compose_text
+    assert 'cp -a "$$requirement" "$$local_requirement"' in compose_text
     assert (
         '"$$venv_python" -m pip --disable-pip-version-check install --no-cache-dir '
         "-r /tmp/requirements.pinned"
@@ -1369,7 +1375,8 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
         "/tmp/requirements.txt > /tmp/requirements.pinned"
     ) in compose_text
     assert (
-        'awk "/^[[:space:]]*\\\\/source\\\\/arbiter(\\\\/|$)/ { print }" '
+        'awk "/^[[:space:]]*\\\\/source\\\\/arbiter(\\\\/|$)/ '
+        '{ sub(/^[[:space:]]*/, \\"\\"); sub(/[[:space:]]*$/, \\"\\"); print }" '
         "/tmp/requirements.txt > /tmp/requirements.editable"
     ) in compose_text
     assert "${ARBITER_WHEELS_DIR:-./wheels}:/wheels:ro" in compose_text
