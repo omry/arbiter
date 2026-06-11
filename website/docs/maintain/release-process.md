@@ -63,8 +63,15 @@ Commit the updated `NEWS.md` files and removed fragments before publishing.
 
 ## Prepare and publish workflow
 
-Final releases use a two-step GitHub Actions flow. There are two release
-kinds:
+Final releases use a two-step GitHub Actions flow and are published from a
+stable release branch for the release line. For example, the `0.9` stable line
+should have a dedicated branch such as `release/0.9`; security and maintenance
+patches for that line are backported to the same branch and published from
+there. New development can continue on `main`, while the release branch owns
+the package state, release notes, draft releases, and patch releases for its
+stable line.
+
+There are two release kinds:
 
 - `new-release-line`: move the whole compatibility line, such as
   `0.9.0.dev2` to `0.9.0`; this always prepares all package targets together.
@@ -78,14 +85,15 @@ kinds:
    suite on that prepared branch.
 3. Review and merge the release preparation PR after the PR contents and
    integration run are approved.
-4. Run **Prepare Release** again on `main`. With the release files already
-   prepared, it creates or refreshes the draft GitHub Release tags for the
-   selected final packages and runs the full integration suite on `main`.
+4. Run **Prepare Release** again on the stable release branch. With the release
+   files already prepared, it creates or refreshes the draft GitHub Release tags
+   for the selected final packages and runs the full integration suite on that
+   branch.
 5. Run **Publish** with the same `release_line` and `publish_packages`. Publish
    validates the prepared draft releases, reruns lint, the full platform unit
    matrix, build/smoke checks, and the full platform integration gates from
-   `main`, uploads to PyPI only after those gates pass, then promotes the draft
-   GitHub Releases.
+   the same stable release branch, uploads to PyPI only after those gates pass,
+   then promotes the draft GitHub Releases.
 
 Because Arbiter can publish several packages at once, prepare and publish are
 keyed by package selection rather than by a single release tag. Packages with
