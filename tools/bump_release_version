@@ -22,6 +22,7 @@ from release_packages import (  # noqa: E402
 
 SUITE_PYPROJECT = Path("meta/arbiter-suite/pyproject.toml")
 SKILL_PYPROJECT = Path("skill/pyproject.toml")
+GO_CLIENT_VERSION = Path("client/go-cli/internal/cli/version_generated.go")
 GREEN = "\033[32m"
 RED = "\033[31m"
 RESET = "\033[0m"
@@ -260,6 +261,17 @@ def _extract_server_dependency_range(text: str, path: Path) -> tuple[str, str]:
     return match.group(1), match.group(2)
 
 
+def _extract_go_client_version(text: str, path: Path) -> str:
+    match = re.search(
+        r'^const serverVersion = "([0-9]+\.[0-9]+\.[0-9]+(?:[.-]dev[0-9]+)?)"$',
+        text,
+        re.MULTILINE,
+    )
+    if match is None:
+        raise ValueError(f"could not find generated Go client version in {path}")
+    return match.group(1)
+
+
 def _validate_current_state(root: Path) -> dict[Path, str]:
     suite_pyproject = _read(root, SUITE_PYPROJECT)
     suite_version_text = _extract_version(suite_pyproject, SUITE_PYPROJECT)
@@ -346,6 +358,15 @@ def _update_pyproject(
             updated,
         )
     return updated
+
+
+def _update_go_client_version(text: str, target: PackageVersion) -> str:
+    return _replace_one(
+        text,
+        r'^const serverVersion = "[0-9]+\.[0-9]+\.[0-9]+(?:[.-]dev[0-9]+)?"$',
+        f'const serverVersion = "{target.text}"',
+        GO_CLIENT_VERSION,
+    )
 
 
 def _selected_dependency_targets(
@@ -437,6 +458,12 @@ def build_changes(
             after = _update_runtime_file(before, path, runtime_target)
             if after != before:
                 changes.append(Change(path=path, before=before, after=after))
+    if server_selected:
+        target = target_by_path[package_files_by_key["server"]]
+        before = _read(root, GO_CLIENT_VERSION)
+        after = _update_go_client_version(before, target)
+        if after != before:
+            changes.append(Change(path=GO_CLIENT_VERSION, before=before, after=after))
     return changes
 
 
@@ -479,6 +506,15 @@ def check_release_state(
         for path in selected_paths & plugin_paths:
             if expected_range not in _read(root, path):
                 raise ValueError(f"{path} is missing dependency {expected_range}")
+        go_client_version = _extract_go_client_version(
+            _read(root, GO_CLIENT_VERSION),
+            GO_CLIENT_VERSION,
+        )
+        if go_client_version != target.text:
+            raise ValueError(
+                f"{GO_CLIENT_VERSION} version is {go_client_version}, "
+                f"expected {target.text}"
+            )
 
     if _uses_all_packages(root, packages):
         expected_api = f'SERVER_API_VERSION = "{target.line.text}"'
