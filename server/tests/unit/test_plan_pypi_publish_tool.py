@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import json
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -239,17 +240,95 @@ def test_write_github_output_includes_publish_keys(tmp_path: Path) -> None:
         str(output_path),
         publish_count=2,
         publish_keys=["server", "smtp"],
+        publish_matrix={
+            "include": [
+                {
+                    "artifact_dir": "server",
+                    "package_name": "arbiter-server",
+                    "publish_key": "server",
+                    "version": "0.9.0",
+                },
+                {
+                    "artifact_dir": "smtp",
+                    "package_name": "arbiter-smtp",
+                    "publish_key": "smtp",
+                    "version": "0.9.1",
+                },
+            ]
+        },
         publish_specs=["arbiter-server==0.9.0", "arbiter-smtp==0.9.1"],
         publish_title="arbiter-server 0.9.0, arbiter-smtp 0.9.1",
     )
 
-    assert output_path.read_text(encoding="utf-8") == (
-        "publish_count=2\n"
-        "has_publish=true\n"
-        "publish_keys=server,smtp\n"
-        "publish_specs=arbiter-server==0.9.0,arbiter-smtp==0.9.1\n"
-        "publish_title=arbiter-server 0.9.0, arbiter-smtp 0.9.1\n"
+    output = dict(
+        line.split("=", 1)
+        for line in output_path.read_text(encoding="utf-8").splitlines()
     )
+    assert output["publish_count"] == "2"
+    assert output["has_publish"] == "true"
+    assert output["publish_keys"] == "server,smtp"
+    assert json.loads(output["publish_matrix"]) == {
+        "include": [
+            {
+                "artifact_dir": "server",
+                "package_name": "arbiter-server",
+                "publish_key": "server",
+                "version": "0.9.0",
+            },
+            {
+                "artifact_dir": "smtp",
+                "package_name": "arbiter-smtp",
+                "publish_key": "smtp",
+                "version": "0.9.1",
+            },
+        ]
+    }
+    assert output["publish_specs"] == "arbiter-server==0.9.0,arbiter-smtp==0.9.1"
+    assert output["publish_title"] == "arbiter-server 0.9.0, arbiter-smtp 0.9.1"
+
+
+def test_prepare_output_dir_groups_distributions_by_publish_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tool = _load_tool()
+    _write_fixture(tmp_path)
+    monkeypatch.setattr(tool, "_pypi_version", lambda package_name: None)
+
+    dist_dir = tmp_path / "dist"
+    dist_dir.mkdir()
+    for filename in (
+        "arbiter_server-0.9.0.dev1.tar.gz",
+        "arbiter_server-0.9.0.dev1-py3-none-any.whl",
+        "arbiter_suite-0.9.0.dev1.tar.gz",
+        "arbiter_suite-0.9.0.dev1-py3-none-any.whl",
+    ):
+        (dist_dir / filename).write_text("artifact\n", encoding="utf-8")
+
+    assert (
+        tool.main(
+            [
+                "--root",
+                str(tmp_path),
+                "--packages",
+                "server,meta:all",
+                "--prepare-output-dir",
+            ]
+        )
+        == 0
+    )
+
+    assert sorted(
+        path.name for path in (tmp_path / "dist-publish/server").iterdir()
+    ) == [
+        "arbiter_server-0.9.0.dev1-py3-none-any.whl",
+        "arbiter_server-0.9.0.dev1.tar.gz",
+    ]
+    assert sorted(
+        path.name for path in (tmp_path / "dist-publish/meta-all").iterdir()
+    ) == [
+        "arbiter_suite-0.9.0.dev1-py3-none-any.whl",
+        "arbiter_suite-0.9.0.dev1.tar.gz",
+    ]
 
 
 def test_copy_distributions_missing_artifact_explains_build_order(

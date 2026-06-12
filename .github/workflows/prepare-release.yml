@@ -285,7 +285,7 @@ jobs:
               ("Windows x64", "windows-2025", "windows-x64"),
               ("Windows arm64", "windows-11-arm", "windows-arm64"),
           ]
-          suites = [{"suite": "Core", "target": "server/tests/integration", "go_tests": True}]
+          suites = [{"suite": "Server", "target": "server/tests/integration", "go_tests": True}]
           for path in sorted(Path("plugins").glob("*/tests/integration")):
               if path.is_dir():
                   suites.append(

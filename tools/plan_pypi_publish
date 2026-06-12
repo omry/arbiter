@@ -92,6 +92,11 @@ class PlanItem:
     reason: str
 
 
+def _publish_artifact_dir(item: PlanItem, keys_by_name: dict[str, str]) -> str:
+    key = keys_by_name[item.package.name]
+    return re.sub(r"[^A-Za-z0-9_.-]+", "-", key)
+
+
 def _read_project(root: Path, package: Package) -> dict[str, object]:
     if package.path is None:
         raise ValueError(f"{package.name} does not have a pyproject path")
@@ -294,6 +299,7 @@ def _write_github_output(
     *,
     publish_count: int,
     publish_keys: list[str],
+    publish_matrix: dict[str, list[dict[str, str]]],
     publish_specs: list[str],
     publish_title: str,
 ) -> None:
@@ -303,6 +309,8 @@ def _write_github_output(
         output.write(f"publish_count={publish_count}\n")
         output.write(f"has_publish={'true' if publish_count else 'false'}\n")
         output.write(f"publish_keys={','.join(publish_keys)}\n")
+        matrix_json = json.dumps(publish_matrix, separators=(",", ":"))
+        output.write(f"publish_matrix={matrix_json}\n")
         output.write(f"publish_specs={','.join(publish_specs)}\n")
         output.write(f"publish_title={publish_title}\n")
 
@@ -343,6 +351,17 @@ def main(argv: list[str] | None = None) -> int:
         publish_specs = [
             f"{item.package.name}=={item.local_version.text}" for item in publish_items
         ]
+        publish_matrix = {
+            "include": [
+                {
+                    "artifact_dir": _publish_artifact_dir(item, keys_by_name),
+                    "package_name": item.package.name,
+                    "publish_key": keys_by_name[item.package.name],
+                    "version": item.local_version.text,
+                }
+                for item in publish_items
+            ]
+        }
         publish_title = ", ".join(
             f"{item.package.name} {item.local_version.text}" for item in publish_items
         )
@@ -354,9 +373,13 @@ def main(argv: list[str] | None = None) -> int:
             output_dir.mkdir(parents=True)
             dist_dir = root / namespace.dist_dir
             for item in publish_items:
+                package_output_dir = output_dir / _publish_artifact_dir(
+                    item, keys_by_name
+                )
+                package_output_dir.mkdir(parents=True)
                 _copy_distributions(
                     dist_dir=dist_dir,
-                    output_dir=output_dir,
+                    output_dir=package_output_dir,
                     item=item,
                 )
 
@@ -372,6 +395,7 @@ def main(argv: list[str] | None = None) -> int:
             os.environ.get("GITHUB_OUTPUT"),
             publish_count=len(publish_items),
             publish_keys=publish_keys,
+            publish_matrix=publish_matrix,
             publish_specs=publish_specs,
             publish_title=publish_title,
         )

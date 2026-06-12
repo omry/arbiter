@@ -37,6 +37,7 @@ jobs:
       has_publish: ${{ steps.pypi-plan.outputs.has_publish }}
       integration_matrix: ${{ steps.integration-matrix.outputs.matrix }}
       publish_keys: ${{ steps.pypi-plan.outputs.publish_keys }}
+      publish_matrix: ${{ steps.pypi-plan.outputs.publish_matrix }}
       publish_specs: ${{ steps.pypi-plan.outputs.publish_specs }}
       publish_title: ${{ steps.pypi-plan.outputs.publish_title }}
       release_tags: ${{ steps.drafts.outputs.release_tags }}
@@ -147,7 +148,7 @@ jobs:
               ("Windows x64", "windows-2025", "windows-x64"),
               ("Windows arm64", "windows-11-arm", "windows-arm64"),
           ]
-          suites = [{"suite": "Core", "target": "server/tests/integration", "go_tests": True}]
+          suites = [{"suite": "Server", "target": "server/tests/integration", "go_tests": True}]
           for path in sorted(Path("plugins").glob("*/tests/integration")):
               if path.is_dir():
                   suites.append(
@@ -359,7 +360,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: python-distributions-to-publish
-          path: dist-publish/*
+          path: dist-publish/**
           if-no-files-found: error
 
   integration-tests:
@@ -454,7 +455,7 @@ jobs:
         run: nox -s deploy-test
 
   publish:
-    name: Publish ${{ needs.validate.outputs.publish_title }} to PyPI
+    name: Publish ${{ matrix.package_name }} ${{ matrix.version }} to PyPI
     needs:
       - build
       - docker-deploy-test
@@ -474,15 +475,21 @@ jobs:
       contents: read
       id-token: write
 
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.validate.outputs.publish_matrix) }}
+
     steps:
       - name: Download publishable distributions
         uses: actions/download-artifact@v4
         with:
           name: python-distributions-to-publish
-          path: dist
+          path: dist-publish
 
       - name: Publish distributions
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist-publish/${{ matrix.artifact_dir }}
 
   promote:
     name: Promote GitHub Releases
