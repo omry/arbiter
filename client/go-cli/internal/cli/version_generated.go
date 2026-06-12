@@ -2,4 +2,4 @@
 
 package cli
 
-const serverVersion = "0.9.1.dev1"
+const serverVersion = "0.9.1.dev2"

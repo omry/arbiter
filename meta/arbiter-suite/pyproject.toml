@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "arbiter-suite"
-version = "0.9.1.dev1"
+version = "0.9.1.dev2"
 description = "Policy-controlled access to configured services for agents"
 readme = { text = "Arbiter suite meta package.", content-type = "text/markdown" }
 requires-python = ">=3.10,<3.15"
@@ -30,10 +30,10 @@ classifiers = [
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-  "arbiter-server==0.9.1.dev1",
-  "arbiter-client==0.9.1.dev1",
-  "arbiter-smtp==0.9.1.dev1",
-  "arbiter-imap==0.9.1.dev1",
+  "arbiter-server==0.9.1.dev2",
+  "arbiter-client==0.9.1.dev2",
+  "arbiter-smtp==0.9.1.dev2",
+  "arbiter-imap==0.9.1.dev2",
 ]
 
 [project.urls]
