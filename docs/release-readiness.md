@@ -13,10 +13,34 @@ run, it is not done.
 - Documentation pass across the published-package install and deployment path
   has not been completed.
 - Security analysis has not been completed.
-- Agent Skill Installer validation against the published `arbiter-skill`
-  package has not been completed.
 - Cleanup of the earlier platform-specific skill package attempt has not been
   planned or executed.
+
+## Verified release evidence
+
+- `0.9.1.dev2` was published from GitHub Actions run
+  `27397058544` on `main`.
+- The publish workflow used separate PyPI jobs for each publish key. The
+  `arbiter-suite`, `arbiter-server`, `arbiter-imap`, `arbiter-smtp`,
+  `arbiter-skill`, and `arbiter-client` publish jobs all completed
+  successfully.
+- PyPI version-specific JSON endpoints confirmed the expected `0.9.1.dev2`
+  files:
+  - `arbiter-server`, `arbiter-imap`, `arbiter-smtp`, and `arbiter-suite`:
+    wheel plus sdist.
+  - `arbiter-skill`: platform-neutral wheel.
+  - `arbiter-client`: six platform wheels for macOS arm64, macOS x86_64,
+    Linux aarch64, Linux x86_64, Windows amd64, and Windows arm64.
+- The project-level PyPI JSON endpoint can lag immediately after upload. Prefer
+  release-specific endpoints such as
+  `https://pypi.org/pypi/arbiter-server/0.9.1.dev2/json` for post-publish
+  verification evidence.
+- Agent Skill Installer installed `arbiter-skill==0.9.1.dev2` from PyPI into
+  standalone target `/tmp/arbiter-asi-pypi-5lz5Q9` using directory scope for
+  Codex. ASI resolved the external `arbiter-client==0.9.1.dev2` companion
+  wheel from PyPI, copied `arbiter_client/bin/arbiter` to
+  `.codex/skills/arbiter/bin/arbiter`, wrote the Codex `AGENTS.md` hook, and
+  the copied binary reported `arbiter-go 0.9.1.dev2`.
 
 ## Required gates
 
@@ -141,9 +165,10 @@ See `website/docs/maintain/release-process.md`.
 Confirm PyPI trusted publishers exist for the selected package keys, and that
 the GitHub `pypi` environment is ready.
 
-For the initial bootstrap, publish one package at a time because PyPI pending
-trusted publishers currently allow only one pending project for the same
-repository, workflow, and environment.
+The publish workflow publishes each package key in its own PyPI job. This keeps
+server, plugin, suite, skill, and client uploads isolated, so one package upload
+failure does not hide which artifact set failed. Keep `fail-fast: false` on the
+publish matrix.
 
 The native client publishing key is `client`, which publishes the
 `arbiter-client` platform wheel set. The transitional Python CLI client is not

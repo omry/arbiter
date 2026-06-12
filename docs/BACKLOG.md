@@ -27,11 +27,16 @@ This file is the day-to-day queue for design and implementation gaps.
 ## Now
 
 - [ ] `P1` Prepare release packaging and version readiness.
-      The service plugin/config reroute is in place, so the package/release
-      surface needs one explicit readiness pass before initial release.
-      Acceptance checks: the intended version target is chosen; package
-      metadata and deployment requirements docs agree; release notes and status notes
-      are current; and a build/install smoke path is verified.
+      The `0.9.1.dev2` full publish validated the package split and PyPI
+      trusted-publisher path for `arbiter-server`, `arbiter-imap`,
+      `arbiter-smtp`, `arbiter-suite`, `arbiter-skill`, and `arbiter-client`.
+      A standalone ASI install from PyPI also validated that `arbiter-skill`
+      resolves and copies the `arbiter-client` companion wheel.
+      Remaining readiness work is the final-release pass, not the dev publish
+      mechanics. Acceptance checks: the intended final version target is
+      chosen; package metadata and deployment requirements docs agree; release
+      notes and status notes are current; local build/install smoke is verified;
+      and PyPI post-publish verification uses release-specific endpoints.
 
 - [ ] `P1` Add CI smoke tests for all platform-specific Arbiter client wheels.
       The `arbiter-skill` package now relies on ASI to copy the native Go client
