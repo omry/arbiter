@@ -1,5 +1,6 @@
 from collections.abc import Sequence
-from typing import cast
+from dataclasses import replace
+from typing import Any, cast
 
 import pytest
 
@@ -9,9 +10,16 @@ from arbiter_imap.config import (
     IMAPAccessPolicyConfig,
     IMAPConfig,
     IMAPFlagMode,
+    IMAPFolderAccessConfig,
+    IMAPFolderAccessRuleConfig,
     IMAPFolderConfig,
     IMAPFolderKind,
+    IMAPFolderOperationPolicyConfig,
+    IMAPFolderPolicyDefaultsConfig,
+    IMAPMovePolicyConfig,
+    IMAPOperationDecision,
     IMAPSystemFlagsPolicyConfig,
+    default_imap_system_flags_policy,
 )
 from arbiter_smtp.config import (
     SMTPConfig,
@@ -22,7 +30,7 @@ from arbiter_smtp.config import (
     SMTPServicePolicyConfig,
 )
 from arbiter_server.services import RuntimeRegistry, ServicePluginContext
-from arbiter_imap import IMAPRuntime, IMAPServicePlugin
+from arbiter_imap import IMAP_OPERATION_DESCRIPTORS, IMAPRuntime, IMAPServicePlugin
 from arbiter_imap.client import (
     FetchedIMAPMessage,
     IMAPAttachment,
@@ -112,6 +120,8 @@ class FakeIMAPClient:
         self.get_calls: list[dict[str, object]] = []
         self.get_attachment_calls: list[dict[str, object]] = []
         self.search_calls: list[dict[str, object]] = []
+        self.flag_calls: list[dict[str, object]] = []
+        self.update_flag_calls: list[dict[str, object]] = []
         self.move_calls: list[dict[str, object]] = []
         self.mark_read_calls: list[dict[str, object]] = []
         self.delete_calls: list[dict[str, object]] = []
@@ -146,6 +156,9 @@ class FakeIMAPClient:
     def list_messages(self, *, folder: str, limit: int) -> list[FetchedIMAPMessage]:
         self.list_calls.append({"folder": folder, "limit": limit})
         return self.messages[:limit]
+
+    def list_folders(self) -> list[str]:
+        return ["Archive", "Archive/2024", "INBOX", "Sent", "Trash"]
 
     def test_connection(self, *, folders: Sequence[str]) -> None:
         return None
@@ -192,6 +205,27 @@ class FakeIMAPClient:
 
     def mark_message_read(self, *, folder: str, uid: str, read: bool) -> None:
         self.mark_read_calls.append({"folder": folder, "uid": uid, "read": read})
+
+    def get_message_flags(self, *, folder: str, uid: str) -> list[str]:
+        self.flag_calls.append({"folder": folder, "uid": uid})
+        return self.messages[0].flags
+
+    def update_message_flags(
+        self,
+        *,
+        folder: str,
+        uid: str,
+        add_flags: Sequence[str],
+        remove_flags: Sequence[str],
+    ) -> None:
+        self.update_flag_calls.append(
+            {
+                "folder": folder,
+                "uid": uid,
+                "add_flags": tuple(add_flags),
+                "remove_flags": tuple(remove_flags),
+            }
+        )
 
     def delete_message(self, *, folder: str, uid: str) -> None:
         self.delete_calls.append({"folder": folder, "uid": uid})
@@ -306,18 +340,88 @@ def _imap_config(policy: str = "personal") -> IMAPConfig:
             "INBOX": IMAPFolderConfig(description="Inbox"),
             "Archive": IMAPFolderConfig(
                 description="Archive",
-                kind=IMAPFolderKind.archive,
+                kind=IMAPFolderKind.ARCHIVE,
             ),
             "Archive/2024": IMAPFolderConfig(
                 description="Archived mail from 2024",
-                kind=IMAPFolderKind.archive,
+                kind=IMAPFolderKind.ARCHIVE,
             ),
             "Sent": IMAPFolderConfig(
                 description="Sent mail",
-                kind=IMAPFolderKind.sent,
+                kind=IMAPFolderKind.SENT,
+            ),
+            "Trash": IMAPFolderConfig(
+                description="Deleted mail",
+                kind=IMAPFolderKind.TRASH,
             ),
         },
     )
+
+
+def _imap_policy(
+    *,
+    search: IMAPOperationDecision = IMAPOperationDecision.allow,
+    move: bool | IMAPMovePolicyConfig = False,
+    delete: IMAPOperationDecision = IMAPOperationDecision.deny,
+    mark_read: IMAPOperationDecision = IMAPOperationDecision.deny,
+    seen: IMAPFlagMode = IMAPFlagMode.read_only,
+) -> IMAPAccessPolicyConfig:
+    return IMAPAccessPolicyConfig(
+        folder_access=IMAPFolderAccessConfig(
+            rules=[IMAPFolderAccessRuleConfig(allow_glob="*")]
+        ),
+        operation_defaults=IMAPFolderPolicyDefaultsConfig(
+            read=IMAPOperationDecision.allow,
+            search=search,
+            move=move,
+            mark_read=mark_read,
+            delete=delete,
+            folder_append=IMAPOperationDecision.deny,
+            system_flags=replace(default_imap_system_flags_policy(), SEEN=seen),
+            user_flags={
+                "bot.followed_up": IMAPFlagMode.read_write,
+                "triaged": IMAPFlagMode.read_only,
+                "internal_only": IMAPFlagMode.hidden,
+            },
+        ),
+        folders={
+            "Sent": IMAPFolderOperationPolicyConfig(
+                folder_append=IMAPOperationDecision.allow,
+                system_flags=IMAPSystemFlagsPolicyConfig(SEEN=IMAPFlagMode.read_write),
+                user_flags={"custom": IMAPFlagMode.read_write},
+            )
+        },
+    )
+
+
+def _expected_imap_operations(
+    *,
+    folder_append: str = "deny",
+    seen: str = "read_only",
+    custom: str | None = None,
+) -> dict[str, object]:
+    user_flags = {
+        "bot.followed_up": "read_write",
+        "triaged": "read_only",
+    }
+    if custom is not None:
+        user_flags["custom"] = custom
+    return {
+        "read": "allow",
+        "search": "allow",
+        "move": {"allowed": False},
+        "mark_read": "deny",
+        "delete": "deny",
+        "folder_append": folder_append,
+        "system_flags": {
+            "SEEN": seen,
+            "FLAGGED": "read_only",
+            "ANSWERED": "read_only",
+            "DELETED": "read_only",
+            "DRAFT": "read_only",
+        },
+        "user_flags": user_flags,
+    }
 
 
 def _imap_runtime(
@@ -329,18 +433,7 @@ def _imap_runtime(
 ) -> IMAPRuntime:
     return IMAPRuntime(
         accounts=accounts or {"personal": _imap_config()},
-        policies=policies
-        or {
-            "personal": IMAPAccessPolicyConfig(
-                allow_move=False,
-                allow_delete=False,
-                user_flags={
-                    "bot.followed_up": IMAPFlagMode.read_write,
-                    "triaged": IMAPFlagMode.read_only,
-                    "internal_only": IMAPFlagMode.hidden,
-                },
-            )
-        },
+        policies=policies or {"personal": _imap_policy()},
         imap_client_factory=imap_client_factory or RecordingIMAPClientFactory(),
         artifact_store=cast(PluginArtifactStore | None, artifact_store),
     )
@@ -357,6 +450,180 @@ def _app(
     if imap_runtime is not None:
         runtimes["imap"] = imap_runtime
     return ArbiterApp(RuntimeRegistry(runtimes))
+
+
+def test_imap_service_plugin_invocation_dispatches_runtime_arguments() -> None:
+    calls: list[dict[str, object]] = []
+
+    class RecordingRuntime(IMAPRuntime):
+        def __init__(self) -> None:
+            super().__init__(accounts={}, policies={})
+
+    def recording_method(operation: str) -> object:
+        def record(**kwargs: object) -> dict[str, object]:
+            call = {"operation": operation, **kwargs}
+            calls.append(call)
+            return call
+
+        return record
+
+    cases: list[tuple[str, dict[str, object], dict[str, object]]] = [
+        (
+            "list_messages",
+            {"account": "personal"},
+            {
+                "operation": "list_messages",
+                "account": "personal",
+                "folder": None,
+                "limit": 20,
+            },
+        ),
+        (
+            "list_folders",
+            {"account": "personal"},
+            {
+                "operation": "list_folders",
+                "account": "personal",
+                "root": None,
+                "recursive": False,
+                "limit": 50,
+            },
+        ),
+        (
+            "get_message",
+            {"account": "personal", "message_id": "42"},
+            {
+                "operation": "get_message",
+                "account": "personal",
+                "message_id": "42",
+                "folder": None,
+            },
+        ),
+        (
+            "get_attachment",
+            {
+                "account": "personal",
+                "message_id": "42",
+                "attachment_id": "part-1",
+            },
+            {
+                "operation": "get_attachment",
+                "account": "personal",
+                "message_id": "42",
+                "attachment_id": "part-1",
+                "folder": None,
+            },
+        ),
+        (
+            "search_messages",
+            {"account": "personal", "query": "invoice"},
+            {
+                "operation": "search_messages",
+                "account": "personal",
+                "query": "invoice",
+                "folder": None,
+                "limit": 20,
+            },
+        ),
+        (
+            "search_folders",
+            {"account": "personal", "query": "archive"},
+            {
+                "operation": "search_folders",
+                "account": "personal",
+                "query": "archive",
+                "root": None,
+                "recursive": True,
+                "limit": 20,
+            },
+        ),
+        (
+            "move_message",
+            {
+                "account": "personal",
+                "message_id": "42",
+                "destination_folder": "Archive",
+            },
+            {
+                "operation": "move_message",
+                "account": "personal",
+                "message_id": "42",
+                "destination_folder": "Archive",
+                "folder": None,
+            },
+        ),
+        (
+            "mark_message_read",
+            {"account": "personal", "message_id": "42"},
+            {
+                "operation": "mark_message_read",
+                "account": "personal",
+                "message_id": "42",
+                "folder": None,
+                "read": True,
+            },
+        ),
+        (
+            "get_message_flags",
+            {"account": "personal", "message_id": "42"},
+            {
+                "operation": "get_message_flags",
+                "account": "personal",
+                "message_id": "42",
+                "folder": None,
+            },
+        ),
+        (
+            "update_message_flags",
+            {"account": "personal", "message_id": "42"},
+            {
+                "operation": "update_message_flags",
+                "account": "personal",
+                "message_id": "42",
+                "folder": None,
+                "add_flags": (),
+                "remove_flags": (),
+            },
+        ),
+        (
+            "append_message",
+            {"account": "personal", "message": "Subject: Hi\r\n\r\nBody"},
+            {
+                "operation": "append_message",
+                "account": "personal",
+                "message": "Subject: Hi\r\n\r\nBody",
+                "folder": None,
+                "flags": ("SEEN",),
+            },
+        ),
+        (
+            "delete_message",
+            {"account": "personal", "message_id": "42"},
+            {
+                "operation": "delete_message",
+                "account": "personal",
+                "message_id": "42",
+                "folder": None,
+                "permanent": False,
+            },
+        ),
+    ]
+
+    runtime = RecordingRuntime()
+    for operation, _, _ in cases:
+        setattr(runtime, operation, recording_method(operation))
+    context = ServicePluginContext(runtimes=RuntimeRegistry({"imap": runtime}))
+    plugin = IMAPServicePlugin()
+    assert {operation for operation, _, _ in cases} == {
+        descriptor.name for descriptor in IMAP_OPERATION_DESCRIPTORS
+    }
+
+    for operation, arguments, expected_call in cases:
+        assert plugin.invoke_operation(operation, arguments, context) == expected_call
+
+    assert calls == [expected_call for _, _, expected_call in cases]
+    with pytest.raises(ValueError, match="unknown IMAP operation: not_real"):
+        plugin.invoke_operation("not_real", {}, context)
 
 
 def test_tool_names_contains_server_discovery_tools() -> None:
@@ -377,18 +644,23 @@ def test_list_accounts_returns_service_grouped_summaries() -> None:
                 "enabled": True,
                 "confirmation_required": [],
                 "message": {
-                    "read_allowed": True,
-                    "move_allowed": False,
-                    "delete_allowed": False,
-                    "flags": {
-                        "seen": "read_only",
-                        "flagged": "read_only",
-                        "answered": "read_only",
-                        "deleted": "read_only",
-                        "draft": "read_only",
-                        "user": {
-                            "bot.followed_up": "read_write",
-                            "triaged": "read_only",
+                    "defaults": {
+                        "read": "allow",
+                        "search": "allow",
+                        "move": False,
+                        "mark_read": "deny",
+                        "delete": "deny",
+                        "folder_append": "deny",
+                        "flags": {
+                            "SEEN": "read_only",
+                            "FLAGGED": "read_only",
+                            "ANSWERED": "read_only",
+                            "DELETED": "read_only",
+                            "DRAFT": "read_only",
+                            "user": {
+                                "bot.followed_up": "read_write",
+                                "triaged": "read_only",
+                            },
                         },
                     },
                 },
@@ -754,7 +1026,7 @@ def test_list_messages_uses_account_policy_and_folder_config() -> None:
             "to": ["bot@example.com"],
             "cc": [],
             "date": "Tue, 03 Mar 2026 12:00:00 +0000",
-            "flags": ["seen", "deleted", "bot.followed_up"],
+            "flags": ["SEEN", "DELETED", "bot.followed_up"],
             "rfc822_message_id": "<message-42@example.com>",
             "snippet": "Plain text body",
         }
@@ -776,14 +1048,16 @@ def test_list_folders_browses_configured_folders_without_imap_client() -> None:
             {
                 "name": "Archive",
                 "description": "Archive",
-                "kind": "archive",
+                "kind": "ARCHIVE",
                 "default": False,
+                "operations": _expected_imap_operations(),
             },
             {
                 "name": "INBOX",
                 "description": "Inbox",
                 "kind": None,
                 "default": True,
+                "operations": _expected_imap_operations(),
             },
         ],
     }
@@ -797,12 +1071,13 @@ def test_list_folders_browses_configured_folders_without_imap_client() -> None:
             {
                 "name": "Archive/2024",
                 "description": "Archived mail from 2024",
-                "kind": "archive",
+                "kind": "ARCHIVE",
                 "default": False,
+                "operations": _expected_imap_operations(),
             },
         ],
     }
-    assert factory.clients == []
+    assert len(factory.clients) == 2
 
 
 def test_search_folders_matches_name_description_and_kind() -> None:
@@ -819,8 +1094,13 @@ def test_search_folders_matches_name_description_and_kind() -> None:
             {
                 "name": "Sent",
                 "description": "Sent mail",
-                "kind": "sent",
+                "kind": "SENT",
                 "default": False,
+                "operations": _expected_imap_operations(
+                    folder_append="allow",
+                    seen="read_write",
+                    custom="read_write",
+                ),
             },
         ],
     }
@@ -841,8 +1121,9 @@ def test_search_folders_matches_name_description_and_kind() -> None:
             {
                 "name": "Archive/2024",
                 "description": "Archived mail from 2024",
-                "kind": "archive",
+                "kind": "ARCHIVE",
                 "default": False,
+                "operations": _expected_imap_operations(),
             },
         ],
     }
@@ -985,7 +1266,7 @@ def test_imap_get_attachment_is_hidden_without_artifact_store() -> None:
 
 def test_search_messages_requires_policy_permission() -> None:
     runtime = _imap_runtime(
-        policies={"personal": IMAPAccessPolicyConfig(allow_search=False)}
+        policies={"personal": _imap_policy(search=IMAPOperationDecision.deny)}
     )
 
     with pytest.raises(ValueError, match="search_messages is not allowed"):
@@ -995,7 +1276,7 @@ def test_search_messages_requires_policy_permission() -> None:
 def test_move_message_requires_policy_permission() -> None:
     runtime = _imap_runtime()
 
-    with pytest.raises(ValueError, match="move_message is not allowed"):
+    with pytest.raises(ValueError, match="destination folder is not allowed"):
         runtime.move_message(
             account="personal",
             message_id="42",
@@ -1004,18 +1285,273 @@ def test_move_message_requires_policy_permission() -> None:
 
 
 def test_mark_message_read_requires_read_write_seen_flag() -> None:
-    runtime = _imap_runtime()
+    runtime = _imap_runtime(
+        policies={"personal": _imap_policy(mark_read=IMAPOperationDecision.allow)}
+    )
 
     with pytest.raises(ValueError, match="read_write access"):
         runtime.mark_message_read(account="personal", message_id="42")
+
+
+def test_check_operation_uses_seen_flag_policy_for_mark_message_read() -> None:
+    runtime = _imap_runtime(
+        policies={"personal": _imap_policy(mark_read=IMAPOperationDecision.allow)}
+    )
+    plugin = IMAPServicePlugin()
+    context = ServicePluginContext(runtimes=RuntimeRegistry({"imap": runtime}))
+
+    result = cast(
+        dict[str, Any],
+        plugin.check_operation(
+            "mark_message_read",
+            {"account": "personal", "folder": "INBOX", "message_id": "42"},
+            context,
+        ),
+    )
+
+    assert result["operation"] == "imap:mark_message_read"
+    assert result["allowed"] is False
+    assert result["failed_gate"] == "SEEN"
+    assert result["why_not"] == (
+        "mark_message_read requires read_write access to the SEEN flag for account: personal"
+    )
+
+
+def test_get_and_update_message_flags_apply_effective_flag_policy() -> None:
+    factory = RecordingIMAPClientFactory()
+    runtime = _imap_runtime(
+        policies={
+            "personal": _imap_policy(
+                seen=IMAPFlagMode.read_write,
+            )
+        },
+        imap_client_factory=factory,
+    )
+
+    assert runtime.get_message_flags(account="personal", message_id="42") == {
+        "account": "personal",
+        "folder": "INBOX",
+        "message_id": "42",
+        "flags": ["SEEN", "DELETED", "bot.followed_up"],
+    }
+    assert runtime.update_message_flags(
+        account="personal",
+        message_id="42",
+        add_flags=["SEEN", "bot.followed_up"],
+        remove_flags=["bot.followed_up"],
+    ) == {
+        "ok": True,
+        "account": "personal",
+        "folder": "INBOX",
+        "message_id": "42",
+        "add_flags": ["\\Seen", "bot.followed_up"],
+        "remove_flags": ["bot.followed_up"],
+    }
+    assert factory.clients[0].flag_calls == [{"folder": "INBOX", "uid": "42"}]
+    assert factory.clients[1].update_flag_calls == [
+        {
+            "folder": "INBOX",
+            "uid": "42",
+            "add_flags": ("\\Seen", "bot.followed_up"),
+            "remove_flags": ("bot.followed_up",),
+        }
+    ]
+
+
+def test_update_message_flags_rejects_invalid_flag_names() -> None:
+    runtime = _imap_runtime()
+
+    with pytest.raises(ValueError, match="must be a non-system IMAP atom"):
+        runtime.update_message_flags(
+            account="personal",
+            message_id="42",
+            add_flags=[r"\Seen) bad"],
+        )
+
+
+def test_update_message_flags_requires_read_write_for_every_changed_flag() -> None:
+    runtime = _imap_runtime()
+
+    with pytest.raises(ValueError, match="read_write access"):
+        runtime.update_message_flags(
+            account="personal",
+            message_id="42",
+            add_flags=["triaged"],
+        )
+
+
+def test_check_operation_uses_flag_policy_for_update_message_flags() -> None:
+    runtime = _imap_runtime()
+    plugin = IMAPServicePlugin()
+    context = ServicePluginContext(runtimes=RuntimeRegistry({"imap": runtime}))
+
+    result = cast(
+        dict[str, Any],
+        plugin.check_operation(
+            "update_message_flags",
+            {
+                "account": "personal",
+                "folder": "INBOX",
+                "message_id": "42",
+                "add_flags": ["triaged"],
+            },
+            context,
+        ),
+    )
+
+    assert result["operation"] == "imap:update_message_flags"
+    assert result["allowed"] is False
+    assert (
+        result["why_not"]
+        == "update_message_flags requires read_write access to every changed flag"
+    )
+
+
+def test_check_operation_reports_imap_access_rule_denial() -> None:
+    runtime = _imap_runtime(
+        policies={
+            "personal": IMAPAccessPolicyConfig(
+                folder_access=IMAPFolderAccessConfig(
+                    rules=[
+                        IMAPFolderAccessRuleConfig(allow_glob="*"),
+                        IMAPFolderAccessRuleConfig(deny_exact="Archive"),
+                    ]
+                ),
+                operation_defaults=IMAPFolderPolicyDefaultsConfig(
+                    read=IMAPOperationDecision.allow,
+                    search=IMAPOperationDecision.allow,
+                ),
+            )
+        }
+    )
+    plugin = IMAPServicePlugin()
+    context = ServicePluginContext(runtimes=RuntimeRegistry({"imap": runtime}))
+
+    result = cast(
+        dict[str, Any],
+        plugin.check_operation(
+            "get_message",
+            {"account": "personal", "folder": "Archive", "message_id": "42"},
+            context,
+        ),
+    )
+
+    assert result["operation"] == "imap:get_message"
+    assert result["allowed"] is False
+    assert result["why_not"] == "folder is not accessible for account"
+    assert result["access_rules"] == [
+        {"index": 1, "rule": {"allow_glob": "*"}, "decision": "allow"},
+        {"index": 2, "rule": {"deny_exact": "Archive"}, "decision": "deny"},
+    ]
+
+
+def test_check_operation_reports_imap_move_destination_evidence() -> None:
+    runtime = _imap_runtime()
+    plugin = IMAPServicePlugin()
+    context = ServicePluginContext(runtimes=RuntimeRegistry({"imap": runtime}))
+
+    result = cast(
+        dict[str, Any],
+        plugin.check_operation(
+            "move_message",
+            {
+                "account": "personal",
+                "folder": "INBOX",
+                "message_id": "42",
+                "destination_folder": "Archive",
+            },
+            context,
+        ),
+    )
+
+    assert result["operation"] == "imap:move_message"
+    assert result["allowed"] is False
+    assert result["failed_gate"] == "destination_selector"
+    evidence = result["evidence"]
+    assert evidence["source_folder"]["name"] == "INBOX"
+    assert evidence["destination_folder"]["name"] == "Archive"
+    assert evidence["destination_folder"]["kind"] == "ARCHIVE"
+
+
+def test_check_operation_reports_imap_append_requires_message() -> None:
+    runtime = _imap_runtime()
+    plugin = IMAPServicePlugin()
+    context = ServicePluginContext(runtimes=RuntimeRegistry({"imap": runtime}))
+
+    result = cast(
+        dict[str, Any],
+        plugin.check_operation(
+            "append_message",
+            {"account": "personal", "folder": "INBOX"},
+            context,
+        ),
+    )
+
+    assert result["operation"] == "imap:append_message"
+    assert result["allowed"] is False
+    assert result["why_not"] == "append_message requires a non-empty message"
+
+
+def test_check_operation_reports_imap_append_denial() -> None:
+    runtime = _imap_runtime()
+    plugin = IMAPServicePlugin()
+    context = ServicePluginContext(runtimes=RuntimeRegistry({"imap": runtime}))
+
+    result = cast(
+        dict[str, Any],
+        plugin.check_operation(
+            "append_message",
+            {
+                "account": "personal",
+                "folder": "INBOX",
+                "message": "Subject: Hello\r\n\r\nBody",
+            },
+            context,
+        ),
+    )
+
+    assert result["operation"] == "imap:append_message"
+    assert result["allowed"] is False
+    assert result["why_not"] == "folder_append is not allowed for account: personal"
+    assert result["evidence"]["folder"]["operations"]["folder_append"] == "deny"
+
+
+def test_check_operation_requires_configured_trash_for_soft_delete() -> None:
+    imap_config = _imap_config()
+    del imap_config.folders["Trash"]
+    runtime = _imap_runtime(
+        accounts={"personal": imap_config},
+        policies={"personal": _imap_policy(delete=IMAPOperationDecision.allow)},
+    )
+    plugin = IMAPServicePlugin()
+    context = ServicePluginContext(runtimes=RuntimeRegistry({"imap": runtime}))
+
+    result = cast(
+        dict[str, Any],
+        plugin.check_operation(
+            "delete_message",
+            {"account": "personal", "folder": "INBOX", "message_id": "42"},
+            context,
+        ),
+    )
+
+    assert result["operation"] == "imap:delete_message"
+    assert result["allowed"] is False
+    assert result["failed_gate"] == "trash_folder"
+    assert result["why_not"] == (
+        "delete_message requires an accessible TRASH folder for account: personal"
+    )
 
 
 def test_imap_mutations_use_configured_account_policy() -> None:
     factory = RecordingIMAPClientFactory()
     runtime = _imap_runtime(
         policies={
-            "personal": IMAPAccessPolicyConfig(
-                system_flags=IMAPSystemFlagsPolicyConfig(seen=IMAPFlagMode.read_write)
+            "personal": _imap_policy(
+                move=True,
+                delete=IMAPOperationDecision.allow,
+                mark_read=IMAPOperationDecision.allow,
+                seen=IMAPFlagMode.read_write,
             )
         },
         imap_client_factory=factory,
@@ -1043,11 +1579,17 @@ def test_imap_mutations_use_configured_account_policy() -> None:
         "message_id": "42",
         "read": False,
     }
-    assert runtime.delete_message(account="personal", message_id="42") == {
+    assert runtime.delete_message(
+        account="personal",
+        message_id="42",
+        permanent=True,
+    ) == {
         "ok": True,
         "account": "personal",
         "folder": "INBOX",
         "message_id": "42",
+        "permanent": True,
+        "destination_folder": None,
     }
     assert factory.clients[0].move_calls == [
         {"source_folder": "INBOX", "uid": "42", "destination_folder": "Archive"}
@@ -1056,6 +1598,26 @@ def test_imap_mutations_use_configured_account_policy() -> None:
         {"folder": "INBOX", "uid": "42", "read": False}
     ]
     assert factory.clients[2].delete_calls == [{"folder": "INBOX", "uid": "42"}]
+
+
+def test_delete_message_soft_deletes_to_accessible_trash_folder() -> None:
+    factory = RecordingIMAPClientFactory()
+    runtime = _imap_runtime(
+        policies={"personal": _imap_policy(delete=IMAPOperationDecision.allow)},
+        imap_client_factory=factory,
+    )
+
+    assert runtime.delete_message(account="personal", message_id="42") == {
+        "ok": True,
+        "account": "personal",
+        "folder": "INBOX",
+        "message_id": "42",
+        "permanent": False,
+        "destination_folder": "Trash",
+    }
+    assert factory.clients[1].move_calls == [
+        {"source_folder": "INBOX", "uid": "42", "destination_folder": "Trash"}
+    ]
 
 
 def test_append_sent_message_uses_configured_folder() -> None:
@@ -1075,3 +1637,66 @@ def test_append_sent_message_uses_configured_folder() -> None:
             "flags": (r"\Seen",),
         }
     ]
+
+
+def test_append_message_uses_allowed_folder() -> None:
+    factory = RecordingIMAPClientFactory()
+    runtime = _imap_runtime(imap_client_factory=factory)
+
+    assert runtime.append_message(
+        account="personal",
+        folder="Sent",
+        message="Subject: Hello\r\n\r\nBody",
+        flags=["\\Seen", "custom"],
+    ) == {
+        "ok": True,
+        "account": "personal",
+        "folder": "Sent",
+        "flags": ["\\Seen", "custom"],
+    }
+    assert factory.clients[0].append_calls == [
+        {
+            "folder": "Sent",
+            "message_bytes": b"Subject: Hello\r\n\r\nBody",
+            "flags": ("\\Seen", "custom"),
+        }
+    ]
+
+
+def test_append_message_requires_read_write_for_every_flag() -> None:
+    runtime = _imap_runtime()
+
+    with pytest.raises(ValueError, match="read_write access"):
+        runtime.append_message(
+            account="personal",
+            folder="Sent",
+            message="Subject: Hello\r\n\r\nBody",
+            flags=["internal_only"],
+        )
+
+
+def test_append_sent_message_requires_folder_append_policy() -> None:
+    factory = RecordingIMAPClientFactory()
+    runtime = _imap_runtime(
+        policies={
+            "personal": IMAPAccessPolicyConfig(
+                folder_access=IMAPFolderAccessConfig(
+                    rules=[IMAPFolderAccessRuleConfig(allow_glob="*")]
+                ),
+                operation_defaults=IMAPFolderPolicyDefaultsConfig(
+                    read=IMAPOperationDecision.allow,
+                    search=IMAPOperationDecision.allow,
+                    folder_append=IMAPOperationDecision.deny,
+                ),
+            )
+        },
+        imap_client_factory=factory,
+    )
+
+    with pytest.raises(ValueError, match="folder_append is not allowed"):
+        runtime.append_sent_message(
+            account="personal",
+            folder="Sent",
+            message_bytes=b"Subject: Hello\r\n\r\nBody",
+        )
+    assert factory.clients == []

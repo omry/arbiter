@@ -1086,10 +1086,12 @@ async def call_arbiter_operation(
     url: str,
     operation_id: str,
     arguments: Mapping[str, Any],
+    *,
+    tool_name: str = "run_op",
 ) -> object:
     return await call_tool(
         url,
-        "run_op",
+        tool_name,
         {
             "id": operation_id,
             "arguments": dict(arguments),
@@ -1293,6 +1295,17 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     operation_run.add_argument("id", help="operation id, such as smtp:send_email")
     operation_run.add_argument(
+        "--args",
+        default={},
+        type=_parse_json_object,
+        help='operation arguments as a JSON object, for example \'{"account": "bot"}\'',
+    )
+    operation_check = operation_subcommands.add_parser(
+        "check",
+        help="check whether one operation would be allowed by policy",
+    )
+    operation_check.add_argument("id", help="operation id, such as imap:get_message")
+    operation_check.add_argument(
         "--args",
         default={},
         type=_parse_json_object,
@@ -1924,6 +1937,18 @@ async def _run_async(namespace: argparse.Namespace) -> int:
             namespace.mcp_url,
             namespace.id,
             namespace.args,
+        )
+        _print_json(_tool_result_payload(result))
+        return 0
+    if (
+        namespace.command in {"operation", "op"}
+        and namespace.operation_command == "check"
+    ):
+        result = await call_arbiter_operation(
+            namespace.mcp_url,
+            namespace.id,
+            namespace.args,
+            tool_name="check_op",
         )
         _print_json(_tool_result_payload(result))
         return 0

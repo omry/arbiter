@@ -132,17 +132,17 @@ Arbiter serializes the message once and uses those same bytes for SMTP DATA and
 the IMAP append, so the Sent copy matches what was submitted to the SMTP server.
 
 Normal configuration is to mark exactly one folder on the matching IMAP account
-as `kind: sent`:
+as `kind: SENT`:
 
 ```yaml
 folders:
   Sent:
     description: Sent mail.
-    kind: sent
+    kind: SENT
 ```
 
-If there is no matching IMAP account, no `kind: sent` folder, or multiple
-`kind: sent` folders, the sent copy is skipped unless a folder override is set
+If there is no matching IMAP account, no `kind: SENT` folder, or multiple
+`kind: SENT` folders, the sent copy is skipped unless a folder override is set
 on the SMTP account:
 
 ```yaml

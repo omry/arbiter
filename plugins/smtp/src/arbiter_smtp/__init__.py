@@ -1039,7 +1039,7 @@ verify_peer: true
 timeout_seconds: 30
 
 # Optional override for the IMAP sent-copy folder used after successful sends.
-# Leave null to infer the only kind=sent folder on the matching IMAP account.
+# Leave null to infer the only kind=SENT folder on the matching IMAP account.
 sent_copy:
   folder: null
 """

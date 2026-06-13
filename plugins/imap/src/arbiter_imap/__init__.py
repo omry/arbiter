@@ -20,10 +20,16 @@ from .config import (
     IMAPConfig,
     IMAPFlagMode,
     IMAPFolderConfig,
+    IMAPFolderKind,
+    IMAPOperationDecision,
+    IMAPSystemFlag,
+    normalize_imap_flag_name,
     register_configs as register_imap_configs,
-    resolve_imap_flag_mode,
-    resolve_system_flag_key,
+    resolve_system_flag,
+    validate_user_flag_name,
 )
+from .policy import IMAPFolderResolution, IMAPPolicyResolver, IMAPResolvedFolderPolicy
+from .runtime_policy import _IMAPRuntimePolicyMixin
 
 from .client import FetchedIMAPMessage, IMAPAttachmentContent
 
@@ -32,6 +38,8 @@ SERVER_API_VERSION = "0.9"
 
 class IMAPClientProtocol(Protocol):
     def test_connection(self, *, folders: Sequence[str]) -> None: ...
+
+    def list_folders(self) -> list[str]: ...
 
     def list_messages(self, *, folder: str, limit: int) -> list[FetchedIMAPMessage]: ...
 
@@ -63,6 +71,17 @@ class IMAPClientProtocol(Protocol):
 
     def mark_message_read(self, *, folder: str, uid: str, read: bool) -> None: ...
 
+    def get_message_flags(self, *, folder: str, uid: str) -> list[str]: ...
+
+    def update_message_flags(
+        self,
+        *,
+        folder: str,
+        uid: str,
+        add_flags: Sequence[str],
+        remove_flags: Sequence[str],
+    ) -> None: ...
+
     def delete_message(self, *, folder: str, uid: str) -> None: ...
 
     def append_message(
@@ -70,7 +89,7 @@ class IMAPClientProtocol(Protocol):
         *,
         folder: str,
         message_bytes: bytes,
-        flags: Sequence[str] = (r"\Seen",),
+        flags: Sequence[str] = (IMAPSystemFlag.SEEN.value,),
     ) -> None: ...
 
 
@@ -120,6 +139,15 @@ RECURSIVE_PROPERTY = {
 MESSAGE_ID_PROPERTY = {
     "type": "string",
     "description": "IMAP UID scoped to the selected account and folder.",
+}
+FLAGS_PROPERTY = {
+    "type": "array",
+    "items": {"type": "string"},
+    "description": "IMAP system flag enum names or configured user flag names.",
+}
+MESSAGE_PROPERTY = {
+    "type": "string",
+    "description": "Raw RFC 5322 message text to append.",
 }
 ATTACHMENT_ID_PROPERTY = {
     "type": "string",
@@ -235,7 +263,7 @@ IMAP_OPERATION_DESCRIPTORS = (
     ),
     OperationDescriptor(
         name="mark_message_read",
-        description="Set or clear the IMAP seen flag for one message by UID.",
+        description="Set or clear the IMAP SEEN flag for one message by UID.",
         input_schema=_object_schema(
             {
                 "account": ACCOUNT_PROPERTY,
@@ -247,6 +275,45 @@ IMAP_OPERATION_DESCRIPTORS = (
                 },
             },
             ["account", "message_id"],
+        ),
+    ),
+    OperationDescriptor(
+        name="get_message_flags",
+        description="Fetch visible flags for one message by IMAP UID.",
+        input_schema=_object_schema(
+            {
+                "account": ACCOUNT_PROPERTY,
+                "message_id": MESSAGE_ID_PROPERTY,
+                "folder": FOLDER_PROPERTY,
+            },
+            ["account", "message_id"],
+        ),
+    ),
+    OperationDescriptor(
+        name="update_message_flags",
+        description="Add or remove allowed IMAP flags for one message by UID.",
+        input_schema=_object_schema(
+            {
+                "account": ACCOUNT_PROPERTY,
+                "message_id": MESSAGE_ID_PROPERTY,
+                "folder": FOLDER_PROPERTY,
+                "add_flags": FLAGS_PROPERTY,
+                "remove_flags": FLAGS_PROPERTY,
+            },
+            ["account", "message_id"],
+        ),
+    ),
+    OperationDescriptor(
+        name="append_message",
+        description="Append a raw message to an allowed IMAP folder.",
+        input_schema=_object_schema(
+            {
+                "account": ACCOUNT_PROPERTY,
+                "folder": FOLDER_PROPERTY,
+                "message": MESSAGE_PROPERTY,
+                "flags": FLAGS_PROPERTY,
+            },
+            ["account"],
         ),
     ),
     OperationDescriptor(
@@ -280,11 +347,62 @@ IMAP_OPERATION_DESCRIPTORS = (
                 "account": ACCOUNT_PROPERTY,
                 "message_id": MESSAGE_ID_PROPERTY,
                 "folder": FOLDER_PROPERTY,
+                "permanent": {
+                    "type": "boolean",
+                    "description": (
+                        "Hard-delete instead of moving to an accessible TRASH folder."
+                    ),
+                },
             },
             ["account", "message_id"],
         ),
     ),
 )
+
+
+_OperationArgumentSpec = str | tuple[str, object]
+
+
+IMAP_OPERATION_ARGUMENTS: Mapping[str, tuple[_OperationArgumentSpec, ...]] = {
+    "list_messages": ("account", "folder", ("limit", 20)),
+    "list_folders": ("account", "root", ("recursive", False), ("limit", 50)),
+    "get_message": ("account", "message_id", "folder"),
+    "get_attachment": ("account", "message_id", "attachment_id", "folder"),
+    "search_messages": ("account", "query", "folder", ("limit", 20)),
+    "search_folders": ("account", "query", "root", ("recursive", True), ("limit", 20)),
+    "move_message": ("account", "message_id", "destination_folder", "folder"),
+    "mark_message_read": ("account", "message_id", "folder", ("read", True)),
+    "get_message_flags": ("account", "message_id", "folder"),
+    "update_message_flags": (
+        "account",
+        "message_id",
+        "folder",
+        ("add_flags", ()),
+        ("remove_flags", ()),
+    ),
+    "append_message": (
+        "account",
+        "folder",
+        "message",
+        ("flags", (IMAPSystemFlag.SEEN.name,)),
+    ),
+    "delete_message": ("account", "message_id", "folder", ("permanent", False)),
+}
+
+
+def _operation_arguments(
+    operation: str,
+    arguments: Mapping[str, object],
+) -> dict[str, object]:
+    try:
+        argument_specs = IMAP_OPERATION_ARGUMENTS[operation]
+    except KeyError as exc:
+        raise ValueError(f"unknown IMAP operation: {operation}") from exc
+    runtime_arguments: dict[str, object] = {}
+    for spec in argument_specs:
+        argument_name, default = spec if isinstance(spec, tuple) else (spec, None)
+        runtime_arguments[argument_name] = arguments.get(argument_name, default)
+    return runtime_arguments
 
 
 @dataclass(frozen=True)
@@ -293,7 +411,7 @@ class _FolderItems:
     truncated: bool
 
 
-class IMAPRuntime:
+class IMAPRuntime(_IMAPRuntimePolicyMixin):
     service_name = "imap"
 
     def __init__(
@@ -331,14 +449,15 @@ class IMAPRuntime:
     def test_accounts(self) -> dict[str, object]:
         results: dict[str, object] = {}
         for account_name, imap_config in sorted(self._accounts.items()):
-            folders = self._test_folders(imap_config)
+            client = self._make_client(imap_config)
             try:
-                self._make_client(imap_config).test_connection(folders=folders)
+                server_folders = client.list_folders()
+                folders = self._test_folders(account_name, imap_config, server_folders)
+                client.test_connection(folders=folders)
             except Exception as exc:
                 results[account_name] = {
                     "status": "failed",
                     "stage": "connect_auth_noop_examine",
-                    "folders": folders,
                     "error_type": type(exc).__name__,
                     "message": str(exc),
                 }
@@ -348,7 +467,7 @@ class IMAPRuntime:
                     "status": "skipped",
                     "stage": "connect_auth_noop",
                     "checks": ["connect", "noop"],
-                    "reason": "no configured IMAP folders to examine read-only",
+                    "reason": "no accessible IMAP folders to examine read-only",
                 }
                 continue
             results[account_name] = {
@@ -365,22 +484,29 @@ class IMAPRuntime:
         folder: str | None = None,
         limit: int = 20,
     ) -> dict[str, object]:
-        imap_config, imap_policy, folder_name = self._resolve_context(
+        imap_config, folder_resolution = self._resolve_context(
             "list_messages", account, folder
         )
-        if not imap_policy.allow_read:
-            raise ValueError(f"list_messages is not allowed for account: {account}")
+        self._require_accessible(account, "list_messages", folder_resolution)
+        self._require_operation(
+            account,
+            "list_messages",
+            folder_resolution,
+            folder_resolution.policy.read,
+        )
 
         normalized_limit = self._normalize_limit(limit)
         messages = self._make_client(imap_config).list_messages(
-            folder=folder_name,
+            folder=folder_resolution.name,
             limit=normalized_limit,
         )
         return {
             "account": account,
-            "folder": folder_name,
+            "folder": folder_resolution.name,
             "messages": [
-                self._message_to_dict(message, imap_policy, include_body=False)
+                self._message_to_dict(
+                    message, folder_resolution.policy, include_body=False
+                )
                 for message in messages
             ],
         }
@@ -393,10 +519,13 @@ class IMAPRuntime:
         limit: int = 50,
     ) -> dict[str, object]:
         imap_config = self._resolve_account_config("list_folders", account)
+        resolver = self._resolver(imap_config)
         normalized_root = self._normalize_folder_root(root)
         normalized_limit = self._normalize_folder_limit(limit)
         folder_items = self._folder_items(
+            account,
             imap_config,
+            resolver,
             root=normalized_root,
             recursive=recursive,
             limit=normalized_limit,
@@ -416,23 +545,25 @@ class IMAPRuntime:
         message_id: str,
         folder: str | None = None,
     ) -> dict[str, object]:
-        imap_config, imap_policy, folder_name = self._resolve_context(
+        imap_config, folder_resolution = self._resolve_context(
             "get_message", account, folder
         )
-        if not imap_policy.allow_read:
-            raise ValueError(f"get_message is not allowed for account: {account}")
+        self._require_accessible(account, "get_message", folder_resolution)
+        self._require_operation(
+            account, "get_message", folder_resolution, folder_resolution.policy.read
+        )
 
         uid = self._normalize_message_uid(message_id)
         message = self._make_client(imap_config).get_message(
-            folder=folder_name,
+            folder=folder_resolution.name,
             uid=uid,
         )
         return {
             "account": account,
-            "folder": folder_name,
+            "folder": folder_resolution.name,
             "message": self._message_to_dict(
                 message,
-                imap_policy,
+                folder_resolution.policy,
                 include_body=True,
             ),
         }
@@ -444,11 +575,16 @@ class IMAPRuntime:
         attachment_id: str,
         folder: str | None = None,
     ) -> dict[str, object]:
-        imap_config, imap_policy, folder_name = self._resolve_context(
+        imap_config, folder_resolution = self._resolve_context(
             "get_attachment", account, folder
         )
-        if not imap_policy.allow_read:
-            raise ValueError(f"get_attachment is not allowed for account: {account}")
+        self._require_accessible(account, "get_attachment", folder_resolution)
+        self._require_operation(
+            account,
+            "get_attachment",
+            folder_resolution,
+            folder_resolution.policy.read,
+        )
         if self._artifact_store is None:
             raise ValueError(
                 "get_attachment requires server artifact storage; "
@@ -458,7 +594,7 @@ class IMAPRuntime:
         uid = self._normalize_message_uid(message_id)
         normalized_attachment_id = self._normalize_attachment_id(attachment_id)
         attachment_content = self._make_client(imap_config).get_attachment(
-            folder=folder_name,
+            folder=folder_resolution.name,
             uid=uid,
             attachment_id=normalized_attachment_id,
         )
@@ -469,14 +605,14 @@ class IMAPRuntime:
             content_type=attachment.content_type,
             source={
                 "account": account,
-                "folder": folder_name,
+                "folder": folder_resolution.name,
                 "message_id": uid,
                 "attachment_id": attachment.id,
             },
         )
         return {
             "account": account,
-            "folder": folder_name,
+            "folder": folder_resolution.name,
             "message_id": uid,
             "attachment": {
                 "id": attachment.id,
@@ -526,11 +662,16 @@ class IMAPRuntime:
         folder: str | None = None,
         limit: int = 20,
     ) -> dict[str, object]:
-        imap_config, imap_policy, folder_name = self._resolve_context(
+        imap_config, folder_resolution = self._resolve_context(
             "search_messages", account, folder
         )
-        if not imap_policy.allow_search:
-            raise ValueError(f"search_messages is not allowed for account: {account}")
+        self._require_accessible(account, "search_messages", folder_resolution)
+        self._require_operation(
+            account,
+            "search_messages",
+            folder_resolution,
+            folder_resolution.policy.search,
+        )
 
         normalized_query = query.strip()
         if not normalized_query:
@@ -538,16 +679,18 @@ class IMAPRuntime:
 
         normalized_limit = self._normalize_limit(limit)
         messages = self._make_client(imap_config).search_messages(
-            folder=folder_name,
+            folder=folder_resolution.name,
             query=normalized_query,
             limit=normalized_limit,
         )
         return {
             "account": account,
-            "folder": folder_name,
+            "folder": folder_resolution.name,
             "query": normalized_query,
             "messages": [
-                self._message_to_dict(message, imap_policy, include_body=False)
+                self._message_to_dict(
+                    message, folder_resolution.policy, include_body=False
+                )
                 for message in messages
             ],
         }
@@ -561,6 +704,7 @@ class IMAPRuntime:
         limit: int = 20,
     ) -> dict[str, object]:
         imap_config = self._resolve_account_config("search_folders", account)
+        resolver = self._resolver(imap_config)
         normalized_query = query.strip()
         if not normalized_query:
             raise ValueError("search_folders requires a non-empty query")
@@ -568,7 +712,9 @@ class IMAPRuntime:
         normalized_limit = self._normalize_folder_limit(limit)
         query_text = normalized_query.casefold()
         folder_items = self._folder_items(
+            account,
             imap_config,
+            resolver,
             root=normalized_root,
             recursive=recursive,
             limit=normalized_limit,
@@ -591,27 +737,24 @@ class IMAPRuntime:
         destination_folder: str,
         folder: str | None = None,
     ) -> dict[str, object]:
-        imap_config, imap_policy, source_folder = self._resolve_context(
-            "move_message", account, folder
+        prepared = self._prepare_move_message(
+            account=account,
+            message_id=message_id,
+            destination_folder=destination_folder,
+            folder=folder,
         )
-        if not imap_policy.allow_move:
-            raise ValueError(f"move_message is not allowed for account: {account}")
-
-        uid = self._normalize_message_uid(message_id)
-        normalized_destination = self._resolve_folder(
-            "move_message", imap_config, destination_folder
-        )
-        self._make_client(imap_config).move_message(
-            source_folder=source_folder,
-            uid=uid,
-            destination_folder=normalized_destination,
+        prepared.decision.require_allowed()
+        self._make_client(prepared.imap_config).move_message(
+            source_folder=prepared.source.name,
+            uid=prepared.uid,
+            destination_folder=prepared.destination.name,
         )
         return {
             "ok": True,
             "account": account,
-            "source_folder": source_folder,
-            "destination_folder": normalized_destination,
-            "message_id": uid,
+            "source_folder": prepared.source.name,
+            "destination_folder": prepared.destination.name,
+            "message_id": prepared.uid,
         }
 
     def mark_message_read(
@@ -621,50 +764,181 @@ class IMAPRuntime:
         folder: str | None = None,
         read: bool = True,
     ) -> dict[str, object]:
-        imap_config, imap_policy, folder_name = self._resolve_context(
-            "mark_message_read", account, folder
-        )
-        if resolve_imap_flag_mode(imap_policy, "\\Seen") is not IMAPFlagMode.read_write:
-            raise ValueError(
-                f"mark_message_read requires read_write access to the seen flag for account: {account}"
-            )
-
-        uid = self._normalize_message_uid(message_id)
-        self._make_client(imap_config).mark_message_read(
-            folder=folder_name,
-            uid=uid,
+        prepared = self._prepare_mark_message_read(
+            account=account,
+            message_id=message_id,
+            folder=folder,
             read=read,
+        )
+        prepared.decision.require_allowed()
+        self._make_client(prepared.imap_config).mark_message_read(
+            folder=prepared.folder.name,
+            uid=prepared.uid,
+            read=prepared.read,
         )
         return {
             "ok": True,
             "account": account,
-            "folder": folder_name,
-            "message_id": uid,
-            "read": read,
+            "folder": prepared.folder.name,
+            "message_id": prepared.uid,
+            "read": prepared.read,
         }
+
+    def get_message_flags(
+        self,
+        account: str,
+        message_id: str,
+        folder: str | None = None,
+    ) -> dict[str, object]:
+        imap_config, folder_resolution = self._resolve_context(
+            "get_message_flags", account, folder
+        )
+        self._require_accessible(account, "get_message_flags", folder_resolution)
+        self._require_operation(
+            account,
+            "get_message_flags",
+            folder_resolution,
+            folder_resolution.policy.read,
+            operation_label="read",
+        )
+
+        uid = self._normalize_message_uid(message_id)
+        flags = self._make_client(imap_config).get_message_flags(
+            folder=folder_resolution.name,
+            uid=uid,
+        )
+        return {
+            "account": account,
+            "folder": folder_resolution.name,
+            "message_id": uid,
+            "flags": self._visible_flags(folder_resolution.policy, flags),
+        }
+
+    def update_message_flags(
+        self,
+        account: str,
+        message_id: str,
+        folder: str | None = None,
+        add_flags: Sequence[str] = (),
+        remove_flags: Sequence[str] = (),
+    ) -> dict[str, object]:
+        prepared = self._prepare_update_message_flags(
+            account=account,
+            message_id=message_id,
+            folder=folder,
+            add_flags=add_flags,
+            remove_flags=remove_flags,
+        )
+        prepared.decision.require_allowed()
+        self._make_client(prepared.imap_config).update_message_flags(
+            folder=prepared.folder.name,
+            uid=prepared.uid,
+            add_flags=prepared.add_flags,
+            remove_flags=prepared.remove_flags,
+        )
+        return {
+            "ok": True,
+            "account": account,
+            "folder": prepared.folder.name,
+            "message_id": prepared.uid,
+            "add_flags": list(prepared.add_flags),
+            "remove_flags": list(prepared.remove_flags),
+        }
+
+    def check_operation(
+        self,
+        operation: str,
+        arguments: Mapping[str, object],
+    ) -> dict[str, object]:
+        operation_id = f"imap:{operation}"
+        account = cast(str, arguments.get("account"))
+        try:
+            if operation == "move_message":
+                return self._check_move_message(operation_id, account, arguments)
+            if operation == "mark_message_read":
+                prepared = self._prepare_mark_message_read(
+                    account=account,
+                    message_id=cast(str, arguments.get("message_id")),
+                    folder=cast(str | None, arguments.get("folder")),
+                    read=cast(bool, arguments.get("read", True)),
+                )
+                return self._decision_check_result(operation_id, prepared.decision)
+            if operation == "delete_message":
+                prepared = self._prepare_delete_message(
+                    account=account,
+                    message_id=cast(str, arguments.get("message_id")),
+                    folder=cast(str | None, arguments.get("folder")),
+                    permanent=cast(bool, arguments.get("permanent", False)),
+                )
+                return self._decision_check_result(operation_id, prepared.decision)
+            if operation == "update_message_flags":
+                return self._check_update_message_flags(
+                    operation_id, account, arguments
+                )
+            if operation == "append_message":
+                return self._check_append_message(operation_id, account, arguments)
+            folder = cast(str | None, arguments.get("folder"))
+            imap_config, folder_resolution = self._resolve_context(
+                operation, account, folder
+            )
+            del imap_config
+            decision = self._folder_operation_decision(
+                account,
+                operation,
+                folder_resolution,
+                self._operation_decision_for_check(operation, folder_resolution),
+                access_why_not="folder is not accessible for account",
+            ).evaluate()
+            result = self._decision_check_result(operation_id, decision)
+            if decision.allowed:
+                return result
+            if decision.failed_gate == "folder_access":
+                result["access_rules"] = self._access_rules_for_output(
+                    folder_resolution
+                )
+            return result
+        except Exception as exc:
+            return {
+                "operation": operation_id,
+                "allowed": False,
+                "why_not": str(exc),
+            }
 
     def delete_message(
         self,
         account: str,
         message_id: str,
         folder: str | None = None,
+        permanent: bool = False,
     ) -> dict[str, object]:
-        imap_config, imap_policy, folder_name = self._resolve_context(
-            "delete_message", account, folder
+        prepared = self._prepare_delete_message(
+            account=account,
+            message_id=message_id,
+            folder=folder,
+            permanent=permanent,
         )
-        if not imap_policy.allow_delete:
-            raise ValueError(f"delete_message is not allowed for account: {account}")
-
-        uid = self._normalize_message_uid(message_id)
-        self._make_client(imap_config).delete_message(
-            folder=folder_name,
-            uid=uid,
-        )
+        prepared.decision.require_allowed()
+        if prepared.permanent:
+            self._make_client(prepared.imap_config).delete_message(
+                folder=prepared.folder.name,
+                uid=prepared.uid,
+            )
+            destination_folder = None
+        else:
+            destination = self._resolve_trash_destination(account, prepared.imap_config)
+            self._make_client(prepared.imap_config).move_message(
+                source_folder=prepared.folder.name,
+                uid=prepared.uid,
+                destination_folder=destination.name,
+            )
+            destination_folder = destination.name
         return {
             "ok": True,
             "account": account,
-            "folder": folder_name,
-            "message_id": uid,
+            "folder": prepared.folder.name,
+            "message_id": prepared.uid,
+            "permanent": prepared.permanent,
+            "destination_folder": destination_folder,
         }
 
     def append_sent_message(
@@ -674,32 +948,59 @@ class IMAPRuntime:
         folder: str,
         message_bytes: bytes,
     ) -> None:
-        imap_config = self._resolve_account_config("append_sent_message", account)
-        folder_name = self._resolve_folder(
-            "append_sent_message",
-            imap_config,
-            folder,
-        )
-        self._make_client(imap_config).append_message(
-            folder=folder_name,
+        prepared = self._prepare_append_message(
+            account,
+            folder=folder,
             message_bytes=message_bytes,
-            flags=(r"\Seen",),
+            flags=(IMAPSystemFlag.SEEN.name,),
+            tool_name="append_sent_message",
         )
+        prepared.decision.require_allowed()
+        self._make_client(prepared.imap_config).append_message(
+            folder=prepared.folder.name,
+            message_bytes=cast(bytes, prepared.message_bytes),
+            flags=prepared.flags,
+        )
+
+    def append_message(
+        self,
+        *,
+        account: str,
+        message: str,
+        folder: str | None = None,
+        flags: Sequence[str] = (IMAPSystemFlag.SEEN.name,),
+    ) -> dict[str, object]:
+        prepared = self._prepare_append_message(
+            account,
+            folder=folder,
+            message=message,
+            flags=flags,
+            tool_name="append_message",
+        )
+        prepared.decision.require_allowed()
+        self._make_client(prepared.imap_config).append_message(
+            folder=prepared.folder.name,
+            message_bytes=cast(bytes, prepared.message_bytes),
+            flags=prepared.flags,
+        )
+        return {
+            "ok": True,
+            "account": account,
+            "folder": prepared.folder.name,
+            "flags": list(prepared.flags),
+        }
 
     def _resolve_context(
         self,
         tool_name: str,
         account_name: str,
         folder: str | None,
-    ) -> tuple[IMAPConfig, IMAPAccessPolicyConfig, str]:
+    ) -> tuple[IMAPConfig, IMAPFolderResolution]:
         imap_config = self._resolve_account_config(tool_name, account_name)
-        folder_name = self._resolve_optional_folder(tool_name, imap_config, folder)
-        imap_policy = self._policies.get(imap_config.policy)
-        if imap_policy is None:
-            raise ValueError(
-                f"{tool_name} account references an unknown IMAP policy: {account_name}"
-            )
-        return imap_config, imap_policy, folder_name
+        folder_resolution = self._resolve_optional_folder(
+            tool_name, account_name, imap_config, folder
+        )
+        return imap_config, folder_resolution
 
     def _resolve_account_config(self, tool_name: str, account_name: str) -> IMAPConfig:
         imap_config = self._accounts.get(account_name)
@@ -716,54 +1017,115 @@ class IMAPRuntime:
                     "IMAP account references an unknown policy: "
                     f"{account_name} -> {imap_config.policy}"
                 )
+            self._resolver(imap_config)
 
     def _resolve_optional_folder(
         self,
         tool_name: str,
+        account_name: str,
         imap_config: IMAPConfig,
         folder: str | None,
-    ) -> str:
+    ) -> IMAPFolderResolution:
         folder_name = folder.strip() if folder else imap_config.default_folder
         if not folder_name:
             raise ValueError(
                 f"{tool_name} requires folder when the account has no default_folder"
             )
-        return self._resolve_folder(tool_name, imap_config, folder_name)
+        return self._resolve_named_folder(
+            tool_name, account_name, imap_config, folder_name
+        )
 
-    def _resolve_folder(
+    def _resolve_named_folder(
         self,
         tool_name: str,
+        account_name: str,
         imap_config: IMAPConfig,
         folder: str,
-    ) -> str:
+    ) -> IMAPFolderResolution:
         folder_name = folder.strip()
         if not folder_name:
             raise ValueError(f"{tool_name} requires a non-empty folder")
-        if folder_name not in imap_config.folders:
-            raise ValueError(f"{tool_name} received an unconfigured folder: {folder}")
-        return folder_name
+        return self._resolver(imap_config).resolve_folder(folder_name)
+
+    def _resolver(self, imap_config: IMAPConfig) -> IMAPPolicyResolver:
+        imap_policy = self._policies.get(imap_config.policy)
+        if imap_policy is None:
+            raise ValueError(
+                f"IMAP account references an unknown policy: {imap_config.policy}"
+            )
+        return IMAPPolicyResolver(
+            folder_metadata=imap_config.folders,
+            policy=imap_policy,
+        )
 
     def _make_client(self, imap_config: IMAPConfig) -> IMAPClientProtocol:
         if self._imap_client_factory is None:
             raise RuntimeError("IMAP client factory is not configured")
         return self._imap_client_factory(imap_config)
 
-    def _test_folders(self, imap_config: IMAPConfig) -> list[str]:
-        folders = sorted(imap_config.folders)
-        if imap_config.default_folder and imap_config.default_folder not in folders:
-            folders.append(imap_config.default_folder)
-        return folders
+    def _test_folders(
+        self,
+        account_name: str,
+        imap_config: IMAPConfig,
+        server_folders: Sequence[str],
+    ) -> list[str]:
+        resolver = self._resolver(imap_config)
+        folder_set = set(server_folders)
+        if imap_config.default_folder:
+            if imap_config.default_folder not in folder_set:
+                raise ValueError(
+                    "default_folder does not exist for IMAP account: " f"{account_name}"
+                )
+            default_resolution = resolver.resolve_folder(imap_config.default_folder)
+            if not default_resolution.access.allowed:
+                raise ValueError(
+                    "default_folder is not accessible for IMAP account: "
+                    f"{account_name}"
+                )
+        return [
+            folder_name
+            for folder_name in sorted(folder_set)
+            if resolver.resolve_folder(folder_name).access.allowed
+        ]
+
+    def _resolve_trash_destination(
+        self,
+        account: str,
+        imap_config: IMAPConfig,
+    ) -> IMAPFolderResolution:
+        resolver = self._resolver(imap_config)
+        trash_folders: list[IMAPFolderResolution] = []
+        for folder_name in self._make_client(imap_config).list_folders():
+            folder = resolver.resolve_folder(folder_name)
+            if folder.metadata.kind is not IMAPFolderKind.TRASH:
+                continue
+            if folder.access.allowed:
+                trash_folders.append(folder)
+        if not trash_folders:
+            raise ValueError(
+                "delete_message requires an accessible TRASH folder for account: "
+                f"{account}"
+            )
+        return sorted(trash_folders, key=lambda folder: folder.name)[0]
 
     def _message_summary(
         self,
         imap_policy: IMAPAccessPolicyConfig,
     ) -> dict[str, object]:
-        flags = self._flag_summary(imap_policy)
         return {
-            "read_allowed": imap_policy.allow_read,
-            "move_allowed": imap_policy.allow_move,
-            "delete_allowed": imap_policy.allow_delete,
-            "flags": flags,
+            "defaults": {
+                "read": imap_policy.operation_defaults.read.value,
+                "search": imap_policy.operation_defaults.search.value,
+                "move": (
+                    imap_policy.operation_defaults.move
+                    if isinstance(imap_policy.operation_defaults.move, bool)
+                    else {"allowed": imap_policy.operation_defaults.move.allowed}
+                ),
+                "mark_read": imap_policy.operation_defaults.mark_read.value,
+                "delete": imap_policy.operation_defaults.delete.value,
+                "folder_append": imap_policy.operation_defaults.folder_append.value,
+                "flags": self._flag_summary(imap_policy),
+            },
         }
 
     def _flag_summary(
@@ -771,19 +1133,21 @@ class IMAPRuntime:
         imap_policy: IMAPAccessPolicyConfig,
     ) -> dict[str, object]:
         system_flags = {
-            "seen": imap_policy.system_flags.seen,
-            "flagged": imap_policy.system_flags.flagged,
-            "answered": imap_policy.system_flags.answered,
-            "deleted": imap_policy.system_flags.deleted,
-            "draft": imap_policy.system_flags.draft,
+            IMAPSystemFlag.SEEN: imap_policy.operation_defaults.system_flags.SEEN,
+            IMAPSystemFlag.FLAGGED: imap_policy.operation_defaults.system_flags.FLAGGED,
+            IMAPSystemFlag.ANSWERED: imap_policy.operation_defaults.system_flags.ANSWERED,
+            IMAPSystemFlag.DELETED: imap_policy.operation_defaults.system_flags.DELETED,
+            IMAPSystemFlag.DRAFT: imap_policy.operation_defaults.system_flags.DRAFT,
         }
         flags: dict[str, object] = {
-            flag_name: mode.value for flag_name, mode in system_flags.items()
+            flag_name.name: mode.value for flag_name, mode in system_flags.items()
         }
 
         user_flags = {
             flag_name: mode.value
-            for flag_name, mode in sorted(imap_policy.user_flags.items())
+            for flag_name, mode in sorted(
+                imap_policy.operation_defaults.user_flags.items()
+            )
             if mode is not IMAPFlagMode.hidden
         }
         if user_flags:
@@ -813,7 +1177,9 @@ class IMAPRuntime:
 
     def _folder_items(
         self,
+        account: str,
         imap_config: IMAPConfig,
+        resolver: IMAPPolicyResolver,
         *,
         root: str | None,
         recursive: bool,
@@ -821,12 +1187,14 @@ class IMAPRuntime:
         query: str | None = None,
     ) -> _FolderItems:
         items: list[dict[str, object]] = []
-        for folder_name, folder_config in sorted(imap_config.folders.items()):
+        for folder_name in self._make_client(imap_config).list_folders():
             if not self._folder_matches_root(folder_name, root, recursive=recursive):
                 continue
+            folder_resolution = resolver.resolve_folder(folder_name)
+            if not folder_resolution.access.allowed:
+                continue
             item = self._folder_to_dict(
-                folder_name,
-                folder_config,
+                folder_resolution,
                 default_folder=imap_config.default_folder,
             )
             if query is not None and not self._folder_matches_query(item, query):
@@ -857,18 +1225,18 @@ class IMAPRuntime:
 
     def _folder_to_dict(
         self,
-        folder_name: str,
-        folder_config: IMAPFolderConfig,
+        folder: IMAPFolderResolution,
         *,
         default_folder: str | None,
     ) -> dict[str, object]:
         return {
-            "name": folder_name,
-            "description": folder_config.description,
+            "name": folder.name,
+            "description": folder.metadata.description,
             "kind": (
-                folder_config.kind.value if folder_config.kind is not None else None
+                folder.metadata.kind.value if folder.metadata.kind is not None else None
             ),
-            "default": folder_name == default_folder,
+            "default": folder.name == default_folder,
+            "operations": folder.policy.operation_summary(),
         }
 
     def _folder_matches_query(self, folder: dict[str, object], query: str) -> bool:
@@ -893,10 +1261,22 @@ class IMAPRuntime:
             raise ValueError("IMAP attachment_id must be non-empty")
         return normalized
 
+    def _normalize_flags(self, flags: Sequence[str]) -> tuple[str, ...]:
+        normalized: list[str] = []
+        for flag in flags:
+            stripped = flag.strip()
+            if not stripped:
+                raise ValueError("IMAP flag names must be non-empty")
+            normalized_flag = normalize_imap_flag_name(stripped)
+            if resolve_system_flag(normalized_flag) is None:
+                validate_user_flag_name(normalized_flag)
+            normalized.append(normalized_flag)
+        return tuple(dict.fromkeys(normalized))
+
     def _message_to_dict(
         self,
         message: FetchedIMAPMessage,
-        imap_policy: IMAPAccessPolicyConfig,
+        imap_policy: IMAPResolvedFolderPolicy,
         *,
         include_body: bool,
     ) -> dict[str, object]:
@@ -930,19 +1310,6 @@ class IMAPRuntime:
                 for attachment in message.attachments
             ]
         return message_dict
-
-    def _visible_flags(
-        self,
-        imap_policy: IMAPAccessPolicyConfig,
-        flags: list[str],
-    ) -> list[str]:
-        visible_flags: list[str] = []
-        for flag in flags:
-            mode = resolve_imap_flag_mode(imap_policy, flag)
-            if mode is IMAPFlagMode.hidden:
-                continue
-            visible_flags.append(resolve_system_flag_key(flag) or flag)
-        return visible_flags
 
 
 def _imap_account_bootstrap_template(
@@ -984,34 +1351,57 @@ default_folder: INBOX
 folders:
   INBOX:
     description: Primary inbox.
-    # Optional folder kind: all, archive, drafts, flagged, junk, sent, or trash.
+    kind: INBOX
+  Sent:
+    description: Sent mail.
+    kind: SENT
+    # Optional folder kind: INBOX, ALL, ARCHIVE, DRAFTS, FLAGGED, JUNK, SENT, or TRASH.
     # These map to IMAP special-use mailbox attributes.
-    kind:
 """
 
 
-def _imap_policy_bootstrap_template(*, name: str) -> str:
+def _imap_policy_bootstrap_template(*, name: str, variant: str = "default-open") -> str:
+    if variant not in {"default-open", "default-closed"}:
+        raise ValueError(f"unknown IMAP policy bootstrap variant: {variant}")
+    access_rule = (
+        '    - allow_glob: "*"' if variant == "default-open" else '    - deny_glob: "*"'
+    )
+    access_description = (
+        "default-open variant exposes all server folders first, then lets you add deny rules below"
+        if variant == "default-open"
+        else "default-closed variant denies all server folders first, then lets you add allow rules below"
+    )
     return f"""# @package arbiter.policy.imap.{name}
 defaults:
   # Extend the plugin-owned structured schema, then override values below.
   - schema@_here_
   - _self_
 
-# Read/search are enabled by default; mutating mailbox actions are disabled.
-allow_read: true
-allow_search: true
-allow_move: false
-allow_delete: false
+# Explicit folder access baseline. This {access_description}.
+folder_access:
+  rules:
+{access_rule}
+operation_defaults:
+  read: allow
+  search: allow
+  move: false
+  mark_read: deny
+  delete: deny
+  folder_append: deny
+  system_flags:
+    SEEN: read_only
+    FLAGGED: read_only
+    ANSWERED: read_only
+    DELETED: read_only
+    DRAFT: read_only
+  user_flags: {{}}
 confirmation_required: []
 
-# System flags remain visible but read-only unless deliberately opened up.
-system_flags:
-  seen: read_only
-  flagged: read_only
-  answered: read_only
-  deleted: read_only
-  draft: read_only
-user_flags: {{}}
+folders:
+  Sent:
+    folder_append: allow
+    system_flags:
+      SEEN: read_write
 """
 
 
@@ -1023,7 +1413,21 @@ class IMAPServicePlugin:
     def register_configs(self, config_store: ConfigStore) -> None:
         register_imap_configs(config_store)
 
-    def bootstrap_config(self, *, kind: str, name: str) -> object | None:
+    def bootstrap_variants(self, *, kind: str) -> Mapping[str, str]:
+        if kind != "policy":
+            return {}
+        return {
+            "default-open": "allow all folders first, then add deny rules",
+            "default-closed": "deny all folders first, then add allow rules",
+        }
+
+    def bootstrap_config(
+        self,
+        *,
+        kind: str,
+        name: str,
+        variant: str | None = None,
+    ) -> object | None:
         if kind == "account":
             env_suffix = name.upper().replace("-", "_")
             if not env_suffix.endswith("_ACCOUNT"):
@@ -1034,7 +1438,10 @@ class IMAPServicePlugin:
                 env_suffix=env_suffix,
             )
         if kind == "policy":
-            return _imap_policy_bootstrap_template(name=name)
+            return _imap_policy_bootstrap_template(
+                name=name,
+                variant=variant or "default-open",
+            )
         return None
 
     def build_runtime(
@@ -1089,68 +1496,18 @@ class IMAPServicePlugin:
         context: ServicePluginContext,
     ) -> object:
         runtime = context.runtimes.require(self.name, IMAPRuntime)
-        if operation == "list_messages":
-            return runtime.list_messages(
-                account=cast(str, arguments.get("account")),
-                folder=cast(str | None, arguments.get("folder")),
-                limit=cast(int, arguments.get("limit", 20)),
-            )
-        if operation == "list_folders":
-            return runtime.list_folders(
-                account=cast(str, arguments.get("account")),
-                root=cast(str | None, arguments.get("root")),
-                recursive=cast(bool, arguments.get("recursive", False)),
-                limit=cast(int, arguments.get("limit", 50)),
-            )
-        if operation == "get_message":
-            return runtime.get_message(
-                account=cast(str, arguments.get("account")),
-                message_id=cast(str, arguments.get("message_id")),
-                folder=cast(str | None, arguments.get("folder")),
-            )
-        if operation == "get_attachment":
-            return runtime.get_attachment(
-                account=cast(str, arguments.get("account")),
-                message_id=cast(str, arguments.get("message_id")),
-                attachment_id=cast(str, arguments.get("attachment_id")),
-                folder=cast(str | None, arguments.get("folder")),
-            )
-        if operation == "search_messages":
-            return runtime.search_messages(
-                account=cast(str, arguments.get("account")),
-                query=cast(str, arguments.get("query")),
-                folder=cast(str | None, arguments.get("folder")),
-                limit=cast(int, arguments.get("limit", 20)),
-            )
-        if operation == "search_folders":
-            return runtime.search_folders(
-                account=cast(str, arguments.get("account")),
-                query=cast(str, arguments.get("query")),
-                root=cast(str | None, arguments.get("root")),
-                recursive=cast(bool, arguments.get("recursive", True)),
-                limit=cast(int, arguments.get("limit", 20)),
-            )
-        if operation == "move_message":
-            return runtime.move_message(
-                account=cast(str, arguments.get("account")),
-                message_id=cast(str, arguments.get("message_id")),
-                destination_folder=cast(str, arguments.get("destination_folder")),
-                folder=cast(str | None, arguments.get("folder")),
-            )
-        if operation == "mark_message_read":
-            return runtime.mark_message_read(
-                account=cast(str, arguments.get("account")),
-                message_id=cast(str, arguments.get("message_id")),
-                folder=cast(str | None, arguments.get("folder")),
-                read=cast(bool, arguments.get("read", True)),
-            )
-        if operation == "delete_message":
-            return runtime.delete_message(
-                account=cast(str, arguments.get("account")),
-                message_id=cast(str, arguments.get("message_id")),
-                folder=cast(str | None, arguments.get("folder")),
-            )
-        raise ValueError(f"unknown IMAP operation: {operation}")
+        runtime_arguments = _operation_arguments(operation, arguments)
+        runtime_method = getattr(runtime, operation)
+        return runtime_method(**runtime_arguments)
+
+    def check_operation(
+        self,
+        operation: str,
+        arguments: Mapping[str, object],
+        context: ServicePluginContext,
+    ) -> object:
+        runtime = context.runtimes.require(self.name, IMAPRuntime)
+        return runtime.check_operation(operation, arguments)
 
 
 def plugin() -> IMAPServicePlugin:

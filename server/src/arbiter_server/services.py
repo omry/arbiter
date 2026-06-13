@@ -94,7 +94,12 @@ class ServicePlugin(Protocol):
     # service-owned schema and example options in their ConfigStore groups here.
     def register_configs(self, config_store: Any) -> None: ...
 
-    def bootstrap_config(self, *, kind: str, name: str) -> object | None: ...
+    def bootstrap_config(
+        self,
+        *,
+        kind: str,
+        name: str,
+    ) -> object | None: ...
 
     def build_runtime(
         self,
@@ -358,6 +363,29 @@ class OperationCatalog:
             operation_arguments,
             self._context,
         )
+
+    def check_operation(
+        self,
+        operation_ref: str,
+        arguments: Mapping[str, Any] | None = None,
+    ) -> object:
+        capability, operation = parse_operation_id(operation_ref)
+        descriptor = self._require_operation(capability, operation)
+        operation_arguments = dict(arguments or {})
+        _validate_operation_arguments(
+            operation_id(capability, operation),
+            descriptor.input_schema,
+            operation_arguments,
+        )
+        plugin = self._plugins[capability]
+        check_operation = getattr(plugin, "check_operation", None)
+        if not callable(check_operation):
+            return {
+                "operation": operation_id(capability, operation),
+                "allowed": None,
+                "why_not": "operation check is not supported by this capability",
+            }
+        return check_operation(operation, operation_arguments, self._context)
 
     def _require_capability(self, capability: str) -> CapabilityDescriptor:
         descriptor = self._capabilities.get(capability)

@@ -9,7 +9,7 @@ import re
 import shutil
 import subprocess
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, distribution, entry_points
 from importlib.resources import files
@@ -277,26 +277,21 @@ class _IMAPSentMessageAppender:
 
         folders = _config_mapping_value(imap_config, "folders")
         if folder is not None:
-            if folder not in folders:
-                raise ValueError(
-                    f"sent copy folder is not configured for IMAP account "
-                    f"{account}: {folder}"
-                )
             return _SentCopyDestination(account=account, folder=folder)
 
         sent_folders = [
             folder_name
             for folder_name, folder_config in sorted(folders.items())
-            if _folder_kind_value(folder_config) == "sent"
+            if _folder_kind_value(folder_config) == "SENT"
         ]
         if len(sent_folders) == 1:
             return _SentCopyDestination(account=account, folder=sent_folders[0])
         if not sent_folders:
             raise ValueError(
-                f"IMAP account has no folder configured with kind=sent: {account}"
+                f"IMAP account has no folder configured with kind=SENT: {account}"
             )
         raise ValueError(
-            f"IMAP account has multiple folders configured with kind=sent: {account}"
+            f"IMAP account has multiple folders configured with kind=SENT: {account}"
         )
 
     def check_destination(
@@ -669,6 +664,18 @@ def _register_server_tools(
         arguments: dict[str, Any] | None = None,
     ) -> object:
         return catalog.invoke_operation(id, arguments)
+
+    @server.tool(
+        description=(
+            "Check whether one Arbiter operation would be allowed by policy "
+            "without calling external services or mutating state."
+        )
+    )
+    def check_op(
+        id: str,
+        arguments: dict[str, Any] | None = None,
+    ) -> object:
+        return catalog.check_operation(id, arguments)
 
 
 def _create_fastmcp_server(cfg: HydraConfig) -> "FastMCP":
@@ -2117,6 +2124,8 @@ def _load_plugin_example_yaml(
     plugin: str,
     kind: BootstrapObjectKind,
     name: str,
+    *,
+    variant: str | None = None,
 ) -> str | None:
     plugins = _service_plugin_map(discover_service_plugins())
     service_plugin = plugins.get(plugin)
@@ -2124,7 +2133,23 @@ def _load_plugin_example_yaml(
         print_cli_error(f"service plugin is not installed: {plugin}", area="bootstrap")
         return None
 
-    node = service_plugin.bootstrap_config(kind=kind, name=name)
+    bootstrap_config = cast(
+        Callable[..., object | None],
+        getattr(service_plugin, "bootstrap_config"),
+    )
+    try:
+        node = bootstrap_config(kind=kind, name=name, variant=variant)
+    except TypeError:
+        if variant is not None:
+            print_cli_error(
+                f"service plugin does not support bootstrap variants: {plugin}",
+                area="bootstrap",
+            )
+            return None
+        node = service_plugin.bootstrap_config(kind=kind, name=name)
+    except ValueError as exc:
+        print_cli_error(str(exc), area="bootstrap")
+        return None
     if node is None:
         print_cli_error(
             f"service plugin does not provide an {kind} bootstrap example: {plugin}",
@@ -2134,6 +2159,27 @@ def _load_plugin_example_yaml(
     if isinstance(node, str):
         return node
     return OmegaConf.to_yaml(node, resolve=False)
+
+
+def _run_plugin_bootstrap_list_variants(
+    *,
+    plugin: str,
+    kind: BootstrapObjectKind,
+) -> int:
+    plugins = _service_plugin_map(discover_service_plugins())
+    service_plugin = plugins.get(plugin)
+    if service_plugin is None:
+        print_cli_error(f"service plugin is not installed: {plugin}", area="bootstrap")
+        return 1
+    bootstrap_variants = getattr(service_plugin, "bootstrap_variants", None)
+    variants = (
+        cast(Mapping[str, str], bootstrap_variants(kind=kind))
+        if callable(bootstrap_variants)
+        else {}
+    )
+    for name, description in sorted(variants.items()):
+        print(f"{name}\t{description}")
+    return 0
 
 
 def _bootstrap_account_policy_name(account_name: str) -> str:
@@ -2535,17 +2581,24 @@ def _run_plugin_bootstrap(
     *,
     plugin: str,
     kind: BootstrapObjectKind,
-    name: str,
+    name: str | None,
     config_dir: str | None,
     config_name: str,
     force: bool,
+    variant: str | None = None,
+    list_variants: bool = False,
 ) -> int:
+    if list_variants:
+        return _run_plugin_bootstrap_list_variants(plugin=plugin, kind=kind)
     config_dir_path = _ensure_config_dir(config_dir)
     if config_dir_path is None:
         return 2
+    if name is None:
+        print_cli_error("bootstrap plugin requires name", area="bootstrap")
+        return 2
     if not _validate_bootstrap_object_args(plugin, name):
         return 2
-    content = _load_plugin_example_yaml(plugin, kind, name)
+    content = _load_plugin_example_yaml(plugin, kind, name, variant=variant)
     if content is None:
         return 1
     files = [
@@ -2561,7 +2614,12 @@ def _run_plugin_bootstrap(
     ]
     if kind == "account":
         policy_name = _bootstrap_account_policy_name(name)
-        policy_content = _load_plugin_example_yaml(plugin, "policy", policy_name)
+        policy_content = _load_plugin_example_yaml(
+            plugin,
+            "policy",
+            policy_name,
+            variant=variant,
+        )
         if policy_content is None:
             return 1
         files.append(
@@ -2708,7 +2766,16 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     bootstrap_plugin.add_argument("plugin")
     bootstrap_plugin.add_argument("kind", choices=["account", "policy"])
-    bootstrap_plugin.add_argument("name")
+    bootstrap_plugin.add_argument("name", nargs="?")
+    bootstrap_plugin.add_argument(
+        "--variant",
+        help="bootstrap template variant when the plugin provides variants",
+    )
+    bootstrap_plugin.add_argument(
+        "--list-variants",
+        action="store_true",
+        help="list bootstrap variants for this plugin and kind",
+    )
     bootstrap_plugin.add_argument(
         "--force",
         action="store_true",
@@ -2854,6 +2921,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             config_dir=namespace.config_dir,
             config_name=namespace.config_name,
             force=namespace.force,
+            variant=namespace.variant,
+            list_variants=namespace.list_variants,
         )
 
     parser.error("unknown command")

@@ -16,6 +16,8 @@ from arbiter_imap.client import (
 )
 from arbiter_imap.config import (
     IMAPAccessPolicyConfig,
+    IMAPFolderAccessConfig,
+    IMAPFolderAccessRuleConfig,
     IMAPConfig,
     IMAPFolderConfig,
     MailTlsMode,
@@ -33,6 +35,14 @@ MESSAGE_BYTES = (
     b"\r\n"
     b"Plain text body\r\n"
 )
+
+
+def _allow_all_policy() -> IMAPAccessPolicyConfig:
+    return IMAPAccessPolicyConfig(
+        folder_access=IMAPFolderAccessConfig(
+            rules=[IMAPFolderAccessRuleConfig(allow_glob="*")]
+        )
+    )
 
 
 class FakeIMAPServer:
@@ -189,6 +199,9 @@ def test_runtime_tests_configured_folders_read_only() -> None:
         def test_connection(self, *, folders: Sequence[str]) -> None:
             self.tested_folders = list(folders)
 
+        def list_folders(self) -> list[str]:
+            return ["Archive", "INBOX"]
+
         def list_messages(self, *, folder: str, limit: int) -> list[FetchedIMAPMessage]:
             raise AssertionError("list_messages should not be called")
 
@@ -224,6 +237,19 @@ def test_runtime_tests_configured_folders_read_only() -> None:
 
         def mark_message_read(self, *, folder: str, uid: str, read: bool) -> None:
             raise AssertionError("mark_message_read should not be called")
+
+        def get_message_flags(self, *, folder: str, uid: str) -> list[str]:
+            raise AssertionError("get_message_flags should not be called")
+
+        def update_message_flags(
+            self,
+            *,
+            folder: str,
+            uid: str,
+            add_flags: Sequence[str],
+            remove_flags: Sequence[str],
+        ) -> None:
+            raise AssertionError("update_message_flags should not be called")
 
         def delete_message(self, *, folder: str, uid: str) -> None:
             raise AssertionError("delete_message should not be called")
@@ -255,7 +281,7 @@ def test_runtime_tests_configured_folders_read_only() -> None:
                 },
             )
         },
-        policies={"bot": IMAPAccessPolicyConfig()},
+        policies={"bot": _allow_all_policy()},
         imap_client_factory=client_factory,
     )
 
@@ -274,6 +300,9 @@ def test_runtime_skips_folder_probe_when_no_folders_are_configured() -> None:
     class RecordingIMAPClient:
         def test_connection(self, *, folders: Sequence[str]) -> None:
             assert folders == []
+
+        def list_folders(self) -> list[str]:
+            return []
 
         def list_messages(self, *, folder: str, limit: int) -> list[FetchedIMAPMessage]:
             raise AssertionError("list_messages should not be called")
@@ -311,6 +340,19 @@ def test_runtime_skips_folder_probe_when_no_folders_are_configured() -> None:
         def mark_message_read(self, *, folder: str, uid: str, read: bool) -> None:
             raise AssertionError("mark_message_read should not be called")
 
+        def get_message_flags(self, *, folder: str, uid: str) -> list[str]:
+            raise AssertionError("get_message_flags should not be called")
+
+        def update_message_flags(
+            self,
+            *,
+            folder: str,
+            uid: str,
+            add_flags: Sequence[str],
+            remove_flags: Sequence[str],
+        ) -> None:
+            raise AssertionError("update_message_flags should not be called")
+
         def delete_message(self, *, folder: str, uid: str) -> None:
             raise AssertionError("delete_message should not be called")
 
@@ -325,7 +367,7 @@ def test_runtime_skips_folder_probe_when_no_folders_are_configured() -> None:
 
     runtime = IMAPRuntime(
         accounts={"primary": IMAPConfig(policy="bot")},
-        policies={"bot": IMAPAccessPolicyConfig()},
+        policies={"bot": _allow_all_policy()},
         imap_client_factory=lambda config: RecordingIMAPClient(),
     )
 
@@ -334,7 +376,7 @@ def test_runtime_skips_folder_probe_when_no_folders_are_configured() -> None:
             "status": "skipped",
             "stage": "connect_auth_noop",
             "checks": ["connect", "noop"],
-            "reason": "no configured IMAP folders to examine read-only",
+            "reason": "no accessible IMAP folders to examine read-only",
         }
     }
 

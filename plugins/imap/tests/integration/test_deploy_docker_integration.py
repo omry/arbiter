@@ -220,12 +220,16 @@ def _write_imap_only_config(path: Path, imap_server: Any) -> None:
         "  policy:\n"
         "    imap:\n"
         "      bot:\n"
-        "        allow_read: true\n"
-        "        allow_search: true\n"
-        "        allow_move: false\n"
-        "        allow_delete: false\n"
-        "        confirmation_required: []\n"
-        "        user_flags: {}\n",
+        "        folder_access:\n"
+        "          rules:\n"
+        '            - allow_glob: "*"\n'
+        "        operation_defaults:\n"
+        "          read: allow\n"
+        "          search: allow\n"
+        "          move: false\n"
+        "          delete: deny\n"
+        "          user_flags: {}\n"
+        "        confirmation_required: []\n",
         encoding="utf-8",
     )
     path.chmod(0o640)
@@ -242,7 +246,7 @@ def _wait_for_imap_operation(
     while time.monotonic() < deadline:
         last_result = _run(
             [
-                _command("arbiter-py"),
+                _command("arbiter"),
                 "op",
                 "run",
                 "imap:list_messages",
@@ -276,7 +280,7 @@ def _run_delete_message(
 ) -> subprocess.CompletedProcess[str]:
     return _run(
         [
-            _command("arbiter-py"),
+            _command("arbiter"),
             "op",
             "run",
             "imap:delete_message",
@@ -327,7 +331,7 @@ def _assert_imap_deployment_operation(
     assert message["subject"] == DEPLOYMENT_TEST_SUBJECT
     assert message["from"] == "Deploy Sender <deploy-sender@example.com>"
     assert message["snippet"] == DEPLOYMENT_TEST_SNIPPET
-    assert message["flags"] == ["seen"]
+    assert message["flags"] == ["SEEN"]
     assert "bot.followed_up" not in message["flags"]
     assert any("LOGIN user@example.com" in command for command in imap_server.commands)
     assert any(command.endswith("EXAMINE INBOX") for command in imap_server.commands)

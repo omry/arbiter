@@ -143,6 +143,7 @@ def compat(session: nox.Session) -> None:
 @nox.session(name="deploy-test")
 def deploy_test(session: nox.Session) -> None:
     install_project(session)
+    session.install("-e", "client")
     session.run(
         "pytest",
         "plugins/imap/tests/integration/test_deploy_docker_integration.py",

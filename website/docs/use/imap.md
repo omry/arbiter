@@ -4,8 +4,9 @@ title: IMAP
 
 [![PyPI](https://img.shields.io/pypi/v/arbiter-imap.svg?label=arbiter-imap)](https://pypi.org/project/arbiter-imap/) [![Python](https://img.shields.io/pypi/pyversions/arbiter-imap.svg?label=python)](https://pypi.org/project/arbiter-imap/) [![Downloads](https://pepy.tech/badge/arbiter-imap/month)](https://pepy.tech/project/arbiter-imap)
 
-The IMAP capability operates on configured accounts and folders. It does not
-provide arbitrary mailbox access.
+The IMAP capability operates on configured accounts and policy-accessible
+folders. Account folder entries are metadata overlays; folder access lives in
+IMAP policy.
 
 ## Operations
 
@@ -17,6 +18,9 @@ provide arbitrary mailbox access.
 - `imap:search_folders`
 - `imap:move_message`
 - `imap:mark_message_read`
+- `imap:get_message_flags`
+- `imap:update_message_flags`
+- `imap:append_message`
 - `imap:delete_message`
 
 ## Common inputs
@@ -25,12 +29,11 @@ Every IMAP operation takes `account`. Operations that target messages also use a
 folder-scoped `message_id`, which is an IMAP UID returned by `imap:list_messages`
 or `imap:search_messages`.
 
-Folders must be configured on the selected account. `imap:list_folders` and
-`imap:search_folders` expose only configured folder metadata; they do not query
-the upstream IMAP server's full mailbox tree. Folder results include `name`,
-`description`, `kind` when configured, and whether the folder is the account
-default. Folder list and search results also include `limit` and `truncated`;
-`truncated: true` means more configured folders matched than were returned.
+`imap:list_folders` and `imap:search_folders` query the upstream IMAP server,
+overlay matching account folder metadata, and hide folders denied by
+`folder_access`. Folder results include `name`, `description`, `kind`,
+`default`, and effective operation policy. Folder list and search results also
+include `limit` and `truncated`.
 
 ## Config schema
 
@@ -50,13 +53,14 @@ class MailTlsMode(str, Enum):
 
 
 class IMAPFolderKind(str, Enum):
-    all = "all"
-    archive = "archive"
-    drafts = "drafts"
-    flagged = "flagged"
-    junk = "junk"
-    sent = "sent"
-    trash = "trash"
+    INBOX = "INBOX"
+    ALL = "ALL"
+    ARCHIVE = "ARCHIVE"
+    DRAFTS = "DRAFTS"
+    FLAGGED = "FLAGGED"
+    JUNK = "JUNK"
+    SENT = "SENT"
+    TRASH = "TRASH"
 
 
 @dataclass
@@ -91,10 +95,10 @@ folders:
     description: Primary inbox.
   Sent:
     description: Sent mail.
-    kind: sent
+    kind: SENT
   Archives/2020-2029/2024:
     description: Archived mail from 2024.
-    kind: archive
+    kind: ARCHIVE
 ```
 
 IMAP policy config is registered as `arbiter/policy/imap/schema`:
@@ -112,29 +116,41 @@ class IMAPConfirmationAction(str, Enum):
     move = "move"
     mark_read = "mark_read"
     delete = "delete"
+    folder_append = "folder_append"
 
 
 @dataclass
 class IMAPSystemFlagsPolicyConfig:
-    seen: IMAPFlagMode = IMAPFlagMode.read_only
-    flagged: IMAPFlagMode = IMAPFlagMode.read_only
-    answered: IMAPFlagMode = IMAPFlagMode.read_only
-    deleted: IMAPFlagMode = IMAPFlagMode.read_only
-    draft: IMAPFlagMode = IMAPFlagMode.read_only
+    SEEN: IMAPFlagMode = MISSING
+    FLAGGED: IMAPFlagMode = MISSING
+    ANSWERED: IMAPFlagMode = MISSING
+    DELETED: IMAPFlagMode = MISSING
+    DRAFT: IMAPFlagMode = MISSING
+
+
+def default_imap_system_flags_policy() -> IMAPSystemFlagsPolicyConfig:
+    return IMAPSystemFlagsPolicyConfig(
+        SEEN=IMAPFlagMode.read_only,
+        FLAGGED=IMAPFlagMode.read_only,
+        ANSWERED=IMAPFlagMode.read_only,
+        DELETED=IMAPFlagMode.read_only,
+        DRAFT=IMAPFlagMode.read_only,
+    )
 
 
 @dataclass
 class IMAPAccessPolicyConfig(Policy):
-    allow_read: bool = True
-    allow_search: bool = True
-    allow_move: bool = True
-    allow_delete: bool = True
-    confirmation_required: list[IMAPConfirmationAction] = field(default_factory=list)
-    system_flags: IMAPSystemFlagsPolicyConfig = field(
-        default_factory=IMAPSystemFlagsPolicyConfig
+    folder_access: IMAPFolderAccessConfig = field(default_factory=IMAPFolderAccessConfig)
+    operation_defaults: IMAPFolderPolicyDefaultsConfig = field(
+        default_factory=IMAPFolderPolicyDefaultsConfig
     )
-    user_flags: dict[str, IMAPFlagMode] = field(default_factory=dict)
+    folders: dict[str, IMAPFolderOperationPolicyConfig] = field(default_factory=dict)
+    confirmation_required: list[IMAPConfirmationAction] = field(default_factory=list)
 ```
+
+System flag fields use OmegaConf missing values so folder policy overrides can
+set only the flags they change. `operation_defaults` supplies the complete
+baseline policy.
 
 </details>
 
@@ -252,4 +268,22 @@ The IMAP policy gates:
 `imap:mark_message_read` mutates the standard `seen` flag and requires
 `read_write` access to that flag.
 
-`imap:get_attachment` is read-only and is governed by `allow_read`.
+`imap:append_message` and SMTP sent-copy appends require `folder_append` on the
+destination folder. Any flags supplied with the append, including the default
+`\Seen` flag, also require `read_write` access in that folder's effective flag
+policy.
+
+`imap:get_attachment` is read-only and is governed by the effective `read`
+decision for the selected folder.
+
+Use `op check` to ask why a specific operation payload is allowed or denied
+without calling the upstream IMAP server:
+
+```bash
+arbiter op check imap:move_message --args '{
+  "account": "bot",
+  "folder": "INBOX",
+  "message_id": "42",
+  "destination_folder": "Archive"
+}'
+```

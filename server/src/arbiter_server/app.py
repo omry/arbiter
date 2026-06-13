@@ -13,6 +13,7 @@ SERVER_TOOL_NAMES = (
     "describe_cap",
     "describe_op",
     "run_op",
+    "check_op",
 )
 
 

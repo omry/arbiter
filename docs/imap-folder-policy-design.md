@@ -120,7 +120,7 @@ folder_access:
     - deny_exact: Junk
     - deny_regex: "^Archives[.][^.]+[.]20[0-1][0-9]$"
 
-defaults:
+operation_defaults:
   read: allow
   search: allow
   move: false
@@ -128,18 +128,18 @@ defaults:
   delete: deny
   folder_append: deny
   system_flags:
-    seen: read_only
-    flagged: read_only
-    answered: read_only
-    deleted: read_only
-    draft: read_only
+    SEEN: read_only
+    FLAGGED: read_only
+    ANSWERED: read_only
+    DELETED: read_only
+    DRAFT: read_only
   user_flags: {}
 
 folders:
   INBOX:
     system_flags:
-      seen: read_write
-      flagged: read_write
+      SEEN: read_write
+      FLAGGED: read_write
     user_flags:
       triaged: read_write
     move:
@@ -150,13 +150,15 @@ folders:
     read: allow
     search: allow
     folder_append: allow
+    system_flags:
+      SEEN: read_write
   "Archives.*":
     read: allow
     search: allow
     move: false
     delete: deny
     system_flags:
-      seen: read_only
+      SEEN: read_only
 ```
 
 Notes:
@@ -256,7 +258,7 @@ Accessible folders:
 
 - appear in `imap:list_folders`
 - can be found by `imap:search_folders`
-- can be used as `folder`, `source_folder`, or `destination_folder` arguments
+- can be used as `folder` or `destination_folder` arguments
   only if the relevant folder operation also allows that action
 - can be selected during account readiness tests
 
@@ -337,19 +339,22 @@ Suggested operation mapping:
   subtractive lists, not a replace-all flag set, so it cannot accidentally remove
   hidden or unrelated flags.
 - `mark_message_read`: convenience operation for the standard `seen` flag;
-  requires accessible folder, `system_flags.seen: read_write`, and
+  requires accessible folder, `system_flags.SEEN: read_write`, and
   `mark_read != deny`.
 - `delete_message`: requires accessible source folder and `delete != deny`.
   By default, it moves the message to an accessible folder classified as
   `kind: TRASH`. With explicit `permanent: true`, it may permanently delete the
   message instead.
-- `append_message`: requires accessible folder and `folder_append != deny`.
+- `append_message`: requires accessible folder, `folder_append != deny`, and
+  `read_write` access to every flag supplied with the append request.
   Initial callers include internal SMTP sent-copy append and future explicit
   append operations.
 
 Flag policy should follow the same default plus per-folder override model as
 operation policy. `system_flags` and `user_flags` may be configured in
-`defaults` and overridden by matching folder policy entries.
+`operation_defaults` and overridden by matching folder policy entries. Per-folder
+`system_flags` entries may omit fields; omitted fields inherit from the current
+effective policy through the same ordered merge as the rest of folder policy.
 
 Supported system flag modes:
 
@@ -363,7 +368,7 @@ returned by `list_messages`, `get_message`, or `get_message_flags`, and it
 cannot be added or removed by `update_message_flags`.
 
 `mark_read` remains a higher-level operation gate for `imap:mark_message_read`;
-the operation also requires `system_flags.seen: read_write` on the effective
+the operation also requires `system_flags.SEEN: read_write` on the effective
 folder policy.
 
 General flag access and mutation should be exposed at the plugin operation
@@ -556,8 +561,8 @@ operation decisions:
     "delete": "deny",
     "folder_append": "allow",
     "system_flags": {
-      "seen": "read_only",
-      "flagged": "read_only"
+      "SEEN": "read_only",
+      "FLAGGED": "read_only"
     },
     "user_flags": {}
   }
@@ -611,7 +616,7 @@ Suggested client CLI shape, using operation-shaped arguments:
 
 ```bash
 arbiter op check imap:get_message --args '{"account":"personal","folder":"FolderX","message_id":"123"}'
-arbiter op check imap:move_message --args '{"account":"personal","source_folder":"INBOX","message_id":"123","destination_folder":"Archives.2020-2029.2026"}'
+arbiter op check imap:move_message --args '{"account":"personal","folder":"INBOX","message_id":"123","destination_folder":"Archives.2020-2029.2026"}'
 arbiter op check imap:append_message --args '{"account":"personal","folder":"Sent"}'
 ```
 
@@ -730,7 +735,6 @@ Initial compatibility defaults:
 
 - Existing policies without folder access fail configuration validation until
   the operator adds an explicit access policy.
-- Existing account-wide booleans remain supported as policy defaults.
 - Existing server folders continue to list and search only when the explicit
   folder access policy allows them. Existing account folder entries continue to
   provide metadata for matching folders.
@@ -768,7 +772,7 @@ Default-open template:
 folder_access:
   rules:
     - allow_glob: "*"
-defaults:
+operation_defaults:
   read: allow
   search: allow
   move: false
@@ -776,11 +780,11 @@ defaults:
   delete: deny
   folder_append: deny
   system_flags:
-    seen: read_only
-    flagged: read_only
-    answered: read_only
-    deleted: read_only
-    draft: read_only
+    SEEN: read_only
+    FLAGGED: read_only
+    ANSWERED: read_only
+    DELETED: read_only
+    DRAFT: read_only
   user_flags: {}
 folders: {}
 ```
@@ -791,7 +795,7 @@ Default-closed template:
 folder_access:
   rules:
     - deny_glob: "*"
-defaults:
+operation_defaults:
   read: allow
   search: allow
   move: false
@@ -799,20 +803,16 @@ defaults:
   delete: deny
   folder_append: deny
   system_flags:
-    seen: read_only
-    flagged: read_only
-    answered: read_only
-    deleted: read_only
-    draft: read_only
+    SEEN: read_only
+    FLAGGED: read_only
+    ANSWERED: read_only
+    DELETED: read_only
+    DRAFT: read_only
   user_flags: {}
 folders: {}
 ```
 
-One possible migration path is to keep top-level `allow_read` style fields as
-aliases for operation decisions during the first release line, then collapse the
-representation before final release if no published compatibility promise exists
-yet. For example, `allow_read: true` maps to `read: allow`, and
-`allow_read: false` maps to `read: deny`.
+The implementation does not keep top-level `allow_read` style aliases. This is pre-release behavior, and `operation_defaults` plus per-folder policy are the required policy shape.
 
 ## Tests
 

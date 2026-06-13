@@ -11,7 +11,7 @@ import re
 import ssl
 from typing import Any, cast
 
-from .config import IMAPConfig, MailTlsMode
+from .config import IMAPConfig, IMAPSystemFlag, MailTlsMode
 
 
 @dataclass(frozen=True)
@@ -61,6 +61,16 @@ class IMAPClient:
             self._expect_ok(status, data, "NOOP")
             for folder in folders:
                 self._select_folder(server, folder, readonly=True)
+
+    def list_folders(self) -> list[str]:
+        with self._session() as server:
+            status, data = server.list()
+            self._expect_ok(status, data, "list folders")
+        return sorted(
+            folder_name
+            for item in data
+            if (folder_name := self._parse_list_folder_name(item)) is not None
+        )
 
     def list_messages(self, *, folder: str, limit: int) -> list[FetchedIMAPMessage]:
         with self._session() as server:
@@ -117,8 +127,45 @@ class IMAPClient:
         with self._session() as server:
             self._select_folder(server, folder, readonly=False)
             operation = "+FLAGS.SILENT" if read else "-FLAGS.SILENT"
-            status, data = server.uid("STORE", uid, operation, r"(\Seen)")
+            status, data = server.uid(
+                "STORE",
+                uid,
+                operation,
+                self._format_flag_list([IMAPSystemFlag.SEEN.value]),
+            )
             self._expect_ok(status, data, "mark message read")
+
+    def get_message_flags(self, *, folder: str, uid: str) -> list[str]:
+        with self._session() as server:
+            self._select_folder(server, folder, readonly=True)
+            return self._fetch_flags(server, uid)
+
+    def update_message_flags(
+        self,
+        *,
+        folder: str,
+        uid: str,
+        add_flags: Sequence[str],
+        remove_flags: Sequence[str],
+    ) -> None:
+        with self._session() as server:
+            self._select_folder(server, folder, readonly=False)
+            if add_flags:
+                status, data = server.uid(
+                    "STORE",
+                    uid,
+                    "+FLAGS.SILENT",
+                    self._format_flag_list(add_flags),
+                )
+                self._expect_ok(status, data, "add message flags")
+            if remove_flags:
+                status, data = server.uid(
+                    "STORE",
+                    uid,
+                    "-FLAGS.SILENT",
+                    self._format_flag_list(remove_flags),
+                )
+                self._expect_ok(status, data, "remove message flags")
 
     def delete_message(self, *, folder: str, uid: str) -> None:
         with self._session() as server:
@@ -131,7 +178,7 @@ class IMAPClient:
         *,
         folder: str,
         message_bytes: bytes,
-        flags: Sequence[str] = (r"\Seen",),
+        flags: Sequence[str] = (IMAPSystemFlag.SEEN.value,),
     ) -> None:
         with self._session() as server:
             date_time: Any = None
@@ -281,7 +328,12 @@ class IMAPClient:
         server: imaplib.IMAP4 | imaplib.IMAP4_SSL,
         uid: str,
     ) -> None:
-        status, data = server.uid("STORE", uid, "+FLAGS.SILENT", r"(\Deleted)")
+        status, data = server.uid(
+            "STORE",
+            uid,
+            "+FLAGS.SILENT",
+            self._format_flag_list([IMAPSystemFlag.DELETED.value]),
+        )
         self._expect_ok(status, data, "mark message deleted")
 
     def _expunge_uid(
@@ -296,6 +348,23 @@ class IMAPClient:
     def _expect_ok(self, status: str, data: list[Any], action: str) -> None:
         if status.upper() != "OK":
             raise IMAPOperationError(f"IMAP {action} failed: {status} {data!r}")
+
+    def _format_flag_list(self, flags: Sequence[str]) -> str:
+        return "(" + " ".join(flags) + ")"
+
+    def _parse_list_folder_name(self, item: object) -> str | None:
+        if item is None:
+            return None
+        raw = (
+            item.decode("utf-8", errors="replace")
+            if isinstance(item, bytes)
+            else str(item)
+        )
+        match = re.search(r'\s(?:"((?:[^"\\]|\\.)*)"|([^ ]+))$', raw)
+        if match is None:
+            return None
+        folder_name = match.group(1) if match.group(1) is not None else match.group(2)
+        return folder_name.replace(r"\"", '"').replace(r"\\", "\\")
 
     def _move_status_supports_fallback(self, status: str, data: list[Any]) -> bool:
         normalized_status = status.upper()

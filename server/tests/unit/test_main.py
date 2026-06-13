@@ -52,8 +52,14 @@ from arbiter_imap import IMAPRuntime, IMAPServicePlugin
 from arbiter_imap.config import (
     IMAPAccessPolicyConfig,
     IMAPConfig,
+    IMAPFlagMode,
+    IMAPFolderAccessConfig,
+    IMAPFolderAccessRuleConfig,
     IMAPFolderConfig,
     IMAPFolderKind,
+    IMAPFolderOperationPolicyConfig,
+    IMAPOperationDecision,
+    IMAPSystemFlagsPolicyConfig,
 )
 from arbiter_smtp import SendEmailResult, SMTPRuntime, SMTPServicePlugin
 from arbiter_smtp.config import SMTPConfig, SMTPServicePolicyConfig
@@ -7373,15 +7379,25 @@ def test_cli_bootstrap_plugin_imap_account_writes_service_example(
     assert "  - schema@_here_\n" in policy_yaml
     assert "  - _self_\n" in policy_yaml
     assert (
-        "# Read/search are enabled by default; mutating mailbox actions are disabled.\n"
+        "# Explicit folder access baseline. This default-open variant exposes all server folders first, then lets you add deny rules below.\n"
         in (policy_yaml)
     )
-    assert "allow_read: true\n" in policy_yaml
-    assert "allow_search: true\n" in policy_yaml
-    assert "allow_move: false\n" in policy_yaml
-    assert "allow_delete: false\n" in policy_yaml
-    assert "seen: read_only\n" in policy_yaml
+    assert "folder_access:\n" in policy_yaml
+    assert '    - allow_glob: "*"\n' in policy_yaml
+    assert "operation_defaults:\n" in policy_yaml
+    assert "  read: allow\n" in policy_yaml
+    assert "  search: allow\n" in policy_yaml
+    assert "  move: false\n" in policy_yaml
+    assert "  delete: deny\n" in policy_yaml
+    assert "SEEN: read_only\n" in policy_yaml
     assert "user_flags: {}\n" in policy_yaml
+    assert (
+        "folders:\n"
+        "  Sent:\n"
+        "    folder_append: allow\n"
+        "    system_flags:\n"
+        "      SEEN: read_write\n" in policy_yaml
+    )
     main_config = (config_dir / "arbiter-server.yaml").read_text(encoding="utf-8")
     assert "/arbiter/account/imap@arbiter.account.imap.bot" not in main_config
     assert "/arbiter/policy/imap@arbiter.policy.imap.bot_policy" not in main_config
@@ -7396,6 +7412,64 @@ def test_cli_bootstrap_plugin_imap_account_writes_service_example(
         "Then inspect the composed config with:\n"
         f"  arbiter-server --config-dir {config_dir} config show\n"
     )
+
+
+def test_cli_bootstrap_plugin_imap_policy_lists_variants(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert (
+        main(
+            [
+                "--config-dir",
+                str(tmp_path),
+                "bootstrap",
+                "plugin",
+                "imap",
+                "policy",
+                "--list-variants",
+            ]
+        )
+        == 0
+    )
+
+    assert capsys.readouterr().out == (
+        "default-closed\tdeny all folders first, then add allow rules\n"
+        "default-open\tallow all folders first, then add deny rules\n"
+    )
+
+
+def test_cli_bootstrap_plugin_imap_policy_writes_selected_variant(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_dir = tmp_path / "conf"
+    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "--config-dir",
+                str(config_dir),
+                "bootstrap",
+                "plugin",
+                "imap",
+                "policy",
+                "locked_down",
+                "--variant",
+                "default-closed",
+            ]
+        )
+        == 0
+    )
+
+    policy_file = config_dir / "arbiter" / "policy" / "imap" / "locked_down.yaml"
+    policy_yaml = policy_file.read_text(encoding="utf-8")
+    assert '    - deny_glob: "*"\n' in policy_yaml
+    assert "operation_defaults:\n" in policy_yaml
+    assert "folder_append: deny\n" in policy_yaml
+    assert "      SEEN: read_write\n" in policy_yaml
 
 
 def _test_service_plugins() -> list[ServicePlugin]:
@@ -7444,7 +7518,13 @@ def _app_config_with_smtp_imap() -> AppConfig:
             },
             policy={
                 "smtp": {"bot": SMTPServicePolicyConfig(require_confirmation=False)},
-                "imap": {"bot": IMAPAccessPolicyConfig()},
+                "imap": {
+                    "bot": IMAPAccessPolicyConfig(
+                        folder_access=IMAPFolderAccessConfig(
+                            rules=[IMAPFolderAccessRuleConfig(allow_glob="*")]
+                        )
+                    )
+                },
             },
         )
     )
@@ -7584,7 +7664,13 @@ def test_build_app_wires_smtp_sent_copy_to_matching_imap_account() -> None:
     imap_appends: list[dict[str, object]] = []
     cfg = _app_config_with_smtp_imap()
     cast(IMAPConfig, cfg.arbiter.account["imap"]["primary"]).folders["Sent"] = (
-        IMAPFolderConfig(description="Sent mail", kind=IMAPFolderKind.sent)
+        IMAPFolderConfig(description="Sent mail", kind=IMAPFolderKind.SENT)
+    )
+    cast(IMAPAccessPolicyConfig, cfg.arbiter.policy["imap"]["bot"]).folders["Sent"] = (
+        IMAPFolderOperationPolicyConfig(
+            folder_append=IMAPOperationDecision.allow,
+            system_flags=IMAPSystemFlagsPolicyConfig(SEEN=IMAPFlagMode.read_write),
+        )
     )
 
     class FakeSMTPClient:
@@ -7656,7 +7742,7 @@ def test_build_app_sent_copy_does_not_infer_folder_from_different_account() -> N
     cfg.arbiter.account["imap"]["other"] = IMAPConfig(
         default_folder="INBOX",
         folders={
-            "Sent": IMAPFolderConfig(description="Sent mail", kind=IMAPFolderKind.sent)
+            "Sent": IMAPFolderConfig(description="Sent mail", kind=IMAPFolderKind.SENT)
         },
     )
 
@@ -7715,7 +7801,7 @@ def test_build_app_sent_copy_does_not_infer_folder_from_different_account() -> N
     assert result.sent_copy == {
         "status": "skipped",
         "account": "primary",
-        "reason": "IMAP account has no folder configured with kind=sent: primary",
+        "reason": "IMAP account has no folder configured with kind=SENT: primary",
         "error_type": "ValueError",
     }
 
@@ -7732,6 +7818,9 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     search_messages_calls: list[dict[str, object]] = []
     move_message_calls: list[dict[str, object]] = []
     mark_message_read_calls: list[dict[str, object]] = []
+    get_message_flags_calls: list[dict[str, object]] = []
+    update_message_flags_calls: list[dict[str, object]] = []
+    append_message_calls: list[dict[str, object]] = []
     delete_message_calls: list[dict[str, object]] = []
     fake_cfg = _app_config_with_smtp_imap()
     smtp_accounts = fake_cfg.arbiter.account["smtp"]
@@ -7948,14 +8037,67 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
             )
             return {"ok": True}
 
-        def delete_message(
+        def get_message_flags(
             self,
             account: str,
             message_id: str,
             folder: str | None = None,
         ) -> dict[str, object]:
-            delete_message_calls.append(
+            get_message_flags_calls.append(
                 {"account": account, "message_id": message_id, "folder": folder}
+            )
+            return {"account": account, "folder": folder or "INBOX", "flags": []}
+
+        def update_message_flags(
+            self,
+            account: str,
+            message_id: str,
+            folder: str | None = None,
+            add_flags: Sequence[str] = (),
+            remove_flags: Sequence[str] = (),
+        ) -> dict[str, object]:
+            update_message_flags_calls.append(
+                {
+                    "account": account,
+                    "message_id": message_id,
+                    "folder": folder,
+                    "add_flags": tuple(add_flags),
+                    "remove_flags": tuple(remove_flags),
+                }
+            )
+            return {"ok": True}
+
+        def append_message(
+            self,
+            account: str,
+            message: str,
+            folder: str | None = None,
+            flags: Sequence[str] = (r"\Seen",),
+        ) -> dict[str, object]:
+            append_message_calls.append(
+                {
+                    "account": account,
+                    "message": message,
+                    "folder": folder,
+                    "flags": tuple(flags),
+                }
+            )
+            return {"ok": True}
+
+        def delete_message(
+            self,
+            account: str,
+            message_id: str,
+            folder: str | None = None,
+            permanent: bool = False,
+        ) -> dict[str, object]:
+            delete_message_calls.append(
+                {
+                    "account": account,
+                    "message_id": message_id,
+                    "folder": folder,
+                    "permanent": permanent,
+                }
             )
             return {"ok": True}
 
@@ -8258,7 +8400,7 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
         "description": "Read and manage mail through configured IMAP accounts.",
         "version": IMAPServicePlugin.version,
         "account_count": 1,
-        "operation_count": 9,
+        "operation_count": 12,
         "accounts": [
             {
                 "plugin": "imap",
@@ -8350,16 +8492,16 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
             "account_count": 1,
             "accounts": ["primary"],
             "accounts_truncated": False,
-            "operation_count": 9,
+            "operation_count": 12,
             "operations": [
+                "append_message",
                 "delete_message",
                 "get_attachment",
                 "get_message",
+                "get_message_flags",
                 "list_folders",
                 "list_messages",
                 "mark_message_read",
-                "move_message",
-                "search_folders",
             ],
             "operations_truncated": True,
         },
@@ -8383,9 +8525,9 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     imap_limited = limited_capabilities["capabilities"][0]
     assert imap_limited["id"] == "imap"
     assert imap_limited["operations"] == [
+        "append_message",
         "delete_message",
         "get_attachment",
-        "get_message",
     ]
     assert imap_limited["operations_truncated"] is True
 
@@ -8431,29 +8573,37 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
             "enabled": True,
             "confirmation_required": [],
             "message": {
-                "read_allowed": True,
-                "move_allowed": True,
-                "delete_allowed": True,
-                "flags": {
-                    "seen": "read_only",
-                    "flagged": "read_only",
-                    "answered": "read_only",
-                    "deleted": "read_only",
-                    "draft": "read_only",
+                "defaults": {
+                    "read": "allow",
+                    "search": "allow",
+                    "move": False,
+                    "mark_read": "deny",
+                    "delete": "deny",
+                    "folder_append": "deny",
+                    "flags": {
+                        "SEEN": "read_only",
+                        "FLAGGED": "read_only",
+                        "ANSWERED": "read_only",
+                        "DELETED": "read_only",
+                        "DRAFT": "read_only",
+                    },
                 },
             },
         }
     }
     assert [operation["id"] for operation in imap_capability["operations"]] == [
+        "imap:append_message",
         "imap:delete_message",
         "imap:get_attachment",
         "imap:get_message",
+        "imap:get_message_flags",
         "imap:list_folders",
         "imap:list_messages",
         "imap:mark_message_read",
         "imap:move_message",
         "imap:search_folders",
         "imap:search_messages",
+        "imap:update_message_flags",
     ]
 
     smtp_operation = cast(
@@ -8591,8 +8741,8 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
         capped_tools["describe_caps"](operation_preview_limit=99),
     )
     assert capped_capabilities["capabilities"][0]["operations"] == [
+        "append_message",
         "delete_message",
-        "get_attachment",
     ]
     assert capped_capabilities["capabilities"][0]["operations_truncated"] is True
     assert get_message_calls == [
@@ -8716,11 +8866,67 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     ]
 
     assert tools["run_op"](
-        id="imap:delete_message",
+        id="imap:get_message_flags",
         arguments={"account": "primary", "message_id": "42", "folder": "INBOX"},
+    ) == {"account": "primary", "folder": "INBOX", "flags": []}
+    assert get_message_flags_calls == [
+        {"account": "primary", "message_id": "42", "folder": "INBOX"}
+    ]
+
+    assert tools["run_op"](
+        id="imap:update_message_flags",
+        arguments={
+            "account": "primary",
+            "message_id": "42",
+            "folder": "INBOX",
+            "add_flags": ["\\Seen"],
+            "remove_flags": ["custom"],
+        },
+    ) == {"ok": True}
+    assert update_message_flags_calls == [
+        {
+            "account": "primary",
+            "message_id": "42",
+            "folder": "INBOX",
+            "add_flags": ("\\Seen",),
+            "remove_flags": ("custom",),
+        }
+    ]
+
+    assert tools["run_op"](
+        id="imap:append_message",
+        arguments={
+            "account": "primary",
+            "folder": "Sent",
+            "message": "Subject: Hello\r\n\r\nBody",
+            "flags": ["\\Seen"],
+        },
+    ) == {"ok": True}
+    assert append_message_calls == [
+        {
+            "account": "primary",
+            "message": "Subject: Hello\r\n\r\nBody",
+            "folder": "Sent",
+            "flags": ("\\Seen",),
+        }
+    ]
+
+    assert tools["run_op"](
+        id="imap:delete_message",
+        arguments={
+            "account": "primary",
+            "message_id": "42",
+            "folder": "INBOX",
+            "permanent": True,
+        },
     ) == {"ok": True}
     assert delete_message_calls == [
-        {"account": "primary", "message_id": "42", "folder": "INBOX"}
+        {
+            "account": "primary",
+            "message_id": "42",
+            "folder": "INBOX",
+            "permanent": True,
+        }
     ]
 
     with pytest.raises(
@@ -8851,6 +9057,18 @@ def test_build_server_describes_send_email_tool_schema() -> None:
     run_parameters = run_op_tool.parameters["properties"]
     assert run_parameters["id"]["type"] == "string"
     assert run_parameters["arguments"]["anyOf"] == [
+        {
+            "additionalProperties": True,
+            "type": "object",
+        },
+        {"type": "null"},
+    ]
+
+    check_op_tool = server._tool_manager._tools["check_op"]
+    assert "without calling external services" in check_op_tool.description
+    check_parameters = check_op_tool.parameters["properties"]
+    assert check_parameters["id"]["type"] == "string"
+    assert check_parameters["arguments"]["anyOf"] == [
         {
             "additionalProperties": True,
             "type": "object",

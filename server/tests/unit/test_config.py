@@ -140,7 +140,7 @@ def test_compose_config_applies_overrides() -> None:
             "arbiter.account.smtp.primary.verify_peer=false",
             "arbiter.account.imap.primary.guidance=Use for inbox triage.",
             "arbiter.policy.smtp.bot.require_confirmation=true",
-            "arbiter.policy.imap.bot.system_flags.seen=read_write",
+            "arbiter.policy.imap.bot.operation_defaults.system_flags.SEEN=read_write",
         ]
     )
 
@@ -157,7 +157,10 @@ def test_compose_config_applies_overrides() -> None:
     assert cfg.arbiter.account.smtp.primary.verify_peer is False
     assert cfg.arbiter.account.imap.primary.guidance == "Use for inbox triage."
     assert cfg.arbiter.policy.smtp.bot.require_confirmation is True
-    assert cfg.arbiter.policy.imap.bot.system_flags.seen == IMAPFlagMode.read_write
+    assert (
+        cfg.arbiter.policy.imap.bot.operation_defaults.system_flags.SEEN
+        == IMAPFlagMode.read_write
+    )
 
 
 def test_hydra_config_preserves_lazy_interpolations() -> None:
@@ -324,12 +327,12 @@ def test_hydra_rejects_invalid_plugin_enum_values() -> None:
 
     with pytest.raises(
         ConfigCompositionException,
-        match="arbiter.policy.imap.bot.system_flags.seen",
+        match="arbiter.policy.imap.bot.operation_defaults.system_flags.SEEN",
     ):
         _compose_config(
             [
                 "+arbiter/policy/imap@arbiter.policy.imap.bot=schema",
-                "arbiter.policy.imap.bot.system_flags.seen=bogus",
+                "arbiter.policy.imap.bot.operation_defaults.system_flags.SEEN=bogus",
             ]
         )
 
@@ -360,8 +363,8 @@ def test_hydra_coerces_plugin_enum_values() -> None:
             "arbiter.account.smtp.primary.tls=implicit",
             "arbiter.account.smtp.primary.sent_copy.folder=Sent",
             "arbiter.policy.smtp.bot.sent_copy.on_failure=fail",
-            "arbiter.policy.imap.bot.system_flags.seen=read_write",
-            "+arbiter.policy.imap.bot.user_flags.bot_followed_up=read_only",
+            "arbiter.policy.imap.bot.operation_defaults.system_flags.SEEN=read_write",
+            "+arbiter.policy.imap.bot.operation_defaults.user_flags.bot_followed_up=read_only",
             "+arbiter.policy.imap.bot.confirmation_required=[read]",
         ]
     )
@@ -371,13 +374,17 @@ def test_hydra_coerces_plugin_enum_values() -> None:
     assert (
         cfg.arbiter.policy.smtp.bot.sent_copy.on_failure == SMTPSentCopyFailureMode.fail
     )
-    folder_cfg = _compose_imap_folder_config(kind="sent")
+    folder_cfg = _compose_imap_folder_config(kind="SENT")
     assert (
-        folder_cfg.arbiter.account.imap.primary.folders.Sent.kind == IMAPFolderKind.sent
+        folder_cfg.arbiter.account.imap.primary.folders.Sent.kind == IMAPFolderKind.SENT
     )
-    assert cfg.arbiter.policy.imap.bot.system_flags.seen == IMAPFlagMode.read_write
     assert (
-        cfg.arbiter.policy.imap.bot.user_flags.bot_followed_up == IMAPFlagMode.read_only
+        cfg.arbiter.policy.imap.bot.operation_defaults.system_flags.SEEN
+        == IMAPFlagMode.read_write
+    )
+    assert (
+        cfg.arbiter.policy.imap.bot.operation_defaults.user_flags.bot_followed_up
+        == IMAPFlagMode.read_only
     )
     assert cfg.arbiter.policy.imap.bot.confirmation_required == [
         IMAPConfirmationAction.read
