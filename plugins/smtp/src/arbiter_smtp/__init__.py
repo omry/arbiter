@@ -30,6 +30,7 @@ from .config import (
     register_configs as register_smtp_configs,
 )
 from .idempotency import SMTPIdempotencyResult, SMTPIdempotencyStore
+from .runtime_policy import _SMTPRuntimePolicyMixin
 
 SERVER_API_VERSION = "0.9"
 
@@ -67,6 +68,13 @@ class SMTPClientProtocol(Protocol):
 
 
 class SentMessageAppender(Protocol):
+    def check_destination(
+        self,
+        *,
+        account: str,
+        folder: str | None,
+    ) -> SentCopyDestination: ...
+
     def resolve_destination(
         self,
         *,
@@ -138,7 +146,7 @@ SEND_EMAIL_INPUT_SCHEMA: dict[str, object] = {
 }
 
 
-class SMTPRuntime:
+class SMTPRuntime(_SMTPRuntimePolicyMixin):
     service_name = "smtp"
 
     def __init__(
@@ -309,8 +317,18 @@ class SMTPRuntime:
                     account=account,
                     smtp_config=smtp_config,
                     smtp_policy=smtp_policy,
+                    enforce_required=False,
                 )
             )
+            sent_copy_decision = self._sent_copy_preflight_decision(
+                smtp_policy=smtp_policy,
+                result=sent_copy_result,
+            ).evaluate()
+            if not sent_copy_decision.allowed:
+                raise RuntimeError(
+                    sent_copy_decision.why_not
+                    or "send_email sent-copy preflight failed"
+                )
             self._consume_rate_limit(account, smtp_policy)
             smtp_client = self._smtp_client_factory(smtp_config)
             smtp_client.send(
@@ -362,6 +380,66 @@ class SMTPRuntime:
         self._raise_if_submitted_sent_copy_required(result, smtp_policy)
         return result
 
+    def check_operation(
+        self,
+        operation: str,
+        arguments: Mapping[str, object],
+    ) -> dict[str, object]:
+        operation_id = f"smtp:{operation}"
+        if operation != "send_email":
+            return {
+                "operation": operation_id,
+                "allowed": False,
+                "why_not": f"unknown SMTP operation: {operation}",
+            }
+        account = cast(str, arguments.get("account"))
+        try:
+            smtp_config, smtp_policy = self._resolve_context(account)
+            recipients_to = self._normalize_recipients(
+                "to", cast(list[str], arguments.get("to"))
+            )
+            recipients_cc = self._normalize_recipients(
+                "cc", cast(list[str] | None, arguments.get("cc")) or []
+            )
+            recipients_bcc = self._normalize_recipients(
+                "bcc", cast(list[str] | None, arguments.get("bcc")) or []
+            )
+            text_body = cast(str | None, arguments.get("text_body"))
+            html_body = cast(str | None, arguments.get("html_body"))
+            if not text_body and not html_body:
+                raise ValueError("send_email requires text_body or html_body")
+            normalized_subject = cast(str, arguments.get("subject")).strip()
+            if not normalized_subject:
+                raise ValueError("send_email requires a non-empty subject")
+
+            recipients = recipients_to + recipients_cc + recipients_bcc
+            send_decision = self._send_policy_decision(
+                account_name=account,
+                smtp_policy=smtp_policy,
+                recipients=recipients,
+            ).evaluate()
+            if not send_decision.allowed:
+                return self._decision_check_result(operation_id, send_decision)
+
+            sent_copy_result = self._check_sent_copy_destination(
+                account=account,
+                smtp_config=smtp_config,
+                smtp_policy=smtp_policy,
+            )
+            return self._check_send_decision(
+                operation_id=operation_id,
+                account=account,
+                smtp_policy=smtp_policy,
+                recipients=recipients,
+                sent_copy_result=sent_copy_result,
+            )
+        except Exception as exc:
+            return {
+                "operation": operation_id,
+                "allowed": False,
+                "why_not": str(exc),
+            }
+
     def _resolve_context(
         self,
         account_name: str,
@@ -379,6 +457,43 @@ class SMTPRuntime:
             )
 
         return smtp_config, smtp_policy
+
+    def _check_sent_copy_destination(
+        self,
+        *,
+        account: str,
+        smtp_config: SMTPConfig,
+        smtp_policy: SMTPServicePolicyConfig,
+    ) -> dict[str, object] | None:
+        if not smtp_policy.sent_copy.enabled:
+            return self._sent_copy_outcome("disabled", account=account)
+
+        folder_override = self._normalize_sent_copy_folder(smtp_config.sent_copy.folder)
+        if self._sent_message_appender is None:
+            return self._sent_copy_outcome(
+                "skipped",
+                account=account,
+                reason="IMAP sent-copy appender is not configured",
+            )
+
+        try:
+            destination = self._sent_message_appender.check_destination(
+                account=account,
+                folder=folder_override,
+            )
+        except Exception as exc:
+            return self._sent_copy_outcome(
+                "skipped",
+                account=account,
+                reason=str(exc),
+                error_type=type(exc).__name__,
+            )
+
+        return self._sent_copy_outcome(
+            "resolved",
+            account=destination.account,
+            folder=destination.folder,
+        )
 
     def _resolve_sent_copy_destination(
         self,
@@ -614,65 +729,42 @@ class SMTPRuntime:
         _, _, domain = smtp_config.from_email.partition("@")
         return domain or "localhost"
 
+    def _policy_now(self) -> float:
+        return self._time_provider()
+
+    def _rate_limit_attempt_timestamps(self) -> dict[str, list[float]]:
+        return self._attempt_timestamps
+
     def _enforce_policy(
         self,
         account_name: str,
         smtp_policy: SMTPServicePolicyConfig,
         recipients: list[str],
     ) -> None:
-        max_recipients = smtp_policy.limits.max_recipients_per_message
-        if max_recipients is not None and len(recipients) > max_recipients:
-            raise ValueError(
-                f"send_email exceeds max_recipients_per_message for account: {account_name}"
-            )
-
-        recipient_policy = smtp_policy.recipient_policy
-        for recipient in recipients:
-            normalized_recipient = recipient.strip().lower()
-            _, _, domain = normalized_recipient.partition("@")
-            if self._recipient_matches_list(
-                normalized_recipient, recipient_policy.blocked_recipients
-            ):
-                raise ValueError(
-                    f"send_email recipient is blocked by exact address policy: {recipient}"
-                )
-            if self._domain_matches_any_pattern(
-                domain, recipient_policy.blocked_domain_patterns
-            ):
-                raise ValueError(
-                    f"send_email recipient is blocked by domain policy: {recipient}"
-                )
-
-            has_allowlist = bool(
-                recipient_policy.allowed_recipients
-                or recipient_policy.allowed_domain_patterns
-            )
-            if has_allowlist and not (
-                self._recipient_matches_list(
-                    normalized_recipient, recipient_policy.allowed_recipients
-                )
-                or self._domain_matches_any_pattern(
-                    domain, recipient_policy.allowed_domain_patterns
-                )
-            ):
-                raise ValueError(
-                    f"send_email recipient is not allowed by policy: {recipient}"
-                )
+        self._send_policy_decision(
+            account_name=account_name,
+            smtp_policy=smtp_policy,
+            recipients=recipients,
+        ).evaluate().require_allowed()
 
     def _consume_rate_limit(
         self,
         account_name: str,
         smtp_policy: SMTPServicePolicyConfig,
     ) -> None:
+        self._rate_limit_decision(
+            account_name, smtp_policy
+        ).evaluate().require_allowed()
         max_messages = smtp_policy.limits.max_messages_per_minute
         if max_messages is None:
             return
 
-        now = self._time_provider()
+        now = self._policy_now()
         window_start = now - 60.0
+        attempt_timestamps = self._rate_limit_attempt_timestamps()
         active_attempts = [
             timestamp
-            for timestamp in self._attempt_timestamps.get(account_name, [])
+            for timestamp in attempt_timestamps.get(account_name, [])
             if timestamp > window_start
         ]
         if len(active_attempts) >= max_messages:
@@ -681,7 +773,7 @@ class SMTPRuntime:
             )
 
         active_attempts.append(now)
-        self._attempt_timestamps[account_name] = active_attempts
+        attempt_timestamps[account_name] = active_attempts
 
     def _recipient_matches_list(
         self,
@@ -1091,6 +1183,15 @@ class SMTPServicePlugin:
             "sent_copy": result.sent_copy,
             "idempotency_replayed": result.idempotency_replayed,
         }
+
+    def check_operation(
+        self,
+        operation: str,
+        arguments: Mapping[str, object],
+        context: ServicePluginContext,
+    ) -> dict[str, object]:
+        runtime = context.runtimes.require(self.name, SMTPRuntime)
+        return runtime.check_operation(operation, arguments)
 
 
 def plugin() -> SMTPServicePlugin:

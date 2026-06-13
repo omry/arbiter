@@ -17,6 +17,8 @@ from arbiter_smtp.config import (
     SMTPConfig,
     SMTPLimitsConfig,
     SMTPRecipientPolicyConfig,
+    SMTPSentCopyFailureMode,
+    SMTPSentCopyPolicyConfig,
     SMTPServicePolicyConfig,
 )
 from arbiter_server.services import RuntimeRegistry, ServicePluginContext
@@ -26,7 +28,7 @@ from arbiter_imap.client import (
     IMAPAttachment,
     IMAPAttachmentContent,
 )
-from arbiter_smtp import SMTPRuntime
+from arbiter_smtp import SMTPRuntime, SMTPServicePlugin, SentCopyDestination
 
 
 class FakeSMTPClient:
@@ -59,6 +61,49 @@ class RecordingSMTPClientFactory:
         client = FakeSMTPClient()
         self.clients.append(client)
         return client
+
+
+class RecordingSentMessageAppender:
+    def __init__(
+        self,
+        destination: SentCopyDestination | None = None,
+    ) -> None:
+        self.destination = destination or SentCopyDestination(
+            account="primary",
+            folder="Sent",
+        )
+        self.checked: list[dict[str, object]] = []
+        self.resolved: list[dict[str, object]] = []
+        self.appended: list[dict[str, object]] = []
+
+    def check_destination(
+        self,
+        *,
+        account: str,
+        folder: str | None,
+    ) -> SentCopyDestination:
+        self.checked.append({"account": account, "folder": folder})
+        return self.destination
+
+    def resolve_destination(
+        self,
+        *,
+        account: str,
+        folder: str | None,
+    ) -> SentCopyDestination:
+        self.resolved.append({"account": account, "folder": folder})
+        return self.destination
+
+    def append_sent_message(
+        self,
+        *,
+        account: str,
+        folder: str,
+        message_bytes: bytes,
+    ) -> None:
+        self.appended.append(
+            {"account": account, "folder": folder, "message_bytes": message_bytes}
+        )
 
 
 class FakeIMAPClient:
@@ -466,6 +511,195 @@ def test_send_email_enforces_recipient_policy() -> None:
             subject="Hello",
             text_body="Plain body",
         )
+
+
+def test_check_operation_reports_smtp_policy_denial() -> None:
+    runtime = _smtp_runtime(
+        policies={
+            "bot": SMTPServicePolicyConfig(
+                recipient_policy=SMTPRecipientPolicyConfig(
+                    blocked_domain_patterns=["blocked.example"],
+                ),
+            )
+        }
+    )
+    plugin = SMTPServicePlugin()
+    context = ServicePluginContext(runtimes=RuntimeRegistry({"smtp": runtime}))
+
+    result = cast(
+        dict[str, Any],
+        plugin.check_operation(
+            "send_email",
+            {
+                "account": "primary",
+                "to": ["person@blocked.example"],
+                "subject": "Hello",
+                "text_body": "Plain body",
+            },
+            context,
+        ),
+    )
+
+    assert result["operation"] == "smtp:send_email"
+    assert result["allowed"] is False
+    assert result["failed_gate"] == "blocked_domain"
+    assert result["why_not"] == (
+        "send_email recipient is blocked by domain policy: person@blocked.example"
+    )
+
+
+def test_check_operation_allows_smtp_send_without_delivery() -> None:
+    factory = RecordingSMTPClientFactory()
+    runtime = _smtp_runtime(smtp_client_factory=factory)
+    plugin = SMTPServicePlugin()
+    context = ServicePluginContext(runtimes=RuntimeRegistry({"smtp": runtime}))
+
+    result = cast(
+        dict[str, Any],
+        plugin.check_operation(
+            "send_email",
+            {
+                "account": "primary",
+                "to": ["to@example.com"],
+                "subject": "Hello",
+                "text_body": "Plain body",
+            },
+            context,
+        ),
+    )
+
+    assert result["operation"] == "smtp:send_email"
+    assert result["allowed"] is True
+    assert result["evidence"]["recipient_count"] == 1
+    assert factory.clients == []
+
+
+def test_check_operation_reports_required_smtp_sent_copy_preflight_denial() -> None:
+    factory = RecordingSMTPClientFactory()
+    runtime = _smtp_runtime(
+        policies={
+            "bot": SMTPServicePolicyConfig(
+                sent_copy=SMTPSentCopyPolicyConfig(
+                    on_failure=SMTPSentCopyFailureMode.fail,
+                ),
+            )
+        },
+        smtp_client_factory=factory,
+    )
+    plugin = SMTPServicePlugin()
+    context = ServicePluginContext(runtimes=RuntimeRegistry({"smtp": runtime}))
+
+    result = cast(
+        dict[str, Any],
+        plugin.check_operation(
+            "send_email",
+            {
+                "account": "primary",
+                "to": ["to@example.com"],
+                "subject": "Hello",
+                "text_body": "Plain body",
+            },
+            context,
+        ),
+    )
+
+    assert result["operation"] == "smtp:send_email"
+    assert result["allowed"] is False
+    assert result["failed_gate"] == "sent_copy"
+    assert result["why_not"] == (
+        "send_email sent-copy preflight failed: "
+        "IMAP sent-copy appender is not configured"
+    )
+    assert factory.clients == []
+
+
+def test_check_operation_uses_smtp_sent_copy_check_without_resolving_or_appending() -> (
+    None
+):
+    factory = RecordingSMTPClientFactory()
+    appender = RecordingSentMessageAppender()
+    runtime = _smtp_runtime(
+        policies={
+            "bot": SMTPServicePolicyConfig(
+                sent_copy=SMTPSentCopyPolicyConfig(
+                    on_failure=SMTPSentCopyFailureMode.fail,
+                ),
+            )
+        },
+        smtp_client_factory=factory,
+    )
+    runtime.configure_sent_message_appender(appender)
+    plugin = SMTPServicePlugin()
+    context = ServicePluginContext(runtimes=RuntimeRegistry({"smtp": runtime}))
+
+    result = cast(
+        dict[str, Any],
+        plugin.check_operation(
+            "send_email",
+            {
+                "account": "primary",
+                "to": ["to@example.com"],
+                "subject": "Hello",
+                "text_body": "Plain body",
+            },
+            context,
+        ),
+    )
+
+    assert result["operation"] == "smtp:send_email"
+    assert result["allowed"] is True
+    assert result["evidence"]["sent_copy"] == {
+        "status": "resolved",
+        "account": "primary",
+        "folder": "Sent",
+    }
+    assert appender.checked == [{"account": "primary", "folder": None}]
+    assert appender.resolved == []
+    assert appender.appended == []
+    assert factory.clients == []
+
+
+def test_check_operation_reports_smtp_rate_limit_without_consuming_attempt() -> None:
+    clock = FakeClock()
+    factory = RecordingSMTPClientFactory()
+    runtime = _smtp_runtime(
+        policies={
+            "bot": SMTPServicePolicyConfig(
+                limits=SMTPLimitsConfig(max_messages_per_minute=1)
+            )
+        },
+        smtp_client_factory=factory,
+        time_provider=clock,
+    )
+    runtime.send_email(
+        account="primary",
+        to=["to@example.com"],
+        subject="Hello",
+        text_body="Plain body",
+    )
+    plugin = SMTPServicePlugin()
+    context = ServicePluginContext(runtimes=RuntimeRegistry({"smtp": runtime}))
+
+    result = cast(
+        dict[str, Any],
+        plugin.check_operation(
+            "send_email",
+            {
+                "account": "primary",
+                "to": ["to@example.com"],
+                "subject": "Hello again",
+                "text_body": "Plain body",
+            },
+            context,
+        ),
+    )
+
+    assert result["operation"] == "smtp:send_email"
+    assert result["allowed"] is False
+    assert result["failed_gate"] == "max_messages_per_minute"
+    assert result["evidence"]["active_attempt_count"] == 1
+    assert runtime._rate_limit_attempt_timestamps()["primary"] == [0.0]
+    assert len(factory.clients) == 1
 
 
 def test_send_email_enforces_rate_limit() -> None:

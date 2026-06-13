@@ -265,7 +265,7 @@ class _IMAPSentMessageAppender:
         self._imap_accounts = imap_accounts
         self._imap_runtime = imap_runtime
 
-    def resolve_destination(
+    def _destination_from_config(
         self,
         *,
         account: str,
@@ -298,6 +298,22 @@ class _IMAPSentMessageAppender:
         raise ValueError(
             f"IMAP account has multiple folders configured with kind=sent: {account}"
         )
+
+    def check_destination(
+        self,
+        *,
+        account: str,
+        folder: str | None,
+    ) -> _SentCopyDestination:
+        return self._destination_from_config(account=account, folder=folder)
+
+    def resolve_destination(
+        self,
+        *,
+        account: str,
+        folder: str | None,
+    ) -> _SentCopyDestination:
+        return self._destination_from_config(account=account, folder=folder)
 
     def append_sent_message(
         self,

@@ -96,8 +96,28 @@ class RecordingSentMessageAppender:
             folder="Sent",
         )
         self.append_error = append_error
+        self.checked: list[dict[str, object]] = []
         self.resolved: list[dict[str, object]] = []
         self.appended: list[dict[str, object]] = []
+
+    def _destination_for(
+        self,
+        *,
+        account: str,
+        folder: str | None,
+    ) -> SentCopyDestination:
+        if folder is not None:
+            return SentCopyDestination(account=account, folder=folder)
+        return self.destination
+
+    def check_destination(
+        self,
+        *,
+        account: str,
+        folder: str | None,
+    ) -> SentCopyDestination:
+        self.checked.append({"account": account, "folder": folder})
+        return self._destination_for(account=account, folder=folder)
 
     def resolve_destination(
         self,
@@ -106,9 +126,7 @@ class RecordingSentMessageAppender:
         folder: str | None,
     ) -> SentCopyDestination:
         self.resolved.append({"account": account, "folder": folder})
-        if folder is not None:
-            return SentCopyDestination(account=account, folder=folder)
-        return self.destination
+        return self._destination_for(account=account, folder=folder)
 
     def append_sent_message(
         self,
