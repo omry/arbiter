@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from omegaconf import OmegaConf
-from omegaconf.errors import MissingMandatoryValue
+from omegaconf.errors import MissingMandatoryValue, OmegaConfBaseException
 
 from .config import (
     IMAPAccessPolicyConfig,
@@ -36,6 +36,7 @@ ACCESS_RULE_KEYS = (
     "allow_kind",
     "deny_kind",
 )
+_POSITIONAL_CAPTURE_PREFIX = "__arbiter_pos_"
 OPERATION_POLICY_FIELDS = (
     "read",
     "search",
@@ -187,6 +188,12 @@ def validate_imap_policy(policy: IMAPAccessPolicyConfig) -> None:
         move = override.move
         if isinstance(move, IMAPMovePolicyConfig):
             validate_move_policy(move, context=f"folder policy {pattern!r}")
+        if override.system_flags is not None:
+            _merge_system_flags(
+                policy.operation_defaults.system_flags,
+                override.system_flags,
+                context=f"folder policy {pattern!r}",
+            )
         _validate_user_flags(
             override.user_flags,
             context=f"folder policy {pattern!r}",
@@ -435,10 +442,16 @@ def _normalize_move_policy(
 def _merge_system_flags(
     base: Any,
     override: Any,
+    *,
+    context: str = "effective folder policy",
 ) -> IMAPSystemFlagsPolicyConfig:
+    try:
+        merged = OmegaConf.merge(base, override)
+    except OmegaConfBaseException as exc:
+        raise ValueError(f"IMAP {context} has invalid system_flags: {exc}") from exc
     return _materialize_system_flags(
-        OmegaConf.merge(base, override),
-        context="effective folder policy",
+        merged,
+        context=context,
     )
 
 
@@ -453,6 +466,8 @@ def _materialize_system_flags(
         )
     except MissingMandatoryValue as exc:
         raise ValueError(f"IMAP {context} has incomplete system_flags") from exc
+    except OmegaConfBaseException as exc:
+        raise ValueError(f"IMAP {context} has invalid system_flags: {exc}") from exc
     if not isinstance(system_flags, IMAPSystemFlagsPolicyConfig):
         raise TypeError("IMAP system_flags must be a structured config")
     return system_flags
@@ -542,7 +557,9 @@ def _compile_metadata_pattern(pattern: str) -> re.Pattern[str]:
     while index < len(pattern):
         char = pattern[index]
         if char == "*":
-            regex_parts.append(f"(?P<p{positional_index}>.*?)")
+            regex_parts.append(
+                f"(?P<{_POSITIONAL_CAPTURE_PREFIX}{positional_index}>[^.]*?)"
+            )
             positional_index += 1
             index += 1
             continue
@@ -555,8 +572,20 @@ def _compile_metadata_pattern(pattern: str) -> re.Pattern[str]:
                 matcher, name = block.rsplit(":", 1)
             else:
                 matcher, name = "*", block
-            regex_parts.append(f"(?P<{name}>{_glob_to_regex(matcher)})")
-            index = end_index + 1
+            optional = name.endswith("?")
+            if optional:
+                name = name.removesuffix("?")
+            capture_regex = f"(?P<{name}>{_metadata_glob_to_regex(matcher)})"
+            next_index = end_index + 1
+            if optional and next_index < len(pattern) and pattern[next_index] == ".":
+                regex_parts.append(f"(?:{capture_regex}{re.escape('.')})?")
+                index = next_index + 1
+            elif optional:
+                regex_parts.append(f"(?:{capture_regex})?")
+                index = next_index
+            else:
+                regex_parts.append(capture_regex)
+                index = next_index
             continue
         regex_parts.append(re.escape(char))
         index += 1
@@ -571,18 +600,80 @@ def _match_metadata_pattern(
     if match is None:
         return None
     captures = {
-        key.removeprefix("p"): value
+        (
+            key.removeprefix(_POSITIONAL_CAPTURE_PREFIX)
+            if key.startswith(_POSITIONAL_CAPTURE_PREFIX)
+            else key
+        ): value
         for key, value in match.groupdict().items()
         if value is not None
     }
     return captures
 
 
-def _glob_to_regex(pattern: str) -> str:
-    translated = fnmatch.translate(pattern)
-    if translated.startswith("(?s:") and translated.endswith(")\\Z"):
-        return translated[4:-3]
-    return translated
+def _metadata_glob_to_regex(pattern: str) -> str:
+    regex_parts: list[str] = []
+    index = 0
+    while index < len(pattern):
+        char = pattern[index]
+        if char == "*":
+            if index + 1 < len(pattern) and pattern[index + 1] == "*":
+                regex_parts.append(".*?")
+                index += 2
+            else:
+                regex_parts.append("[^.]*?")
+                index += 1
+            continue
+        if char == "?":
+            regex_parts.append("[^.]")
+            index += 1
+            continue
+        if char == "[":
+            character_class, next_index = _metadata_character_class_to_regex(
+                pattern,
+                index,
+            )
+            regex_parts.append(character_class)
+            index = next_index
+            continue
+        regex_parts.append(re.escape(char))
+        index += 1
+    return "".join(regex_parts)
+
+
+def _metadata_character_class_to_regex(
+    pattern: str,
+    start_index: int,
+) -> tuple[str, int]:
+    end_index = pattern.find("]", start_index + 1)
+    if end_index < 0:
+        return re.escape(pattern[start_index]), start_index + 1
+    content = pattern[start_index + 1 : end_index]
+    if not content:
+        return re.escape(pattern[start_index : end_index + 1]), end_index + 1
+    negated = content.startswith("!")
+    if negated:
+        content = content[1:]
+    if not content:
+        return re.escape(pattern[start_index : end_index + 1]), end_index + 1
+    escaped = _metadata_character_class_content_to_regex(content)
+    if negated:
+        return f"[^.{escaped}]", end_index + 1
+    return f"[{escaped}]", end_index + 1
+
+
+def _metadata_character_class_content_to_regex(content: str) -> str:
+    regex_parts: list[str] = []
+    for char in content:
+        if char == "\\":
+            regex_parts.append("\\\\")
+        elif char in "[]^":
+            regex_parts.append("\\" + char)
+        elif char == "-":
+            regex_parts.append("-")
+        else:
+            regex_parts.append(re.escape(char))
+    return "".join(regex_parts)
 
 
 def _format_description(description: str, captures: Mapping[str, str]) -> str:

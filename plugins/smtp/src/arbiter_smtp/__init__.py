@@ -17,6 +17,8 @@ from hydra.core.config_store import ConfigStore
 
 from arbiter_server.services import (
     CapabilityDescriptor,
+    ConfigCheckError,
+    ConfigCheckIssue,
     OperationDescriptor,
     ServicePluginContext,
     ServiceRuntimeContext,
@@ -194,9 +196,15 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
             for account_name, account in sorted(self._accounts.items())
         }
 
-    def test_accounts(self) -> dict[str, object]:
+    def test_accounts(
+        self,
+        *,
+        progress: Callable[[str], None] | None = None,
+    ) -> dict[str, object]:
         results: dict[str, object] = {}
         for account_name, smtp_config in sorted(self._accounts.items()):
+            if progress is not None:
+                progress(account_name)
             smtp_policy = self._policies[smtp_config.policy]
             stage = "connect_auth_noop_idempotency"
             strict_sent_copy = self._sent_copy_requires_readiness_check(smtp_policy)
@@ -1134,6 +1142,48 @@ class SMTPServicePlugin:
                 context.dependencies.get("sent_message_appender"),
             ),
         )
+
+    def check_config(
+        self,
+        *,
+        accounts: Mapping[str, object],
+        policies: Mapping[str, object],
+    ) -> None:
+        smtp_accounts = cast(Mapping[str, SMTPConfig], accounts)
+        smtp_policies = cast(Mapping[str, SMTPServicePolicyConfig], policies)
+        errors: list[ConfigCheckIssue] = []
+        for account_name, smtp_config in sorted(smtp_accounts.items()):
+            if smtp_config.policy not in smtp_policies:
+                continue
+            if (
+                smtp_config.sent_copy.folder is not None
+                and not smtp_config.sent_copy.folder.strip()
+            ):
+                errors.append(
+                    ConfigCheckIssue(
+                        message="SMTP sent_copy.folder must be non-empty",
+                        account=account_name,
+                        policy=smtp_config.policy,
+                    )
+                )
+        for policy_name, smtp_policy in sorted(smtp_policies.items()):
+            if smtp_policy.idempotency.expiration_days <= 0:
+                errors.append(
+                    ConfigCheckIssue(
+                        message="SMTP idempotency expiration_days must be positive",
+                        policy=policy_name,
+                    )
+                )
+            cache_dir = smtp_policy.idempotency.cache_dir
+            if cache_dir is not None and not cache_dir.strip():
+                errors.append(
+                    ConfigCheckIssue(
+                        message="SMTP idempotency cache_dir must be non-empty",
+                        policy=policy_name,
+                    )
+                )
+        if errors:
+            raise ConfigCheckError(errors)
 
     def describe_capability(
         self,

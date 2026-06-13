@@ -171,8 +171,9 @@ def _runtime(
 def test_runtime_tests_accounts_without_sending(tmp_path: Path) -> None:
     factory = RecordingSMTPClientFactory()
     runtime = _runtime(cache_dir=tmp_path, factory=factory)
+    progress_calls: list[str] = []
 
-    assert runtime.test_accounts() == {
+    assert runtime.test_accounts(progress=progress_calls.append) == {
         "primary": {
             "status": "ok",
             "stage": "connect_auth_noop_idempotency",
@@ -184,6 +185,7 @@ def test_runtime_tests_accounts_without_sending(tmp_path: Path) -> None:
 
     assert len(factory.clients) == 1
     assert factory.clients[0].tested is True
+    assert progress_calls == ["primary"]
 
 
 def test_runtime_tests_required_sent_copy_destination(tmp_path: Path) -> None:

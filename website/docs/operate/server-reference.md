@@ -43,7 +43,7 @@ Inspect, validate, activate, and deactivate server config.
 
 ```bash
 arbiter-server config show [--resolve] [override...]
-arbiter-server config check [override...]
+arbiter-server config check [--live] [override...]
 arbiter-server config activate account <plugin> <name>
 arbiter-server config deactivate account <plugin> <name>
 ```
@@ -52,6 +52,8 @@ arbiter-server config deactivate account <plugin> <name>
 - `config show --resolve`: resolve OmegaConf interpolations before printing.
 - `config check`: validate config and service runtime construction without
   serving.
+- `config check --live`: also run configured account readiness checks using the
+  current credentials.
 - `config activate account`: add an account to the root defaults list. The
   account's referenced policy is activated as well.
 - `config deactivate account`: remove an account from the root defaults list.

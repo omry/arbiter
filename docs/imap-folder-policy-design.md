@@ -230,17 +230,25 @@ normal YAML quoting.
 
 Folder metadata patterns:
 
-- Bare matchers capture positionally. For example, `Projects.*` captures the
-  project name as `{0}`.
+- `.` is a hard segment delimiter for default metadata matchers.
+- Bare `*` matchers capture zero or more non-dot characters positionally. For
+  example, `Projects.*` captures the project name as `{0}`, but does not match
+  `Projects.A.B`.
 - Named capture blocks bind a matcher result to a name. `{name}` is shorthand
-  for `{*:name}`.
-- Explicit matcher blocks use `{glob:name}`. For example,
-  `Archives.{range}.{20??:year}` captures `range` before the next literal `.`
-  and captures a four-character year-like suffix beginning with `20`.
+  for a one-segment wildcard capture.
+- Explicit matcher blocks use `{glob:name}`. `*` matches zero or more non-dot
+  characters, `?` matches one non-dot character, and `[0-9]` style character
+  classes match one character. Use `**` when a capture intentionally needs to
+  span dots.
+- Capture names ending in `?` are optional. When an optional capture is followed
+  by a literal `.`, the capture and that delimiter are optional together. For
+  example, `Archives.{**:prefix?}.{year}` matches both `Archives.2026` and
+  `Archives.2020-2029.2026`, with `{year}` bound to the last segment.
+- For example, `Archives.{range}.{20??:year}` captures `range` before the next
+  literal `.` and captures a four-character year-like suffix beginning with
+  `20`.
 - Literal text in the pattern matches exactly.
-- Pattern matching is over the full folder name. Capture width is constrained by
-  the surrounding literal pattern text, not by the IMAP server's hierarchy
-  delimiter.
+- Pattern matching is over the full folder name.
 - Captures can be referenced from metadata strings. In
   `Archives.{range}.{20??:year}`, `{year}` resolves to the named capture. In
   `Projects.*`, `{0}` resolves to the first positional capture.

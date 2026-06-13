@@ -34,11 +34,15 @@ from arbiter_server.main import (
     _build_local_source_wheel,
     _default_container_user,
     _register_artifact_route,
+    _run_config_check,
     _run_server,
     _write_text_with_mode,
     build_app,
     build_server,
     compose_config,
+    ConfigCheckComponentReport,
+    config_check_components,
+    config_check_report,
     config_check_summary,
     ensure_runnable_config,
     load_env_file,
@@ -68,6 +72,8 @@ from arbiter_server.services import (
     SERVER_VERSION,
     SERVICE_PLUGIN_ENTRY_POINT_GROUP,
     CapabilityDescriptor,
+    ConfigCheckError,
+    ConfigCheckIssue,
     OperationDescriptor,
     RuntimeRegistry,
     ServicePlugin,
@@ -600,13 +606,560 @@ def test_build_app_rejects_plugin_version_outside_server_line() -> None:
 
 
 def test_config_check_summary_validates_runtime_construction() -> None:
-    assert (
-        config_check_summary(
-            _app_config_with_smtp_imap(),
-            service_plugins=_test_service_plugins(),
-        )
-        == "config ok: services=smtp,imap service_accounts=smtp:primary;imap:primary"
+    assert config_check_summary(
+        _app_config_with_smtp_imap(),
+        service_plugins=_test_service_plugins(),
+    ) == (
+        "server: pass\n"
+        "smtp: pass\n"
+        "imap: pass\n"
+        "result | plugin | account | policy | message\n"
+        "-------+--------+---------+--------+--------------------------\n"
+        "pass   | smtp   | primary | bot    | account/policy pair valid\n"
+        "pass   | imap   | primary | bot    | account/policy pair valid"
     )
+
+
+def test_config_check_summary_calls_active_plugin_config_checker() -> None:
+    checked: dict[str, object] = {}
+
+    class FakePlugin:
+        name = "fake"
+        version = SERVER_VERSION
+        server_api_version = SERVER_API_VERSION
+
+        def register_configs(self, config_store: object) -> None:
+            return None
+
+        def bootstrap_config(self, *, kind: str, name: str) -> object | None:
+            return None
+
+        def check_config(
+            self,
+            *,
+            accounts: Mapping[str, object],
+            policies: Mapping[str, object],
+        ) -> None:
+            checked["accounts"] = accounts
+            checked["policies"] = policies
+
+        def build_runtime(
+            self,
+            accounts: Mapping[str, object],
+            policies: Mapping[str, object],
+            context: ServiceRuntimeContext,
+        ) -> object:
+            return object()
+
+        def describe_capability(
+            self,
+            context: ServicePluginContext,
+        ) -> CapabilityDescriptor:
+            return CapabilityDescriptor(name="fake", description="Fake")
+
+        def describe_operations(
+            self,
+            context: ServicePluginContext,
+        ) -> list[OperationDescriptor]:
+            return []
+
+        def invoke_operation(
+            self,
+            operation: str,
+            arguments: Mapping[str, Any],
+            context: ServicePluginContext,
+        ) -> object:
+            return {}
+
+    cfg = AppConfig(
+        arbiter=ArbiterConfig(
+            account={"fake": {"primary": {"policy": "bot"}}},
+            policy={"fake": {"bot": {}}},
+        )
+    )
+
+    assert config_check_summary(cfg, service_plugins=[FakePlugin()]) == (
+        "server: pass\n"
+        "fake: pass\n"
+        "result | plugin | account | policy | message\n"
+        "-------+--------+---------+--------+--------------------------\n"
+        "pass   | fake   | primary | bot    | account/policy pair valid"
+    )
+    assert checked["accounts"] == {"primary": {"policy": "bot"}}
+    assert checked["policies"] == {"bot": {}}
+
+
+def test_config_check_report_marks_plugin_failures() -> None:
+    class FakePlugin:
+        name = "fake"
+        version = SERVER_VERSION
+        server_api_version = SERVER_API_VERSION
+
+        def register_configs(self, config_store: object) -> None:
+            return None
+
+        def bootstrap_config(self, *, kind: str, name: str) -> object | None:
+            return None
+
+        def check_config(
+            self,
+            *,
+            accounts: Mapping[str, object],
+            policies: Mapping[str, object],
+        ) -> None:
+            raise ConfigCheckError(
+                (
+                    ConfigCheckIssue(
+                        message="bad fake policy",
+                        account="primary",
+                        policy="bot",
+                    ),
+                )
+            )
+
+        def build_runtime(
+            self,
+            accounts: Mapping[str, object],
+            policies: Mapping[str, object],
+            context: ServiceRuntimeContext,
+        ) -> object:
+            return object()
+
+        def describe_capability(
+            self,
+            context: ServicePluginContext,
+        ) -> CapabilityDescriptor:
+            return CapabilityDescriptor(name="fake", description="Fake")
+
+        def describe_operations(
+            self,
+            context: ServicePluginContext,
+        ) -> list[OperationDescriptor]:
+            return []
+
+        def invoke_operation(
+            self,
+            operation: str,
+            arguments: Mapping[str, Any],
+            context: ServicePluginContext,
+        ) -> object:
+            return {}
+
+    cfg = AppConfig(
+        arbiter=ArbiterConfig(
+            account={"fake": {"primary": {"policy": "bot"}}},
+            policy={"fake": {"bot": {}}},
+        )
+    )
+
+    report = config_check_report(cfg, service_plugins=[FakePlugin()])
+
+    assert report.failed is True
+    assert report.summary == (
+        "server: pass\n"
+        "fake: fail\n"
+        "result | plugin | account | policy | message\n"
+        "-------+--------+---------+--------+--------------------------\n"
+        "pass   | fake   | primary | bot    | account/policy pair valid\n"
+        "fail   | fake   | primary | bot    | bad fake policy"
+    )
+
+
+def test_config_check_report_marks_unknown_account_policy_pair() -> None:
+    class FakePlugin:
+        name = "fake"
+        version = SERVER_VERSION
+        server_api_version = SERVER_API_VERSION
+
+        def register_configs(self, config_store: object) -> None:
+            return None
+
+        def bootstrap_config(self, *, kind: str, name: str) -> object | None:
+            return None
+
+        def check_config(
+            self,
+            *,
+            accounts: Mapping[str, object],
+            policies: Mapping[str, object],
+        ) -> None:
+            return None
+
+        def build_runtime(
+            self,
+            accounts: Mapping[str, object],
+            policies: Mapping[str, object],
+            context: ServiceRuntimeContext,
+        ) -> object:
+            raise AssertionError("runtime should not be built")
+
+        def describe_capability(
+            self,
+            context: ServicePluginContext,
+        ) -> CapabilityDescriptor:
+            return CapabilityDescriptor(name="fake", description="Fake")
+
+        def describe_operations(
+            self,
+            context: ServicePluginContext,
+        ) -> list[OperationDescriptor]:
+            return []
+
+        def invoke_operation(
+            self,
+            operation: str,
+            arguments: Mapping[str, Any],
+            context: ServicePluginContext,
+        ) -> object:
+            return {}
+
+    cfg = AppConfig(
+        arbiter=ArbiterConfig(
+            account={"fake": {"primary": {"policy": "missing"}}},
+            policy={"fake": {"bot": {}}},
+        )
+    )
+
+    report = config_check_report(cfg, service_plugins=[FakePlugin()])
+
+    assert report.failed is True
+    assert report.summary == (
+        "server: pass\n"
+        "fake: fail\n"
+        "result | plugin | account | policy  | message\n"
+        "-------+--------+---------+---------+-------------------------------------\n"
+        "fail   | fake   | primary | missing | account references an unknown policy"
+    )
+
+
+def test_config_check_report_live_marks_failed_account_tests() -> None:
+    class FakeRuntime:
+        def test_accounts(self) -> dict[str, object]:
+            return {
+                "primary": {
+                    "status": "failed",
+                    "stage": "connect_auth_noop",
+                    "message": "authentication failed",
+                }
+            }
+
+    class FakePlugin:
+        name = "fake"
+        version = SERVER_VERSION
+        server_api_version = SERVER_API_VERSION
+
+        def register_configs(self, config_store: object) -> None:
+            return None
+
+        def bootstrap_config(self, *, kind: str, name: str) -> object | None:
+            return None
+
+        def check_config(
+            self,
+            *,
+            accounts: Mapping[str, object],
+            policies: Mapping[str, object],
+        ) -> None:
+            return None
+
+        def build_runtime(
+            self,
+            accounts: Mapping[str, object],
+            policies: Mapping[str, object],
+            context: ServiceRuntimeContext,
+        ) -> object:
+            return FakeRuntime()
+
+        def describe_capability(
+            self,
+            context: ServicePluginContext,
+        ) -> CapabilityDescriptor:
+            return CapabilityDescriptor(name="fake", description="Fake")
+
+        def describe_operations(
+            self,
+            context: ServicePluginContext,
+        ) -> list[OperationDescriptor]:
+            return []
+
+        def invoke_operation(
+            self,
+            operation: str,
+            arguments: Mapping[str, Any],
+            context: ServicePluginContext,
+        ) -> object:
+            return {}
+
+    cfg = AppConfig(
+        arbiter=ArbiterConfig(
+            account={"fake": {"primary": {"policy": "bot"}}},
+            policy={"fake": {"bot": {}}},
+        )
+    )
+
+    report = config_check_report(cfg, service_plugins=[FakePlugin()], live=True)
+
+    assert report.failed is True
+    assert report.summary == (
+        "server: pass\n"
+        "fake: fail\n"
+        "result | plugin | account | policy | message\n"
+        "-------+--------+---------+--------+------------------------------------------------\n"
+        "pass   | fake   | primary | bot    | account/policy pair valid\n"
+        "fail   | fake   | primary | bot    | authentication failed "
+        "(stage=connect_auth_noop)"
+    )
+
+
+def test_config_check_report_live_decodes_byte_account_test_messages() -> None:
+    class FakeRuntime:
+        def test_accounts(self) -> dict[str, object]:
+            return {
+                "primary": {
+                    "status": "failed",
+                    "stage": "connect_auth_noop",
+                    "message": b"[AUTHENTICATIONFAILED] Authentication failed.",
+                }
+            }
+
+    class FakePlugin:
+        name = "fake"
+        version = SERVER_VERSION
+        server_api_version = SERVER_API_VERSION
+
+        def register_configs(self, config_store: object) -> None:
+            return None
+
+        def bootstrap_config(self, *, kind: str, name: str) -> object | None:
+            return None
+
+        def check_config(
+            self,
+            *,
+            accounts: Mapping[str, object],
+            policies: Mapping[str, object],
+        ) -> None:
+            return None
+
+        def build_runtime(
+            self,
+            accounts: Mapping[str, object],
+            policies: Mapping[str, object],
+            context: ServiceRuntimeContext,
+        ) -> object:
+            return FakeRuntime()
+
+        def describe_capability(
+            self,
+            context: ServicePluginContext,
+        ) -> CapabilityDescriptor:
+            return CapabilityDescriptor(name="fake", description="Fake")
+
+        def describe_operations(
+            self,
+            context: ServicePluginContext,
+        ) -> list[OperationDescriptor]:
+            return []
+
+        def invoke_operation(
+            self,
+            operation: str,
+            arguments: Mapping[str, Any],
+            context: ServicePluginContext,
+        ) -> object:
+            return {}
+
+    cfg = AppConfig(
+        arbiter=ArbiterConfig(
+            account={"fake": {"primary": {"policy": "bot"}}},
+            policy={"fake": {"bot": {}}},
+        )
+    )
+
+    report = config_check_report(cfg, service_plugins=[FakePlugin()], live=True)
+
+    assert report.summary == (
+        "server: pass\n"
+        "fake: fail\n"
+        "result | plugin | account | policy | message\n"
+        "-------+--------+---------+--------+------------------------------------------------------------------------\n"
+        "pass   | fake   | primary | bot    | account/policy pair valid\n"
+        "fail   | fake   | primary | bot    | "
+        "[AUTHENTICATIONFAILED] Authentication failed. "
+        "(stage=connect_auth_noop)"
+    )
+
+
+def test_config_check_report_live_decodes_byte_exception_args() -> None:
+    class FakeRuntime:
+        def test_accounts(self) -> dict[str, object]:
+            return {
+                "primary": {
+                    "status": "failed",
+                    "stage": "connect_auth_noop_idempotency",
+                    "message": RuntimeError(
+                        535,
+                        b"5.7.8 Error: authentication failed: (reason unavailable)",
+                    ),
+                }
+            }
+
+    class FakePlugin:
+        name = "fake"
+        version = SERVER_VERSION
+        server_api_version = SERVER_API_VERSION
+
+        def register_configs(self, config_store: object) -> None:
+            return None
+
+        def bootstrap_config(self, *, kind: str, name: str) -> object | None:
+            return None
+
+        def check_config(
+            self,
+            *,
+            accounts: Mapping[str, object],
+            policies: Mapping[str, object],
+        ) -> None:
+            return None
+
+        def build_runtime(
+            self,
+            accounts: Mapping[str, object],
+            policies: Mapping[str, object],
+            context: ServiceRuntimeContext,
+        ) -> object:
+            return FakeRuntime()
+
+        def describe_capability(
+            self,
+            context: ServicePluginContext,
+        ) -> CapabilityDescriptor:
+            return CapabilityDescriptor(name="fake", description="Fake")
+
+        def describe_operations(
+            self,
+            context: ServicePluginContext,
+        ) -> list[OperationDescriptor]:
+            return []
+
+        def invoke_operation(
+            self,
+            operation: str,
+            arguments: Mapping[str, Any],
+            context: ServicePluginContext,
+        ) -> object:
+            return {}
+
+    cfg = AppConfig(
+        arbiter=ArbiterConfig(
+            account={"fake": {"primary": {"policy": "bot"}}},
+            policy={"fake": {"bot": {}}},
+        )
+    )
+
+    report = config_check_report(cfg, service_plugins=[FakePlugin()], live=True)
+
+    assert "b'" not in report.summary
+    assert (
+        "fail   | fake   | primary | bot    | "
+        "535: 5.7.8 Error: authentication failed: (reason unavailable) "
+        "(stage=connect_auth_noop_idempotency)"
+    ) in report.summary
+
+
+def test_config_check_components_live_forwards_account_progress() -> None:
+    progress_calls: list[tuple[str, str | None]] = []
+
+    class FakeRuntime:
+        def test_accounts(
+            self,
+            *,
+            progress: Callable[[str], None],
+        ) -> dict[str, object]:
+            progress("primary")
+            return {
+                "primary": {
+                    "status": "ok",
+                    "stage": "connect_auth_noop",
+                }
+            }
+
+    class FakePlugin:
+        name = "fake"
+        version = SERVER_VERSION
+        server_api_version = SERVER_API_VERSION
+
+        def register_configs(self, config_store: object) -> None:
+            return None
+
+        def bootstrap_config(self, *, kind: str, name: str) -> object | None:
+            return None
+
+        def check_config(
+            self,
+            *,
+            accounts: Mapping[str, object],
+            policies: Mapping[str, object],
+        ) -> None:
+            return None
+
+        def build_runtime(
+            self,
+            accounts: Mapping[str, object],
+            policies: Mapping[str, object],
+            context: ServiceRuntimeContext,
+        ) -> object:
+            return FakeRuntime()
+
+        def describe_capability(
+            self,
+            context: ServicePluginContext,
+        ) -> CapabilityDescriptor:
+            return CapabilityDescriptor(name="fake", description="Fake")
+
+        def describe_operations(
+            self,
+            context: ServicePluginContext,
+        ) -> list[OperationDescriptor]:
+            return []
+
+        def invoke_operation(
+            self,
+            operation: str,
+            arguments: Mapping[str, Any],
+            context: ServicePluginContext,
+        ) -> object:
+            return {}
+
+    cfg = AppConfig(
+        arbiter=ArbiterConfig(
+            account={"fake": {"primary": {"policy": "bot"}}},
+            policy={"fake": {"bot": {}}},
+        )
+    )
+
+    components = tuple(
+        config_check_components(
+            cfg,
+            service_plugins=[FakePlugin()],
+            live=True,
+            progress=lambda component, account: progress_calls.append(
+                (component, account)
+            ),
+        )
+    )
+
+    assert [component.name for component in components] == ["server", "fake"]
+    assert components[1].lines == (
+        "fake: pass",
+        "result | plugin | account | policy | message",
+        "-------+--------+---------+--------+----------------------------------------------------",
+        "pass   | fake   | primary | bot    | account/policy pair valid",
+        "pass   | fake   | primary | bot    | live account check passed "
+        "(stage=connect_auth_noop)",
+    )
+    assert progress_calls == [("server", None), ("fake", None), ("fake", "primary")]
 
 
 def test_runnable_config_requires_at_least_one_service_account() -> None:
@@ -6764,6 +7317,7 @@ def test_cli_config_check_subcommand_passes_config_and_overrides(
                 "/tmp",
                 "config",
                 "check",
+                "--live",
                 "arbiter.server.bind.port=8025",
             ]
         )
@@ -6775,8 +7329,215 @@ def test_cli_config_check_subcommand_passes_config_and_overrides(
             "config_dir": "/tmp",
             "config_name": "arbiter-server",
             "overrides": ["arbiter.server.bind.port=8025"],
+            "live": True,
         },
     ]
+
+
+def test_cli_config_check_reports_hydra_composition_errors_compactly(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    missing_config_dir = tmp_path / "missing"
+
+    assert main(["--config-dir", str(missing_config_dir), "config", "check"]) == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("Arbiter config error: Primary config directory")
+    assert str(missing_config_dir) in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_cli_config_check_prints_warnings_without_failing(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = object()
+    monkeypatch.setattr("arbiter_server.main.compose_config", lambda **kwargs: cfg)
+    monkeypatch.setattr(
+        "arbiter_server.main.config_check_components",
+        lambda cfg, **kwargs: iter(
+            (
+                ConfigCheckComponentReport(name="server"),
+                ConfigCheckComponentReport(
+                    name="imap",
+                    warnings=(
+                        ConfigCheckIssue(
+                            message="IMAP account has no accessible configured folders",
+                            account="primary",
+                            policy="bot",
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    assert main(["--config-dir", "/tmp", "config", "check"]) == 0
+
+    captured = capsys.readouterr()
+    assert captured.out == (
+        "server: pass\n"
+        "imap: warn\n"
+        "result | plugin | account | policy | message\n"
+        "-------+--------+---------+--------+--------------------------------------------------\n"
+        "warn   | imap   | primary | bot    | "
+        "IMAP account has no accessible configured folders\n"
+    )
+    assert captured.err == ""
+
+
+def test_cli_config_check_prints_each_component_as_it_completes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RecordingStdout:
+        def __init__(self) -> None:
+            self.text = ""
+            self.flush_count = 0
+
+        def write(self, value: str) -> int:
+            self.text += value
+            return len(value)
+
+        def flush(self) -> None:
+            self.flush_count += 1
+
+        def isatty(self) -> bool:
+            return False
+
+    stdout = RecordingStdout()
+    cfg = object()
+    monkeypatch.setattr("arbiter_server.main.compose_config", lambda **kwargs: cfg)
+    monkeypatch.setattr(sys, "stdout", stdout)
+
+    def fake_components(cfg: object, **kwargs: object):
+        yield ConfigCheckComponentReport(name="server")
+        assert stdout.text == "server: pass\n"
+        assert stdout.flush_count >= 1
+        yield ConfigCheckComponentReport(
+            name="imap",
+            warnings=(ConfigCheckIssue(message="still checking later component"),),
+        )
+
+    monkeypatch.setattr(
+        "arbiter_server.main.config_check_components",
+        fake_components,
+    )
+
+    assert (
+        _run_config_check(
+            config_dir="/tmp",
+            config_name="arbiter-server",
+            overrides=(),
+        )
+        == 0
+    )
+    assert stdout.text == (
+        "server: pass\n" "imap: warn\n" "- warn: still checking later component\n"
+    )
+
+
+def test_cli_config_check_animates_active_component_on_tty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RecordingStdout:
+        def __init__(self) -> None:
+            self.text = ""
+
+        def write(self, value: str) -> int:
+            self.text += value
+            return len(value)
+
+        def flush(self) -> None:
+            return None
+
+        def isatty(self) -> bool:
+            return True
+
+    stdout = RecordingStdout()
+    cfg = object()
+    monkeypatch.setenv("ARBITER_COLOR", "never")
+    monkeypatch.setattr("arbiter_server.main.compose_config", lambda **kwargs: cfg)
+    monkeypatch.setattr(sys, "stdout", stdout)
+
+    def fake_components(cfg: object, **kwargs: object):
+        progress = cast(Callable[[str, str | None], None], kwargs["progress"])
+        progress("smtp", "primary")
+        assert "\r\033[2Ksmtp/primary: testing |" in stdout.text
+        yield ConfigCheckComponentReport(name="smtp")
+
+    monkeypatch.setattr(
+        "arbiter_server.main.config_check_components",
+        fake_components,
+    )
+
+    assert (
+        _run_config_check(
+            config_dir="/tmp",
+            config_name="arbiter-server",
+            overrides=(),
+        )
+        == 0
+    )
+    assert "\r\033[2Ksmtp/primary: testing |" in stdout.text
+    assert "\r\033[2Ksmtp: pass\n" in stdout.text
+
+
+def test_cli_config_check_can_color_statuses(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = object()
+    monkeypatch.setenv("ARBITER_COLOR", "always")
+    monkeypatch.setattr("arbiter_server.main.compose_config", lambda **kwargs: cfg)
+    monkeypatch.setattr(
+        "arbiter_server.main.config_check_components",
+        lambda cfg, **kwargs: iter(
+            (
+                ConfigCheckComponentReport(name="server"),
+                ConfigCheckComponentReport(
+                    name="imap",
+                    warnings=(
+                        ConfigCheckIssue(
+                            message="IMAP account has no accessible configured folders",
+                            account="primary",
+                            policy="bot",
+                        ),
+                    ),
+                ),
+                ConfigCheckComponentReport(
+                    name="smtp",
+                    errors=(
+                        ConfigCheckIssue(
+                            message="SMTP sent-copy destination missing",
+                            account="primary",
+                            policy="bot",
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    assert main(["--config-dir", "/tmp", "config", "check"]) == 1
+
+    captured = capsys.readouterr()
+    assert "\033[94mserver\033[0m" in captured.out
+    assert "\033[94mimap\033[0m" in captured.out
+    assert "\033[94msmtp\033[0m" in captured.out
+    assert "\033[32mpass\033[0m" in captured.out
+    assert "\033[33mwarn\033[0m" in captured.out
+    assert "\033[31mfail\033[0m" in captured.out
+    assert (
+        "\033[33mwarn\033[0m   | imap   | primary | bot    | "
+        "IMAP account has no accessible configured folders\n"
+    ) in captured.out
+    assert (
+        "\033[31mfail\033[0m   | smtp   | primary | bot    | "
+        "SMTP sent-copy destination missing\n"
+    ) in captured.out
+    assert captured.err == ""
 
 
 def test_cli_config_show_subcommand_passes_config_and_overrides(
@@ -6886,13 +7647,15 @@ def test_cli_bootstrap_arbiter_writes_main_config(
     )
 
     assert main(["--config-dir", str(config_dir), "config", "check"]) == 1
-    assert capsys.readouterr().err == (
-        "Arbiter config error: config must define at least one service "
-        "account before Arbiter can run\n"
+    captured = capsys.readouterr()
+    assert captured.out == (
+        "server: fail\n"
+        "- fail: config must define at least one service account before Arbiter can run\n"
         "  currently installed arbiter plugins: imap, smtp\n"
         "  use `arbiter-server --config-dir DIR bootstrap plugin PLUGIN account "
         "NAME` to create an account config\n"
     )
+    assert captured.err == ""
 
     served: dict[str, object] = {}
 
@@ -7829,7 +8592,11 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     imap_policies = fake_cfg.arbiter.policy["imap"]
 
     class FakeSMTPRuntime(SMTPRuntime):
-        def test_accounts(self) -> dict[str, object]:
+        def test_accounts(
+            self,
+            *,
+            progress: Callable[[str], None] | None = None,
+        ) -> dict[str, object]:
             return {
                 "primary": {
                     "status": "ok",
@@ -7871,7 +8638,11 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
         def artifact_delivery_available(self) -> bool:
             return True
 
-        def test_accounts(self) -> dict[str, object]:
+        def test_accounts(
+            self,
+            *,
+            progress: Callable[[str], None] | None = None,
+        ) -> dict[str, object]:
             return {
                 "primary": {
                     "status": "skipped",
@@ -8571,7 +9342,6 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
             "guidance": "",
             "policy": "bot",
             "enabled": True,
-            "confirmation_required": [],
             "message": {
                 "defaults": {
                     "read": "allow",

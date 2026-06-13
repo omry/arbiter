@@ -228,8 +228,7 @@ def _write_imap_only_config(path: Path, imap_server: Any) -> None:
         "          search: allow\n"
         "          move: false\n"
         "          delete: deny\n"
-        "          user_flags: {}\n"
-        "        confirmation_required: []\n",
+        "          user_flags: {}\n",
         encoding="utf-8",
     )
     path.chmod(0o640)

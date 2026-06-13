@@ -590,7 +590,13 @@ def test_arbiter_console_script_config_show_and_check(
     assert "primary:" in show.stdout
     assert show.stderr == ""
     assert check.returncode == 0
-    assert check.stdout == "config ok: services=smtp service_accounts=smtp:primary\n"
+    assert check.stdout == (
+        "server: pass\n"
+        "smtp: pass\n"
+        "result | plugin | account | policy         | message\n"
+        "-------+--------+---------+----------------+--------------------------\n"
+        "pass   | smtp   | primary | primary_policy | account/policy pair valid\n"
+    )
     assert check.stderr == ""
 
 

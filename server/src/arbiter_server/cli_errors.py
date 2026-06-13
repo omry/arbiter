@@ -29,3 +29,29 @@ def print_cli_error(
     if file is None:
         file = sys.stderr
     print(format_cli_error(message, area=area, details=details), file=file)
+
+
+def format_cli_warning(
+    message: str,
+    *,
+    area: str | None = None,
+    details: Iterable[str] = (),
+) -> str:
+    area_text = f" {area}" if area else ""
+    message_lines = message.splitlines() or [""]
+    lines = [f"Arbiter{area_text} warning: {message_lines[0]}"]
+    lines.extend(f"  {line}" for line in message_lines[1:])
+    lines.extend(f"  {detail}" for detail in details)
+    return "\n".join(lines)
+
+
+def print_cli_warning(
+    message: str,
+    *,
+    area: str | None = None,
+    details: Iterable[str] = (),
+    file: TextIO | None = None,
+) -> None:
+    if file is None:
+        file = sys.stderr
+    print(format_cli_warning(message, area=area, details=details), file=file)

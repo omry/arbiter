@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import ssl
 import imaplib
-from collections.abc import Sequence
-from typing import Any
+from collections.abc import Mapping, Sequence
+from typing import Any, cast
 
 import pytest
 
-from arbiter_imap import IMAPRuntime
+from arbiter_imap import IMAPRuntime, IMAPServicePlugin
 from arbiter_imap.client import (
     FetchedIMAPMessage,
     IMAPAttachmentContent,
@@ -43,6 +43,27 @@ def _allow_all_policy() -> IMAPAccessPolicyConfig:
             rules=[IMAPFolderAccessRuleConfig(allow_glob="*")]
         )
     )
+
+
+def test_plugin_config_check_warns_when_configured_folders_are_denied() -> None:
+    warnings = IMAPServicePlugin().check_config(
+        accounts={
+            "primary": IMAPConfig(
+                folders={"INBOX": IMAPFolderConfig(description="Inbox")}
+            )
+        },
+        policies={
+            "bot": IMAPAccessPolicyConfig(
+                folder_access=IMAPFolderAccessConfig(
+                    rules=[IMAPFolderAccessRuleConfig(deny_glob="*")]
+                )
+            )
+        },
+    )
+
+    assert [
+        (warning.account, warning.policy, warning.message) for warning in warnings
+    ] == [("primary", "bot", "IMAP account has no accessible configured folders")]
 
 
 class FakeIMAPServer:
@@ -285,7 +306,9 @@ def test_runtime_tests_configured_folders_read_only() -> None:
         imap_client_factory=client_factory,
     )
 
-    assert runtime.test_accounts() == {
+    progress_calls: list[str] = []
+
+    assert runtime.test_accounts(progress=progress_calls.append) == {
         "primary": {
             "status": "ok",
             "stage": "connect_auth_noop_examine",
@@ -294,6 +317,7 @@ def test_runtime_tests_configured_folders_read_only() -> None:
         }
     }
     assert clients[0].tested_folders == ["Archive", "INBOX"]
+    assert progress_calls == ["primary"]
 
 
 def test_runtime_skips_folder_probe_when_no_folders_are_configured() -> None:
@@ -379,6 +403,86 @@ def test_runtime_skips_folder_probe_when_no_folders_are_configured() -> None:
             "reason": "no accessible IMAP folders to examine read-only",
         }
     }
+
+
+def test_runtime_decodes_byte_authentication_failures() -> None:
+    class FailingIMAPClient:
+        def test_connection(self, *, folders: Sequence[str]) -> None:
+            raise AssertionError("test_connection should not be called")
+
+        def list_folders(self) -> list[str]:
+            raise imaplib.IMAP4.error(b"[AUTHENTICATIONFAILED] Authentication failed.")
+
+        def list_messages(self, *, folder: str, limit: int) -> list[FetchedIMAPMessage]:
+            raise AssertionError("list_messages should not be called")
+
+        def get_message(self, *, folder: str, uid: str) -> FetchedIMAPMessage:
+            raise AssertionError("get_message should not be called")
+
+        def get_attachment(
+            self,
+            *,
+            folder: str,
+            uid: str,
+            attachment_id: str,
+        ) -> IMAPAttachmentContent:
+            raise AssertionError("get_attachment should not be called")
+
+        def search_messages(
+            self,
+            *,
+            folder: str,
+            query: str,
+            limit: int,
+        ) -> list[FetchedIMAPMessage]:
+            raise AssertionError("search_messages should not be called")
+
+        def move_message(
+            self,
+            *,
+            source_folder: str,
+            uid: str,
+            destination_folder: str,
+        ) -> None:
+            raise AssertionError("move_message should not be called")
+
+        def mark_message_read(self, *, folder: str, uid: str, read: bool) -> None:
+            raise AssertionError("mark_message_read should not be called")
+
+        def get_message_flags(self, *, folder: str, uid: str) -> list[str]:
+            raise AssertionError("get_message_flags should not be called")
+
+        def update_message_flags(
+            self,
+            *,
+            folder: str,
+            uid: str,
+            add_flags: Sequence[str],
+            remove_flags: Sequence[str],
+        ) -> None:
+            raise AssertionError("update_message_flags should not be called")
+
+        def delete_message(self, *, folder: str, uid: str) -> None:
+            raise AssertionError("delete_message should not be called")
+
+        def append_message(
+            self,
+            *,
+            folder: str,
+            message_bytes: bytes,
+            flags: Sequence[str] = (r"\Seen",),
+        ) -> None:
+            raise AssertionError("append_message should not be called")
+
+    runtime = IMAPRuntime(
+        accounts={"primary": IMAPConfig(policy="bot")},
+        policies={"bot": _allow_all_policy()},
+        imap_client_factory=lambda config: FailingIMAPClient(),
+    )
+
+    result = cast(Mapping[str, object], runtime.test_accounts()["primary"])
+
+    assert result["message"] == "[AUTHENTICATIONFAILED] Authentication failed."
 
 
 def test_move_falls_back_to_copy_delete_and_uid_expunge(

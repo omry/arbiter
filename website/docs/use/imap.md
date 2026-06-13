@@ -96,10 +96,23 @@ folders:
   Sent:
     description: Sent mail.
     kind: SENT
-  Archives/2020-2029/2024:
-    description: Archived mail from 2024.
+  "Archives.{**:prefix?}.{year}":
+    description: Archived mail from {year}.
     kind: ARCHIVE
 ```
+
+Folder keys can be literal names or metadata patterns. Pattern matching covers
+the full folder name. `.` is a hard segment delimiter for default matchers:
+`*` matches zero or more non-dot characters, `?` matches one non-dot character,
+`[0-9]` style character classes match one character, and `{name}` is shorthand
+for a named one-segment wildcard capture. Use `**` inside an explicit capture
+when a match intentionally spans dots.
+
+Named captures can be referenced in metadata strings. Capture names ending in
+`?` are optional. When an optional capture is followed by a literal `.`, the
+capture and that delimiter are optional together. For example,
+`Archives.{**:prefix?}.{year}` matches both `Archives.2026` and
+`Archives.2020-2029.2026`, with `{year}` bound to the final segment.
 
 IMAP policy config is registered as `arbiter/policy/imap/schema`:
 
@@ -108,15 +121,6 @@ class IMAPFlagMode(str, Enum):
     hidden = "hidden"
     read_only = "read_only"
     read_write = "read_write"
-
-
-class IMAPConfirmationAction(str, Enum):
-    read = "read"
-    search = "search"
-    move = "move"
-    mark_read = "mark_read"
-    delete = "delete"
-    folder_append = "folder_append"
 
 
 @dataclass
@@ -145,7 +149,6 @@ class IMAPAccessPolicyConfig(Policy):
         default_factory=IMAPFolderPolicyDefaultsConfig
     )
     folders: dict[str, IMAPFolderOperationPolicyConfig] = field(default_factory=dict)
-    confirmation_required: list[IMAPConfirmationAction] = field(default_factory=list)
 ```
 
 System flag fields use OmegaConf missing values so folder policy overrides can

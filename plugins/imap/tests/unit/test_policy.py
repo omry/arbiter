@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import cast
 
+from omegaconf import OmegaConf
 import pytest
 
 from arbiter_imap.config import (
@@ -21,7 +23,9 @@ from arbiter_imap.config import (
 )
 from arbiter_imap.policy import (
     IMAPPolicyResolver,
+    _match_metadata_pattern,
     destination_matches_move_policy,
+    validate_imap_policy,
 )
 
 
@@ -76,6 +80,104 @@ def test_metadata_overlay_supports_captures_and_ordered_merge() -> None:
 
     assert folder.metadata.kind is IMAPFolderKind.ARCHIVE
     assert folder.metadata.description == "Archived mail from 2026"
+
+
+def test_metadata_patterns_treat_dot_as_segment_delimiter() -> None:
+    resolver = IMAPPolicyResolver(
+        folder_metadata={
+            "Archives.{range}.{year}": IMAPFolderConfig(
+                description="Archived mail from {year}",
+                kind=IMAPFolderKind.ARCHIVE,
+            ),
+            "Archives.{year}": IMAPFolderConfig(
+                description="Archived mail from {year}",
+                kind=IMAPFolderKind.ARCHIVE,
+            ),
+            "Everything.{**:suffix}": IMAPFolderConfig(
+                description="Captured {suffix}",
+            ),
+        },
+        policy=IMAPAccessPolicyConfig(
+            folder_access=IMAPFolderAccessConfig(
+                rules=[IMAPFolderAccessRuleConfig(allow_glob="*")]
+            )
+        ),
+    )
+
+    yearly = resolver.resolve_folder("Archives.2026")
+    ranged = resolver.resolve_folder("Archives.2020-2029.2026")
+    deeper = resolver.resolve_folder("Archives.2020-2029.Q1.2026")
+    explicit_cross_dot = resolver.resolve_folder("Everything.a.b.c")
+
+    assert yearly.metadata.description == "Archived mail from 2026"
+    assert ranged.metadata.description == "Archived mail from 2026"
+    assert deeper.metadata.description == ""
+    assert explicit_cross_dot.metadata.description == "Captured a.b.c"
+
+
+def test_metadata_patterns_support_optional_prefix_capture() -> None:
+    resolver = IMAPPolicyResolver(
+        folder_metadata={
+            "Archives.{**:prefix?}.{year}": IMAPFolderConfig(
+                description="Archived mail from {year}",
+                kind=IMAPFolderKind.ARCHIVE,
+            ),
+        },
+        policy=IMAPAccessPolicyConfig(
+            folder_access=IMAPFolderAccessConfig(
+                rules=[IMAPFolderAccessRuleConfig(allow_glob="*")]
+            )
+        ),
+    )
+
+    yearly = resolver.resolve_folder("Archives.2026")
+    ranged = resolver.resolve_folder("Archives.2020-2029.2026")
+    deeper = resolver.resolve_folder("Archives.customer.range.2026")
+    missing_year = resolver.resolve_folder("Archives")
+
+    assert yearly.metadata.description == "Archived mail from 2026"
+    assert yearly.metadata.kind is IMAPFolderKind.ARCHIVE
+    assert ranged.metadata.description == "Archived mail from 2026"
+    assert ranged.metadata.kind is IMAPFolderKind.ARCHIVE
+    assert deeper.metadata.description == "Archived mail from 2026"
+    assert deeper.metadata.kind is IMAPFolderKind.ARCHIVE
+    assert missing_year.metadata.description == ""
+    assert missing_year.metadata.kind is None
+
+
+def test_metadata_patterns_preserve_named_captures_starting_with_p() -> None:
+    assert _match_metadata_pattern(
+        "Archives.{**:prefix?}.{year}",
+        "Archives.customer.range.2026",
+    ) == {"prefix": "customer.range", "year": "2026"}
+    assert _match_metadata_pattern(
+        "Archives.{**:prefix?}.{year}",
+        "Archives.2026",
+    ) == {"year": "2026"}
+
+
+def test_metadata_patterns_support_character_classes() -> None:
+    resolver = IMAPPolicyResolver(
+        folder_metadata={
+            "Archives.{[0-9][0-9][0-9][0-9]:year}": IMAPFolderConfig(
+                description="Archived mail from {year}",
+                kind=IMAPFolderKind.ARCHIVE,
+            ),
+        },
+        policy=IMAPAccessPolicyConfig(
+            folder_access=IMAPFolderAccessConfig(
+                rules=[IMAPFolderAccessRuleConfig(allow_glob="*")]
+            )
+        ),
+    )
+
+    year = resolver.resolve_folder("Archives.2026")
+    non_year = resolver.resolve_folder("Archives.abcd")
+
+    assert year.metadata.description == "Archived mail from 2026"
+    assert year.metadata.kind is IMAPFolderKind.ARCHIVE
+    assert non_year.metadata.description == ""
+    assert non_year.metadata.kind is None
 
 
 def test_folder_policy_composes_defaults_and_matching_overrides() -> None:
@@ -173,6 +275,28 @@ def test_system_flag_override_keeps_previous_matching_override() -> None:
 
     assert folder.policy.system_flags[IMAPSystemFlag.SEEN] is IMAPFlagMode.read_write
     assert folder.policy.system_flags[IMAPSystemFlag.FLAGGED] is IMAPFlagMode.hidden
+
+
+def test_policy_validation_rejects_invalid_folder_system_flag_keys() -> None:
+    policy = IMAPAccessPolicyConfig(
+        folder_access=IMAPFolderAccessConfig(
+            rules=[IMAPFolderAccessRuleConfig(allow_glob="*")]
+        ),
+        folders={
+            "INBOX": IMAPFolderOperationPolicyConfig(
+                system_flags=cast(
+                    IMAPSystemFlagsPolicyConfig,
+                    OmegaConf.create({"seen": "read_write"}),
+                )
+            )
+        },
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="IMAP folder policy 'INBOX' has invalid system_flags",
+    ):
+        validate_imap_policy(policy)
 
 
 def test_folder_access_validation_requires_explicit_baseline() -> None:

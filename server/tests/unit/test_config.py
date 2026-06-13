@@ -18,7 +18,6 @@ from arbiter_server.config import (
 )
 from arbiter_imap.config import (
     IMAPAccessPolicyConfig,
-    IMAPConfirmationAction,
     IMAPConfig,
     IMAPFlagMode,
     IMAPFolderConfig,
@@ -365,7 +364,6 @@ def test_hydra_coerces_plugin_enum_values() -> None:
             "arbiter.policy.smtp.bot.sent_copy.on_failure=fail",
             "arbiter.policy.imap.bot.operation_defaults.system_flags.SEEN=read_write",
             "+arbiter.policy.imap.bot.operation_defaults.user_flags.bot_followed_up=read_only",
-            "+arbiter.policy.imap.bot.confirmation_required=[read]",
         ]
     )
 
@@ -386,9 +384,6 @@ def test_hydra_coerces_plugin_enum_values() -> None:
         cfg.arbiter.policy.imap.bot.operation_defaults.user_flags.bot_followed_up
         == IMAPFlagMode.read_only
     )
-    assert cfg.arbiter.policy.imap.bot.confirmation_required == [
-        IMAPConfirmationAction.read
-    ]
 
 
 def test_smtp_configstore_example_composes(

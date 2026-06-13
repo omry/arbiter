@@ -9,6 +9,9 @@ from hydra.core.config_store import ConfigStore
 from arbiter_server.artifacts import PluginArtifactStore
 from arbiter_server.services import (
     CapabilityDescriptor,
+    ConfigCheckError,
+    ConfigCheckIssue,
+    ConfigCheckWarning,
     OperationDescriptor,
     ServicePluginContext,
     ServiceRuntimeContext,
@@ -28,7 +31,12 @@ from .config import (
     resolve_system_flag,
     validate_user_flag_name,
 )
-from .policy import IMAPFolderResolution, IMAPPolicyResolver, IMAPResolvedFolderPolicy
+from .policy import (
+    IMAPFolderResolution,
+    IMAPPolicyResolver,
+    IMAPResolvedFolderPolicy,
+    validate_imap_policy,
+)
 from .runtime_policy import _IMAPRuntimePolicyMixin
 
 from .client import FetchedIMAPMessage, IMAPAttachmentContent
@@ -94,6 +102,12 @@ class IMAPClientProtocol(Protocol):
 
 
 IMAPClientFactory = Callable[[IMAPConfig], IMAPClientProtocol]
+
+
+def _format_exception_message(exc: BaseException) -> str:
+    if len(exc.args) == 1 and isinstance(exc.args[0], bytes):
+        return exc.args[0].decode("utf-8", errors="replace")
+    return str(exc)
 
 
 def _object_schema(
@@ -439,16 +453,19 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
                 "guidance": account.guidance,
                 "policy": account.policy,
                 "enabled": True,
-                "confirmation_required": [
-                    action.value for action in imap_policy.confirmation_required
-                ],
                 "message": self._message_summary(imap_policy),
             }
         return summaries
 
-    def test_accounts(self) -> dict[str, object]:
+    def test_accounts(
+        self,
+        *,
+        progress: Callable[[str], None] | None = None,
+    ) -> dict[str, object]:
         results: dict[str, object] = {}
         for account_name, imap_config in sorted(self._accounts.items()):
+            if progress is not None:
+                progress(account_name)
             client = self._make_client(imap_config)
             try:
                 server_folders = client.list_folders()
@@ -459,7 +476,7 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
                     "status": "failed",
                     "stage": "connect_auth_noop_examine",
                     "error_type": type(exc).__name__,
-                    "message": str(exc),
+                    "message": _format_exception_message(exc),
                 }
                 continue
             if not folders:
@@ -1395,7 +1412,6 @@ operation_defaults:
     DELETED: read_only
     DRAFT: read_only
   user_flags: {{}}
-confirmation_required: []
 
 folders:
   Sent:
@@ -1466,6 +1482,73 @@ class IMAPServicePlugin:
             imap_client_factory=imap_client_factory,
             artifact_store=artifact_store,
         )
+
+    def check_config(
+        self,
+        *,
+        accounts: Mapping[str, object],
+        policies: Mapping[str, object],
+    ) -> tuple[ConfigCheckWarning, ...]:
+        imap_accounts = cast(Mapping[str, IMAPConfig], accounts)
+        imap_policies = cast(Mapping[str, IMAPAccessPolicyConfig], policies)
+        errors: list[ConfigCheckIssue] = []
+        warnings: list[ConfigCheckWarning] = []
+        for policy_name, policy in sorted(imap_policies.items()):
+            try:
+                validate_imap_policy(policy)
+            except Exception as exc:
+                errors.append(ConfigCheckIssue(message=str(exc), policy=policy_name))
+        if errors:
+            raise ConfigCheckError(errors)
+        for account_name, imap_config in sorted(imap_accounts.items()):
+            imap_policy = imap_policies.get(imap_config.policy)
+            if imap_policy is None:
+                continue
+            resolver = IMAPPolicyResolver(
+                folder_metadata=imap_config.folders,
+                policy=imap_policy,
+            )
+            if imap_config.default_folder:
+                try:
+                    resolver.resolve_folder(imap_config.default_folder)
+                except Exception as exc:
+                    errors.append(
+                        ConfigCheckIssue(
+                            message=(
+                                "IMAP default_folder is invalid: "
+                                f"{imap_config.default_folder}: {exc}"
+                            ),
+                            account=account_name,
+                            policy=imap_config.policy,
+                        )
+                    )
+                    continue
+            accessible_configured_folders = 0
+            for folder_name in imap_config.folders:
+                try:
+                    folder = resolver.resolve_folder(folder_name)
+                except Exception as exc:
+                    errors.append(
+                        ConfigCheckIssue(
+                            message=f"IMAP configured folder is invalid: {folder_name}: {exc}",
+                            account=account_name,
+                            policy=imap_config.policy,
+                        )
+                    )
+                    continue
+                if folder.access.allowed:
+                    accessible_configured_folders += 1
+            if imap_config.folders and accessible_configured_folders == 0:
+                warnings.append(
+                    ConfigCheckWarning(
+                        message="IMAP account has no accessible configured folders",
+                        account=account_name,
+                        policy=imap_config.policy,
+                    )
+                )
+        if errors:
+            raise ConfigCheckError(errors)
+        return tuple(warnings)
 
     def describe_capability(
         self,

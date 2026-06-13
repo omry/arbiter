@@ -642,7 +642,6 @@ def test_list_accounts_returns_service_grouped_summaries() -> None:
                 "guidance": "",
                 "policy": "personal",
                 "enabled": True,
-                "confirmation_required": [],
                 "message": {
                     "defaults": {
                         "read": "allow",

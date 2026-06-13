@@ -89,7 +89,6 @@ arbiter:
             DELETED: read_only
             DRAFT: read_only
           user_flags: {}
-        confirmation_required: []
 
   etc:
     bot_mailserver:

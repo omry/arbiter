@@ -30,15 +30,6 @@ class IMAPSystemFlag(str, Enum):
     DRAFT = r"\Draft"
 
 
-class IMAPConfirmationAction(str, Enum):
-    read = "read"
-    search = "search"
-    move = "move"
-    mark_read = "mark_read"
-    delete = "delete"
-    folder_append = "folder_append"
-
-
 class IMAPFolderKind(str, Enum):
     INBOX = "INBOX"
     ALL = "ALL"
@@ -157,7 +148,6 @@ class IMAPAccessPolicyConfig(Policy):
         default_factory=IMAPFolderPolicyDefaultsConfig
     )
     folders: dict[str, IMAPFolderOperationPolicyConfig] = field(default_factory=dict)
-    confirmation_required: list[IMAPConfirmationAction] = field(default_factory=list)
 
 
 USER_FLAG_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")

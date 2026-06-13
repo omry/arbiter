@@ -72,6 +72,28 @@ class OperationDescriptor:
     input_schema: Mapping[str, object]
 
 
+@dataclass(frozen=True)
+class ConfigCheckIssue:
+    message: str
+    account: str | None = None
+    policy: str | None = None
+
+
+@dataclass(frozen=True)
+class ConfigCheckWarning(ConfigCheckIssue):
+    pass
+
+
+class ConfigCheckError(ValueError):
+    def __init__(self, issues: Sequence[ConfigCheckIssue]) -> None:
+        self.issues = tuple(issues)
+        super().__init__(
+            "; ".join(issue.message for issue in self.issues)
+            if self.issues
+            else "config check failed"
+        )
+
+
 def operation_id(capability: str, operation: str) -> str:
     return f"{capability}:{operation}"
 
@@ -124,6 +146,15 @@ class ServicePlugin(Protocol):
         arguments: Mapping[str, Any],
         context: ServicePluginContext,
     ) -> object: ...
+
+
+class ServicePluginConfigChecker(Protocol):
+    def check_config(
+        self,
+        *,
+        accounts: Mapping[str, object],
+        policies: Mapping[str, object],
+    ) -> Sequence[ConfigCheckWarning] | None: ...
 
 
 @dataclass(frozen=True)
@@ -181,6 +212,22 @@ def validate_service_plugins(
 ) -> None:
     for service_plugin in service_plugins:
         validate_service_plugin_compatibility(service_plugin)
+
+
+def check_service_plugin_config(
+    service_plugin: ServicePlugin,
+    *,
+    accounts: Mapping[str, object],
+    policies: Mapping[str, object],
+) -> tuple[ConfigCheckWarning, ...]:
+    check_config = getattr(service_plugin, "check_config", None)
+    if not callable(check_config):
+        return ()
+    warnings = cast(ServicePluginConfigChecker, service_plugin).check_config(
+        accounts=accounts,
+        policies=policies,
+    )
+    return tuple(warnings or ())
 
 
 class OperationCatalog:

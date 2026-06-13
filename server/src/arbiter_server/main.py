@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import inspect
 import json
 import logging
 import os
@@ -9,7 +10,9 @@ import re
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable, Mapping, Sequence
+import threading
+import time
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, distribution, entry_points
 from importlib.resources import files
@@ -20,6 +23,7 @@ from urllib.parse import urlparse
 from urllib.request import url2pathname
 
 from hydra import compose, initialize_config_dir
+from hydra.errors import CompactHydraException
 from omegaconf import DictConfig, OmegaConf
 
 from .app import ArbiterApp
@@ -44,6 +48,8 @@ from .plugins import discover_service_plugins
 from .services import (
     SERVER_API_VERSION,
     SERVER_VERSION,
+    ConfigCheckError,
+    ConfigCheckIssue,
     OperationCatalog,
     RuntimeRegistry,
     SERVICE_PLUGIN_ENTRY_POINT_GROUP,
@@ -51,6 +57,7 @@ from .services import (
     ServicePluginContext,
     ServicePluginFactory,
     ServiceRuntimeContext,
+    check_service_plugin_config,
     service_plugin_runtime_info,
     validate_service_plugin_compatibility,
     validate_service_plugins,
@@ -181,6 +188,328 @@ class DockerDeployArgs:
 @dataclass(frozen=True)
 class DockerDeployRequirements:
     requirements: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ConfigCheckReport:
+    components: tuple["ConfigCheckComponentReport", ...]
+
+    @property
+    def summary(self) -> str:
+        return "\n".join(self.lines)
+
+    @property
+    def lines(self) -> tuple[str, ...]:
+        lines: list[str] = []
+        account_rows = []
+        for component in self.components:
+            account_rows.extend(component.table_rows)
+        for component in self.components:
+            lines.extend(component.summary_lines)
+        if account_rows:
+            lines.extend(_config_check_table_lines(account_rows))
+        for component in self.components:
+            lines.extend(component.issue_lines)
+        return tuple(lines)
+
+    @property
+    def failed(self) -> bool:
+        return any(component.status == "fail" for component in self.components)
+
+
+@dataclass(frozen=True)
+class ConfigCheckComponentReport:
+    name: str
+    account_results: tuple["ConfigCheckAccountResult", ...] = ()
+    warnings: tuple[ConfigCheckIssue, ...] = ()
+    errors: tuple[ConfigCheckIssue, ...] = ()
+
+    @property
+    def status(self) -> str:
+        if self.errors:
+            return "fail"
+        if any(result.status == "fail" for result in self.account_results):
+            return "fail"
+        if self.warnings:
+            return "warn"
+        if any(result.status == "warn" for result in self.account_results):
+            return "warn"
+        return "pass"
+
+    @property
+    def lines(self) -> tuple[str, ...]:
+        lines = [*self.summary_lines]
+        table_rows = self.table_rows
+        if table_rows:
+            lines.extend(_config_check_table_lines(table_rows))
+        lines.extend(self.issue_lines)
+        return tuple(lines)
+
+    @property
+    def summary_lines(self) -> tuple[str, ...]:
+        return (f"{self.name}: {self.status}",)
+
+    @property
+    def issue_lines(self) -> tuple[str, ...]:
+        lines: list[str] = []
+        issue_lines = [
+            ("fail", issue)
+            for issue in self.errors
+            if not _config_check_issue_has_account(issue)
+        ]
+        issue_lines.extend(
+            ("warn", issue)
+            for issue in self.warnings
+            if not _config_check_issue_has_account(issue)
+        )
+        for severity, issue in issue_lines:
+            message = _config_check_issue_message(issue)
+            message_lines = message.splitlines() or [""]
+            lines.append(f"- {severity}: {message_lines[0]}")
+            lines.extend(f"  {line}" for line in message_lines[1:])
+        return tuple(lines)
+
+    @property
+    def table_rows(self) -> tuple["_ConfigCheckTableRow", ...]:
+        rows = [
+            _ConfigCheckTableRow(
+                plugin=self.name,
+                account=result.account,
+                policy=result.policy or "",
+                result=result.status,
+                message=result.message or "",
+            )
+            for result in self.account_results
+        ]
+        rows.extend(
+            _config_check_issue_table_row(
+                plugin=self.name,
+                result="fail",
+                issue=issue,
+            )
+            for issue in self.errors
+            if _config_check_issue_has_account(issue)
+        )
+        rows.extend(
+            _config_check_issue_table_row(
+                plugin=self.name,
+                result="warn",
+                issue=issue,
+            )
+            for issue in self.warnings
+            if _config_check_issue_has_account(issue)
+        )
+        return tuple(rows)
+
+
+@dataclass(frozen=True)
+class ConfigCheckAccountResult:
+    account: str
+    status: Literal["pass", "warn", "fail"]
+    policy: str | None = None
+    message: str | None = None
+
+
+@dataclass(frozen=True)
+class _ConfigCheckTableRow:
+    plugin: str
+    account: str
+    policy: str
+    result: Literal["pass", "warn", "fail"]
+    message: str
+
+
+_CONFIG_CHECK_STATUS_COLORS = {
+    "pass": "32",
+    "warn": "33",
+    "fail": "31",
+}
+_CONFIG_CHECK_COMPONENT_COLOR = "94"
+_CONFIG_CHECK_PROGRESS_FRAMES = ("|", "/", "-", "\\")
+
+
+def _config_check_color_enabled(output: object) -> bool:
+    color = os.environ.get("ARBITER_COLOR", "").lower()
+    if color == "always":
+        return True
+    if color == "never":
+        return False
+    if os.environ.get("NO_COLOR"):
+        return False
+    isatty = getattr(output, "isatty", None)
+    return bool(callable(isatty) and isatty())
+
+
+def _config_check_progress_enabled(output: object) -> bool:
+    isatty = getattr(output, "isatty", None)
+    return bool(callable(isatty) and isatty())
+
+
+def _color_config_check_status(status: str) -> str:
+    color = _CONFIG_CHECK_STATUS_COLORS.get(status)
+    if color is None:
+        return status
+    return f"\033[{color}m{status}\033[0m"
+
+
+def _color_config_check_component(component: str) -> str:
+    return f"\033[{_CONFIG_CHECK_COMPONENT_COLOR}m{component}\033[0m"
+
+
+class _ConfigCheckProgress:
+    def __init__(
+        self,
+        output: object,
+        *,
+        color: bool,
+        enabled: bool,
+        interval: float = 0.1,
+    ) -> None:
+        self._output = output
+        self._color = color
+        self._enabled = enabled
+        self._interval = interval
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._label: str | None = None
+        self._lock = threading.Lock()
+
+    def start(self, component: str, account: str | None = None) -> None:
+        if not self._enabled:
+            return
+        self.finish()
+        self._label = f"{component}/{account}" if account is not None else component
+        self._stop.clear()
+        self._write_frame(_CONFIG_CHECK_PROGRESS_FRAMES[0])
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def finish(self) -> None:
+        if not self._enabled:
+            return
+        thread = self._thread
+        if thread is not None:
+            self._stop.set()
+            thread.join()
+            self._thread = None
+        if self._label is not None:
+            with self._lock:
+                self._write("\r\033[2K")
+            self._label = None
+
+    def _run(self) -> None:
+        frame_index = 1
+        while not self._stop.wait(self._interval):
+            self._write_frame(
+                _CONFIG_CHECK_PROGRESS_FRAMES[
+                    frame_index % len(_CONFIG_CHECK_PROGRESS_FRAMES)
+                ]
+            )
+            frame_index += 1
+
+    def _write_frame(self, frame: str) -> None:
+        label = self._label
+        if label is None:
+            return
+        if self._color:
+            label = _color_config_check_component(label)
+        with self._lock:
+            self._write(f"\r\033[2K{label}: testing {frame}")
+
+    def _write(self, value: str) -> None:
+        write = getattr(self._output, "write", None)
+        if callable(write):
+            write(value)
+        flush = getattr(self._output, "flush", None)
+        if callable(flush):
+            flush()
+
+
+def _color_config_check_line(line: str) -> str:
+    match = re.fullmatch(r"([^:]+): (pass|warn|fail)", line)
+    if match is not None:
+        return (
+            f"{_color_config_check_component(match.group(1))}: "
+            f"{_color_config_check_status(match.group(2))}"
+        )
+    match = re.fullmatch(r"(pass|warn|fail)( +\| .*)", line)
+    if match is not None:
+        return f"{_color_config_check_status(match.group(1))}{match.group(2)}"
+    match = re.fullmatch(r"(- )(pass|warn|fail):(.*)", line)
+    if match is not None:
+        return (
+            f"{match.group(1)}{_color_config_check_status(match.group(2))}:"
+            f"{match.group(3)}"
+        )
+    return line
+
+
+def _config_check_table_lines(
+    rows: Sequence[_ConfigCheckTableRow],
+) -> tuple[str, ...]:
+    headers = ("result", "plugin", "account", "policy", "message")
+    raw_rows = [
+        (row.result, row.plugin, row.account, row.policy, row.message) for row in rows
+    ]
+    widths = [
+        max(len(headers[index]), *(len(row[index]) for row in raw_rows))
+        for index in range(len(headers))
+    ]
+
+    def format_row(values: Sequence[str]) -> str:
+        return " | ".join(
+            value.ljust(widths[index]) for index, value in enumerate(values)
+        ).rstrip()
+
+    separator = "-+-".join("-" * width for width in widths)
+    return (
+        format_row(headers),
+        separator,
+        *(format_row(row) for row in raw_rows),
+    )
+
+
+def _config_check_issue_has_account(issue: ConfigCheckIssue) -> bool:
+    return issue.account is not None
+
+
+def _config_check_issue_table_row(
+    *,
+    plugin: str,
+    result: Literal["warn", "fail"],
+    issue: ConfigCheckIssue,
+) -> _ConfigCheckTableRow:
+    account = issue.account
+    if account is None:
+        raise ValueError("config check issue table rows require an account")
+    return _ConfigCheckTableRow(
+        plugin=plugin,
+        account=account,
+        policy=issue.policy or "",
+        result=result,
+        message=issue.message,
+    )
+
+
+def _color_config_check_lines(
+    lines: Sequence[str],
+    *,
+    color: bool,
+) -> tuple[str, ...]:
+    if not color:
+        return tuple(lines)
+    return tuple(_color_config_check_line(line) for line in lines)
+
+
+def _config_check_issue_message(issue: ConfigCheckIssue) -> str:
+    subject_parts = []
+    if issue.account is not None:
+        subject_parts.append(f"account={issue.account}")
+    if issue.policy is not None:
+        subject_parts.append(f"policy={issue.policy}")
+    if not subject_parts:
+        return issue.message
+    return f"{' '.join(subject_parts)}: {issue.message}"
 
 
 def _service_plugin_map(
@@ -477,16 +806,363 @@ def ensure_runnable_config(
         )
 
 
+def check_config(
+    cfg: HydraConfig,
+    service_plugins: Sequence[ServicePlugin] | None = None,
+) -> ConfigCheckReport:
+    return config_check_report(cfg, service_plugins=service_plugins)
+
+
 def config_check_summary(
     cfg: HydraConfig,
     service_plugins: Sequence[ServicePlugin] | None = None,
 ) -> str:
-    ensure_runnable_config(cfg, service_plugins=service_plugins)
-    build_app(cfg, service_plugins=service_plugins)
-    return (
-        "config ok: "
-        f"services={_csv_or_none(configured_service_names(cfg.arbiter.account))} "
-        f"service_accounts={_service_accounts_summary(cfg)}"
+    return config_check_report(cfg, service_plugins=service_plugins).summary
+
+
+def _account_policy_name(account_config: object) -> str | None:
+    policy = (
+        account_config.get("policy")
+        if isinstance(account_config, Mapping)
+        else getattr(account_config, "policy", None)
+    )
+    return None if policy is None else str(policy)
+
+
+def _format_live_check_message(message: object) -> str:
+    if isinstance(message, bytes):
+        return message.decode("utf-8", errors="replace")
+    if isinstance(message, BaseException):
+        if not message.args:
+            return str(message)
+        return ": ".join(_format_live_check_message(arg) for arg in message.args)
+    if isinstance(message, tuple):
+        return ": ".join(_format_live_check_message(item) for item in message)
+    if isinstance(message, list):
+        return ", ".join(_format_live_check_message(item) for item in message)
+    return str(message)
+
+
+def _call_live_account_tests(
+    test_accounts: Callable[..., object],
+    *,
+    progress: Callable[[str], None] | None,
+) -> object:
+    if progress is None:
+        return test_accounts()
+    signature = inspect.signature(test_accounts)
+    accepts_progress = "progress" in signature.parameters or any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    )
+    if not accepts_progress:
+        return test_accounts()
+    return test_accounts(progress=progress)
+
+
+def _live_account_test_result(
+    *,
+    account_name: str,
+    account_config: object,
+    result: object,
+) -> ConfigCheckAccountResult:
+    policy = _account_policy_name(account_config)
+    if not isinstance(result, Mapping):
+        return ConfigCheckAccountResult(
+            account=account_name,
+            policy=policy,
+            status="fail",
+            message=f"live account test result must be a mapping: {type(result).__name__}",
+        )
+    status = str(result.get("status", "failed"))
+    if status == "ok":
+        stage = result.get("stage")
+        message = "live account check passed"
+        if stage:
+            message = f"{message} (stage={stage})"
+        return ConfigCheckAccountResult(
+            account=account_name,
+            policy=policy,
+            status="pass",
+            message=message,
+        )
+    severity: Literal["warn", "fail"] = "warn" if status == "skipped" else "fail"
+    stage = result.get("stage")
+    reason = result.get("message") or result.get("reason")
+    if reason is None:
+        reason = f"live account test {status}"
+    reason = _format_live_check_message(reason)
+    if stage:
+        reason = f"{reason} (stage={stage})"
+    return ConfigCheckAccountResult(
+        account=account_name,
+        policy=policy,
+        status=severity,
+        message=reason,
+    )
+
+
+def _live_config_check_report(
+    app: ArbiterApp,
+    *,
+    cfg: HydraConfig,
+    service_plugin: ServicePlugin,
+    progress: Callable[[str], None] | None = None,
+) -> ConfigCheckComponentReport:
+    runtime = app.runtime_registry.require_object(service_plugin.name)
+    test_accounts = getattr(runtime, "test_accounts", None)
+    if not callable(test_accounts):
+        return ConfigCheckComponentReport(
+            name=service_plugin.name,
+            warnings=(
+                ConfigCheckIssue(
+                    message="runtime does not implement live account tests"
+                ),
+            ),
+        )
+    accounts = service_accounts_for(cfg, service_plugin.name) or {}
+    try:
+        test_results = _call_live_account_tests(test_accounts, progress=progress)
+    except Exception as exc:
+        return ConfigCheckComponentReport(
+            name=service_plugin.name,
+            errors=(ConfigCheckIssue(message=_format_live_check_message(exc)),),
+        )
+    if not isinstance(test_results, Mapping):
+        return ConfigCheckComponentReport(
+            name=service_plugin.name,
+            errors=(
+                ConfigCheckIssue(
+                    message=(
+                        "live account tests must return a mapping: "
+                        f"{type(test_results).__name__}"
+                    )
+                ),
+            ),
+        )
+    account_results: list[ConfigCheckAccountResult] = []
+    for account_name, account_config in sorted(accounts.items()):
+        result = test_results.get(account_name)
+        if result is None:
+            account_results.append(
+                ConfigCheckAccountResult(
+                    account=str(account_name),
+                    policy=_account_policy_name(account_config),
+                    status="fail",
+                    message="live account test result is missing",
+                )
+            )
+            continue
+        account_results.append(
+            _live_account_test_result(
+                account_name=str(account_name),
+                account_config=account_config,
+                result=result,
+            )
+        )
+    return ConfigCheckComponentReport(
+        name=service_plugin.name,
+        account_results=tuple(account_results),
+    )
+
+
+def _account_policy_pair_results(
+    accounts: Mapping[str, object],
+    policies: Mapping[str, object],
+) -> tuple[ConfigCheckAccountResult, ...]:
+    results: list[ConfigCheckAccountResult] = []
+    for account_name, account_config in sorted(accounts.items()):
+        policy = _account_policy_name(account_config)
+        if policy is None:
+            results.append(
+                ConfigCheckAccountResult(
+                    account=str(account_name),
+                    status="fail",
+                    message="account policy is missing",
+                )
+            )
+        elif policy not in policies:
+            results.append(
+                ConfigCheckAccountResult(
+                    account=str(account_name),
+                    policy=policy,
+                    status="fail",
+                    message="account references an unknown policy",
+                )
+            )
+        else:
+            results.append(
+                ConfigCheckAccountResult(
+                    account=str(account_name),
+                    policy=policy,
+                    status="pass",
+                    message="account/policy pair valid",
+                )
+            )
+    return tuple(results)
+
+
+def _merge_config_check_component_reports(
+    base: ConfigCheckComponentReport,
+    extra: ConfigCheckComponentReport,
+) -> ConfigCheckComponentReport:
+    return ConfigCheckComponentReport(
+        name=base.name,
+        account_results=(*base.account_results, *extra.account_results),
+        warnings=(*base.warnings, *extra.warnings),
+        errors=(*base.errors, *extra.errors),
+    )
+
+
+def config_check_components(
+    cfg: HydraConfig,
+    service_plugins: Sequence[ServicePlugin] | None = None,
+    *,
+    live: bool = False,
+    progress: Callable[[str, str | None], None] | None = None,
+) -> Iterator[ConfigCheckComponentReport]:
+    def start_progress(component: str, account: str | None = None) -> None:
+        if progress is not None:
+            progress(component, account)
+
+    start_progress("server")
+    try:
+        ensure_runnable_config(cfg, service_plugins=service_plugins)
+        available_service_plugins = (
+            discover_service_plugins() if service_plugins is None else service_plugins
+        )
+        active_service_plugins = _configured_service_plugins(
+            cfg,
+            available_service_plugins,
+        )
+    except Exception as exc:
+        yield ConfigCheckComponentReport(
+            name="server",
+            errors=(ConfigCheckIssue(message=str(exc)),),
+        )
+        return
+
+    service_errors = False
+    service_components: list[ConfigCheckComponentReport] = []
+    for service_plugin in active_service_plugins:
+        accounts = service_accounts_for(cfg, service_plugin.name)
+        if accounts is None:
+            service_errors = True
+            service_components.append(
+                ConfigCheckComponentReport(
+                    name=service_plugin.name,
+                    errors=(
+                        ConfigCheckIssue(
+                            message=(
+                                "service config is not configured: "
+                                f"{service_plugin.name}"
+                            )
+                        ),
+                    ),
+                )
+            )
+            continue
+        policies = service_policies_for(cfg, service_plugin.name)
+        account_results = _account_policy_pair_results(accounts, policies)
+        if any(result.status == "fail" for result in account_results):
+            service_errors = True
+        try:
+            warnings = check_service_plugin_config(
+                service_plugin,
+                accounts=accounts,
+                policies=policies,
+            )
+        except ConfigCheckError as exc:
+            service_errors = True
+            service_components.append(
+                ConfigCheckComponentReport(
+                    name=service_plugin.name,
+                    account_results=account_results,
+                    errors=exc.issues,
+                )
+            )
+            continue
+        except Exception as exc:
+            service_errors = True
+            service_components.append(
+                ConfigCheckComponentReport(
+                    name=service_plugin.name,
+                    account_results=account_results,
+                    errors=(ConfigCheckIssue(message=str(exc)),),
+                )
+            )
+            continue
+        service_components.append(
+            ConfigCheckComponentReport(
+                name=service_plugin.name,
+                account_results=account_results,
+                warnings=tuple(warnings),
+            )
+        )
+
+    server_error = False
+    server_component = ConfigCheckComponentReport(name="server")
+    if not service_errors:
+        try:
+            build_server(cfg, service_plugins=active_service_plugins)
+        except Exception as exc:
+            server_error = True
+            server_component = ConfigCheckComponentReport(
+                name="server",
+                errors=(ConfigCheckIssue(message=str(exc)),),
+            )
+    if service_errors or server_error or not live:
+        yield server_component
+        yield from service_components
+        return
+
+    try:
+        app = build_app(cfg, service_plugins=active_service_plugins)
+    except Exception as exc:
+        yield ConfigCheckComponentReport(
+            name="server",
+            errors=(ConfigCheckIssue(message=str(exc)),),
+        )
+        return
+
+    yield server_component
+    service_components_by_name = {
+        component.name: component for component in service_components
+    }
+    for service_plugin in active_service_plugins:
+        component = service_components_by_name[service_plugin.name]
+        start_progress(service_plugin.name)
+
+        def account_progress(
+            account_name: str,
+            *,
+            plugin_name: str = service_plugin.name,
+        ) -> None:
+            start_progress(plugin_name, account_name)
+
+        live_component = _live_config_check_report(
+            app,
+            cfg=cfg,
+            service_plugin=service_plugin,
+            progress=account_progress,
+        )
+        yield _merge_config_check_component_reports(component, live_component)
+
+
+def config_check_report(
+    cfg: HydraConfig,
+    service_plugins: Sequence[ServicePlugin] | None = None,
+    *,
+    live: bool = False,
+) -> ConfigCheckReport:
+    return ConfigCheckReport(
+        components=tuple(
+            config_check_components(
+                cfg,
+                service_plugins=service_plugins,
+                live=live,
+            )
+        )
     )
 
 
@@ -1992,7 +2668,7 @@ def _run_serve(
     except KeyboardInterrupt:
         print("Arbiter server stopped.", file=sys.stderr)
         return 130
-    except ValueError as exc:
+    except (CompactHydraException, ValueError) as exc:
         print_cli_error(str(exc), area="config")
         return 1
     return 0
@@ -2003,17 +2679,48 @@ def _run_config_check(
     config_dir: str,
     config_name: str,
     overrides: Sequence[str],
+    live: bool = False,
 ) -> int:
+    color = _config_check_color_enabled(sys.stdout)
+    progress = _ConfigCheckProgress(
+        sys.stdout,
+        color=color,
+        enabled=_config_check_progress_enabled(sys.stdout),
+    )
     try:
         cfg = compose_config(
             config_dir=config_dir,
             config_name=config_name,
             overrides=overrides,
         )
-        print(config_check_summary(cfg))
-    except ValueError as exc:
+        failed = False
+        components: list[ConfigCheckComponentReport] = []
+        for component in config_check_components(
+            cfg,
+            live=live,
+            progress=progress.start,
+        ):
+            progress.finish()
+            components.append(component)
+            lines = (*component.summary_lines, *component.issue_lines)
+            for line in _color_config_check_lines(lines, color=color):
+                print(line, flush=True)
+            failed = failed or component.status == "fail"
+        account_rows = [row for component in components for row in component.table_rows]
+        if account_rows:
+            for line in _color_config_check_lines(
+                _config_check_table_lines(account_rows),
+                color=color,
+            ):
+                print(line, flush=True)
+        if failed:
+            return 1
+    except (CompactHydraException, ValueError) as exc:
+        progress.finish()
         print_cli_error(str(exc), area="config")
         return 1
+    finally:
+        progress.finish()
     return 0
 
 
@@ -2031,7 +2738,7 @@ def _run_config_show(
             overrides=overrides,
         )
         print(OmegaConf.to_yaml(cfg, resolve=resolve), end="")
-    except ValueError as exc:
+    except (CompactHydraException, ValueError) as exc:
         print_cli_error(str(exc), area="config")
         return 1
     return 0
@@ -2720,6 +3427,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "check",
         help="validate config and service runtime construction without serving",
     )
+    check.add_argument(
+        "--live",
+        action="store_true",
+        help="also run live account readiness checks using configured credentials",
+    )
     _add_override_arguments(
         check,
         help_text="Hydra-style config overrides applied before validation",
@@ -2864,6 +3576,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             config_dir=namespace.config_dir,
             config_name=namespace.config_name,
             overrides=namespace.overrides,
+            live=namespace.live,
         )
     if namespace.command == "config" and namespace.config_command == "show":
         return _run_config_show(
