@@ -177,6 +177,20 @@ This file is the day-to-day queue for design and implementation gaps.
       to the bus; and document when plugins should use request/reply versus
       client-facing operations.
 
+- [ ] `P2` Add SMTP attachment sending support.
+      `smtp:send_email` currently sends text and/or HTML bodies only. Agents
+      need a controlled way to include attachments without receiving arbitrary
+      filesystem access or embedding unbounded binary payloads in tool calls.
+      Acceptance checks: define the attachment input contract, such as
+      artifact ids, bounded inline text, or explicit client-provided files;
+      enforce size, count, content-type, and filename policy before SMTP
+      submission; include attachments in the exact MIME bytes used for SMTP
+      delivery and Sent-copy append; make retry keys cover attachment content
+      so retries cannot silently change attachments; document safe client
+      workflows for attaching files; and add unit/integration coverage for
+      attachment MIME construction, policy failures, retry behavior, and
+      Sent-copy preservation.
+
 - [ ] `P2` Add per-account service smoke tests. Each service plugin should be
       able to register a quick stateless account test that uses the configured
       credentials and returns a structured status. Arbiter should expose one
