@@ -40,7 +40,9 @@ arbiter:
   policy:
     smtp:
       bot_policy:
-        require_confirmation: false
+        recipient_policy:
+          allowed_domain_patterns:
+            - example.com
 ```
 
 ## Config authority

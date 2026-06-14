@@ -672,7 +672,6 @@ def test_list_accounts_returns_service_grouped_summaries() -> None:
                 "policy": "bot",
                 "enabled": True,
                 "send": "allowed",
-                "require_confirmation": False,
             },
         },
     }
@@ -712,7 +711,6 @@ def test_send_email_uses_account_policy() -> None:
         },
         policies={
             "personal": SMTPServicePolicyConfig(
-                require_confirmation=True,
                 recipient_policy=SMTPRecipientPolicyConfig(
                     allowed_domain_patterns=["example.com"],
                 ),

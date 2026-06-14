@@ -138,7 +138,7 @@ def test_compose_config_applies_overrides() -> None:
             "arbiter.account.smtp.primary.tls=implicit",
             "arbiter.account.smtp.primary.verify_peer=false",
             "arbiter.account.imap.primary.guidance=Use for inbox triage.",
-            "arbiter.policy.smtp.bot.require_confirmation=true",
+            "arbiter.policy.smtp.bot.limits.max_messages_per_minute=10",
             "arbiter.policy.imap.bot.operation_defaults.system_flags.SEEN=read_write",
         ]
     )
@@ -155,7 +155,7 @@ def test_compose_config_applies_overrides() -> None:
     assert cfg.arbiter.account.smtp.primary.tls == SMTPMailTlsMode.implicit
     assert cfg.arbiter.account.smtp.primary.verify_peer is False
     assert cfg.arbiter.account.imap.primary.guidance == "Use for inbox triage."
-    assert cfg.arbiter.policy.smtp.bot.require_confirmation is True
+    assert cfg.arbiter.policy.smtp.bot.limits.max_messages_per_minute == 10
     assert (
         cfg.arbiter.policy.imap.bot.operation_defaults.system_flags.SEEN
         == IMAPFlagMode.read_write
@@ -199,8 +199,8 @@ def test_standard_deployment_config_composes(
         cfg = compose(config_name="config")
 
     assert cfg.arbiter.server.name == "arbiter-mcp"
-    assert cfg.arbiter.policy.smtp.bot.require_confirmation is False
-    assert cfg.arbiter.policy.smtp.personal.require_confirmation is True
+    assert cfg.arbiter.policy.smtp.bot.limits.max_messages_per_minute is None
+    assert cfg.arbiter.policy.smtp.personal.limits.max_messages_per_minute is None
     assert set(cfg.arbiter.account.smtp) == {"primary", "personal"}
     assert set(cfg.arbiter.account.imap) == {"primary"}
     assert cfg.arbiter.account.smtp.primary.host == "smtp.example.com"
@@ -410,7 +410,6 @@ def test_smtp_configstore_example_composes(
     assert cfg.arbiter.account.smtp.primary.port == 587
     assert cfg.arbiter.account.smtp.primary.authenticate is True
     assert cfg.arbiter.account.smtp.primary.tls == SMTPMailTlsMode.starttls
-    assert cfg.arbiter.policy.smtp.bot.require_confirmation is True
     assert cfg.arbiter.policy.smtp.bot.limits.max_messages_per_minute == 30
     assert cfg.arbiter.policy.smtp.bot.limits.max_recipients_per_message == 10
     assert cfg.arbiter.policy.smtp.bot.recipient_policy.allowed_domain_patterns == []

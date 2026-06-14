@@ -110,5 +110,5 @@ flowchart LR
 ## Where to start
 
 - New operator: start with [Quickstart](get-started/quickstart.md).
-- Agent/tool user: start with [Arbiter CLI Reference](use/cli-reference.md).
+- Agent/tool user: start with [Arbiter CLI Reference](reference/client.md).
 - Plugin author: start with [Writing Plugins](extend/plugins.md).

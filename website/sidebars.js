@@ -66,8 +66,8 @@ const sidebars = {
       label: 'Reference Manual',
       collapsed: false,
       items: [
-        'operate/server-reference',
-        'use/cli-reference',
+        'reference/server',
+        'reference/client',
       ],
     },
     {

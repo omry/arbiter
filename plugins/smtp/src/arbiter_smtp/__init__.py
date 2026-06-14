@@ -189,9 +189,6 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
                 "policy": account.policy,
                 "enabled": True,
                 "send": "allowed",
-                "require_confirmation": self._policies[
-                    account.policy
-                ].require_confirmation,
             }
             for account_name, account in sorted(self._accounts.items())
         }
@@ -1059,9 +1056,6 @@ defaults:
   # Extend the plugin-owned structured schema, then override values below.
   - schema@_here_
   - _self_
-
-# Require confirmation before sending through this policy.
-require_confirmation: true
 
 # Basic send-rate limits. Use null to disable a limit.
 limits:

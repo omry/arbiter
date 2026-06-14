@@ -117,8 +117,8 @@ those accounts.
 
 A policy describes what the plugin should allow for an account. Policies are
 plugin-specific because each service has different meaningful controls. An SMTP
-policy might limit recipients or require confirmation; an IMAP policy might
-limit readable folders or message operations.
+policy might limit recipients or send rate; an IMAP policy might limit readable
+folders or message operations.
 
 Policies are cross-cutting config: they are separate files, but accounts refer
 to them by name. Bootstrap creates a matching policy for each new account, but

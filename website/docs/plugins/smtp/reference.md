@@ -77,7 +77,6 @@ class SMTPSentCopyPolicyConfig:
 
 @dataclass
 class SMTPServicePolicyConfig(Policy):
-    require_confirmation: bool = False
     limits: SMTPLimitsConfig = field(default_factory=SMTPLimitsConfig)
     idempotency: SMTPIdempotencyConfig = field(default_factory=SMTPIdempotencyConfig)
     recipient_policy: SMTPRecipientPolicyConfig = field(

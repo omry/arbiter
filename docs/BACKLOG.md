@@ -134,6 +134,21 @@ This file is the day-to-day queue for design and implementation gaps.
       paths, capability ids, and runtime compatibility checks; and update the
       plugin author guide with one complete example.
 
+- [ ] `P2` Adopt dataclass-based operation input schemas.
+      Plugin operation inputs should be easier to author and review than
+      hand-written JSON schema dictionaries or raw JSON strings. Plugins should
+      define typed dataclasses that encode field types and default values, while
+      Arbiter derives the schema exposed through discovery for clients. Use
+      OmegaConf structured config validation to coerce and validate caller input
+      against the dataclass schema before invocation. Acceptance checks: define
+      the supported dataclass/type/default subset; implement reusable logic that
+      converts dataclass schemas into the client-facing discovery schema; migrate
+      at least one SMTP and one IMAP operation as examples; keep the generated
+      discovery schema compatible with current clients; include field defaults
+      and required/optional fields in the client-facing schema; preserve clear
+      validation errors; and document the recommended pattern for plugin
+      authors.
+
 - [ ] `P2` Create a web interface for Arbiter management.
       Operators should have a first-class browser surface for inspecting and
       managing Arbiter without editing config files or reading raw MCP

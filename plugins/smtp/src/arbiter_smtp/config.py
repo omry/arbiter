@@ -71,7 +71,6 @@ class SMTPConfig(Policy):
 
 @dataclass
 class SMTPServicePolicyConfig(Policy):
-    require_confirmation: bool = False
     limits: SMTPLimitsConfig = field(default_factory=SMTPLimitsConfig)
     idempotency: SMTPIdempotencyConfig = field(default_factory=SMTPIdempotencyConfig)
     recipient_policy: SMTPRecipientPolicyConfig = field(
@@ -98,7 +97,6 @@ SMTP_ACCOUNT_EXAMPLE = SMTPConfig(
 )
 
 SMTP_POLICY_EXAMPLE = SMTPServicePolicyConfig(
-    require_confirmation=True,
     limits=SMTPLimitsConfig(
         max_messages_per_minute=30,
         max_recipients_per_message=10,

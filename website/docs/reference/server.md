@@ -1,5 +1,5 @@
 ---
-title: Server Reference
+title: Arbiter Server reference
 ---
 
 `arbiter-server` is the operator-facing command for configuring and running an
@@ -107,8 +107,9 @@ arbiter-server version [--json]
 ## deploy
 
 Create or update Docker deployment files from the installed `arbiter-server`
-command. See [Deployment](./deployment.md) for the Docker deployment workflow,
-generated helper commands, package bundle management, and Linux install.
+command. See [Deployment](../operate/deployment.md) for the Docker deployment
+workflow, generated helper commands, package bundle management, and Linux
+install.
 For this release line, explicit deployment package pins use versions such as
 `arbiter-server==0.9.0.dev2`.
 

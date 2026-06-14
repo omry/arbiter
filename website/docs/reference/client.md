@@ -1,5 +1,5 @@
 ---
-title: Arbiter CLI Reference
+title: Arbiter Client reference
 ---
 
 `arbiter` is the client-facing command for agents and humans. It connects to an

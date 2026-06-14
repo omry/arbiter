@@ -370,7 +370,6 @@ def test_build_app_list_accounts_uses_real_config_shape() -> None:
                 "policy": "bot",
                 "enabled": True,
                 "send": "allowed",
-                "require_confirmation": False,
             },
         },
     }
@@ -8065,8 +8064,6 @@ def test_cli_bootstrap_plugin_account_writes_service_example(
     assert "defaults:\n" in policy_yaml
     assert "  - schema@_here_\n" in policy_yaml
     assert "  - _self_\n" in policy_yaml
-    assert "# Require confirmation before sending through this policy.\n" in policy_yaml
-    assert "require_confirmation: true\n" in policy_yaml
     assert "max_messages_per_minute: 30\n" in policy_yaml
     assert "allowed_domain_patterns: []\n" in policy_yaml
     assert "example.com" not in policy_yaml
@@ -8154,8 +8151,6 @@ def test_cli_bootstrap_plugin_policy_writes_service_example(
     assert "defaults:\n" in policy_yaml
     assert "  - schema@_here_\n" in policy_yaml
     assert "  - _self_\n" in policy_yaml
-    assert "# Require confirmation before sending through this policy.\n" in policy_yaml
-    assert "require_confirmation: true\n" in policy_yaml
     assert "max_messages_per_minute: 30\n" in policy_yaml
     assert "allowed_domain_patterns: []\n" in policy_yaml
     assert "example.com" not in policy_yaml
@@ -8218,7 +8213,10 @@ def test_cli_config_activate_account_activates_matching_policy(
     assert "    - smtp/personal_account_policy\n" in config_yaml
     cfg = compose_config(config_dir=config_dir, config_name="arbiter-server")
     assert cfg.arbiter.account.smtp.personal_account.policy == "personal_account_policy"
-    assert cfg.arbiter.policy.smtp.personal_account_policy.require_confirmation is True
+    assert (
+        cfg.arbiter.policy.smtp.personal_account_policy.limits.max_recipients_per_message
+        == 10
+    )
     assert capsys.readouterr().out == f"updated {config_dir / 'arbiter-server.yaml'}\n"
 
 
@@ -8246,8 +8244,7 @@ def test_cli_config_activate_account_can_alias_policy_file_name(
         "# @package arbiter.policy.smtp.bot_policy\n"
         "defaults:\n"
         "  - schema@_here_\n"
-        "  - _self_\n"
-        "require_confirmation: true\n",
+        "  - _self_\n",
         encoding="utf-8",
     )
     capsys.readouterr()
@@ -8274,7 +8271,7 @@ def test_cli_config_activate_account_can_alias_policy_file_name(
     assert "    - smtp/bot\n" in config_yaml
     cfg = compose_config(config_dir=config_dir, config_name="arbiter-server")
     assert cfg.arbiter.account.smtp.bot.policy == "bot_policy"
-    assert cfg.arbiter.policy.smtp.bot_policy.require_confirmation is True
+    assert cfg.arbiter.policy.smtp.bot_policy.limits.max_messages_per_minute is None
 
 
 def test_cli_config_deactivate_account_deactivates_unused_policy(
@@ -8359,8 +8356,7 @@ def test_cli_config_deactivate_account_keeps_shared_policy(
         "# @package arbiter.policy.smtp.shared\n"
         "defaults:\n"
         "  - schema@_here_\n"
-        "  - _self_\n"
-        "require_confirmation: true\n",
+        "  - _self_\n",
         encoding="utf-8",
     )
     for account_name in ("primary", "secondary"):
@@ -8583,7 +8579,7 @@ def _app_config_with_smtp() -> AppConfig:
                 "imap": {},
             },
             policy={
-                "smtp": {"bot": SMTPServicePolicyConfig(require_confirmation=False)},
+                "smtp": {"bot": SMTPServicePolicyConfig()},
                 "imap": {},
             },
         )
@@ -8608,7 +8604,7 @@ def _app_config_with_smtp_imap() -> AppConfig:
                 },
             },
             policy={
-                "smtp": {"bot": SMTPServicePolicyConfig(require_confirmation=False)},
+                "smtp": {"bot": SMTPServicePolicyConfig()},
                 "imap": {
                     "bot": IMAPAccessPolicyConfig(
                         folder_access=IMAPFolderAccessConfig(
@@ -9232,7 +9228,6 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
                         "policy": "bot",
                         "enabled": True,
                         "send": "allowed",
-                        "require_confirmation": False,
                     },
                 },
             }
@@ -9657,7 +9652,6 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
                 "policy": "bot",
                 "enabled": True,
                 "send": "allowed",
-                "require_confirmation": False,
             },
         },
         "operations": [

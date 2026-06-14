@@ -5,10 +5,10 @@ title: SMTP
 [![PyPI](https://img.shields.io/pypi/v/arbiter-smtp.svg?label=arbiter-smtp)](https://pypi.org/project/arbiter-smtp/) [![Python](https://img.shields.io/pypi/pyversions/arbiter-smtp.svg?label=python)](https://pypi.org/project/arbiter-smtp/) [![Downloads](https://pepy.tech/badge/arbiter-smtp/month)](https://pepy.tech/project/arbiter-smtp)
 
 SMTP lets Arbiter send email through configured SMTP accounts. Operators own
-the SMTP host, credentials, sender identity, recipient policy, confirmation
-requirements, rate limits, safe retry behavior, and optional Sent-copy
-integration. Agents can discover and run the allowed send operation, but they
-do not provide SMTP credentials or transport settings.
+the SMTP host, credentials, sender identity, recipient policy, rate limits,
+safe retry behavior, and optional Sent-copy integration. Agents can discover
+and run the allowed send operation, but they do not provide SMTP credentials or
+transport settings.
 
 ## Operations
 

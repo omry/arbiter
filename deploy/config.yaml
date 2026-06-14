@@ -66,10 +66,8 @@ arbiter:
 
   policy:
     smtp:
-      bot:
-        require_confirmation: false
-      personal:
-        require_confirmation: true
+      bot: {}
+      personal: {}
     imap:
       bot:
         folder_access:

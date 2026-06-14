@@ -148,7 +148,9 @@ arbiter:
   policy:
     smtp:
       bot_policy:
-        require_confirmation: true
+        recipient_policy:
+          allowed_domain_patterns:
+            - example.com
 ```
 
 ## Environment values

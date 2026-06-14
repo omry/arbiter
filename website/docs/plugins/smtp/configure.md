@@ -30,8 +30,6 @@ verify_peer: true
 The policy file contains the sending guardrails:
 
 ```yaml title="arbiter/policy/smtp/bot_policy.yaml"
-require_confirmation: true
-
 recipient_policy:
   allowed_domain_patterns:
     - example.com
@@ -53,7 +51,6 @@ Agents do not provide or override these fields when sending mail.
 
 ## Policy Fields
 
-- `require_confirmation`: require caller confirmation before sending.
 - `recipient_policy`: allow or block recipients and recipient domains.
 - `limits`: bound recipients per message and sends per minute.
 - `idempotency`: control safe retry storage for repeated send attempts with the
