@@ -8,7 +8,8 @@ SMTP account, and shows the composed config.
 ## Install
 
 Create a virtualenv and install Arbiter from pip. The virtualenv keeps
-the server, client, and plugin packages isolated from your system Python.
+the server, client (`arbiter-client`), and plugin packages isolated from your
+system Python.
 
 ```bash
 python3 -m venv .venv
@@ -20,7 +21,8 @@ python3 -m venv .venv
 
 The PyPI package `arbiter` is unrelated to Arbiter. Install
 `arbiter-suite` for the default Arbiter bundle, or install packages such
-as `arbiter-server`, `arbiter-smtp`, and `arbiter-imap` explicitly.
+as `arbiter-server`, `arbiter-client`, `arbiter-smtp`, and `arbiter-imap`
+explicitly.
 
 :::
 

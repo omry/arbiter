@@ -91,14 +91,15 @@ runtime install set. When the staging directory is in an Arbiter repository
 checkout, normal prepare refreshes local Arbiter wheels from that checkout
 before resolving the wheelhouse.
 
-### Upgrade package pins
+### Upgrade selected versions
 
-For an existing prepared bundle, refresh package pins and rebuild the
-wheelhouse:
+For an existing prepared bundle, refresh selected package versions and rebuild
+the wheelhouse:
 
 ```bash
-./arbiter-docker bundle upgrade       # upgrade selected packages
-./arbiter-docker bundle upgrade smtp  # upgrade one selected package
+./arbiter-docker bundle upgrade                         # upgrade selected packages
+./arbiter-docker bundle upgrade arbiter-smtp             # upgrade one package
+./arbiter-docker bundle upgrade arbiter-smtp==0.9.4      # select one version
 ```
 
 Skip this step when you want to keep the versions already recorded in
@@ -119,7 +120,7 @@ arbiter-server --config-dir ./conf bootstrap arbiter
 # wrote conf/arbiter/server.yaml
 ```
 
-Then bootstrap one SMTP `bot` account:
+Then create an SMTP account named `bot` and a corresponding policy:
 
 ```bash
 arbiter-server --config-dir ./conf bootstrap plugin smtp account bot

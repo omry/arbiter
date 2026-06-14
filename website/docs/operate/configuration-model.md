@@ -121,7 +121,8 @@ policy might limit recipients or require confirmation; an IMAP policy might
 limit readable folders or message operations.
 
 Policies are cross-cutting config: they are separate files, but accounts refer
-to them by name so multiple accounts can share policy shape when useful.
+to them by name. Bootstrap creates a matching policy for each new account, but
+multiple accounts can share one policy when that is useful.
 
 ## Scaffolding flow
 

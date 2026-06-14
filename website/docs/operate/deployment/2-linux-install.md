@@ -15,14 +15,11 @@ promote:
 ```
 
 This catches common production-install mistakes before anything is copied into
-`/opt`.
-
-## Optional dry run
-
-Inspect the host changes without applying them:
+the install target. To also check access for an agent user on the same machine,
+pass that user explicitly:
 
 ```bash
-./arbiter-docker install --dry-run --to /opt/arbiter --user arbiter
+./arbiter-docker doctor --preinstall --agent-user codex
 ```
 
 ## Install
@@ -30,23 +27,25 @@ Inspect the host changes without applying them:
 Promote the prepared directory:
 
 ```bash
-sudo ./arbiter-docker install --to /opt/arbiter --user arbiter
+sudo ./arbiter-docker install
 ```
 
 By default, install starts or restarts the systemd service.
 
-On the first install, the staging `conf/` directory seeds the installed
-configuration package. After that, the installed configuration and env file are
+On the first install, the staging `conf/` directory and env file are copied into
+the installed directory. After that, the installed config and env are
 authoritative: later installs update the bundle and service wrapper, but keep
-the installed `conf/` package by default. This lets operators edit credentials
+the installed config and env by default. This lets operators edit credentials
 only in the protected installed directory. When an existing config directory is
 preserved, install keeps a protected timestamped copy under `backup/`.
 
-To intentionally replace the installed config and env from staging:
+To intentionally replace the installed config from staging:
 
 ```bash
-sudo ./arbiter-docker install --to /opt/arbiter --user arbiter --replace-config
+sudo ./arbiter-docker install --replace-config
 ```
+
+Add `--replace-env` when the installed env file should also come from staging.
 
 ## Verify
 
@@ -80,13 +79,13 @@ sudo systemctl restart arbiter.service
 
 `install` requires root unless `--dry-run` is used. It:
 
-- creates the `arbiter` system user/group if missing
-- copies the prepared deployment directory to `/opt/arbiter`
+- creates the configured system user/group if missing
+- copies the prepared deployment directory to the install target
 - preserves an existing installed config package unless `--replace-config` is
   passed
 - rewrites the copied Compose command to pass
   `arbiter.deployment_scope=installed`
-- sets ownership to `arbiter:arbiter`
+- sets ownership to the configured user/group
 - tightens file modes
 - writes `/etc/systemd/system/arbiter.service`
 - reloads and enables systemd
@@ -94,8 +93,8 @@ sudo systemctl restart arbiter.service
 
 ## Privilege Model
 
-The `arbiter` user is not added to the Docker group. The systemd unit is
-root-managed and runs `docker compose`; the container does not receive the
+The dedicated service user is not added to the Docker group. The systemd unit
+is root-managed and runs `docker compose`; the container does not receive the
 Docker socket.
 
 This avoids making the dedicated deployment user host-root-equivalent through
@@ -108,20 +107,17 @@ For the broader boundary model, see [Security Model](../security.md).
 
 Use these when the standard install path needs a small adjustment:
 
-```bash
-./arbiter-docker doctor --preinstall --agent-user codex
-```
+### Install Parameters
 
-Check common access mistakes for an agent user on the same machine.
+The standard install uses these defaults. Override them only when needed:
 
-```bash
-sudo ./arbiter-docker install --to /opt/arbiter --user arbiter --no-start
-```
-
-Install without starting the service.
-
-```bash
-sudo ./arbiter-docker install --to /opt/arbiter --user arbiter --service arbiter-server
-```
-
-Choose a different systemd unit name.
+| Argument | Comment | Default |
+| --- | --- | --- |
+| `--to DIR` | Install target directory. | `/opt/arbiter` |
+| `--user USER` | Service config owner. Created if missing. | `arbiter` |
+| `--group GROUP` | Service config group. Created if missing. | Same as `--user` (`arbiter`) |
+| `--service NAME` | systemd unit name. | `arbiter` |
+| `--no-start` | Install and enable the service without starting it. | Off |
+| `--replace-config` | Replace installed config from this staging directory. | Off |
+| `--replace-env` | With `--replace-config`, also replace the installed env from staging. | Off |
+| `--dry-run` | Print the install plan without changing the host. | Off |

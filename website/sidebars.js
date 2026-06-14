@@ -37,6 +37,7 @@ const sidebars = {
       type: 'category',
       label: 'Plugins',
       collapsed: false,
+      link: {type: 'doc', id: 'use/plugins'},
       items: [
         'use/smtp',
         'use/imap',
