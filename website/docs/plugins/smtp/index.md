@@ -44,6 +44,6 @@ arbiter op run smtp:send_email --args '{
 
 ## More
 
-- [Configure](./configure.md): account and policy setup.
-- [Behavior](./behavior.md): sent copies, safe retries, and policy effects.
-- [Reference](./reference.md): schemas and detailed enforcement notes.
+- [Configure](./configure): account and policy setup.
+- [Behavior](./behavior): sent copies, safe retries, and policy effects.
+- [Reference](./reference): schemas and detailed enforcement notes.

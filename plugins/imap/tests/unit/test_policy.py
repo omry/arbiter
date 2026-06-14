@@ -156,6 +156,12 @@ def test_metadata_patterns_preserve_named_captures_starting_with_p() -> None:
     ) == {"year": "2026"}
 
 
+def test_metadata_patterns_capture_double_star_between_literals() -> None:
+    assert _match_metadata_pattern("a.{**:middle}.e", "a.b.c.d.e") == {
+        "middle": "b.c.d"
+    }
+
+
 def test_metadata_patterns_support_character_classes() -> None:
     resolver = IMAPPolicyResolver(
         folder_metadata={

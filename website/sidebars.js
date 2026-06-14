@@ -49,7 +49,16 @@ const sidebars = {
             'plugins/smtp/reference',
           ],
         },
-        'plugins/imap',
+        {
+          type: 'category',
+          label: 'IMAP',
+          link: {type: 'doc', id: 'plugins/imap/index'},
+          items: [
+            'plugins/imap/configure',
+            'plugins/imap/behavior',
+            'plugins/imap/reference',
+          ],
+        },
       ],
     },
     {
