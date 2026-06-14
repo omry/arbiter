@@ -5444,7 +5444,7 @@ def test_cli_deploy_docker_generated_helper_preinstall_rejects_deploy_root_runti
     assert "ok: preinstall checks passed\n" not in result.stdout
 
 
-def test_cli_deploy_docker_generated_helper_preinstall_warns_for_source_override(
+def test_cli_deploy_docker_generated_helper_preinstall_notes_local_checkout_packages(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -5474,8 +5474,17 @@ def test_cli_deploy_docker_generated_helper_preinstall_warns_for_source_override
         "      - /home/example/arbiter:/source/arbiter:ro\n",
         encoding="utf-8",
     )
+    local_checkout_requirements = (
+        "\n".join(
+            [
+                "/source/arbiter/server",
+                "/source/arbiter/plugins/imap",
+            ]
+        )
+        + "\n"
+    )
     (deploy_dir / "requirements.txt").write_text(
-        "/source/arbiter/server\n",
+        local_checkout_requirements,
         encoding="utf-8",
     )
 
@@ -5489,28 +5498,66 @@ def test_cli_deploy_docker_generated_helper_preinstall_warns_for_source_override
 
     assert result.returncode == 0
     assert (
-        "warn: preinstall found local checkout requirements: "
-        f"{deploy_dir / 'requirements.txt'}\n"
+        "note: package wheels will be built from the local checkout: "
+        "arbiter-server, arbiter-imap\n"
     ) in result.stdout
     assert (
-        "      install will build local wheels and write wheel-backed "
-        "requirements only in the install target\n"
-    ) in result.stdout
+        "note: install target will not copy the /source/arbiter source mount\n"
+    ) not in result.stdout
+    assert "note: local checkout requirements will be wheel-backed" not in result.stdout
+    assert "warn: staging uses local checkout" not in result.stdout
+    assert "ok: preinstall checks passed\n" in result.stdout
+
+
+def test_cli_deploy_docker_generated_helper_preinstall_notes_source_override(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
     assert (
-        f"      run {deploy_dir / 'arbiter-docker'} install to install "
-        "wheel-backed artifacts without changing staging requirements\n"
-    ) in result.stdout
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    config_dir = deploy_dir / "conf"
+    (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
+    (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
+    (deploy_dir / "compose.override.yaml").write_text(
+        "services:\n"
+        "  arbiter:\n"
+        "    volumes:\n"
+        "      - /home/example/arbiter:/source/arbiter:ro\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "doctor", "--preinstall"],
+        check=False,
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
     assert (
-        "warn: preinstall found local checkout compose override: "
-        f"{deploy_dir / 'compose.override.yaml'}\n"
+        "note: install target will not copy the /source/arbiter source mount\n"
     ) in result.stdout
+    assert "note: package wheels will be built from the local checkout:" not in (
+        result.stdout
+    )
     assert (
-        "      install will omit the local checkout override only in the install target\n"
-    ) in result.stdout
-    assert (
-        f"      run {deploy_dir / 'arbiter-docker'} install to install without "
-        "changing the staging local checkout override\n"
-    ) in result.stdout
+        "warn: preinstall found local checkout compose override:" not in result.stdout
+    )
     assert "ok: preinstall checks passed\n" in result.stdout
 
 
@@ -5548,6 +5595,10 @@ def test_cli_deploy_docker_generated_helper_install_keeps_source_checkout_stagin
     (config_dir / ".env").chmod(0o600)
     assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
         "/source/arbiter/server\n"
+    )
+    (deploy_dir / "requirements.txt").write_text(
+        "/source/arbiter/server\n/source/arbiter/plugins/imap\n",
+        encoding="utf-8",
     )
     (deploy_dir / "compose.override.yaml").write_text(
         "services:\n"
@@ -5598,11 +5649,21 @@ def test_cli_deploy_docker_generated_helper_install_keeps_source_checkout_stagin
         "#!/usr/bin/env sh\n"
         f'printf "%s\\n" "$*" >> "{python_calls}"\n'
         'wheel_dir=""\n'
+        'source_dir=""\n'
         'while [ "$#" -gt 0 ]; do\n'
-        '  if [ "$1" = "--wheel-dir" ]; then shift; wheel_dir="$1"; fi\n'
+        '  if [ "$1" = "--wheel-dir" ]; then\n'
+        "    shift\n"
+        '    wheel_dir="$1"\n'
+        "  else\n"
+        '    source_dir="$1"\n'
+        "  fi\n"
         "  shift\n"
         "done\n"
-        'printf "wheel\\n" > "$wheel_dir/arbiter_server-0.9.0.dev2-py3-none-any.whl"\n'
+        'case "$source_dir" in\n'
+        '  */plugins/imap) wheel_name="arbiter_imap-0.9.0.dev2-py3-none-any.whl" ;;\n'
+        '  *) wheel_name="arbiter_server-0.9.0.dev2-py3-none-any.whl" ;;\n'
+        "esac\n"
+        'printf "wheel\\n" > "$wheel_dir/$wheel_name"\n'
         "exit 0\n",
         encoding="utf-8",
     )
@@ -5621,6 +5682,7 @@ def test_cli_deploy_docker_generated_helper_install_keeps_source_checkout_stagin
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
     env["ARBITER_SYSTEMD_DIR"] = str(systemd_dir)
+    env["ARBITER_INSTALL_PROGRESS"] = "always"
 
     result = subprocess.run(
         [
@@ -5640,24 +5702,34 @@ def test_cli_deploy_docker_generated_helper_install_keeps_source_checkout_stagin
     )
 
     assert result.returncode == 0
-    assert "prepared wheel-backed install requirements from local checkout:" in (
+    assert "prepared wheel-backed install requirements from local checkout:" not in (
         result.stdout
     )
-    assert (
-        "installed wheel-backed requirements without changing staging: "
-        f"{install_dir / 'requirements.txt'}\n"
-    ) in result.stdout
-    assert (
-        "omitted local checkout compose override from install target: "
-        f"{install_dir / 'compose.override.yaml'}\n"
-    ) in result.stdout
+    assert "note: package wheels will be built from the local checkout:" not in (
+        result.stdout
+    )
+    assert "installed wheel-backed requirements without changing staging:" not in (
+        result.stdout
+    )
+    assert "omitted local checkout compose override from install target:" not in (
+        result.stdout
+    )
+    assert "preparing: arbiter-server" in result.stdout
+    assert "preparing: arbiter-imap" in result.stdout
+    assert "preparing wheelhouse" in result.stdout
+    assert "preparing dependencies for arbiter-" not in result.stdout
+    assert "preparing dependency wheelhouse" not in result.stdout
+    assert "preparing: dependency wheelhouse" not in result.stdout
+    assert "Installing server into " in result.stdout
+    assert ": done\n" not in result.stdout
     assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
-        "/source/arbiter/server\n"
+        "/source/arbiter/server\n/source/arbiter/plugins/imap\n"
     )
     assert (deploy_dir / "compose.override.yaml").exists()
     assert not (deploy_dir / "compose.override.yaml.local-source.bak").exists()
     assert (install_dir / "requirements.txt").read_text(encoding="utf-8") == (
         "/wheels/arbiter_server-0.9.0.dev2-py3-none-any.whl\n"
+        "/wheels/arbiter_imap-0.9.0.dev2-py3-none-any.whl\n"
     )
     assert not (install_dir / "compose.override.yaml").exists()
     unit_text = (systemd_dir / "arbiter.service").read_text(encoding="utf-8")
@@ -5665,6 +5737,9 @@ def test_cli_deploy_docker_generated_helper_install_keeps_source_checkout_stagin
     assert f"-f {install_dir / 'compose.override.yaml'}" not in unit_text
     assert (
         install_dir / "wheels" / "arbiter_server-0.9.0.dev2-py3-none-any.whl"
+    ).exists()
+    assert (
+        install_dir / "wheels" / "arbiter_imap-0.9.0.dev2-py3-none-any.whl"
     ).exists()
     _assert_posix_mode(install_dir / "data" / "plugins", 0o700)
     _assert_posix_mode(install_dir / "data" / "plugins" / "smtp", 0o700)
@@ -5675,7 +5750,10 @@ def test_cli_deploy_docker_generated_helper_install_keeps_source_checkout_stagin
     assert " pip --disable-pip-version-check wheel " in python_calls.read_text(
         encoding="utf-8"
     )
-    assert "service: arbiter.service enabled but not started\n" in result.stdout
+    assert f"Installed Arbiter to {install_dir}. Running as arbiter:arbiter\n" in (
+        result.stdout
+    )
+    assert "service: arbiter.service" not in result.stdout
 
 
 def test_cli_deploy_docker_generated_helper_install_disables_source_override_without_source_requirements(
@@ -5735,7 +5813,14 @@ def test_cli_deploy_docker_generated_helper_install_disables_source_override_wit
     (fake_bin / "systemctl").write_text("#!/usr/bin/env sh\nexit 0\n", encoding="utf-8")
     (fake_bin / "arbiter").write_text("#!/usr/bin/env sh\nexit 0\n", encoding="utf-8")
     (fake_bin / "chown").write_text("#!/usr/bin/env sh\nexit 0\n", encoding="utf-8")
-    for fake_command in ("id", "getent", "docker", "systemctl", "arbiter", "chown"):
+    for fake_command in (
+        "id",
+        "getent",
+        "docker",
+        "systemctl",
+        "arbiter",
+        "chown",
+    ):
         (fake_bin / fake_command).chmod(0o755)
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
@@ -5768,10 +5853,9 @@ def test_cli_deploy_docker_generated_helper_install_disables_source_override_wit
         "arbiter-suite==1.2.3\n"
     )
     assert "promoted local checkout requirements to wheels" not in result.stdout
-    assert (
-        "omitted local checkout compose override from install target: "
-        f"{install_dir / 'compose.override.yaml'}\n"
-    ) in result.stdout
+    assert "omitted local checkout compose override from install target:" not in (
+        result.stdout
+    )
     assert (deploy_dir / "compose.override.yaml").exists()
     assert not (deploy_dir / "compose.override.yaml.local-source.bak").exists()
 
@@ -5817,10 +5901,7 @@ def test_cli_deploy_docker_generated_helper_install_dry_run_plans_promotion(
     )
 
     assert result.returncode == 0
-    assert result.stdout.startswith(
-        "installing Arbiter to /opt/arbiter as arbiter:arbiter "
-        "(service: arbiter.service)\n"
-    )
+    assert "installing Arbiter" not in result.stdout
     assert "ok: preinstall checks passed\n" not in result.stdout
     assert f"would copy deployment: {deploy_dir} -> /opt/arbiter\n" in result.stdout
     assert "would preserve installed config and env if present: /opt/arbiter\n" in (
@@ -5840,7 +5921,9 @@ def test_cli_deploy_docker_generated_helper_install_dry_run_plans_promotion(
         result.stdout
     )
     assert "would run: systemctl restart arbiter.service\n" in result.stdout
-    assert "would run: /opt/arbiter/arbiter-docker config check\n" in result.stdout
+    assert "would run: /opt/arbiter/arbiter-docker config check --live\n" in (
+        result.stdout
+    )
 
 
 def test_cli_deploy_docker_generated_helper_install_replace_env_requires_replace_config(
@@ -5883,9 +5966,15 @@ def test_cli_deploy_docker_generated_helper_install_replace_env_requires_replace
     assert result.stderr == "error: --replace-env requires --replace-config\n"
 
 
-def test_cli_deploy_docker_generated_helper_install_omits_missing_docker_unit(
+@pytest.mark.parametrize(
+    ("wsl_env", "expect_docker_unit_warning"),
+    [(True, False), (False, True)],
+)
+def test_cli_deploy_docker_generated_helper_install_handles_missing_docker_unit(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    wsl_env: bool,
+    expect_docker_unit_warning: bool,
 ) -> None:
     deploy_dir = tmp_path / "docker"
     install_dir = tmp_path / "opt" / "arbiter"
@@ -5924,6 +6013,14 @@ def test_cli_deploy_docker_generated_helper_install_omits_missing_docker_unit(
         "exit 1\n",
         encoding="utf-8",
     )
+    (fake_bin / "grep").write_text(
+        "#!/usr/bin/env sh\n"
+        'case " $* " in\n'
+        '  *" microsoft "*) exit 1 ;;\n'
+        "esac\n"
+        'exec /usr/bin/grep "$@"\n',
+        encoding="utf-8",
+    )
     docker_calls = tmp_path / "docker-calls"
     (fake_bin / "docker").write_text(
         "#!/usr/bin/env sh\n" f'printf "%s\\n" "$*" >> "{docker_calls}"\n' "exit 0\n",
@@ -5939,12 +6036,25 @@ def test_cli_deploy_docker_generated_helper_install_omits_missing_docker_unit(
     )
     (fake_bin / "arbiter").write_text("#!/usr/bin/env sh\nexit 0\n", encoding="utf-8")
     (fake_bin / "chown").write_text("#!/usr/bin/env sh\nexit 0\n", encoding="utf-8")
-    for fake_command in ("id", "getent", "docker", "systemctl", "arbiter", "chown"):
+    for fake_command in (
+        "id",
+        "getent",
+        "grep",
+        "docker",
+        "systemctl",
+        "arbiter",
+        "chown",
+    ):
         (fake_bin / fake_command).chmod(0o755)
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
     env["ARBITER_SYSTEMD_DIR"] = str(systemd_dir)
     env["ARBITER_COLOR"] = "always"
+    env["ARBITER_INSTALL_PROGRESS"] = "always"
+    for wsl_key in ("WSL_DISTRO_NAME", "WSL_INTEROP"):
+        env.pop(wsl_key, None)
+    if wsl_env:
+        env["WSL_DISTRO_NAME"] = "Ubuntu"
 
     result = subprocess.run(
         [
@@ -5963,15 +6073,30 @@ def test_cli_deploy_docker_generated_helper_install_omits_missing_docker_unit(
     )
 
     assert result.returncode == 0
-    assert (
+    docker_unit_warning = (
         "\033[33mwarn\033[0m: docker.service not found; generated unit will "
         "rely on Docker socket availability\n"
-    ) in result.stdout
-    assert "success: installed Arbiter Docker deployment\n" in result.stdout
-    assert f"installed to: {install_dir}\n" in result.stdout
+    )
+    if expect_docker_unit_warning:
+        assert docker_unit_warning in result.stdout
+    else:
+        assert docker_unit_warning not in result.stdout
+        assert "docker.service not found" not in result.stdout
+    assert "Installing server into " in result.stdout
+    assert "Performing live config check" in result.stdout
+    assert "Testing server URL" in result.stdout
+    assert ": done\n" not in result.stdout
+    assert "success: installed Arbiter Docker deployment\n" not in result.stdout
+    assert f"installed to: {install_dir}\n" not in result.stdout
+    assert f"Installed Arbiter to {install_dir}. Running as arbiter:arbiter\n" in (
+        result.stdout
+    )
     assert f"systemd unit: {systemd_dir / 'arbiter.service'}\n" in result.stdout
-    assert "service: arbiter.service enabled and restarted\n" in result.stdout
-    assert "\033[32m✔\033[0m Config check\n" in result.stdout
+    assert "service: arbiter.service" not in result.stdout
+    assert "Config check: passed\n" in result.stdout
+    assert "MCP test:" not in result.stdout
+    assert "MCP URL:" not in result.stdout
+    assert "Server URL: \033[94mhttp://127.0.0.1:8025\033[0m\n" in result.stdout
     assert result.stderr == ""
     installed_compose = (install_dir / "compose.yaml").read_text(encoding="utf-8")
     assert "arbiter.deployment_scope=installed" in installed_compose
@@ -6018,7 +6143,7 @@ def test_cli_deploy_docker_generated_helper_install_omits_missing_docker_unit(
         f"-f {install_dir / 'compose.yaml'} exec -T arbiter sh -lc "
         'exec "$ARBITER_RUNTIME_VENV/bin/arbiter-server" --config-dir /config '
         '--config-name "$ARBITER_CONFIG_NAME" config check "$@" '
-        "arbiter-config-check\n"
+        "arbiter-config-check --live\n"
     )
     assert systemctl_calls.read_text(encoding="utf-8") == (
         "daemon-reload\n"
@@ -6740,10 +6865,7 @@ def test_cli_deploy_docker_generated_helper_install_aborts_on_bad_wheelhouse(
     )
 
     assert result.returncode == 1
-    assert result.stdout.startswith(
-        f"installing Arbiter to {install_dir} as arbiter:arbiter "
-        "(service: arbiter.service)\n"
-    )
+    assert "installing Arbiter" not in result.stdout
     assert "validating dependency wheelhouse" not in result.stdout
     assert (
         f"error: dependency wheelhouse validation failed: {install_dir / 'wheels'}\n"

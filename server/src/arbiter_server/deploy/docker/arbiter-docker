@@ -176,6 +176,104 @@ requirements_has_source_paths() {
   ' "$path"
 }
 
+local_checkout_requirement_packages() {
+  local path="$1"
+
+  awk '
+    function trim(value) {
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      return value
+    }
+    function normalize(name) {
+      name = tolower(name)
+      gsub(/[-_.]+/, "-", name)
+      return name
+    }
+    function package_name(line, suffix, plugin) {
+      suffix = line
+      sub(/^\/source\/arbiter\/?/, "", suffix)
+      if (suffix == "server") {
+        return "arbiter-server"
+      }
+      if (suffix == "meta/arbiter-suite") {
+        return "arbiter-suite"
+      }
+      if (suffix ~ /^plugins\/[^\/]+/) {
+        plugin = suffix
+        sub(/^plugins\//, "", plugin)
+        sub(/\/.*$/, "", plugin)
+        return normalize("arbiter-" plugin)
+      }
+      return line
+    }
+    {
+      line = trim($0)
+      sub(/[[:space:]]+#.*$/, "", line)
+      line = trim(line)
+      if (line == "" || line ~ /^#/) {
+        next
+      }
+      if (line !~ /^\/source\/arbiter(\/|$)/) {
+        next
+      }
+      package = package_name(line)
+      if (seen[package]++) {
+        next
+      }
+      if (packages != "") {
+        packages = packages ", "
+      }
+      packages = packages package
+    }
+    END {
+      print packages
+    }
+  ' "$path"
+}
+
+local_checkout_source_package_label() {
+  local source_suffix="$1"
+  local plugin
+
+  case "$source_suffix" in
+    server)
+      printf 'arbiter-server\n'
+      ;;
+    meta/arbiter-suite)
+      printf 'arbiter-suite\n'
+      ;;
+    plugins/*)
+      plugin="${source_suffix#plugins/}"
+      plugin="${plugin%%/*}"
+      if [[ -n "$plugin" ]]; then
+        normalize_distribution_name "arbiter-$plugin"
+      else
+        printf '/source/arbiter/%s\n' "$source_suffix"
+      fi
+      ;;
+    "")
+      printf '/source/arbiter\n'
+      ;;
+    *)
+      printf '/source/arbiter/%s\n' "$source_suffix"
+      ;;
+  esac
+}
+
+running_under_wsl() {
+  if [[ -n "${WSL_DISTRO_NAME:-}" || -n "${WSL_INTEROP:-}" ]]; then
+    return 0
+  fi
+  if [[ -r /proc/sys/kernel/osrelease ]] && grep -qi microsoft /proc/sys/kernel/osrelease; then
+    return 0
+  fi
+  if [[ -r /proc/version ]] && grep -qi microsoft /proc/version; then
+    return 0
+  fi
+  return 1
+}
+
 reject_source_requirements_for_wheelhouse_command() {
   local command_name="$1"
 
@@ -2354,6 +2452,11 @@ doctor_warn() {
   doctor_line 33 warn "$1"
 }
 
+doctor_note() {
+  [[ "${doctor_quiet:-0}" -eq 1 ]] && return
+  doctor_line 36 note "$1"
+}
+
 doctor_detail() {
   printf '      %s\n' "$1"
 }
@@ -2867,6 +2970,9 @@ doctor_check_preinstall_ready() {
   local active_requirements_file
   local active_wheels_dir
   local active_plugin_data_dir
+  local local_checkout_packages
+  local has_source_requirements=0
+  local has_source_override=0
   local wheel_requirement
   local wheel_path
 
@@ -2887,10 +2993,18 @@ doctor_check_preinstall_ready() {
   doctor_check_container_user_can_write_dir "$active_plugin_data_dir" "plugin data directory"
   doctor_check_file "$active_requirements_file" "runtime requirements file"
 
-  if [[ -f "$active_requirements_file" ]] && grep -Eq '^[[:space:]]*/source/arbiter(/|$)' "$active_requirements_file"; then
-    doctor_warn "preinstall found local checkout requirements: $active_requirements_file"
-    printf '      install will build local wheels and write wheel-backed requirements only in the install target\n'
-    printf '      run %s install to install wheel-backed artifacts without changing staging requirements\n' "$deploy_dir/arbiter-docker"
+  if [[ -f "$active_requirements_file" ]] && requirements_has_source_paths "$active_requirements_file"; then
+    has_source_requirements=1
+  fi
+  if [[ -f "$compose_override_file" ]] && grep -q '/source/arbiter' "$compose_override_file"; then
+    has_source_override=1
+  fi
+
+  if [[ "$has_source_requirements" -eq 1 ]]; then
+    local_checkout_packages="$(local_checkout_requirement_packages "$active_requirements_file")"
+    doctor_note "package wheels will be built from the local checkout: ${local_checkout_packages:-unknown packages}"
+  elif [[ "$has_source_override" -eq 1 ]]; then
+    doctor_note "install target will not copy the /source/arbiter source mount"
   fi
 
   while IFS= read -r wheel_requirement; do
@@ -2915,12 +3029,6 @@ doctor_check_preinstall_ready() {
       }
     ' "$active_requirements_file"
   )
-
-  if [[ -f "$compose_override_file" ]] && grep -q '/source/arbiter' "$compose_override_file"; then
-    doctor_warn "preinstall found local checkout compose override: $compose_override_file"
-    printf '      install will omit the local checkout override only in the install target\n'
-    printf '      run %s install to install without changing the staging local checkout override\n' "$deploy_dir/arbiter-docker"
-  fi
 
   if [[ "$doctor_status" -eq 0 ]]; then
     doctor_ok "preinstall checks passed"
@@ -3143,6 +3251,85 @@ run_install_command() {
   fi
 }
 
+install_progress_enabled() {
+  [[ "${install_dry_run:-0}" -eq 0 ]] || return 1
+  case "${ARBITER_INSTALL_PROGRESS:-auto}" in
+    always)
+      return 0
+      ;;
+    never)
+      return 1
+      ;;
+  esac
+  [[ -t 1 && "${TERM:-}" != "dumb" ]]
+}
+
+install_spinner_loop() {
+  local action="$1"
+  local index="${2:-0}"
+  local frames=$'|/-\\'
+
+  while true; do
+    printf '\r\033[K%s %s' "$action" "${frames:index:1}"
+    index=$(((index + 1) % 4))
+    sleep 0.12
+  done
+}
+
+install_active_spinner_pid=""
+
+install_cleanup_active_spinner() {
+  if [[ -n "${install_active_spinner_pid:-}" ]]; then
+    kill "$install_active_spinner_pid" >/dev/null 2>&1 || true
+    wait "$install_active_spinner_pid" 2>/dev/null || true
+    install_active_spinner_pid=""
+  fi
+}
+
+install_run_step() {
+  local action="$1"
+  local stdout_file
+  local stderr_file
+  local spinner_pid
+  local status
+  shift
+
+  if ! install_progress_enabled; then
+    "$@"
+    return
+  fi
+
+  stdout_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-install-stdout.XXXXXX")"
+  stderr_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-install-stderr.XXXXXX")"
+  printf '\r\033[K%s |' "$action"
+  install_spinner_loop "$action" 1 &
+  spinner_pid="$!"
+  install_active_spinner_pid="$spinner_pid"
+  trap install_cleanup_active_spinner EXIT
+
+  if (set -euo pipefail; "$@") >"$stdout_file" 2>"$stderr_file"; then
+    status=0
+  else
+    status="$?"
+  fi
+
+  install_cleanup_active_spinner
+  trap - EXIT
+  if [[ "$status" -eq 0 ]]; then
+    printf '\r\033[K'
+  else
+    printf '\r\033[K%s: failed\n' "$action"
+  fi
+  if [[ -s "$stdout_file" ]]; then
+    cat "$stdout_file"
+  fi
+  if [[ -s "$stderr_file" ]]; then
+    cat "$stderr_file" >&2
+  fi
+  rm -f "$stdout_file" "$stderr_file"
+  return "$status"
+}
+
 install_report_success() {
   local unit_file="$systemd_unit_dir/${install_service}.service"
 
@@ -3150,15 +3337,15 @@ install_report_success() {
     return 0
   fi
 
-  printf 'success: installed Arbiter Docker deployment\n'
-  printf 'installed to: %s\n' "$install_target_dir"
+  printf 'Installed Arbiter to %s. Running as %s:%s\n' \
+    "$install_target_dir" "$install_user" "$install_group"
   printf 'systemd unit: %s\n' "$unit_file"
-  print_mcp_url_value "$(install_mcp_url_value)"
-  if [[ "$install_start" -eq 1 ]]; then
-    printf 'service: %s.service enabled and restarted\n' "$install_service"
-  else
-    printf 'service: %s.service enabled but not started\n' "$install_service"
+  if [[ "${install_config_check_passed:-0}" -eq 1 ]]; then
+    printf 'Config check: passed\n'
   fi
+  printf 'Server URL: '
+  doctor_prefix 94 "$(install_server_url_value)"
+  printf '\n'
 }
 
 install_require_root() {
@@ -3293,6 +3480,13 @@ install_build_source_wheel() {
   rm -rf "$build_dir"
 }
 
+install_build_source_wheel_to_file() {
+  local output_file="$1"
+  shift
+
+  install_build_source_wheel "$@" >"$output_file"
+}
+
 install_prepare_local_checkout_wheels() {
   local active_requirements_file
   local active_wheels_dir
@@ -3303,6 +3497,8 @@ install_prepare_local_checkout_wheels() {
   local line
   local source_suffix
   local source_dir
+  local package_label
+  local wheel_output_file
   local wheel_name
   local promoted=0
   local has_source_requirements=0
@@ -3369,10 +3565,20 @@ install_prepare_local_checkout_wheels() {
           rm -f "$tmp_requirements"
           return 1
         fi
-        wheel_name="$(install_build_source_wheel "$python_bin" "$source_dir" "$active_wheels_dir")" || {
+        package_label="$(local_checkout_source_package_label "$source_suffix")"
+        wheel_output_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-install-wheel-name.XXXXXX")"
+        install_run_step "preparing: $package_label" \
+          install_build_source_wheel_to_file \
+          "$wheel_output_file" \
+          "$python_bin" \
+          "$source_dir" \
+          "$active_wheels_dir" || {
           rm -f "$tmp_requirements"
+          rm -f "$wheel_output_file"
           return 1
         }
+        wheel_name="$(cat "$wheel_output_file")"
+        rm -f "$wheel_output_file"
         printf '/wheels/%s\n' "$wheel_name" >>"$tmp_requirements"
         promoted=1
         continue
@@ -3389,18 +3595,30 @@ install_prepare_local_checkout_wheels() {
     fi
     image="$(compose_env_value ARBITER_IMAGE python:3.11-slim)"
     docker_user="$(id -u):$(id -g)"
-    if ! prepare_dependency_wheelhouse "$tmp_requirements" "$active_wheels_dir" "$docker_user" "$image" 1 0; then
+    if ! install_run_step "preparing wheelhouse" \
+      prepare_dependency_wheelhouse \
+      "$tmp_requirements" \
+      "$active_wheels_dir" \
+      "$docker_user" \
+      "$image" \
+      1 \
+      0; then
       rm -f "$tmp_requirements"
       return 1
     fi
-    if ! validate_dependency_wheelhouse "$tmp_requirements" "$active_wheels_dir" "$docker_user" "$image" 1; then
+    if ! install_run_step "validating: dependency wheelhouse" \
+      validate_dependency_wheelhouse \
+      "$tmp_requirements" \
+      "$active_wheels_dir" \
+      "$docker_user" \
+      "$image" \
+      1; then
       rm -f "$tmp_requirements"
       return 1
     fi
     install_chown_wheelhouse_to_invoking_user "$active_wheels_dir"
     install_chown_to_invoking_user "$tmp_requirements"
     install_local_checkout_requirements_file="$tmp_requirements"
-    printf 'prepared wheel-backed install requirements from local checkout: %s\n' "$install_local_checkout_requirements_file"
   else
     if [[ -n "$tmp_requirements" ]]; then
       rm -f "$tmp_requirements"
@@ -3421,13 +3639,11 @@ install_apply_local_checkout_install_artifacts() {
     install_copy_file_protected "$install_local_checkout_requirements_file" "$target_requirements_file" 0640
     rm -f "$install_local_checkout_requirements_file"
     install_local_checkout_requirements_file=""
-    printf 'installed wheel-backed requirements without changing staging: %s\n' "$target_requirements_file"
   fi
 
   target_compose_override_file="$install_target_dir/compose.override.yaml"
   if [[ "$install_local_checkout_has_source_override" -eq 1 && -f "$target_compose_override_file" ]] && grep -q '/source/arbiter' "$target_compose_override_file"; then
     rm -f "$target_compose_override_file"
-    printf 'omitted local checkout compose override from install target: %s\n' "$target_compose_override_file"
   fi
 }
 
@@ -3474,6 +3690,12 @@ install_server_host_url_value() {
 
 install_mcp_url_value() {
   printf 'http://%s:%s/mcp\n' \
+    "$(install_server_host_url_value)" \
+    "$(install_env_value ARBITER_HOST_PORT 8025)"
+}
+
+install_server_url_value() {
+  printf 'http://%s:%s\n' \
     "$(install_server_host_url_value)" \
     "$(install_env_value ARBITER_HOST_PORT 8025)"
 }
@@ -3891,6 +4113,9 @@ install_record_location() {
 install_test_server() {
   local url
   local client_command
+  local output_file
+  local timeout
+  local start_time
 
   url="$(install_mcp_url_value)"
   if [[ "${install_dry_run:-0}" -eq 1 ]]; then
@@ -3902,7 +4127,23 @@ install_test_server() {
     doctor_warn "skipping MCP test; Arbiter client command not found"
     return 0
   fi
-  test_server_url "$url"
+
+  output_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-docker-test.XXXXXX")"
+  timeout="${ARBITER_TEST_TIMEOUT:-60}"
+  start_time="$SECONDS"
+  while true; do
+    if "$client_command" mcp call version_info "arbiter.mcp_url=$url" >"$output_file" 2>&1; then
+      rm -f "$output_file"
+      return 0
+    fi
+    if ((SECONDS - start_time >= timeout)); then
+      cat "$output_file" >&2
+      rm -f "$output_file"
+      printf 'error: MCP test did not pass within %s seconds: %s\n' "$timeout" "$url" >&2
+      return 1
+    fi
+    sleep 1
+  done
 }
 
 install_config_check() {
@@ -3911,7 +4152,7 @@ install_config_check() {
   local start_time
 
   if [[ "${install_dry_run:-0}" -eq 1 ]]; then
-    print_command "$install_target_dir/arbiter-docker" config check
+    print_command "$install_target_dir/arbiter-docker" config check --live
     return 0
   fi
 
@@ -3919,9 +4160,8 @@ install_config_check() {
   timeout="${ARBITER_INSTALL_CONFIG_CHECK_TIMEOUT:-60}"
   start_time="$SECONDS"
   while true; do
-    if "$install_target_dir/arbiter-docker" config check >"$output_file" 2>&1; then
+    if "$install_target_dir/arbiter-docker" config check --live >"$output_file" 2>&1; then
       rm -f "$output_file"
-      print_config_check_ok
       return 0
     fi
     if ((SECONDS - start_time >= timeout)); then
@@ -4486,7 +4726,7 @@ install_write_systemd_unit() {
   if systemctl cat docker.service >/dev/null 2>&1; then
     docker_unit_lines="Requires=docker.service
 After=docker.service"
-  else
+  elif ! running_under_wsl; then
     doctor_warn "docker.service not found; generated unit will rely on Docker socket availability"
   fi
 
@@ -4554,6 +4794,28 @@ install_compose_down_for_recreate() {
   fi
 }
 
+install_server_into_target() {
+  install_ensure_identity
+  install_copy_deployment
+  install_apply_local_checkout_install_artifacts
+  install_mark_deployment_installed
+  install_write_target_metadata
+  install_apply_permissions
+  install_validate_wheelhouse
+  install_apply_permissions
+  install_write_systemd_unit
+  install_record_location
+  run_install_command systemctl daemon-reload
+  run_install_command systemctl enable "${install_service}.service"
+}
+
+install_restart_server_service() {
+  install_stop_service_for_recreate
+  install_reset_failed_service_for_recreate
+  install_compose_down_for_recreate
+  run_install_command systemctl restart "${install_service}.service"
+}
+
 install_deployment() {
   install_target_dir="/opt/arbiter"
   install_user="arbiter"
@@ -4563,6 +4825,7 @@ install_deployment() {
   install_dry_run=0
   install_replace_config=0
   install_replace_env=0
+  install_config_check_passed=0
 
   while (($#)); do
     case "$1" in
@@ -4658,37 +4921,21 @@ install_deployment() {
     exit 2
   fi
 
-  printf 'installing Arbiter to %s as %s:%s (service: %s.service)\n' \
-    "$install_target_dir" "$install_user" "$install_group" "$install_service"
-
   install_prepare_local_checkout_wheels
-  doctor --preinstall --quiet
+  install_run_step "Performing preinstall checks" doctor --preinstall --quiet
 
   if [[ "$install_dry_run" -ne 1 ]]; then
     install_require_root
   fi
 
-  install_ensure_identity
-  install_copy_deployment
-  install_apply_local_checkout_install_artifacts
-  install_mark_deployment_installed
-  install_write_target_metadata
-  install_apply_permissions
-  install_validate_wheelhouse
-  install_apply_permissions
-  install_write_systemd_unit
-  install_record_location
-  run_install_command systemctl daemon-reload
-  run_install_command systemctl enable "${install_service}.service"
+  install_run_step "Installing server into $install_target_dir" install_server_into_target
   if [[ "$install_start" -eq 1 ]]; then
-    install_stop_service_for_recreate
-    install_reset_failed_service_for_recreate
-    install_compose_down_for_recreate
-    run_install_command systemctl restart "${install_service}.service"
-    install_config_check
+    install_run_step "Restarting Arbiter service" install_restart_server_service
+    install_run_step "Performing live config check" install_config_check
+    install_config_check_passed=1
   fi
   if [[ "$install_start" -eq 1 ]]; then
-    install_test_server
+    install_run_step "Testing server URL" install_test_server
   fi
   install_report_success
 }

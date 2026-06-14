@@ -201,8 +201,8 @@ mounts `/source/arbiter`.
 Linux install promotes this testing state automatically: it builds local wheels,
 rewrites the installed `requirements.txt` to `/wheels/*.whl` entries, and moves
 the `/source/arbiter` Compose override aside before copying the deployment into
-place. Direct `doctor --preinstall` still reports local checkout requirements as
-not install-ready because that command only checks the current directory; run
+place. Direct `doctor --preinstall` reports which package wheels will be built
+from the local checkout and still checks the rest of the staging directory; run
 `install` to perform the promotion.
 
 </details>

@@ -30,8 +30,8 @@ the helper.
 
 | Command | Purpose |
 | --- | --- |
-| `install --to DIR --user USER` | Promote the staging directory to an installed systemd service. First install seeds config from staging; later installs preserve installed config and env. |
-| `install --replace-config --to DIR --user USER` | Promote and explicitly replace the installed config package from staging. |
+| `install` | Promote the staging directory to an installed systemd service. First install seeds config from staging; later installs preserve installed config and env. |
+| `install --replace-config` | Promote and explicitly replace the installed config package from staging. |
 
 ## Edit
 
