@@ -6,6 +6,7 @@ systemd_unit_dir="${ARBITER_SYSTEMD_DIR:-/etc/systemd/system}"
 compose_file="$deploy_dir/compose.yaml"
 compose_env_file="$deploy_dir/docker.env"
 requirements_file="$deploy_dir/requirements.txt"
+bundle_plugins_file="$deploy_dir/bundle-plugins.tsv"
 compose_override_file="$deploy_dir/compose.override.yaml"
 
 usage() {
@@ -75,8 +76,16 @@ require_dir() {
 
 validate_requirements_file() {
   local path="$1"
+  local component_packages
 
-  awk '
+  component_packages="$(bundle_suite_component_packages)"
+  awk -v component_packages="$component_packages" '
+    BEGIN {
+      split(component_packages, component_list, " ")
+      for (i in component_list) {
+        component[component_list[i]] = 1
+      }
+    }
     {
       line = $0
       sub(/^[[:space:]]+/, "", line)
@@ -103,7 +112,7 @@ validate_requirements_file() {
         if (name == "arbiter-suite") {
           meta_all = 1
         }
-        if (name == "arbiter-server" || name == "arbiter-smtp" || name == "arbiter-imap") {
+        if (name in component) {
           all_component = 1
         }
         next
@@ -113,7 +122,7 @@ validate_requirements_file() {
     }
     END {
       if (meta_all && all_component) {
-        printf "%s: arbiter-suite meta package cannot be combined directly with arbiter-server, arbiter-smtp, or arbiter-imap pins; generate expanded real package pins with arbiter-server deploy docker docker.requirement=...\n", FILENAME
+        printf "%s: arbiter-suite meta package cannot be combined directly with component package pins; generate expanded real package pins with arbiter-server deploy docker docker.requirement=...\n", FILENAME
         invalid = 1
       }
       exit invalid
@@ -308,29 +317,83 @@ bundle_list_all() {
   rm -f "$root_requirements" "$resolved_requirements"
 }
 
+bundle_list_plugin_ids() {
+  require_file "$bundle_plugins_file"
+  awk -F '\t' '
+    $0 == "" || $1 ~ /^#/ {
+      next
+    }
+    NF >= 4 {
+      print $1
+    }
+  ' "$bundle_plugins_file"
+}
+
 bundle_list_plugins() {
-  printf 'imap\n'
-  printf 'smtp\n'
+  require_file "$bundle_plugins_file"
+  awk -F '\t' '
+    $0 == "" || $1 ~ /^#/ {
+      next
+    }
+    NF >= 4 {
+      printf "%s\t%s\n", $1, $4
+    }
+  ' "$bundle_plugins_file"
 }
 
 bundle_plugin_package() {
-  case "$1" in
-    imap)
-      printf 'arbiter-imap\n'
-      ;;
-    smtp)
-      printf 'arbiter-smtp\n'
-      ;;
-    *)
-      return 1
-      ;;
-  esac
+  local plugin="$1"
+
+  require_file "$bundle_plugins_file"
+  awk -F '\t' -v plugin="$plugin" '
+    $0 == "" || $1 ~ /^#/ {
+      next
+    }
+    NF >= 4 && $1 == plugin {
+      print $2
+      found = 1
+      exit
+    }
+    END {
+      exit found ? 0 : 1
+    }
+  ' "$bundle_plugins_file"
+}
+
+bundle_suite_plugin_ids() {
+  require_file "$bundle_plugins_file"
+  awk -F '\t' '
+    $0 == "" || $1 ~ /^#/ {
+      next
+    }
+    NF >= 4 && $3 == "suite" {
+      print $1
+    }
+  ' "$bundle_plugins_file"
+}
+
+bundle_suite_component_packages() {
+  require_file "$bundle_plugins_file"
+  awk -F '\t' '
+    BEGIN {
+      printf "arbiter-server"
+    }
+    $0 == "" || $1 ~ /^#/ {
+      next
+    }
+    NF >= 4 && $3 == "suite" {
+      printf " %s", $2
+    }
+    END {
+      printf "\n"
+    }
+  ' "$bundle_plugins_file"
 }
 
 bundle_meta_plugins() {
   case "$1" in
     arbiter-suite)
-      bundle_list_plugins
+      bundle_suite_plugin_ids
       ;;
     *)
       return 1
@@ -347,7 +410,17 @@ bundle_item_plugins() {
 }
 
 bundle_supported_items_message() {
-  printf 'supported plugins: imap, smtp; supported meta packages: arbiter-suite\n'
+  local plugins
+
+  plugins="$(bundle_list_plugin_ids | awk '
+    NR > 1 {
+      printf ", "
+    }
+    {
+      printf "%s", $0
+    }
+  ')"
+  printf 'supported plugins: %s; supported meta packages: arbiter-suite\n' "$plugins"
 }
 
 normalize_distribution_name() {
@@ -436,6 +509,127 @@ bundle_update_requirements_file() {
   fi
   mv "$updated_file" "$requirements_file"
   printf 'updated requirements file: %s\n' "$requirements_file"
+}
+
+bundle_append_requirement() {
+  local requirement="$1"
+  local tmp_file
+  local last_char
+
+  require_file "$requirements_file"
+  validate_requirements_file "$requirements_file"
+  if grep -Fxq "$requirement" "$requirements_file"; then
+    printf 'bundle requirement already selected: %s\n' "$requirement"
+    return 0
+  fi
+
+  tmp_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-docker-requirements.XXXXXX")"
+  cp "$requirements_file" "$tmp_file"
+  last_char=""
+  if [[ -s "$tmp_file" ]]; then
+    last_char="$(tail -c 1 "$tmp_file")"
+  fi
+  if [[ -n "$last_char" ]]; then
+    printf '\n' >>"$tmp_file"
+  fi
+  printf '%s\n' "$requirement" >>"$tmp_file"
+  bundle_update_requirements_file "$tmp_file"
+}
+
+bundle_add_package() {
+  local requirement="${1:-}"
+
+  if [[ -z "$requirement" || $# -ne 1 ]]; then
+    printf 'error: bundle add-package requires exactly one package pin\n' >&2
+    printf '       example: bundle add-package my-arbiter-plugin==1.0.0\n' >&2
+    return 2
+  fi
+  if [[ "$requirement" == /* ]]; then
+    printf 'error: bundle add-package expects a package pin, not a path: %s\n' "$requirement" >&2
+    printf '       use bundle add-wheel for local wheel files\n' >&2
+    return 2
+  fi
+  bundle_append_requirement "$requirement"
+}
+
+bundle_add_wheel() {
+  local source_path="${1:-}"
+  local wheel_name
+  local target_wheels_dir
+  local target_path
+
+  if [[ -z "$source_path" || $# -ne 1 ]]; then
+    printf 'error: bundle add-wheel requires exactly one wheel path\n' >&2
+    printf '       example: bundle add-wheel ./dist/my_plugin-1.0.0-py3-none-any.whl\n' >&2
+    return 2
+  fi
+  if [[ ! -f "$source_path" ]]; then
+    printf 'error: wheel file not found: %s\n' "$source_path" >&2
+    return 1
+  fi
+  wheel_name="${source_path##*/}"
+  if [[ "$wheel_name" != *.whl ]]; then
+    printf 'error: bundle add-wheel expects a .whl file: %s\n' "$source_path" >&2
+    return 2
+  fi
+
+  target_wheels_dir="$(wheels_dir_path)"
+  mkdir -p "$target_wheels_dir"
+  target_path="$target_wheels_dir/$wheel_name"
+  if [[ "$(cd -- "$(dirname -- "$source_path")" && pwd -P)/$wheel_name" != "$(cd -- "$target_wheels_dir" && pwd -P)/$wheel_name" ]]; then
+    cp "$source_path" "$target_path"
+  fi
+  printf 'copied wheel: %s\n' "$target_path"
+  bundle_append_requirement "/wheels/$wheel_name"
+}
+
+bundle_local_wheel_python() {
+  local python_bin="${ARBITER_PYTHON:-}"
+  local repo_root
+
+  if [[ -n "$python_bin" ]]; then
+    printf '%s\n' "$python_bin"
+    return 0
+  fi
+  if repo_root="$(find_repo_root)" && [[ -x "$repo_root/.venv/bin/python" ]]; then
+    printf '%s\n' "$repo_root/.venv/bin/python"
+    return 0
+  fi
+  if command -v python >/dev/null; then
+    command -v python
+    return 0
+  fi
+  if command -v python3 >/dev/null; then
+    command -v python3
+    return 0
+  fi
+  return 1
+}
+
+bundle_add_source() {
+  local source_dir="${1:-}"
+  local python_bin
+  local target_wheels_dir
+  local wheel_name
+
+  if [[ -z "$source_dir" || $# -ne 1 ]]; then
+    printf 'error: bundle add-source requires exactly one package source directory\n' >&2
+    printf '       example: bundle add-source ../my-arbiter-plugin\n' >&2
+    return 2
+  fi
+  if [[ ! -d "$source_dir" || ! -f "$source_dir/pyproject.toml" ]]; then
+    printf 'error: source directory must contain pyproject.toml: %s\n' "$source_dir" >&2
+    return 1
+  fi
+  if ! python_bin="$(bundle_local_wheel_python)"; then
+    printf 'error: cannot build local source wheel: python command not found\n' >&2
+    printf '       set ARBITER_PYTHON to the Python interpreter for building local wheels\n' >&2
+    return 1
+  fi
+
+  target_wheels_dir="$(wheels_dir_path)"
+  wheel_name="$(install_build_source_wheel "$python_bin" "$source_dir" "$target_wheels_dir")" || return 1
+  bundle_append_requirement "/wheels/$wheel_name"
 }
 
 bundle_add_plugin() {
@@ -548,16 +742,14 @@ bundle_remove_plugin() {
     bundle_write_without_packages \
       "$other_requirements_file" \
       arbiter-suite \
-      arbiter-server \
-      arbiter-imap \
-      arbiter-smtp
+      $(bundle_suite_component_packages)
     {
       printf 'arbiter-server==%s\n' "$suite_version"
       while IFS= read -r supported_plugin; do
         [[ "$remove_plugins" != *" $supported_plugin "* ]] || continue
         supported_package="$(bundle_plugin_package "$supported_plugin")"
         printf '%s==%s\n' "$supported_package" "$suite_version"
-      done < <(bundle_list_plugins)
+      done < <(bundle_list_plugin_ids)
       awk '
         {
           line = $0
@@ -782,7 +974,7 @@ repo_root_from_start() {
   start="$(cd -- "$start" 2>/dev/null && pwd -P)" || return 1
 
   while [[ "$start" != "/" ]]; do
-    if [[ -f "$start/server/pyproject.toml" && -f "$start/plugins/imap/pyproject.toml" && -f "$start/plugins/smtp/pyproject.toml" ]]; then
+    if [[ -f "$start/server/pyproject.toml" ]] && { [[ -f "$start/meta/arbiter-suite/pyproject.toml" ]] || [[ -d "$start/plugins" ]]; }; then
       printf '%s\n' "$start"
       return 0
     fi
@@ -796,20 +988,30 @@ find_repo_root() {
 }
 
 repo_source_dir_for_package() {
-  case "$(normalize_distribution_name "$1")" in
+  local package
+
+  package="$(normalize_distribution_name "$1")"
+  case "$package" in
     arbiter-server)
       printf 'server\n'
-      ;;
-    arbiter-imap)
-      printf 'plugins/imap\n'
-      ;;
-    arbiter-smtp)
-      printf 'plugins/smtp\n'
       ;;
     arbiter-suite)
       printf 'meta/arbiter-suite\n'
       ;;
   esac
+  awk -F '\t' -v package="$package" '
+    $0 == "" || $1 ~ /^#/ {
+      next
+    }
+    NF >= 4 && $2 == package {
+      printf "plugins/%s\n", $1
+      found = 1
+      exit
+    }
+    END {
+      exit found ? 0 : 1
+    }
+  ' "$bundle_plugins_file" || true
 }
 
 bundle_add_repo_wheel_sources_for_package() {
@@ -821,7 +1023,7 @@ bundle_add_repo_wheel_sources_for_package() {
 
   normalized_name="$(normalize_distribution_name "$package_name")"
   if [[ "$normalized_name" == "arbiter-suite" ]]; then
-    for package_name in arbiter-server arbiter-imap arbiter-smtp arbiter-suite; do
+    for package_name in $(bundle_suite_component_packages) arbiter-suite; do
       source_dir="$(repo_source_dir_for_package "$package_name")"
       [[ -n "$source_dir" && -d "$repo_root/$source_dir" ]] || continue
       printf '%s\n' "$repo_root/$source_dir" >>"$source_list"
@@ -4182,6 +4384,15 @@ bundle() {
     add)
       bundle_add_plugin "$@"
       ;;
+    add-package)
+      bundle_add_package "$@"
+      ;;
+    add-wheel)
+      bundle_add_wheel "$@"
+      ;;
+    add-source)
+      bundle_add_source "$@"
+      ;;
     remove)
       bundle_remove_plugin "$@"
       ;;
@@ -4194,8 +4405,14 @@ Commands:
   check         Validate the prepared wheelhouse without downloading packages
   list          Show root requirements
   list all      Show root and transitive wheelhouse packages
-  list-plugins  Show service plugins supported by add/remove
+  list-plugins  Show service plugins and descriptions supported by add/remove
   add ITEM      Add a service plugin, or all plugins in a meta package
+  add-package PACKAGE==VERSION
+                Add an exact package pin for an external plugin
+  add-wheel PATH
+                Copy a wheel into the wheelhouse and add it as a root
+  add-source DIR
+                Build a local package source directory into a wheel root
   remove ITEM   Remove a service plugin, or all plugins in a meta package
   upgrade       Upgrade package root requirements and rebuild the wheelhouse
 

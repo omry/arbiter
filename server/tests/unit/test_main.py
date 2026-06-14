@@ -33,6 +33,7 @@ from arbiter_server.main import (
     _artifact_base_url,
     _build_local_source_wheel,
     _default_container_user,
+    _docker_bundle_plugin,
     _register_artifact_route,
     _run_config_check,
     _run_server,
@@ -80,6 +81,22 @@ from arbiter_server.services import (
     ServicePluginContext,
     ServiceRuntimeContext,
 )
+
+
+def test_docker_bundle_plugin_sanitizes_generated_metadata() -> None:
+    assert _docker_bundle_plugin("bad\tname", "acme-mail", "Plugin") is None
+    assert _docker_bundle_plugin("acme", "../acme", "Plugin") is None
+
+    plugin = _docker_bundle_plugin(
+        "acme",
+        "Acme.Mail",
+        "Acme\tmail\nplugin",
+    )
+
+    assert plugin is not None
+    assert plugin.name == "acme"
+    assert plugin.package == "acme-mail"
+    assert plugin.description == "Acme mail plugin"
 
 
 _SUPPORTS_POSIX_FILE_MODES = os.name != "nt"
@@ -2019,6 +2036,7 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
     assert manifest["arbiter_server_version"] == "0.9.0.dev2"
     assert sorted(manifest["files"]) == [
         "arbiter-docker",
+        "bundle-plugins.tsv",
         "compose.yaml",
     ]
     assert not (deploy_dir / "empty-source").exists()
@@ -2131,7 +2149,43 @@ def test_cli_deploy_docker_init_expands_meta_package_with_package_override(
     )
 
     assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
-        "arbiter-server==0.9.0\n" "arbiter-smtp==0.9.1\n" "arbiter-imap==0.9.0\n"
+        "arbiter-server==0.9.0\n" "arbiter-imap==0.9.0\n" "arbiter-smtp==0.9.1\n"
+    )
+    capsys.readouterr()
+
+
+def test_cli_deploy_docker_init_expands_meta_package_from_suite_dependencies(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "arbiter_server.main._suite_dependency_package_names",
+        lambda: ("arbiter-server", "arbiter-smtp"),
+    )
+    deploy_dir = tmp_path / "docker"
+
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==0.9.0",
+                "docker.requirement=arbiter-smtp==0.9.1",
+                "init",
+            ]
+        )
+        == 0
+    )
+
+    assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
+        "arbiter-server==0.9.0\n" "arbiter-smtp==0.9.1\n"
+    )
+    assert (deploy_dir / "bundle-plugins.tsv").read_text(encoding="utf-8") == (
+        "# plugin\tpackage\tsuite\tdescription\n"
+        "imap\tarbiter-imap\t\tIMAP service plugin for Arbiter\n"
+        "smtp\tarbiter-smtp\tsuite\tSMTP service plugin for Arbiter\n"
     )
     capsys.readouterr()
 
@@ -2555,7 +2609,10 @@ def test_cli_deploy_docker_generated_helper_bundle_lists_supported_plugins(
     )
 
     assert result.returncode == 0
-    assert result.stdout == "imap\nsmtp\n"
+    assert result.stdout == (
+        "imap\tIMAP service plugin for Arbiter\n"
+        "smtp\tSMTP service plugin for Arbiter\n"
+    )
 
 
 def test_cli_deploy_docker_generated_helper_bundle_adds_and_removes_plugin_requirements(
@@ -2618,6 +2675,82 @@ def test_cli_deploy_docker_generated_helper_bundle_adds_and_removes_plugin_requi
     assert result.stdout == (
         "root\tarbiter-server==1.2.3\n" "root\tarbiter-imap==1.2.3\n"
     )
+
+
+def test_cli_deploy_docker_generated_helper_bundle_adds_external_plugins(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    wheel = tmp_path / "dist" / "acme_mail-2.0.0-py3-none-any.whl"
+    wheel.parent.mkdir()
+    wheel.write_text("wheel\n", encoding="utf-8")
+    source_dir = tmp_path / "acme-source"
+    source_dir.mkdir()
+    (source_dir / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+    fake_python = tmp_path / "python"
+    fake_python.write_text(
+        "#!/usr/bin/env sh\n"
+        "wheel_dir=\n"
+        'while [ "$#" -gt 0 ]; do\n'
+        '  if [ "$1" = "--wheel-dir" ]; then shift; wheel_dir="$1"; fi\n'
+        "  shift || true\n"
+        "done\n"
+        'mkdir -p "$wheel_dir"\n'
+        "printf 'built\\n' > \"$wheel_dir/acme_source-2.0.0-py3-none-any.whl\"\n",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-server==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    add_package = subprocess.run(
+        [deploy_dir / "arbiter-docker", "bundle", "add-package", "acme-mail==2.0.0"],
+        check=False,
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+    )
+    add_wheel = subprocess.run(
+        [deploy_dir / "arbiter-docker", "bundle", "add-wheel", str(wheel)],
+        check=False,
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+    )
+    add_source = subprocess.run(
+        [deploy_dir / "arbiter-docker", "bundle", "add-source", str(source_dir)],
+        check=False,
+        cwd=tmp_path,
+        env={**os.environ, "ARBITER_PYTHON": str(fake_python)},
+        text=True,
+        capture_output=True,
+    )
+
+    assert add_package.returncode == 0
+    assert add_wheel.returncode == 0
+    assert add_source.returncode == 0
+    assert (deploy_dir / "requirements.txt").read_text(encoding="utf-8") == (
+        "arbiter-server==1.2.3\n"
+        "acme-mail==2.0.0\n"
+        "/wheels/acme_mail-2.0.0-py3-none-any.whl\n"
+        "/wheels/acme_source-2.0.0-py3-none-any.whl\n"
+    )
+    assert (deploy_dir / "wheels" / wheel.name).read_text(encoding="utf-8") == "wheel\n"
+    assert (deploy_dir / "wheels" / "acme_source-2.0.0-py3-none-any.whl").read_text(
+        encoding="utf-8"
+    ) == "built\n"
 
 
 def test_cli_deploy_docker_generated_helper_bundle_adds_and_removes_meta_package_plugins(
@@ -4682,7 +4815,7 @@ def test_cli_deploy_docker_generated_helper_doctor_rejects_raw_meta_override(
     assert result.returncode == 1
     assert (
         "arbiter-suite meta package cannot be combined directly with "
-        "arbiter-server, arbiter-smtp, or arbiter-imap pins"
+        "component package pins"
     ) in result.stdout
     assert (
         "fail: requirements file contains unpinned package requirements"

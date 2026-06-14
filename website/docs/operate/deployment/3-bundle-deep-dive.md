@@ -40,6 +40,39 @@ environment. Check those versions with `arbiter-server version`.
 must be represented as concrete runtime roots, Arbiter expands it into
 `arbiter-server` plus the selected plugin packages.
 
+Custom service plugins do not need to be known to the Docker deployment helper.
+They must be Python packages that expose an Arbiter service entry point:
+
+```toml title="pyproject.toml"
+[project.entry-points."arbiter.services"]
+my_plugin = "my_package:plugin"
+```
+
+For a plugin available from a package index, add an exact package pin:
+
+```bash
+./arbiter-docker bundle add-package my-arbiter-plugin==1.0.0
+```
+
+For a private wheel, copy it into the deployment wheelhouse and add it as a
+root:
+
+```bash
+./arbiter-docker bundle add-wheel ./dist/my_arbiter_plugin-1.0.0-py3-none-any.whl
+```
+
+For a local source checkout outside the Arbiter repository, build a wheel into
+the deployment wheelhouse and add that wheel as a root:
+
+```bash
+./arbiter-docker bundle add-source ../my-arbiter-plugin
+```
+
+After adding custom package roots, run `bundle prepare`. Published package pins
+may still need package-index access during prepare; wheel and source workflows
+keep the selected plugin artifact local, but any missing transitive dependency
+wheels still have to be resolved during prepare.
+
 The package named `arbiter` on PyPI is unrelated to this project. Use
 `arbiter-suite` or concrete packages such as `arbiter-server`, `arbiter-smtp`,
 and `arbiter-imap`.

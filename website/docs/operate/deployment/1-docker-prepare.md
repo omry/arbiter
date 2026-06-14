@@ -19,8 +19,10 @@ refuses to overwrite existing managed files.
 For an existing staging directory, refresh the generated deployment files with:
 
 ```bash
-arbiter-server deploy docker update --force
+arbiter-server deploy docker update
 ```
+
+Use `--force` to replace generated files that have local edits.
 
 <details>
 <summary>Files created by init</summary>
@@ -28,14 +30,16 @@ arbiter-server deploy docker update --force
 Most operators should use the `arbiter-docker` helper and Arbiter config
 commands instead of editing generated deployment files directly.
 
-- `arbiter-docker`: local helper script for this deployment.
 - `conf/`: deployment config directory.
-- `data/plugins/`: writable server runtime state for plugins, such as
-  idempotency records and temporary artifacts.
+- `arbiter-docker`: local helper script for this deployment.
+- `bundle-plugins.tsv`: generated plugin package and suite metadata for bundle
+  commands.
+- `docker.env`: Docker Compose/container wrapper settings.
 - `requirements.txt`: exact package pins or explicit wheel paths installed
   inside the container.
 - `wheels/`: prepared dependency wheelhouse.
-- `docker.env`: Docker Compose/container wrapper settings.
+- `data/plugins/`: writable server runtime state for plugins, such as
+  idempotency records and temporary artifacts.
 - `compose.yaml`: generated Docker Compose service definition.
 - `compose.override.yaml`: optional generated local Compose overrides.
 - `.arbiter-deploy.json`: generated file manifest.
@@ -46,27 +50,21 @@ Prepared Docker directories are staged deployments. They use staging-specific
 Docker names and ports so they can run next to an installed Arbiter. During
 install, the copied directory is rewritten to the installed identity.
 
-Artifact URLs use the public HTTP base URL that clients can reach. Arbiter
-computes `arbiter.server.public.base_url` from `arbiter.server.public.scheme`,
-`arbiter.server.public.host`, and `arbiter.server.public.port`; by default those
-resolve to `http://127.0.0.1:<server-port>`, not the internal bind address. The
-Docker wrapper passes public host and port values derived from
-`ARBITER_HOST_BIND` and `ARBITER_HOST_PORT` so staging port mappings work
-correctly. Set `ARBITER_PUBLIC_SCHEME` or `ARBITER_PUBLIC_BASE_URL` in
-`docker.env` when Arbiter is served through a different hostname, proxy, or TLS
-endpoint.
-
 ## Prepare the bundle
 
-The bundle is the selected Arbiter packages plus the prepared dependency
-wheelhouse. Prepare it before configuring accounts.
+The bundle is the container runtime install set: selected Arbiter packages plus
+a local wheelhouse with their exact dependencies. Prepare it before configuring
+accounts so package resolution, local wheel builds, and Docker compatibility
+fail early. Later container starts install from the wheelhouse, isolating the
+deployment from PyPI package changes and eliminating the Internet connection
+requirement for starting Arbiter.
 
 ### Select plugins
 
 Choose the Arbiter service plugins for this deployment:
 
 ```bash
-./arbiter-docker bundle list-plugins  # show supported plugins
+./arbiter-docker bundle list-plugins  # show addable plugins and descriptions
 ./arbiter-docker bundle add imap      # IMAP support: receive email
 ./arbiter-docker bundle add smtp      # SMTP support: send email
 ./arbiter-docker bundle remove smtp   # remove SMTP if it is not needed

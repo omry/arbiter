@@ -98,13 +98,9 @@ ARTIFACT_ROUTE_PREFIX = "/_arbiter/artifacts"
 DEPLOY_MANIFEST_FILE_NAME = ".arbiter-deploy.json"
 ARBITER_SERVER_PACKAGE = "arbiter-server"
 ARBITER_ALL_META_PACKAGE = "arbiter-suite"
-DOCKER_META_PACKAGE_GROUPS = {
-    ARBITER_ALL_META_PACKAGE: (
-        ARBITER_SERVER_PACKAGE,
-        "arbiter-smtp",
-        "arbiter-imap",
-    )
-}
+DOCKER_BUNDLE_PLUGINS_FILE_NAME = "bundle-plugins.tsv"
+DOCKER_BUNDLE_PLUGIN_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+DOCKER_BUNDLE_PACKAGE_NAME_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$")
 DOCKER_LOCAL_SOURCE_CONTAINER_ROOT = "/source/arbiter"
 DOCKER_WHEELS_CONTAINER_ROOT = "/wheels"
 
@@ -188,6 +184,13 @@ class DockerDeployArgs:
 @dataclass(frozen=True)
 class DockerDeployRequirements:
     requirements: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class DockerBundlePlugin:
+    name: str
+    package: str
+    description: str
 
 
 @dataclass(frozen=True)
@@ -1867,6 +1870,175 @@ def _deploy_template_text(name: str) -> str:
     )
 
 
+def _repo_root_path() -> Path | None:
+    starts = [Path.cwd(), Path(__file__).resolve()]
+    for start in starts:
+        for root in (start, *start.parents):
+            if (root / "server" / "pyproject.toml").is_file() and (
+                root / "meta" / "arbiter-suite" / "pyproject.toml"
+            ).is_file():
+                return root
+    return None
+
+
+def _pyproject_project_data(
+    pyproject: Path,
+) -> tuple[str | None, str | None, tuple[str, ...], tuple[str, ...]]:
+    section: str | None = None
+    in_dependencies = False
+    name: str | None = None
+    description: str | None = None
+    dependencies: list[str] = []
+    entry_point_names: list[str] = []
+
+    for raw_line in pyproject.read_text(encoding="utf-8").splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1]
+            in_dependencies = False
+            continue
+
+        if section == "project":
+            if in_dependencies:
+                if line == "]":
+                    in_dependencies = False
+                    continue
+                if match := re.fullmatch(r'"([^"]+)",?', line):
+                    dependencies.append(match.group(1))
+                continue
+            if line == "dependencies = [":
+                in_dependencies = True
+                continue
+            if match := re.fullmatch(r'name\s*=\s*"([^"]*)"', line):
+                name = match.group(1)
+            elif match := re.fullmatch(r'description\s*=\s*"([^"]*)"', line):
+                description = match.group(1)
+        elif section == f'project.entry-points."{SERVICE_PLUGIN_ENTRY_POINT_GROUP}"':
+            if match := re.fullmatch(r'([A-Za-z0-9_-]+)\s*=\s*"[^"]+"', line):
+                entry_point_names.append(match.group(1))
+    return name, description, tuple(dependencies), tuple(entry_point_names)
+
+
+def _repo_bundle_plugins() -> tuple[DockerBundlePlugin, ...]:
+    repo_root = _repo_root_path()
+    if repo_root is None:
+        return ()
+    plugins: list[DockerBundlePlugin] = []
+    for pyproject in sorted((repo_root / "plugins").glob("*/pyproject.toml")):
+        package, description, _, entry_point_names = _pyproject_project_data(pyproject)
+        if not package or not description:
+            continue
+        for name in entry_point_names:
+            plugin = _docker_bundle_plugin(name, package, description)
+            if plugin is not None:
+                plugins.append(plugin)
+    return tuple(plugins)
+
+
+def _docker_bundle_plugin(
+    name: str,
+    package: str,
+    description: str,
+) -> DockerBundlePlugin | None:
+    package = _normalized_distribution_name(package)
+    description = " ".join(description.split())
+    if (
+        not DOCKER_BUNDLE_PLUGIN_NAME_PATTERN.fullmatch(name)
+        or not DOCKER_BUNDLE_PACKAGE_NAME_PATTERN.fullmatch(package)
+        or not description
+    ):
+        return None
+    return DockerBundlePlugin(name=name, package=package, description=description)
+
+
+def _installed_bundle_plugins() -> tuple[DockerBundlePlugin, ...]:
+    plugins: list[DockerBundlePlugin] = []
+    for entry_point in entry_points().select(group=SERVICE_PLUGIN_ENTRY_POINT_GROUP):
+        distribution_metadata = getattr(
+            getattr(entry_point, "dist", None), "metadata", None
+        )
+        if distribution_metadata is None:
+            continue
+        package = distribution_metadata.get("Name")
+        description = distribution_metadata.get("Summary")
+        if not isinstance(package, str) or not isinstance(description, str):
+            continue
+        plugin = _docker_bundle_plugin(entry_point.name, package, description)
+        if plugin is not None:
+            plugins.append(plugin)
+    return tuple(sorted(plugins, key=lambda plugin: plugin.name))
+
+
+def _docker_bundle_plugins() -> tuple[DockerBundlePlugin, ...]:
+    return _repo_bundle_plugins() or _installed_bundle_plugins()
+
+
+def _docker_bundle_plugins_text() -> str:
+    suite_packages = set(_suite_dependency_package_names())
+    return "# plugin\tpackage\tsuite\tdescription\n" + "".join(
+        f"{plugin.name}\t{plugin.package}\t"
+        f"{'suite' if plugin.package in suite_packages else ''}\t"
+        f"{plugin.description}\n"
+        for plugin in _docker_bundle_plugins()
+    )
+
+
+def _requirement_distribution_name(requirement: str) -> str | None:
+    match = re.match(r"\s*([A-Za-z0-9][A-Za-z0-9_.-]*)", requirement)
+    if match is None:
+        return None
+    return _normalized_distribution_name(match.group(1))
+
+
+def _project_dependencies_from_pyproject(pyproject: Path) -> tuple[str, ...]:
+    _, _, dependencies, _ = _pyproject_project_data(pyproject)
+    return dependencies
+
+
+def _suite_pyproject_path() -> Path | None:
+    repo_root = _repo_root_path()
+    if repo_root is None:
+        return None
+    return repo_root / "meta" / "arbiter-suite" / "pyproject.toml"
+
+
+def _suite_dependency_package_names() -> tuple[str, ...]:
+    pyproject = _suite_pyproject_path()
+    if pyproject is not None:
+        dependencies = _project_dependencies_from_pyproject(pyproject)
+    else:
+        try:
+            dependencies = tuple(distribution(ARBITER_ALL_META_PACKAGE).requires or ())
+        except PackageNotFoundError:
+            dependencies = ()
+    package_names = {
+        name
+        for dependency in dependencies
+        if (name := _requirement_distribution_name(dependency)) is not None
+    }
+    return tuple(sorted(package_names))
+
+
+def _docker_suite_plugins() -> tuple[DockerBundlePlugin, ...]:
+    suite_packages = set(_suite_dependency_package_names())
+    return tuple(
+        plugin
+        for plugin in _docker_bundle_plugins()
+        if plugin.package in suite_packages
+    )
+
+
+def _docker_meta_package_groups() -> dict[str, tuple[str, ...]]:
+    return {
+        ARBITER_ALL_META_PACKAGE: (
+            ARBITER_SERVER_PACKAGE,
+            *(plugin.package for plugin in _docker_suite_plugins()),
+        )
+    }
+
+
 def _entry_point_distribution_name(entry_point: Any) -> str | None:
     distribution = getattr(entry_point, "dist", None)
     metadata = getattr(distribution, "metadata", None)
@@ -1881,7 +2053,7 @@ def _entry_point_distribution_name(entry_point: Any) -> str | None:
 
 
 def _normalized_distribution_name(name: str) -> str:
-    return name.lower().replace("_", "-")
+    return re.sub(r"[-_.]+", "-", name.lower())
 
 
 def _distribution_direct_url_source_root(installed_distribution: Any) -> Path | None:
@@ -2146,21 +2318,22 @@ def _deploy_requirements_semantic_error(requirements: Sequence[str]) -> str | No
 
 
 def _expand_meta_deploy_requirements(requirements: Sequence[str]) -> tuple[str, ...]:
+    meta_package_groups = _docker_meta_package_groups()
     pins = {
-        name: version
+        _normalized_distribution_name(name): version
         for requirement in requirements
         if (parts := _pinned_requirement_parts(requirement)) is not None
         for name, version in (parts,)
     }
     expanded_meta_packages = {
         meta_package
-        for meta_package, package_names in DOCKER_META_PACKAGE_GROUPS.items()
+        for meta_package, package_names in meta_package_groups.items()
         if meta_package in pins and any(name in pins for name in package_names)
     }
     expanded_package_names = {
         package_name
         for meta_package in expanded_meta_packages
-        for package_name in DOCKER_META_PACKAGE_GROUPS[meta_package]
+        for package_name in meta_package_groups[meta_package]
     }
     if not expanded_meta_packages:
         return tuple(requirements)
@@ -2172,8 +2345,9 @@ def _expand_meta_deploy_requirements(requirements: Sequence[str]) -> tuple[str, 
             expanded_requirements.append(requirement)
             continue
         name, version = parts
+        name = _normalized_distribution_name(name)
         if name in expanded_meta_packages:
-            for package_name in DOCKER_META_PACKAGE_GROUPS[name]:
+            for package_name in meta_package_groups[name]:
                 expanded_requirements.append(
                     f"{package_name}=={pins.get(package_name, version)}"
                 )
@@ -2321,6 +2495,7 @@ def _deploy_managed_paths(deploy_dir: Path) -> dict[str, Path]:
         "docker_env": deploy_dir / "docker.env",
         "requirements": deploy_dir / "requirements.txt",
         "helper": deploy_dir / "arbiter-docker",
+        "bundle_plugins": deploy_dir / DOCKER_BUNDLE_PLUGINS_FILE_NAME,
     }
 
 
@@ -2489,6 +2664,7 @@ def _run_deploy_docker(argv: Sequence[str]) -> int:
     paths = _deploy_managed_paths(deploy_dir)
     compose_text = _deploy_template_text("compose.yaml")
     helper_text = _deploy_template_text("arbiter-docker")
+    bundle_plugins_text = _docker_bundle_plugins_text()
 
     if parsed.action == "init":
         manifest_path = _deploy_manifest_path(deploy_dir)
@@ -2497,6 +2673,7 @@ def _run_deploy_docker(argv: Sequence[str]) -> int:
             paths["docker_env"],
             paths["requirements"],
             paths["helper"],
+            paths["bundle_plugins"],
             manifest_path,
         ]
         existing = [path for path in init_paths if path.exists()]
@@ -2540,6 +2717,13 @@ def _run_deploy_docker(argv: Sequence[str]) -> int:
             executable=True,
             manifest_hashes=manifest_hashes,
         )
+        _write_manifest_owned_deploy_file(
+            path=paths["bundle_plugins"],
+            relative_path=DOCKER_BUNDLE_PLUGINS_FILE_NAME,
+            content=bundle_plugins_text,
+            executable=False,
+            manifest_hashes=manifest_hashes,
+        )
         _write_deploy_manifest(deploy_dir, file_hashes=manifest_hashes)
         (deploy_dir / "conf").mkdir(exist_ok=True)
         print("")
@@ -2572,6 +2756,14 @@ def _run_deploy_docker(argv: Sequence[str]) -> int:
                 relative_path="arbiter-docker",
                 content=helper_text,
                 executable=True,
+                manifest_hashes=manifest_hashes,
+                force=parsed.force,
+            ),
+            _update_manifest_owned_deploy_file(
+                path=paths["bundle_plugins"],
+                relative_path=DOCKER_BUNDLE_PLUGINS_FILE_NAME,
+                content=bundle_plugins_text,
+                executable=False,
                 manifest_hashes=manifest_hashes,
                 force=parsed.force,
             ),

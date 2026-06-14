@@ -59,8 +59,11 @@ Installed services are operated through systemd instead; see
 
 | Command | Purpose |
 | --- | --- |
-| `bundle list-plugins` | Show supported service plugins. |
+| `bundle list-plugins` | Show addable service plugins and descriptions. |
 | `bundle add NAME` | Add a service plugin or meta package to `requirements.txt`. |
+| `bundle add-package PACKAGE==VERSION` | Add an exact package pin for an external plugin. |
+| `bundle add-wheel PATH` | Copy a local wheel into the wheelhouse and add it as a root. |
+| `bundle add-source DIR` | Build a local package source directory into the wheelhouse and add it as a root. |
 | `bundle remove NAME` | Remove a service plugin or meta package from `requirements.txt`. |
 | `bundle list` | Show selected root requirements. |
 | `bundle list all` | Show prepared root and transitive wheelhouse packages. |
