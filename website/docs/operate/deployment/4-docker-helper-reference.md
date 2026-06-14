@@ -24,6 +24,7 @@ the helper.
 | `doctor` | Check generated files, env syntax, package requirements, and Docker Compose availability. |
 | `doctor --agent-user USER` | Also check common permission mistakes for an agent identity. |
 | `doctor --preinstall` | Check that the prepared directory is ready to promote. |
+| `config check [--live] [override...]` | Validate the running deployment config inside the container. |
 
 ## Install
 

@@ -904,10 +904,8 @@ def test_config_check_report_live_marks_failed_account_tests() -> None:
         "server: pass\n"
         "fake: fail\n"
         "result | plugin | account | policy | message\n"
-        "-------+--------+---------+--------+------------------------------------------------\n"
-        "pass   | fake   | primary | bot    | account/policy pair valid\n"
-        "fail   | fake   | primary | bot    | authentication failed "
-        "(stage=connect_auth_noop)"
+        "-------+--------+---------+--------+----------------------\n"
+        "fail   | fake   | primary | bot    | authentication failed"
     )
 
 
@@ -982,11 +980,9 @@ def test_config_check_report_live_decodes_byte_account_test_messages() -> None:
         "server: pass\n"
         "fake: fail\n"
         "result | plugin | account | policy | message\n"
-        "-------+--------+---------+--------+------------------------------------------------------------------------\n"
-        "pass   | fake   | primary | bot    | account/policy pair valid\n"
+        "-------+--------+---------+--------+----------------------------------------------\n"
         "fail   | fake   | primary | bot    | "
-        "[AUTHENTICATIONFAILED] Authentication failed. "
-        "(stage=connect_auth_noop)"
+        "[AUTHENTICATIONFAILED] Authentication failed."
     )
 
 
@@ -1063,8 +1059,7 @@ def test_config_check_report_live_decodes_byte_exception_args() -> None:
     assert "b'" not in report.summary
     assert (
         "fail   | fake   | primary | bot    | "
-        "535: 5.7.8 Error: authentication failed: (reason unavailable) "
-        "(stage=connect_auth_noop_idempotency)"
+        "535: 5.7.8 Error: authentication failed: (reason unavailable)"
     ) in report.summary
 
 
@@ -1154,10 +1149,8 @@ def test_config_check_components_live_forwards_account_progress() -> None:
     assert components[1].lines == (
         "fake: pass",
         "result | plugin | account | policy | message",
-        "-------+--------+---------+--------+----------------------------------------------------",
-        "pass   | fake   | primary | bot    | account/policy pair valid",
-        "pass   | fake   | primary | bot    | live account check passed "
-        "(stage=connect_auth_noop)",
+        "-------+--------+---------+--------+--------------------------",
+        "pass   | fake   | primary | bot    | live account check passed",
     )
     assert progress_calls == [("server", None), ("fake", None), ("fake", "primary")]
 
@@ -4208,6 +4201,78 @@ def test_cli_deploy_docker_generated_helper_test_calls_version_info(
     assert result.stderr == ""
 
 
+def test_cli_deploy_docker_generated_helper_config_check_execs_container(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    config_dir = deploy_dir / "conf"
+    (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
+    (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker_calls = tmp_path / "docker-calls"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env sh\n"
+        f'printf "%s\\n" "$*" >> "{docker_calls}"\n'
+        'if [ "$1" = info ]; then exit 0; fi\n'
+        'if [ "$1" = compose ]; then exit 0; fi\n'
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+
+    result = subprocess.run(
+        [
+            deploy_dir / "arbiter-docker",
+            "config",
+            "check",
+            "--live",
+            "arbiter.server.bind.port=9000",
+        ],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    docker_call_text = docker_calls.read_text(encoding="utf-8")
+    assert "info\n" in docker_call_text
+    assert (
+        f"compose --env-file {deploy_dir / 'docker.env'} "
+        f"-f {deploy_dir / 'compose.yaml'} exec -T arbiter sh -lc "
+    ) in docker_call_text
+    assert (
+        'arbiter-server" --config-dir /config --config-name '
+        '"$ARBITER_CONFIG_NAME" config check "$@"'
+    ) in docker_call_text
+    assert "arbiter-config-check --live arbiter.server.bind.port=9000\n" in (
+        docker_call_text
+    )
+    assert result.stdout == ""
+    assert result.stderr == ""
+
+
 def test_cli_deploy_docker_generated_helper_test_finds_checkout_skill_launcher(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -5642,6 +5707,7 @@ def test_cli_deploy_docker_generated_helper_install_dry_run_plans_promotion(
         result.stdout
     )
     assert "would run: systemctl restart arbiter.service\n" in result.stdout
+    assert "would run: /opt/arbiter/arbiter-docker config check\n" in result.stdout
 
 
 def test_cli_deploy_docker_generated_helper_install_replace_env_requires_replace_config(
@@ -5772,6 +5838,7 @@ def test_cli_deploy_docker_generated_helper_install_omits_missing_docker_unit(
     assert f"installed to: {install_dir}\n" in result.stdout
     assert f"systemd unit: {systemd_dir / 'arbiter.service'}\n" in result.stdout
     assert "service: arbiter.service enabled and restarted\n" in result.stdout
+    assert "\033[32m✔\033[0m Config check\n" in result.stdout
     assert result.stderr == ""
     installed_compose = (install_dir / "compose.yaml").read_text(encoding="utf-8")
     assert "arbiter.deployment_scope=installed" in installed_compose
@@ -5813,6 +5880,12 @@ def test_cli_deploy_docker_generated_helper_install_omits_missing_docker_unit(
         "-r /requirements.txt\n"
         f"compose --env-file {install_dir / 'docker.env'} "
         f"-f {install_dir / 'compose.yaml'} down --remove-orphans\n"
+        "info\n"
+        f"compose --env-file {install_dir / 'docker.env'} "
+        f"-f {install_dir / 'compose.yaml'} exec -T arbiter sh -lc "
+        'exec "$ARBITER_RUNTIME_VENV/bin/arbiter-server" --config-dir /config '
+        '--config-name "$ARBITER_CONFIG_NAME" config check "$@" '
+        "arbiter-config-check\n"
     )
     assert systemctl_calls.read_text(encoding="utf-8") == (
         "daemon-reload\n"

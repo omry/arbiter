@@ -35,6 +35,7 @@ from .policy import (
     IMAPFolderResolution,
     IMAPPolicyResolver,
     IMAPResolvedFolderPolicy,
+    folder_metadata_matches,
     validate_imap_policy,
 )
 from .runtime_policy import _IMAPRuntimePolicyMixin
@@ -1088,6 +1089,7 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
     ) -> list[str]:
         resolver = self._resolver(imap_config)
         folder_set = set(server_folders)
+        test_folders: set[str] = set()
         if imap_config.default_folder:
             if imap_config.default_folder not in folder_set:
                 raise ValueError(
@@ -1099,11 +1101,15 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
                     "default_folder is not accessible for IMAP account: "
                     f"{account_name}"
                 )
-        return [
-            folder_name
-            for folder_name in sorted(folder_set)
-            if resolver.resolve_folder(folder_name).access.allowed
-        ]
+            test_folders.add(imap_config.default_folder)
+
+        for folder_name in sorted(folder_set):
+            if not folder_metadata_matches(imap_config.folders, folder_name):
+                continue
+            if resolver.resolve_folder(folder_name).access.allowed:
+                test_folders.add(folder_name)
+
+        return sorted(test_folders)
 
     def _resolve_trash_destination(
         self,

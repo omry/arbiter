@@ -53,8 +53,13 @@ class SMTPSubmissionClient:
         code, message = response
         if code < 200 or code >= 400:
             raise smtplib.SMTPResponseException(
-                code, f"SMTP {action} failed: {message!r}"
+                code, f"SMTP {action} failed: {self._format_response_message(message)}"
             )
+
+    def _format_response_message(self, message: bytes | str) -> str:
+        if isinstance(message, bytes):
+            return message.decode("utf-8", errors="replace")
+        return message
 
     def _build_ssl_context(self) -> ssl.SSLContext:
         if self._config.verify_peer:

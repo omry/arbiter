@@ -876,24 +876,17 @@ def _live_account_test_result(
         )
     status = str(result.get("status", "failed"))
     if status == "ok":
-        stage = result.get("stage")
-        message = "live account check passed"
-        if stage:
-            message = f"{message} (stage={stage})"
         return ConfigCheckAccountResult(
             account=account_name,
             policy=policy,
             status="pass",
-            message=message,
+            message="live account check passed",
         )
     severity: Literal["warn", "fail"] = "warn" if status == "skipped" else "fail"
-    stage = result.get("stage")
     reason = result.get("message") or result.get("reason")
     if reason is None:
         reason = f"live account test {status}"
     reason = _format_live_check_message(reason)
-    if stage:
-        reason = f"{reason} (stage={stage})"
     return ConfigCheckAccountResult(
         account=account_name,
         policy=policy,
@@ -1008,7 +1001,7 @@ def _merge_config_check_component_reports(
 ) -> ConfigCheckComponentReport:
     return ConfigCheckComponentReport(
         name=base.name,
-        account_results=(*base.account_results, *extra.account_results),
+        account_results=extra.account_results,
         warnings=(*base.warnings, *extra.warnings),
         errors=(*base.errors, *extra.errors),
     )

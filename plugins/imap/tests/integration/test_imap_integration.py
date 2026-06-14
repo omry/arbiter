@@ -153,6 +153,8 @@ class _LocalIMAPServerRunner:
                 b"* CAPABILITY IMAP4rev1 UIDPLUS MOVE\r\n"
                 + f"{tag} OK CAPABILITY completed\r\n".encode()
             )
+        if command == "NOOP":
+            return f"{tag} OK NOOP completed\r\n".encode()
         if command in {"EXAMINE", "SELECT"}:
             mailbox = self._mailbox_name(rest)
             if mailbox not in self.selectable_mailboxes:
@@ -290,7 +292,7 @@ def test_imap_client_reads_and_searches_against_local_server(
     assert message.rfc822_message_id == "<message-42@example.com>"
 
     assert any("LOGIN user@example.com" in command for command in imap_server.commands)
-    assert any(command.endswith("EXAMINE INBOX") for command in imap_server.commands)
+    assert any(command.endswith('EXAMINE "INBOX"') for command in imap_server.commands)
     assert any(command.endswith("UID SEARCH ALL") for command in imap_server.commands)
     assert any(
         command.endswith('UID SEARCH TEXT "invoice"')
@@ -298,6 +300,20 @@ def test_imap_client_reads_and_searches_against_local_server(
     )
     assert any(
         command.endswith("UID FETCH 42 (RFC822)") for command in imap_server.commands
+    )
+
+
+def test_imap_client_connection_probe_selects_mailbox_with_spaces(
+    imap_server_factory: Callable[..., LocalIMAPServer],
+) -> None:
+    folder = "Archives._Misc.firestats.Various payments"
+    imap_server = imap_server_factory(selectable_mailboxes={folder})
+    client = _client(imap_server)
+
+    client.test_connection(folders=[folder])
+
+    assert any(
+        command.endswith(f'EXAMINE "{folder}"') for command in imap_server.commands
     )
 
 
@@ -311,9 +327,9 @@ def test_imap_client_mutations_against_local_server(
     client.mark_message_read(folder="INBOX", uid="42", read=False)
     client.delete_message(folder="INBOX", uid="42")
 
-    assert any(command.endswith("SELECT INBOX") for command in imap_server.commands)
+    assert any(command.endswith('SELECT "INBOX"') for command in imap_server.commands)
     assert any(
-        command.endswith("UID MOVE 42 Archive") for command in imap_server.commands
+        command.endswith('UID MOVE 42 "Archive"') for command in imap_server.commands
     )
     assert any(
         command.endswith(r"UID STORE 42 +FLAGS.SILENT (\Seen)")
@@ -339,10 +355,10 @@ def test_imap_client_falls_back_when_move_is_unsupported(
     client.move_message(source_folder="INBOX", uid="42", destination_folder="Archive")
 
     assert any(
-        command.endswith("UID MOVE 42 Archive") for command in imap_server.commands
+        command.endswith('UID MOVE 42 "Archive"') for command in imap_server.commands
     )
     assert any(
-        command.endswith("UID COPY 42 Archive") for command in imap_server.commands
+        command.endswith('UID COPY 42 "Archive"') for command in imap_server.commands
     )
     assert any(
         command.endswith(r"UID STORE 42 +FLAGS.SILENT (\Deleted)")
@@ -423,7 +439,10 @@ def test_imap_client_surfaces_folder_selection_failure(
 ) -> None:
     imap_server = imap_server_factory(selectable_mailboxes={"INBOX"})
 
-    with pytest.raises(IMAPOperationError, match="select folder Missing"):
+    with pytest.raises(
+        IMAPOperationError,
+        match="open folder for read-only access: Missing",
+    ):
         _client(imap_server).get_message(folder="Missing", uid="42")
 
 

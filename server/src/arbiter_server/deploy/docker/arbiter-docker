@@ -21,6 +21,8 @@ Commands:
                 Edit Python requirements installed inside the container
   edit-env      Edit the configured env file with $ARBITER_EDITOR, $EDITOR, or vi
   edit-docker   Edit docker.env with $ARBITER_EDITOR, $EDITOR, or vi
+  config check [--live] [override...]
+                Validate the running deployment config inside the container
   up            Start or update the Docker Compose service
   restart       Recreate the Docker Compose service
   test          Call version_info through the computed MCP URL
@@ -1550,6 +1552,44 @@ test_server_url() {
 
 test_server() {
   test_server_url "$(mcp_url_value)"
+}
+
+print_config_check_ok() {
+  printf ' '
+  doctor_prefix 32 "✔"
+  printf ' Config check\n'
+}
+
+config_check() {
+  compose exec -T arbiter sh -lc \
+    'exec "$ARBITER_RUNTIME_VENV/bin/arbiter-server" --config-dir /config --config-name "$ARBITER_CONFIG_NAME" config check "$@"' \
+    arbiter-config-check "$@"
+}
+
+config_command() {
+  local subcommand="${1:-}"
+  if (($#)); then
+    shift
+  fi
+
+  case "$subcommand" in
+    check)
+      config_check "$@"
+      ;;
+    "" | -h | --help | help)
+      cat <<'EOF'
+Usage: arbiter-docker config COMMAND
+
+Commands:
+  check [--live] [override...]
+      Validate the running deployment config inside the container.
+EOF
+      ;;
+    *)
+      printf 'error: unknown config command: %s\n' "$subcommand" >&2
+      return 2
+      ;;
+  esac
 }
 
 config_main_file() {
@@ -3663,6 +3703,36 @@ install_test_server() {
   test_server_url "$url"
 }
 
+install_config_check() {
+  local output_file
+  local timeout
+  local start_time
+
+  if [[ "${install_dry_run:-0}" -eq 1 ]]; then
+    print_command "$install_target_dir/arbiter-docker" config check
+    return 0
+  fi
+
+  output_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-install-config-check.XXXXXX")"
+  timeout="${ARBITER_INSTALL_CONFIG_CHECK_TIMEOUT:-60}"
+  start_time="$SECONDS"
+  while true; do
+    if "$install_target_dir/arbiter-docker" config check >"$output_file" 2>&1; then
+      rm -f "$output_file"
+      print_config_check_ok
+      return 0
+    fi
+    if ((SECONDS - start_time >= timeout)); then
+      cat "$output_file" >&2
+      rm -f "$output_file"
+      printf 'error: installed config check did not pass within %s seconds\n' "$timeout" >&2
+      printf '       inspect service logs with: %s logs\n' "$install_target_dir/arbiter-docker" >&2
+      return 1
+    fi
+    sleep 1
+  done
+}
+
 copy_existing_wheelhouse() {
   local source_wheels_dir="$1"
   local target_wheels_dir="$2"
@@ -4398,6 +4468,7 @@ install_deployment() {
     install_reset_failed_service_for_recreate
     install_compose_down_for_recreate
     run_install_command systemctl restart "${install_service}.service"
+    install_config_check
   fi
   if [[ "$install_start" -eq 1 ]]; then
     install_test_server
@@ -4434,6 +4505,9 @@ case "$command" in
   edit-docker)
     require_file "$compose_env_file"
     run_editor "$compose_env_file"
+    ;;
+  config)
+    config_command "$@"
     ;;
   up)
     compose up -d

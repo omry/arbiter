@@ -1,1 +1,0 @@
-Fixed Docker local-checkout deployments so `/source/arbiter/...` requirements are installed from a writable scratch copy, allowing read-only source mounts and avoiding stale `*.egg-info` metadata failures.

@@ -17,6 +17,7 @@ class FakeServer:
         self.sent_to: list[str] | None = None
         self.login_args: tuple[str, str] | None = None
         self.ehlo_calls = 0
+        self.ehlo_response: tuple[int, bytes] = (250, b"ok")
         self.refused_recipients: dict[str, tuple[int, bytes]] = {}
 
     def __enter__(self) -> "FakeServer":
@@ -27,7 +28,7 @@ class FakeServer:
 
     def ehlo(self) -> tuple[int, bytes]:
         self.ehlo_calls += 1
-        return 250, b"ok"
+        return self.ehlo_response
 
     def starttls(self, *, context: ssl.SSLContext) -> tuple[int, bytes]:
         self.starttls_context = context
@@ -144,6 +145,26 @@ def test_connection_probe_uses_noop_without_sending(monkeypatch) -> None:
     assert fake_server.ehlo_calls == 2
     assert fake_server.login_args == ("user", "secret")
     assert fake_server.sent_message is None
+
+
+def test_connection_probe_decodes_failed_smtp_response(monkeypatch) -> None:
+    fake_server = FakeServer()
+    fake_server.ehlo_response = (550, b"Mailbox doesn't exist")
+
+    def fake_smtp(host: str, port: int, timeout: float) -> FakeServer:
+        return fake_server
+
+    monkeypatch.setattr("arbiter_smtp.client.smtplib.SMTP", fake_smtp)
+
+    client = SMTPSubmissionClient(_smtp_config())
+
+    with pytest.raises(
+        smtplib.SMTPResponseException,
+        match="SMTP EHLO failed: Mailbox doesn't exist",
+    ) as exc_info:
+        client.test_connection()
+
+    assert "b'" not in str(exc_info.value)
 
 
 def test_send_uses_smtp_ssl_when_use_ssl_is_enabled(monkeypatch) -> None:

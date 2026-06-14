@@ -115,7 +115,11 @@ class IMAPClient:
         with self._session() as server:
             self._select_folder(server, source_folder, readonly=False)
             try:
-                status, data = server.uid("MOVE", uid, destination_folder)
+                status, data = server.uid(
+                    "MOVE",
+                    uid,
+                    self._quote_mailbox(destination_folder),
+                )
                 if self._move_status_supports_fallback(status, data):
                     self._copy_then_delete(server, uid, destination_folder)
                     return
@@ -183,7 +187,10 @@ class IMAPClient:
         with self._session() as server:
             date_time: Any = None
             status, data = server.append(
-                folder, f"({' '.join(flags)})", date_time, message_bytes
+                self._quote_mailbox(folder),
+                f"({' '.join(flags)})",
+                date_time,
+                message_bytes,
             )
             self._expect_ok(status, cast(list[Any], data), "append message")
 
@@ -230,8 +237,13 @@ class IMAPClient:
         *,
         readonly: bool,
     ) -> None:
-        status, data = server.select(folder, readonly=readonly)
-        self._expect_ok(status, data, f"select folder {folder}")
+        status, data = server.select(self._quote_mailbox(folder), readonly=readonly)
+        access_mode = "read-only" if readonly else "read-write"
+        self._expect_ok(
+            status,
+            data,
+            f"open folder for {access_mode} access: {folder}",
+        )
 
     def _search_uids(
         self,
@@ -318,7 +330,7 @@ class IMAPClient:
         uid: str,
         destination_folder: str,
     ) -> None:
-        status, data = server.uid("COPY", uid, destination_folder)
+        status, data = server.uid("COPY", uid, self._quote_mailbox(destination_folder))
         self._expect_ok(status, data, "copy message")
         self._mark_deleted(server, uid)
         self._expunge_uid(server, uid, "expunge moved message")
@@ -347,7 +359,25 @@ class IMAPClient:
 
     def _expect_ok(self, status: str, data: list[Any], action: str) -> None:
         if status.upper() != "OK":
-            raise IMAPOperationError(f"IMAP {action} failed: {status} {data!r}")
+            raise IMAPOperationError(
+                f"IMAP failed to {action}: {status} {self._format_response_data(data)}"
+            )
+
+    def _format_response_data(self, data: list[Any]) -> str:
+        return "[" + ", ".join(self._format_response_item(item) for item in data) + "]"
+
+    def _format_response_item(self, item: object) -> str:
+        if isinstance(item, bytes):
+            return item.decode("utf-8", errors="replace")
+        if isinstance(item, tuple):
+            return (
+                "("
+                + ", ".join(self._format_response_item(value) for value in item)
+                + ")"
+            )
+        if isinstance(item, list):
+            return self._format_response_data(item)
+        return str(item)
 
     def _format_flag_list(self, flags: Sequence[str]) -> str:
         return "(" + " ".join(flags) + ")"
@@ -399,6 +429,9 @@ class IMAPClient:
 
     def _quote_search_text(self, query: str) -> str:
         return '"' + query.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+    def _quote_mailbox(self, folder: str) -> str:
+        return '"' + folder.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
     def _addresses(self, message: EmailMessage, header_name: str) -> list[str]:
         values = message.get_all(header_name, [])

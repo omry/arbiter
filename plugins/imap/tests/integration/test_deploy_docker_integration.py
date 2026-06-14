@@ -333,7 +333,7 @@ def _assert_imap_deployment_operation(
     assert message["flags"] == ["SEEN"]
     assert "bot.followed_up" not in message["flags"]
     assert any("LOGIN user@example.com" in command for command in imap_server.commands)
-    assert any(command.endswith("EXAMINE INBOX") for command in imap_server.commands)
+    assert any(command.endswith('EXAMINE "INBOX"') for command in imap_server.commands)
     delete = _run_delete_message(repo_root=repo_root, mcp_url=mcp_url)
     assert delete.returncode == 1
     assert "delete_message is not allowed for account: primary" in delete.stderr

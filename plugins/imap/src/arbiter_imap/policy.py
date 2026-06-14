@@ -243,6 +243,16 @@ def resolve_folder_metadata(
     return resolved
 
 
+def folder_metadata_matches(
+    folder_metadata: Mapping[str, IMAPFolderConfig],
+    folder_name: str,
+) -> bool:
+    return any(
+        _match_metadata_pattern(pattern, folder_name) is not None
+        for pattern in folder_metadata
+    )
+
+
 def resolve_folder_access(
     policy: IMAPAccessPolicyConfig,
     folder_name: str,

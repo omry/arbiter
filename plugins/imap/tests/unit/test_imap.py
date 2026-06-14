@@ -7,7 +7,7 @@ from typing import Any, cast
 
 import pytest
 
-from arbiter_imap import IMAPRuntime, IMAPServicePlugin
+from arbiter_imap import IMAPClientProtocol, IMAPRuntime, IMAPServicePlugin
 from arbiter_imap.client import (
     FetchedIMAPMessage,
     IMAPAttachmentContent,
@@ -143,7 +143,7 @@ def test_list_messages_uses_ssl_login_and_parses_recent_messages(
     messages = client.list_messages(folder="INBOX", limit=2)
 
     assert fake_server.login_args == ("user", "secret")
-    assert fake_server.selected == [{"mailbox": "INBOX", "readonly": True}]
+    assert fake_server.selected == [{"mailbox": '"INBOX"', "readonly": True}]
     assert [message.uid for message in messages] == ["42", "41"]
     assert messages[0].subject == "Status update"
     assert messages[0].from_addr == "Sender <sender@example.com>"
@@ -206,10 +206,36 @@ def test_connection_probe_uses_noop_and_readonly_folder_select(
     assert fake_server.login_args == ("user", "secret")
     assert fake_server.noop_called is True
     assert fake_server.selected == [
-        {"mailbox": "Archive", "readonly": True},
-        {"mailbox": "INBOX", "readonly": True},
+        {"mailbox": '"Archive"', "readonly": True},
+        {"mailbox": '"INBOX"', "readonly": True},
     ]
     assert fake_server.logged_out is True
+
+
+def test_connection_probe_quotes_mailbox_names_with_spaces(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_server = FakeIMAPServer()
+
+    def fake_imap4_ssl(
+        host: str,
+        port: int,
+        *,
+        ssl_context: ssl.SSLContext,
+        timeout: float,
+    ) -> FakeIMAPServer:
+        return fake_server
+
+    monkeypatch.setattr("arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+
+    client = IMAPClient(IMAPConfig(username="user", password="secret"))
+
+    client.test_connection(folders=["Archive.Various payments", 'Quotes "inside"'])
+
+    assert fake_server.selected == [
+        {"mailbox": '"Archive.Various payments"', "readonly": True},
+        {"mailbox": '"Quotes \\"inside\\""', "readonly": True},
+    ]
 
 
 def test_runtime_tests_configured_folders_read_only() -> None:
@@ -286,10 +312,10 @@ def test_runtime_tests_configured_folders_read_only() -> None:
 
     clients: list[RecordingIMAPClient] = []
 
-    def client_factory(config: IMAPConfig) -> RecordingIMAPClient:
+    def client_factory(config: IMAPConfig) -> IMAPClientProtocol:
         client = RecordingIMAPClient()
         clients.append(client)
-        return client
+        return cast(IMAPClientProtocol, client)
 
     runtime = IMAPRuntime(
         accounts={
@@ -318,6 +344,116 @@ def test_runtime_tests_configured_folders_read_only() -> None:
     }
     assert clients[0].tested_folders == ["Archive", "INBOX"]
     assert progress_calls == ["primary"]
+
+
+def test_runtime_live_check_scopes_probe_to_metadata_patterns() -> None:
+    class RecordingIMAPClient:
+        def __init__(self) -> None:
+            self.tested_folders: list[str] | None = None
+
+        def test_connection(self, *, folders: Sequence[str]) -> None:
+            self.tested_folders = list(folders)
+
+        def list_folders(self) -> list[str]:
+            return [
+                "Archives.2026",
+                "Archives._Misc.firestats.Various payments",
+                "INBOX",
+            ]
+
+        def list_messages(self, *, folder: str, limit: int) -> list[FetchedIMAPMessage]:
+            raise AssertionError("list_messages should not be called")
+
+        def get_message(self, *, folder: str, uid: str) -> FetchedIMAPMessage:
+            raise AssertionError("get_message should not be called")
+
+        def get_attachment(
+            self,
+            *,
+            folder: str,
+            uid: str,
+            attachment_id: str,
+        ) -> IMAPAttachmentContent:
+            raise AssertionError("get_attachment should not be called")
+
+        def search_messages(
+            self,
+            *,
+            folder: str,
+            query: str,
+            limit: int,
+        ) -> list[FetchedIMAPMessage]:
+            raise AssertionError("search_messages should not be called")
+
+        def move_message(
+            self,
+            *,
+            source_folder: str,
+            uid: str,
+            destination_folder: str,
+        ) -> None:
+            raise AssertionError("move_message should not be called")
+
+        def mark_message_read(self, *, folder: str, uid: str, read: bool) -> None:
+            raise AssertionError("mark_message_read should not be called")
+
+        def get_message_flags(self, *, folder: str, uid: str) -> list[str]:
+            raise AssertionError("get_message_flags should not be called")
+
+        def update_message_flags(
+            self,
+            *,
+            folder: str,
+            uid: str,
+            add_flags: Sequence[str],
+            remove_flags: Sequence[str],
+        ) -> None:
+            raise AssertionError("update_message_flags should not be called")
+
+        def delete_message(self, *, folder: str, uid: str) -> None:
+            raise AssertionError("delete_message should not be called")
+
+        def append_message(
+            self,
+            *,
+            folder: str,
+            message_bytes: bytes,
+            flags: Sequence[str] = (),
+        ) -> None:
+            raise AssertionError("append_message should not be called")
+
+    clients: list[RecordingIMAPClient] = []
+
+    def client_factory(config: IMAPConfig) -> RecordingIMAPClient:
+        client = RecordingIMAPClient()
+        clients.append(client)
+        return client
+
+    runtime = IMAPRuntime(
+        accounts={
+            "primary": IMAPConfig(
+                policy="bot",
+                default_folder="INBOX",
+                folders={
+                    "Archives.{year}": IMAPFolderConfig(
+                        description="Archive for {year}"
+                    ),
+                },
+            )
+        },
+        policies={"bot": _allow_all_policy()},
+        imap_client_factory=client_factory,
+    )
+
+    assert runtime.test_accounts() == {
+        "primary": {
+            "status": "ok",
+            "stage": "connect_auth_noop_examine",
+            "checks": ["connect", "noop", "examine"],
+            "folders": ["Archives.2026", "INBOX"],
+        }
+    }
+    assert clients[0].tested_folders == ["Archives.2026", "INBOX"]
 
 
 def test_runtime_skips_folder_probe_when_no_folders_are_configured() -> None:
@@ -510,8 +646,8 @@ def test_move_falls_back_to_copy_delete_and_uid_expunge(
         destination_folder="Archive",
     )
 
-    assert fake_server.selected == [{"mailbox": "INBOX", "readonly": False}]
-    assert ("COPY", ("42", "Archive")) in fake_server.uid_calls
+    assert fake_server.selected == [{"mailbox": '"INBOX"', "readonly": False}]
+    assert ("COPY", ("42", '"Archive"')) in fake_server.uid_calls
     assert ("STORE", ("42", "+FLAGS.SILENT", r"(\Deleted)")) in fake_server.uid_calls
     assert ("EXPUNGE", ("42",)) in fake_server.uid_calls
 
@@ -542,8 +678,8 @@ def test_move_falls_back_when_server_returns_unsupported_status(
     )
 
     assert fake_server.uid_calls == [
-        ("MOVE", ("42", "Archive")),
-        ("COPY", ("42", "Archive")),
+        ("MOVE", ("42", '"Archive"')),
+        ("COPY", ("42", '"Archive"')),
         ("STORE", ("42", "+FLAGS.SILENT", r"(\Deleted)")),
         ("EXPUNGE", ("42",)),
     ]
@@ -568,14 +704,17 @@ def test_move_non_fallback_status_raises_without_copying(
 
     client = IMAPClient(IMAPConfig())
 
-    with pytest.raises(IMAPOperationError, match="move message"):
+    with pytest.raises(
+        IMAPOperationError, match="destination mailbox does not exist"
+    ) as exc_info:
         client.move_message(
             source_folder="INBOX",
             uid="42",
             destination_folder="Archive",
         )
 
-    assert fake_server.uid_calls == [("MOVE", ("42", "Archive"))]
+    assert "b'" not in str(exc_info.value)
+    assert fake_server.uid_calls == [("MOVE", ("42", '"Archive"'))]
 
 
 def test_move_bad_status_without_unsupported_marker_raises_without_copying(
@@ -604,7 +743,7 @@ def test_move_bad_status_without_unsupported_marker_raises_without_copying(
             destination_folder="Archive",
         )
 
-    assert fake_server.uid_calls == [("MOVE", ("42", "Archive"))]
+    assert fake_server.uid_calls == [("MOVE", ("42", '"Archive"'))]
 
 
 def test_delete_message_uses_uid_expunge(monkeypatch: pytest.MonkeyPatch) -> None:
