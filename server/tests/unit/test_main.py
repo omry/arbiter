@@ -9377,7 +9377,20 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
         "description": "Read and manage mail through configured IMAP accounts.",
         "version": IMAPServicePlugin.version,
         "account_count": 1,
-        "operation_count": 12,
+        "operations": [
+            "append_message",
+            "delete_message",
+            "get_attachment",
+            "get_message",
+            "get_message_flags",
+            "list_folders",
+            "list_messages",
+            "mark_message_read",
+            "move_message",
+            "search_folders",
+            "search_messages",
+            "update_message_flags",
+        ],
         "accounts": [
             {
                 "plugin": "imap",
@@ -9394,7 +9407,7 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
         "description": "Send email through configured SMTP accounts.",
         "version": SMTPServicePlugin.version,
         "account_count": 1,
-        "operation_count": 1,
+        "operations": ["send_email"],
     }
     smtp_account_info = cast(
         dict[str, Any],

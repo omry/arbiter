@@ -85,7 +85,7 @@ def test_client_info_summarizes_server_plugins_and_accounts(
                                 "accounts."
                             ),
                             "account_count": 1,
-                            "operation_count": 6,
+                            "operations": ["get_message", "list_messages"],
                             "accounts": [
                                 {
                                     "plugin": "imap",
@@ -116,8 +116,9 @@ def test_client_info_summarizes_server_plugins_and_accounts(
         '{"deployment_scope": "staged", "kind": "overview", "plugins": '
         '[{"account_count": 1, "accounts": [{"description": "", "guidance": "", '
         '"name": "bot", "plugin": "imap"}], "description": "Read and manage mail '
-        'through configured IMAP accounts.", "id": "imap", "operation_count": 6, '
-        '"version": "0.9.0"}], "server_url": "http://localhost:18025/mcp"}\n'
+        'through configured IMAP accounts.", "id": "imap", "operations": '
+        '["get_message", "list_messages"], "version": "0.9.0"}], '
+        '"server_url": "http://localhost:18025/mcp"}\n'
     )
     assert calls == [
         ("info", {"kind": "overview"}),

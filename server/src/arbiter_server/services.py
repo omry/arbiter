@@ -487,7 +487,7 @@ class OperationCatalog:
             "description": descriptor.description,
             "version": self._plugins[capability].version,
             "account_count": len(account_summaries),
-            "operation_count": len(operation_names),
+            "operations": operation_names,
         }
         if include_accounts:
             summary["accounts"] = self._info_account_summaries(capability)
