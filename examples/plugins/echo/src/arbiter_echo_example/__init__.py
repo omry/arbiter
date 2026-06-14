@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
@@ -32,25 +32,17 @@ ECHO_MESSAGE_DESCRIPTION = (
     "Return a policy-checked echo response for the selected account."
 )
 
-ECHO_MESSAGE_INPUT_SCHEMA: dict[str, object] = {
-    "type": "object",
-    "properties": {
-        "account": {
-            "type": "string",
-            "description": "Configured echo account name.",
-        },
-        "message": {
-            "type": "string",
-            "description": "Message to echo back.",
-        },
-        "uppercase": {
-            "type": "boolean",
-            "description": "Return the echoed message in uppercase.",
-        },
-    },
-    "required": ["account", "message"],
-    "additionalProperties": False,
-}
+
+@dataclass(frozen=True)
+class EchoMessageInput:
+    account: str = field(
+        metadata={"description": "Configured echo account name."},
+    )
+    message: str = field(metadata={"description": "Message to echo back."})
+    uppercase: bool = field(
+        default=False,
+        metadata={"description": "Return the echoed message in uppercase."},
+    )
 
 
 @dataclass(frozen=True)
@@ -222,7 +214,7 @@ class EchoServicePlugin:
             OperationDescriptor(
                 name="echo_message",
                 description=ECHO_MESSAGE_DESCRIPTION,
-                input_schema=ECHO_MESSAGE_INPUT_SCHEMA,
+                input_schema=EchoMessageInput,
             ),
         )
 

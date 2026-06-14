@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable, ItemsView, KeysView, Mapping, Sequence
-from dataclasses import dataclass, field
-from typing import Any, NoReturn, Protocol, TypeVar, cast
+from dataclasses import MISSING, Field, asdict, dataclass, field, fields, is_dataclass
+from types import UnionType
+from typing import Any, Protocol, TypeVar, Union, cast, get_args, get_origin
+from typing import get_type_hints
+
+from omegaconf import OmegaConf
+from omegaconf.errors import OmegaConfBaseException
 
 from .version import arbiter_server_version, compatibility_line, server_api_version
 
@@ -65,11 +70,14 @@ class CapabilityDescriptor:
     description: str
 
 
+OperationInputSchema = type[object]
+
+
 @dataclass(frozen=True)
 class OperationDescriptor:
     name: str
     description: str
-    input_schema: Mapping[str, object]
+    input_schema: OperationInputSchema
 
 
 @dataclass(frozen=True)
@@ -317,7 +325,7 @@ class OperationCatalog:
             "capability": capability,
             "name": descriptor.name,
             "description": descriptor.description,
-            "input_schema": dict(descriptor.input_schema),
+            "input_schema": operation_input_schema(descriptor.input_schema),
         }
 
     def info(
@@ -399,11 +407,10 @@ class OperationCatalog:
     ) -> object:
         capability, operation = parse_operation_id(operation_ref)
         descriptor = self._require_operation(capability, operation)
-        operation_arguments = dict(arguments or {})
-        _validate_operation_arguments(
+        operation_arguments = _validate_operation_arguments(
             operation_id(capability, operation),
             descriptor.input_schema,
-            operation_arguments,
+            dict(arguments or {}),
         )
         return self._plugins[capability].invoke_operation(
             operation,
@@ -418,11 +425,10 @@ class OperationCatalog:
     ) -> object:
         capability, operation = parse_operation_id(operation_ref)
         descriptor = self._require_operation(capability, operation)
-        operation_arguments = dict(arguments or {})
-        _validate_operation_arguments(
+        operation_arguments = _validate_operation_arguments(
             operation_id(capability, operation),
             descriptor.input_schema,
-            operation_arguments,
+            dict(arguments or {}),
         )
         plugin = self._plugins[capability]
         check_operation = getattr(plugin, "check_operation", None)
@@ -697,84 +703,148 @@ class OperationCatalog:
         return result
 
 
+def operation_input_schema(schema: OperationInputSchema) -> dict[str, object]:
+    if _is_dataclass_schema_type(schema):
+        return _dataclass_input_schema(schema)
+    raise TypeError(f"operation input schema must be a dataclass: {schema}")
+
+
+def _is_dataclass_schema_type(value: object) -> bool:
+    return isinstance(value, type) and is_dataclass(value)
+
+
+def _dataclass_input_schema(schema_type: type[object]) -> dict[str, object]:
+    type_hints = get_type_hints(schema_type)
+    properties: dict[str, object] = {}
+    required: list[str] = []
+    for schema_field in fields(cast(Any, schema_type)):
+        field_name = schema_field.name
+        field_schema = _field_input_schema(
+            type_hints.get(field_name, object),
+            schema_field,
+        )
+        properties[field_name] = field_schema
+        if _field_is_required(schema_field):
+            required.append(field_name)
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": required,
+        "additionalProperties": False,
+    }
+
+
+def _field_input_schema(
+    annotation: object,
+    schema_field: Field[object],
+) -> dict[str, object]:
+    field_schema = _type_input_schema(annotation)
+    description = schema_field.metadata.get("description")
+    if isinstance(description, str):
+        field_schema["description"] = description
+    for metadata_key in ("minimum", "maximum"):
+        metadata_value = schema_field.metadata.get(metadata_key)
+        if isinstance(metadata_value, int):
+            field_schema[metadata_key] = metadata_value
+    default_value = _field_default(schema_field)
+    if default_value is not MISSING and default_value is not None:
+        field_schema["default"] = default_value
+    return field_schema
+
+
+def _type_input_schema(annotation: object) -> dict[str, object]:
+    optional_type = _optional_inner_type(annotation)
+    if optional_type is not None:
+        return _type_input_schema(optional_type)
+
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+    if origin is list:
+        item_type = args[0] if args else object
+        return {
+            "type": "array",
+            "items": _type_input_schema(item_type),
+        }
+    if annotation is str:
+        return {"type": "string"}
+    if annotation is int:
+        return {"type": "integer"}
+    if annotation is bool:
+        return {"type": "boolean"}
+    raise TypeError(f"unsupported operation input field type: {annotation}")
+
+
+def _optional_inner_type(annotation: object) -> object | None:
+    origin = get_origin(annotation)
+    if origin not in (UnionType, Union):
+        return None
+    args = get_args(annotation)
+    non_none_args = tuple(arg for arg in args if arg is not type(None))
+    if len(non_none_args) == 1 and len(non_none_args) != len(args):
+        return non_none_args[0]
+    return None
+
+
+def _field_is_required(schema_field: Field[object]) -> bool:
+    return schema_field.default is MISSING and schema_field.default_factory is MISSING
+
+
+def _field_default(schema_field: Field[object]) -> object:
+    if schema_field.default is not MISSING:
+        return schema_field.default
+    if schema_field.default_factory is not MISSING:
+        return schema_field.default_factory()
+    return MISSING
+
+
 def _validate_operation_arguments(
     operation_ref: str,
-    schema: Mapping[str, object],
+    schema: OperationInputSchema,
     arguments: Mapping[str, Any],
-) -> None:
-    required = schema.get("required", [])
-    if isinstance(required, Sequence) and not isinstance(required, str):
-        missing = [
-            key for key in required if isinstance(key, str) and key not in arguments
-        ]
-        if missing:
-            raise ValueError(
-                f"{operation_ref} missing required argument(s): {', '.join(missing)}"
-            )
-
-    properties = schema.get("properties", {})
-    if not isinstance(properties, Mapping):
-        return
-
-    if schema.get("additionalProperties") is False:
-        unknown = sorted(str(key) for key in arguments if key not in properties)
-        if unknown:
-            raise ValueError(
-                f"{operation_ref} received unknown argument(s): {', '.join(unknown)}"
-            )
-
-    for name, value in arguments.items():
-        property_schema = properties.get(name)
-        if not isinstance(property_schema, Mapping):
-            continue
-        _validate_argument_value(operation_ref, str(name), property_schema, value)
+) -> dict[str, Any]:
+    if _is_dataclass_schema_type(schema):
+        return _validate_dataclass_operation_arguments(
+            operation_ref,
+            schema,
+            arguments,
+        )
+    raise TypeError(f"operation input schema must be a dataclass: {schema}")
 
 
-def _validate_argument_value(
+def _validate_dataclass_operation_arguments(
     operation_ref: str,
-    name: str,
-    schema: Mapping[str, object],
-    value: object,
-) -> None:
-    expected_type = schema.get("type")
-    if expected_type == "string":
-        if not isinstance(value, str):
-            _raise_argument_type_error(operation_ref, name, "string")
-        return
-    if expected_type == "integer":
-        if not isinstance(value, int) or isinstance(value, bool):
-            _raise_argument_type_error(operation_ref, name, "integer")
-        integer_value = cast(int, value)
-        minimum = schema.get("minimum")
-        maximum = schema.get("maximum")
-        if isinstance(minimum, int) and integer_value < minimum:
-            raise ValueError(f"{operation_ref} argument {name} must be >= {minimum}")
-        if isinstance(maximum, int) and integer_value > maximum:
-            raise ValueError(f"{operation_ref} argument {name} must be <= {maximum}")
-        return
-    if expected_type == "boolean":
-        if not isinstance(value, bool):
-            _raise_argument_type_error(operation_ref, name, "boolean")
-        return
-    if expected_type == "array":
-        if not isinstance(value, list):
-            _raise_argument_type_error(operation_ref, name, "array")
-        list_value = cast(list[object], value)
-        items = schema.get("items")
-        if isinstance(items, Mapping) and items.get("type") == "string":
-            for index, item in enumerate(list_value):
-                if not isinstance(item, str):
-                    raise ValueError(
-                        f"{operation_ref} argument {name}[{index}] must be string"
-                    )
+    schema_type: type[object],
+    arguments: Mapping[str, Any],
+) -> dict[str, Any]:
+    schema_fields = {
+        schema_field.name: schema_field
+        for schema_field in fields(cast(Any, schema_type))
+    }
+    missing = [
+        field_name
+        for field_name, schema_field in schema_fields.items()
+        if _field_is_required(schema_field) and field_name not in arguments
+    ]
+    if missing:
+        raise ValueError(
+            f"{operation_ref} missing required argument(s): {', '.join(missing)}"
+        )
 
+    unknown = sorted(str(key) for key in arguments if key not in schema_fields)
+    if unknown:
+        raise ValueError(
+            f"{operation_ref} received unknown argument(s): {', '.join(unknown)}"
+        )
 
-def _raise_argument_type_error(
-    operation_ref: str,
-    name: str,
-    expected_type: str,
-) -> NoReturn:
-    raise ValueError(f"{operation_ref} argument {name} must be {expected_type}")
+    try:
+        argument_values = {key: value for key, value in arguments.items()}
+        merged = OmegaConf.merge(OmegaConf.structured(schema_type), argument_values)
+        operation_input = OmegaConf.to_object(merged)
+    except OmegaConfBaseException as exc:
+        raise ValueError(f"{operation_ref} invalid argument(s): {exc}") from exc
+    if not is_dataclass(operation_input):
+        raise RuntimeError(f"{operation_ref} input schema did not produce a dataclass")
+    return asdict(operation_input)
 
 
 ServicePluginFactory = Callable[[], ServicePlugin]

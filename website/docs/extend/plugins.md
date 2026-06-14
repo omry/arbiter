@@ -25,7 +25,7 @@ A useful plugin usually has these pieces:
 - bootstrap templates for new accounts and policies
 - a runtime object that talks to the service
 - service access enforcement according to the configured policy
-- operation descriptions and input schemas
+- operation descriptions and dataclass input schemas
 - operation invocation code
 - optional config checks and account tests
 
@@ -169,21 +169,36 @@ def describe_capability(self, context: ServicePluginContext) -> CapabilityDescri
     )
 ```
 
-Each operation has a short name, a description, and a JSON Schema input schema:
+Each operation has a short name, a description, and a dataclass input schema.
+The dataclass encodes field types and defaults; field metadata supplies
+client-facing descriptions and numeric bounds. Arbiter derives the schema shown
+to clients and validates/coerces caller input with OmegaConf before invocation:
+
+Keep operation input schemas simple. Supported field types are `str`, `int`,
+`bool`, `list[...]`, and optional forms such as `str | None`. Use dataclass
+defaults or `default_factory` for default values. The supported field metadata
+keys are `description`, `minimum`, and `maximum`.
 
 ```python
+from dataclasses import dataclass, field
+
+
+@dataclass(frozen=True)
+class EchoMessageInput:
+    account: str = field(
+        metadata={"description": "Configured echo account name."},
+    )
+    message: str = field(metadata={"description": "Message to echo back."})
+    uppercase: bool = field(
+        default=False,
+        metadata={"description": "Return the echoed message in uppercase."},
+    )
+
+
 OperationDescriptor(
     name="echo_message",
     description="Return a policy-checked echo response for the selected account.",
-    input_schema={
-        "type": "object",
-        "properties": {
-            "account": {"type": "string"},
-            "message": {"type": "string"},
-        },
-        "required": ["account", "message"],
-        "additionalProperties": False,
-    },
+    input_schema=EchoMessageInput,
 )
 ```
 
@@ -205,9 +220,9 @@ details, credentials, or policy toggles as operation parameters.
 
 ## 5. Invoke Operations
 
-Before invocation, Arbiter validates arguments against the operation's input
-schema. The plugin then dispatches the operation to its runtime and enforces
-service-specific policy:
+Before invocation, Arbiter validates and coerces arguments against the
+operation's dataclass input schema. The plugin then dispatches the operation to
+its runtime and enforces service-specific policy:
 
 ```python
 def invoke_operation(
@@ -270,7 +285,7 @@ Before publishing or installing a plugin, confirm that:
 - `name`, `version`, and `server_api_version` are correct
 - config schemas register under the plugin's account and policy groups
 - bootstrap creates useful account and policy examples
-- operations have clear descriptions and strict input schemas
+- operations have clear descriptions and typed dataclass input schemas
 - policy is enforced in runtime behavior, not only in docs
 - config checks catch the mistakes operators are likely to make
 - tests exercise discovery, invocation, policy, and failure paths

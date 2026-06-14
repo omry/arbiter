@@ -10057,13 +10057,26 @@ def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
             },
         )
 
+    assert tools["run_op"](
+        id="imap:list_messages",
+        arguments={"account": "primary", "limit": "5"},
+    ) == {
+        "account": "primary",
+        "folder": "INBOX",
+        "messages": [],
+    }
+    assert list_messages_calls[-1] == {
+        "account": "primary",
+        "folder": None,
+        "limit": 5,
+    }
     with pytest.raises(
         ValueError,
-        match="imap:list_messages argument limit must be integer",
+        match="imap:list_messages invalid argument",
     ):
         tools["run_op"](
             id="imap:list_messages",
-            arguments={"account": "primary", "limit": "5"},
+            arguments={"account": "primary", "limit": "many"},
         )
 
 

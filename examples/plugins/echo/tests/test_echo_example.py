@@ -87,6 +87,7 @@ def test_echo_plugin_describes_and_invokes_operation() -> None:
             "uppercase": {
                 "type": "boolean",
                 "description": "Return the echoed message in uppercase.",
+                "default": False,
             },
         },
         "required": ["account", "message"],

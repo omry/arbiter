@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from email import policy as email_policy
 from email.message import EmailMessage
@@ -104,48 +104,36 @@ SEND_EMAIL_DESCRIPTION = (
     "one of text_body or html_body."
 )
 
-SEND_EMAIL_INPUT_SCHEMA: dict[str, object] = {
-    "type": "object",
-    "properties": {
-        "account": {
-            "type": "string",
-            "description": "Configured SMTP account name.",
-        },
-        "to": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "Primary recipient email addresses.",
-        },
-        "subject": {
-            "type": "string",
-            "description": "Email subject line.",
-        },
-        "text_body": {
-            "type": "string",
-            "description": "Plain text body.",
-        },
-        "html_body": {
-            "type": "string",
-            "description": "HTML body.",
-        },
-        "cc": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "CC recipient email addresses.",
-        },
-        "bcc": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "BCC recipient email addresses.",
-        },
-        "idempotency_key": {
-            "type": "string",
-            "description": "Optional caller-supplied key for retry-safe dedupe.",
-        },
-    },
-    "required": ["account", "to", "subject"],
-    "additionalProperties": False,
-}
+
+@dataclass(frozen=True)
+class SendEmailInput:
+    account: str = field(
+        metadata={"description": "Configured SMTP account name."},
+    )
+    to: list[str] = field(
+        metadata={"description": "Primary recipient email addresses."},
+    )
+    subject: str = field(metadata={"description": "Email subject line."})
+    text_body: str | None = field(
+        default=None,
+        metadata={"description": "Plain text body."},
+    )
+    html_body: str | None = field(
+        default=None,
+        metadata={"description": "HTML body."},
+    )
+    cc: list[str] | None = field(
+        default=None,
+        metadata={"description": "CC recipient email addresses."},
+    )
+    bcc: list[str] | None = field(
+        default=None,
+        metadata={"description": "BCC recipient email addresses."},
+    )
+    idempotency_key: str | None = field(
+        default=None,
+        metadata={"description": "Optional caller-supplied key for retry-safe dedupe."},
+    )
 
 
 class SMTPRuntime(_SMTPRuntimePolicyMixin):
@@ -1196,7 +1184,7 @@ class SMTPServicePlugin:
             OperationDescriptor(
                 name="send_email",
                 description=SEND_EMAIL_DESCRIPTION,
-                input_schema=SEND_EMAIL_INPUT_SCHEMA,
+                input_schema=SendEmailInput,
             ),
         )
 

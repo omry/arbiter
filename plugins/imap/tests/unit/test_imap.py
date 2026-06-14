@@ -7,8 +7,13 @@ from typing import Any, cast
 
 import pytest
 
-from arbiter_server.services import ConfigCheckError
-from arbiter_imap import IMAPClientProtocol, IMAPRuntime, IMAPServicePlugin
+from arbiter_server.services import ConfigCheckError, operation_input_schema
+from arbiter_imap import (
+    IMAPClientProtocol,
+    IMAP_OPERATION_DESCRIPTORS,
+    IMAPRuntime,
+    IMAPServicePlugin,
+)
 from arbiter_imap.client import (
     FetchedIMAPMessage,
     IMAPAttachmentContent,
@@ -47,6 +52,62 @@ def _allow_all_policy() -> IMAPAccessPolicyConfig:
             rules=[IMAPFolderAccessRuleConfig(allow_glob="*")]
         )
     )
+
+
+def test_operation_schemas_describe_imap_inputs() -> None:
+    schemas = {
+        descriptor.name: operation_input_schema(descriptor.input_schema)
+        for descriptor in IMAP_OPERATION_DESCRIPTORS
+    }
+
+    assert list(schemas) == [
+        "list_folders",
+        "list_messages",
+        "get_message",
+        "get_attachment",
+        "search_messages",
+        "move_message",
+        "mark_message_read",
+        "get_message_flags",
+        "update_message_flags",
+        "append_message",
+        "search_folders",
+        "delete_message",
+    ]
+    assert {name: schema["required"] for name, schema in schemas.items()} == {
+        "list_folders": ["account"],
+        "list_messages": ["account"],
+        "get_message": ["account", "message_id"],
+        "get_attachment": ["account", "message_id", "attachment_id"],
+        "search_messages": ["account", "query"],
+        "move_message": ["account", "message_id", "destination_folder"],
+        "mark_message_read": ["account", "message_id"],
+        "get_message_flags": ["account", "message_id"],
+        "update_message_flags": ["account", "message_id"],
+        "append_message": ["account"],
+        "search_folders": ["account", "query"],
+        "delete_message": ["account", "message_id"],
+    }
+    assert all(schema["additionalProperties"] is False for schema in schemas.values())
+
+    def defaults(operation: str) -> dict[str, object]:
+        properties = cast(
+            dict[str, dict[str, object]], schemas[operation]["properties"]
+        )
+        return {
+            name: schema["default"]
+            for name, schema in properties.items()
+            if "default" in schema
+        }
+
+    assert defaults("list_folders") == {"recursive": False, "limit": 50}
+    assert defaults("list_messages") == {"limit": 20}
+    assert defaults("search_messages") == {"limit": 20}
+    assert defaults("mark_message_read") == {"read": True}
+    assert defaults("update_message_flags") == {"add_flags": [], "remove_flags": []}
+    assert defaults("append_message") == {"flags": ["SEEN"]}
+    assert defaults("search_folders") == {"recursive": True, "limit": 20}
+    assert defaults("delete_message") == {"permanent": False}
 
 
 def test_plugin_config_check_warns_when_configured_folders_are_denied() -> None:
