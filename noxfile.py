@@ -96,17 +96,6 @@ def install_project(session: nox.Session) -> None:
     session.install("-e", "plugins/imap")
 
 
-def iter_black_targets() -> list[str]:
-    paths: list[str] = []
-    for target in BLACK_TARGETS:
-        path = Path(target)
-        if path.is_dir():
-            paths.extend(str(file_path) for file_path in sorted(path.rglob("*.py")))
-        else:
-            paths.append(target)
-    return paths
-
-
 @nox.session
 def unit(session: nox.Session) -> None:
     install_project(session)
@@ -154,14 +143,13 @@ def deploy_test(session: nox.Session) -> None:
 @nox.session
 def lint(session: nox.Session) -> None:
     install_project(session)
-    for black_target in iter_black_targets():
-        session.run(
-            "black",
-            "--check",
-            "--target-version",
-            "py310",
-            "--workers",
-            "1",
-            black_target,
-        )
+    session.run(
+        "black",
+        "--check",
+        "--target-version",
+        "py310",
+        "--workers",
+        "1",
+        *BLACK_TARGETS,
+    )
     session.run("pyrefly", "check", "--config", "pyrefly.toml", *PYREFLY_TARGETS)

@@ -26,10 +26,10 @@ current user message also asks you to proceed.
 
 For user-facing changes, add towncrier news fragments for the affected
 published package unless the change is explicitly not release-note-worthy.
-Use `server/newsfragments/` for `arbiter-server`,
-`plugins/imap/newsfragments/` for `arbiter-imap`,
-`plugins/smtp/newsfragments/` for `arbiter-smtp`, and
-`meta/arbiter-suite/newsfragments/` for the `arbiter-suite` all-in-one meta
+Use `server/news/` for `arbiter-server`,
+`plugins/imap/news/` for `arbiter-imap`,
+`plugins/smtp/news/` for `arbiter-smtp`, and
+`meta/arbiter-suite/news/` for the `arbiter-suite` all-in-one meta
 package. `meta:all` means only the zero-code dependency bundle that installs
 all real packages; it does not mean publishing server or plugin packages. Use a
 GitHub issue or PR number when one exists, or the `+` orphan prefix for

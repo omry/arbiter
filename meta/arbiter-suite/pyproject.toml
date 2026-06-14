@@ -46,5 +46,5 @@ py-modules = []
 [tool.towncrier]
 name = "Arbiter"
 filename = "NEWS.md"
-directory = "newsfragments"
+directory = "news"
 issue_format = "#{issue}"

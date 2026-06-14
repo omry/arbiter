@@ -33,10 +33,10 @@ notes.
 Add fragments under the package that changed:
 
 ```text
-server/newsfragments/123.feature.md
-plugins/imap/newsfragments/123.bugfix.md
-plugins/smtp/newsfragments/+smtp-only-change.feature.md
-meta/arbiter-suite/newsfragments/+meta-package-change.feature.md
+server/news/123.feature.md
+plugins/imap/news/123.bugfix.md
+plugins/smtp/news/+smtp-only-change.feature.md
+meta/arbiter-suite/news/+meta-package-change.feature.md
 ```
 
 Use a GitHub issue or PR number when one exists. Use the `+` orphan prefix when
