@@ -7,6 +7,7 @@ from typing import Any, cast
 
 import pytest
 
+from arbiter_server.services import ConfigCheckError
 from arbiter_imap import IMAPClientProtocol, IMAPRuntime, IMAPServicePlugin
 from arbiter_imap.client import (
     FetchedIMAPMessage,
@@ -20,6 +21,9 @@ from arbiter_imap.config import (
     IMAPFolderAccessRuleConfig,
     IMAPConfig,
     IMAPFolderConfig,
+    IMAPFolderKind,
+    IMAPFolderOperationPolicyConfig,
+    IMAPOperationDecision,
     MailTlsMode,
 )
 
@@ -64,6 +68,113 @@ def test_plugin_config_check_warns_when_configured_folders_are_denied() -> None:
     assert [
         (warning.account, warning.policy, warning.message) for warning in warnings
     ] == [("primary", "bot", "IMAP account has no accessible configured folders")]
+
+
+def test_plugin_config_check_rejects_delete_without_accessible_trash() -> None:
+    policy = _allow_all_policy()
+    policy.operation_defaults.delete = IMAPOperationDecision.allow
+
+    with pytest.raises(ConfigCheckError) as exc_info:
+        IMAPServicePlugin().check_config(
+            accounts={
+                "primary": IMAPConfig(
+                    folders={"INBOX": IMAPFolderConfig(description="Inbox")}
+                )
+            },
+            policies={"bot": policy},
+        )
+
+    assert [
+        (issue.account, issue.policy, issue.message) for issue in exc_info.value.issues
+    ] == [
+        (
+            "primary",
+            "bot",
+            "delete_message requires an accessible TRASH folder for account: primary",
+        )
+    ]
+
+
+def test_plugin_config_check_rejects_default_delete_without_configured_trash() -> None:
+    policy = _allow_all_policy()
+    policy.operation_defaults.delete = IMAPOperationDecision.allow
+
+    with pytest.raises(ConfigCheckError) as exc_info:
+        IMAPServicePlugin().check_config(
+            accounts={"primary": IMAPConfig()},
+            policies={"bot": policy},
+        )
+
+    assert [
+        (issue.account, issue.policy, issue.message) for issue in exc_info.value.issues
+    ] == [
+        (
+            "primary",
+            "bot",
+            "delete_message requires an accessible TRASH folder for account: primary",
+        )
+    ]
+
+
+def test_plugin_config_check_rejects_pattern_delete_without_configured_trash() -> None:
+    policy = _allow_all_policy()
+    policy.folders["Archives.{[0-9][0-9]*:year}"] = IMAPFolderOperationPolicyConfig(
+        delete=IMAPOperationDecision.allow
+    )
+
+    with pytest.raises(ConfigCheckError) as exc_info:
+        IMAPServicePlugin().check_config(
+            accounts={
+                "primary": IMAPConfig(
+                    folders={"INBOX": IMAPFolderConfig(description="Inbox")}
+                )
+            },
+            policies={"bot": policy},
+        )
+
+    assert [
+        (issue.account, issue.policy, issue.message) for issue in exc_info.value.issues
+    ] == [
+        (
+            "primary",
+            "bot",
+            "delete_message requires an accessible TRASH folder for account: primary",
+        )
+    ]
+
+
+def test_plugin_config_check_rejects_delete_with_denied_trash() -> None:
+    policy = _allow_all_policy()
+    policy.operation_defaults.delete = IMAPOperationDecision.allow
+    policy.folder_access.rules.append(
+        IMAPFolderAccessRuleConfig(deny_kind=IMAPFolderKind.TRASH)
+    )
+
+    with pytest.raises(ConfigCheckError) as exc_info:
+        IMAPServicePlugin().check_config(
+            accounts={
+                "primary": IMAPConfig(
+                    folders={
+                        "INBOX": IMAPFolderConfig(description="Inbox"),
+                        "Trash": IMAPFolderConfig(
+                            description="Trash",
+                            kind=IMAPFolderKind.TRASH,
+                        ),
+                    }
+                )
+            },
+            policies={"bot": policy},
+        )
+
+    assert [
+        (issue.account, issue.policy, issue.message) for issue in exc_info.value.issues
+    ] == [
+        (
+            "primary",
+            "bot",
+            "delete_message requires an accessible TRASH folder for account: primary",
+        )
+    ]
 
 
 class FakeIMAPServer:
@@ -238,6 +349,79 @@ def test_connection_probe_quotes_mailbox_names_with_spaces(
     ]
 
 
+class LiveCheckRecordingIMAPClient:
+    def __init__(self, folders: Sequence[str]) -> None:
+        self._folders = list(folders)
+        self.tested_folders: list[str] | None = None
+
+    def test_connection(self, *, folders: Sequence[str]) -> None:
+        self.tested_folders = list(folders)
+
+    def list_folders(self) -> list[str]:
+        return list(self._folders)
+
+    def list_messages(self, *, folder: str, limit: int) -> list[FetchedIMAPMessage]:
+        raise AssertionError("list_messages should not be called")
+
+    def get_message(self, *, folder: str, uid: str) -> FetchedIMAPMessage:
+        raise AssertionError("get_message should not be called")
+
+    def get_attachment(
+        self,
+        *,
+        folder: str,
+        uid: str,
+        attachment_id: str,
+    ) -> IMAPAttachmentContent:
+        raise AssertionError("get_attachment should not be called")
+
+    def search_messages(
+        self,
+        *,
+        folder: str,
+        query: str,
+        limit: int,
+    ) -> list[FetchedIMAPMessage]:
+        raise AssertionError("search_messages should not be called")
+
+    def move_message(
+        self,
+        *,
+        source_folder: str,
+        uid: str,
+        destination_folder: str,
+    ) -> None:
+        raise AssertionError("move_message should not be called")
+
+    def mark_message_read(self, *, folder: str, uid: str, read: bool) -> None:
+        raise AssertionError("mark_message_read should not be called")
+
+    def get_message_flags(self, *, folder: str, uid: str) -> list[str]:
+        raise AssertionError("get_message_flags should not be called")
+
+    def update_message_flags(
+        self,
+        *,
+        folder: str,
+        uid: str,
+        add_flags: Sequence[str],
+        remove_flags: Sequence[str],
+    ) -> None:
+        raise AssertionError("update_message_flags should not be called")
+
+    def delete_message(self, *, folder: str, uid: str) -> None:
+        raise AssertionError("delete_message should not be called")
+
+    def append_message(
+        self,
+        *,
+        folder: str,
+        message_bytes: bytes,
+        flags: Sequence[str] = (r"\Seen",),
+    ) -> None:
+        raise AssertionError("append_message should not be called")
+
+
 def test_runtime_tests_configured_folders_read_only() -> None:
     class RecordingIMAPClient:
         def __init__(self) -> None:
@@ -344,6 +528,81 @@ def test_runtime_tests_configured_folders_read_only() -> None:
     }
     assert clients[0].tested_folders == ["Archive", "INBOX"]
     assert progress_calls == ["primary"]
+
+
+def test_runtime_live_check_requires_server_trash_when_delete_allowed() -> None:
+    policy = _allow_all_policy()
+    policy.operation_defaults.delete = IMAPOperationDecision.allow
+    clients: list[LiveCheckRecordingIMAPClient] = []
+
+    def client_factory(config: IMAPConfig) -> IMAPClientProtocol:
+        client = LiveCheckRecordingIMAPClient(["INBOX"])
+        clients.append(client)
+        return cast(IMAPClientProtocol, client)
+
+    runtime = IMAPRuntime(
+        accounts={
+            "primary": IMAPConfig(
+                policy="bot",
+                default_folder="INBOX",
+                folders={
+                    "INBOX": IMAPFolderConfig(),
+                    "Trash": IMAPFolderConfig(kind=IMAPFolderKind.TRASH),
+                },
+            )
+        },
+        policies={"bot": policy},
+        imap_client_factory=client_factory,
+    )
+
+    assert runtime.test_accounts() == {
+        "primary": {
+            "status": "failed",
+            "stage": "connect_auth_noop_examine",
+            "error_type": "ValueError",
+            "message": (
+                "delete_message requires an accessible TRASH folder for account: "
+                "primary"
+            ),
+        }
+    }
+    assert clients[0].tested_folders == ["INBOX"]
+
+
+def test_runtime_live_check_accepts_server_trash_when_delete_allowed() -> None:
+    policy = _allow_all_policy()
+    policy.operation_defaults.delete = IMAPOperationDecision.allow
+    clients: list[LiveCheckRecordingIMAPClient] = []
+
+    def client_factory(config: IMAPConfig) -> IMAPClientProtocol:
+        client = LiveCheckRecordingIMAPClient(["INBOX", "Trash"])
+        clients.append(client)
+        return cast(IMAPClientProtocol, client)
+
+    runtime = IMAPRuntime(
+        accounts={
+            "primary": IMAPConfig(
+                policy="bot",
+                default_folder="INBOX",
+                folders={
+                    "INBOX": IMAPFolderConfig(),
+                    "Trash": IMAPFolderConfig(kind=IMAPFolderKind.TRASH),
+                },
+            )
+        },
+        policies={"bot": policy},
+        imap_client_factory=client_factory,
+    )
+
+    assert runtime.test_accounts() == {
+        "primary": {
+            "status": "ok",
+            "stage": "connect_auth_noop_examine",
+            "checks": ["connect", "noop", "examine", "trash_destination"],
+            "folders": ["INBOX", "Trash"],
+        }
+    }
+    assert clients[0].tested_folders == ["INBOX", "Trash"]
 
 
 def test_runtime_live_check_scopes_probe_to_metadata_patterns() -> None:

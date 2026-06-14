@@ -111,6 +111,55 @@ def _format_exception_message(exc: BaseException) -> str:
     return str(exc)
 
 
+def _accessible_trash_folders(
+    resolver: IMAPPolicyResolver,
+    folder_names: Sequence[str],
+) -> list[IMAPFolderResolution]:
+    trash_folders: list[IMAPFolderResolution] = []
+    for folder_name in sorted(set(folder_names)):
+        folder = resolver.resolve_folder(folder_name)
+        if folder.metadata.kind is not IMAPFolderKind.TRASH:
+            continue
+        if folder.access.allowed:
+            trash_folders.append(folder)
+    return trash_folders
+
+
+def _delete_allowed_folders(
+    resolver: IMAPPolicyResolver,
+    folder_names: Sequence[str],
+) -> list[IMAPFolderResolution]:
+    delete_folders: list[IMAPFolderResolution] = []
+    for folder_name in sorted(set(folder_names)):
+        folder = resolver.resolve_folder(folder_name)
+        if not folder.access.allowed:
+            continue
+        if folder.policy.delete == IMAPOperationDecision.allow:
+            delete_folders.append(folder)
+    return delete_folders
+
+
+def _delete_may_require_trash(
+    resolver: IMAPPolicyResolver,
+    folder_names: Sequence[str],
+    policy: IMAPAccessPolicyConfig,
+) -> bool:
+    if policy.operation_defaults.delete == IMAPOperationDecision.allow:
+        return True
+    if any(
+        folder_policy.delete == IMAPOperationDecision.allow
+        for folder_policy in policy.folders.values()
+    ):
+        return True
+    return bool(_delete_allowed_folders(resolver, folder_names))
+
+
+def _trash_required_message(account: str) -> str:
+    return (
+        "delete_message requires an accessible TRASH folder for account: " f"{account}"
+    )
+
+
 def _object_schema(
     properties: Mapping[str, object],
     required: list[str],
@@ -472,6 +521,11 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
                 server_folders = client.list_folders()
                 folders = self._test_folders(account_name, imap_config, server_folders)
                 client.test_connection(folders=folders)
+                trash_checked = self._test_delete_trash_destination(
+                    account_name,
+                    imap_config,
+                    server_folders,
+                )
             except Exception as exc:
                 results[account_name] = {
                     "status": "failed",
@@ -491,7 +545,12 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
             results[account_name] = {
                 "status": "ok",
                 "stage": "connect_auth_noop_examine",
-                "checks": ["connect", "noop", "examine"],
+                "checks": [
+                    "connect",
+                    "noop",
+                    "examine",
+                    *(["trash_destination"] if trash_checked else []),
+                ],
                 "folders": folders,
             }
         return results
@@ -1111,24 +1170,32 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
 
         return sorted(test_folders)
 
+    def _test_delete_trash_destination(
+        self,
+        account: str,
+        imap_config: IMAPConfig,
+        server_folders: Sequence[str],
+    ) -> bool:
+        resolver = self._resolver(imap_config)
+        delete_folders = _delete_allowed_folders(resolver, server_folders)
+        if not delete_folders:
+            return False
+        if not _accessible_trash_folders(resolver, server_folders):
+            raise ValueError(_trash_required_message(account))
+        return True
+
     def _resolve_trash_destination(
         self,
         account: str,
         imap_config: IMAPConfig,
     ) -> IMAPFolderResolution:
         resolver = self._resolver(imap_config)
-        trash_folders: list[IMAPFolderResolution] = []
-        for folder_name in self._make_client(imap_config).list_folders():
-            folder = resolver.resolve_folder(folder_name)
-            if folder.metadata.kind is not IMAPFolderKind.TRASH:
-                continue
-            if folder.access.allowed:
-                trash_folders.append(folder)
+        trash_folders = _accessible_trash_folders(
+            resolver,
+            self._make_client(imap_config).list_folders(),
+        )
         if not trash_folders:
-            raise ValueError(
-                "delete_message requires an accessible TRASH folder for account: "
-                f"{account}"
-            )
+            raise ValueError(_trash_required_message(account))
         return sorted(trash_folders, key=lambda folder: folder.name)[0]
 
     def _message_summary(
@@ -1514,6 +1581,8 @@ class IMAPServicePlugin:
                 folder_metadata=imap_config.folders,
                 policy=imap_policy,
             )
+            source_folder_names: list[str] = []
+            configured_folder_names: list[str] = []
             if imap_config.default_folder:
                 try:
                     resolver.resolve_folder(imap_config.default_folder)
@@ -1529,6 +1598,7 @@ class IMAPServicePlugin:
                         )
                     )
                     continue
+                source_folder_names.append(imap_config.default_folder)
             accessible_configured_folders = 0
             for folder_name in imap_config.folders:
                 try:
@@ -1536,12 +1606,17 @@ class IMAPServicePlugin:
                 except Exception as exc:
                     errors.append(
                         ConfigCheckIssue(
-                            message=f"IMAP configured folder is invalid: {folder_name}: {exc}",
+                            message=(
+                                "IMAP configured folder is invalid: "
+                                f"{folder_name}: {exc}"
+                            ),
                             account=account_name,
                             policy=imap_config.policy,
                         )
                     )
                     continue
+                configured_folder_names.append(folder_name)
+                source_folder_names.append(folder_name)
                 if folder.access.allowed:
                     accessible_configured_folders += 1
             if imap_config.folders and accessible_configured_folders == 0:
@@ -1552,6 +1627,19 @@ class IMAPServicePlugin:
                         policy=imap_config.policy,
                     )
                 )
+            if _delete_may_require_trash(
+                resolver,
+                source_folder_names,
+                imap_policy,
+            ):
+                if not _accessible_trash_folders(resolver, configured_folder_names):
+                    errors.append(
+                        ConfigCheckIssue(
+                            message=_trash_required_message(account_name),
+                            account=account_name,
+                            policy=imap_config.policy,
+                        )
+                    )
         if errors:
             raise ConfigCheckError(errors)
         return tuple(warnings)
