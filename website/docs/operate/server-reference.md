@@ -2,8 +2,8 @@
 title: Server Reference
 ---
 
-`arbiter-server` is the operator-facing command for configuring and running the
-Arbiter MCP server.
+`arbiter-server` is the operator-facing command for configuring and running an
+Arbiter server.
 
 ## Global options
 
@@ -23,7 +23,7 @@ subcommand.
 
 ## serve
 
-Run the MCP server.
+Run the Arbiter server.
 
 ```bash
 arbiter-server serve [override...]

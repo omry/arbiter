@@ -4,15 +4,15 @@ title: Configuration Model
 
 Arbiter treats configuration as the deployment authority. Operators
 declare which services exist, which accounts are available, which policies
-apply, and where credentials are referenced. Agents consume the approved MCP
-surface that results from that configuration.
+apply, and where credentials are referenced. Agents consume the approved
+Arbiter operations that result from that configuration.
 
 ## Security note
 
-Agents should interact with Arbiter only through approved surfaces, such
-as MCP or the Arbiter CLI. They must not control the config directory or Agent
-Arbiter deployment, because changing those inputs lets them circumvent the
-policy they are supposed to be constrained by.
+Agents should interact with services through Arbiter, normally by using the
+`arbiter` client. They must not control the config directory or Arbiter
+deployment, because changing those inputs lets them circumvent the policy they
+are supposed to be constrained by.
 
 It is recommended to deny agents direct access to protected services and
 credentials, typically by sandboxing the agent. For the full trust model, see
@@ -47,7 +47,7 @@ accounts, and maintain the local env file.
 │   │   └── smtp
 │   │       ├── bot.yaml        # bot policy with full SMTP access
 │   │       └── personal.yaml   # restricted access to owner SMTP
-│   └── server.yaml             # MCP server settings
+│   └── server.yaml             # server settings
 ├── arbiter-server.yaml         # root server composition config
 └── .env                        # local environment-backed values
 ```
@@ -109,9 +109,9 @@ An account describes how a plugin reaches an upstream service. Account config
 usually includes connection settings, credential references, display metadata,
 and the policy name used for that account.
 
-Accounts are deployment-owned. Agents may select exposed accounts through the
-MCP surface, but they should not receive the service credentials behind those
-accounts.
+Accounts are deployment-owned. Agents may select exposed accounts through
+Arbiter operations, but they should not receive the service credentials behind
+those accounts.
 
 ## Policies
 

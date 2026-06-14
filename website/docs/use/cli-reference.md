@@ -2,12 +2,11 @@
 title: Arbiter CLI Reference
 ---
 
-`arbiter` is the client-facing command for agents and humans. It talks to an
-Arbiter MCP server and exposes discovery, operation execution, and raw MCP
-commands.
+`arbiter` is the client-facing command for agents and humans. It connects to an
+Arbiter server and exposes discovery and operation execution.
 
-Most users and agents should start with `info`. The raw `mcp` commands are
-available for inspection and debugging.
+Most users and agents should start with `info`. The lower-level protocol
+commands are available for inspection and debugging.
 
 Arbiter exposes a hierarchical discovery surface under `info`. Start with a
 server and account orientation summary, then drill into the plugin, account, or
@@ -31,8 +30,8 @@ arbiter [--config-dir DIR] [--config-name NAME] <command>
   `arbiter-client`.
 - `--version`: print the installed version.
 
-The client reads `arbiter.mcp_url` from its config. You can override it per
-command with a Hydra-style argument:
+The client reads the server URL from its config. The current config key is
+`arbiter.mcp_url`; you can override it per command with a Hydra-style argument:
 
 ```bash
 arbiter info arbiter.mcp_url=http://127.0.0.1:8000/mcp
@@ -137,15 +136,16 @@ Example:
 arbiter op run smtp:send_email --args '{"account":"bot","to":["ops@example.com"],"subject":"Hello","text_body":"Hi"}'
 ```
 
-## mcp
+## Low-level protocol commands
 
-Inspect and call raw MCP tools.
+Inspect and call the raw protocol tools exposed by the server. Agents should
+normally use `info` and `op run` instead.
 
 ```bash
 arbiter mcp [tools] [--json]
 arbiter mcp call <tool-name> --args '<json-object>'
 ```
 
-- `mcp` and `mcp tools`: list raw MCP tools.
+- `mcp` and `mcp tools`: list raw protocol tools.
 - `mcp tools --json`: print full tool metadata as JSON.
-- `mcp call`: call a raw MCP tool by name.
+- `mcp call`: call a raw protocol tool by name.

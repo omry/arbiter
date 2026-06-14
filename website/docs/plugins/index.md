@@ -40,7 +40,7 @@ Bootstrap creates a matching policy for each new account, but accounts refer to
 policies by name. Multiple accounts can share the same policy when that matches
 the deployment model.
 
-## From Plugin To Tool
+## From Plugin To Operation
 
 At startup, Arbiter discovers installed service plugins, registers their config
 schemas, composes the active deployment config, validates it, and then exposes
@@ -48,7 +48,7 @@ operations for configured accounts.
 
 Agents see the resulting capability and operation surface. They do not provide
 transport settings, credentials, folder access, recipient policy, or other
-deployment-owned controls in tool payloads.
+deployment-owned controls in operation arguments.
 
 For the file layout and activation model, see
 [Configuration Model](../operate/configuration-model.md). For plugin authoring,

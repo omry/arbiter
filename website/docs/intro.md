@@ -14,8 +14,8 @@ configured and approved.
 Arbiter is built as a small module system with one plugin per service. The SMTP
 and IMAP plugins can restrict who an agent may email, which messages it may read
 from configured folders, and other service-specific behavior. Agents get a
-narrow, discoverable surface through MCP or the `arbiter` CLI instead of raw
-service access.
+narrow, discoverable surface through the `arbiter` CLI instead of raw service
+access.
 
 ## The shape
 
@@ -25,9 +25,9 @@ flowchart LR
   subgraph sandbox["Sandbox (Recommended)"]
     direction LR
     agent[Agent]
-    access["Access Methods<br/><br/>MCP<br/>Arbiter CLI"]
+    access["Arbiter CLI"]
 
-    agent -- Uses --> access
+    agent -- Invokes --> access
   end
 
   subgraph arbiterRuntime[Arbiter]
@@ -66,9 +66,9 @@ flowchart LR
   imapServer[IMAP Server]
   smtpServer[SMTP Server]
 
-  access -- MCP --> arbiter
-  arbiter -- Dispatches Tool Call --> imapIncoming
-  arbiter -- Dispatches Tool Call --> smtpIncoming
+  access -- Operation request --> arbiter
+  arbiter -- Dispatches Operation --> imapIncoming
+  arbiter -- Dispatches Operation --> smtpIncoming
   imapForward --> imapServer
   smtpForward --> smtpServer
 
@@ -95,8 +95,8 @@ flowchart LR
   style smtpPlugin fill:#342b45,stroke:#8c7ab8,stroke-width:2px,color:#f7f3ff
 ```
 
-- The server server composes config, loads plugins, exposes MCP and CLI access
-  surfaces, and enforces the shared discovery flow.
+- The server composes config, loads plugins, exposes the Arbiter client
+  interface, and enforces the shared discovery flow.
 - Operators configure accounts, credentials, service activation, and policies.
 - Agents discover capabilities before selecting operations.
 - Service plugins own their schemas, bootstrap templates, policy checks, and

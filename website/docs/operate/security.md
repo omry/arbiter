@@ -2,9 +2,8 @@
 title: Security Model
 ---
 
-Arbiter's current trust model assumes the caller is trusted once connected
-to the MCP server. Caller authentication is not part of the first server
-contract yet.
+Arbiter's current trust model assumes the caller is trusted once connected to
+the server. Caller authentication is not part of the first server contract yet.
 
 ## Current boundary
 
@@ -16,8 +15,8 @@ The active boundary is deployment-owned configuration plus path control:
 - deployment-owned credentials and transport settings
 - control over alternative paths to the same service
 
-Operators own the deployment inputs. Agents consume the MCP tools produced by
-those inputs.
+Operators own the deployment inputs. Agents consume the Arbiter operations
+produced by those inputs.
 
 Callers may explicitly select any configured account exposed by the server.
 Account names and descriptions guide caller behavior, but they are not identity
@@ -31,12 +30,12 @@ use those credentials inside the server process after applying policy checks,
 then talk to the upstream service using its native protocol.
 
 The Arbiter operator is the root administrator for the deployment. Arbiter
-protects configured services from agents and other MCP callers; it does not
-protect account owners from the person or organization that controls the
-Arbiter host, process, configuration, plugin packages, logs, and startup
-environment. Do not ask users to provide private account credentials to an
-Arbiter deployment unless they trust that deployment's operator with those
-credentials or with equivalent delegated access.
+protects configured services from agents and other callers; it does not protect
+account owners from the person or organization that controls the Arbiter host,
+process, configuration, plugin packages, logs, and startup environment. Do not
+ask users to provide private account credentials to an Arbiter deployment unless
+they trust that deployment's operator with those credentials or with equivalent
+delegated access.
 
 Do not expose the same credentials to the agent through environment variables,
 workspace files, shell startup files, local credential stores, unrestricted API
@@ -62,9 +61,9 @@ injection can turn that capability into a policy bypass.
 
 ## Deployment note
 
-Binding to `127.0.0.1` protects against network access from other hosts, but any
-local process that can reach the MCP endpoint can use whatever the configured
-policy allows.
+Binding to `127.0.0.1` protects against network access from other hosts, but
+any local process that can reach the Arbiter server can use whatever the
+configured policy allows.
 
 For production, run Arbiter as a separate least-privileged user. Harden
 filesystem permissions so agents and other untrusted users cannot modify config,
@@ -81,13 +80,12 @@ root-equivalent.
 - Ensure agents do not inherit the upstream service credentials.
 - Remove local tools or API tokens that reach the protected service directly.
 - Run the server as a least-privileged deployment user.
-- Limit MCP endpoint reachability to trusted local clients.
+- Limit Arbiter server reachability to trusted local clients.
 
 ## Future work
 
 Client identification and authentication are planned design work. Until then,
-deploy Arbiter only where the MCP endpoint is reachable by trusted local
-clients.
+deploy Arbiter only where the server is reachable by trusted local clients.
 
 Hosted or shared Arbiter deployments need a separate secret-ownership design
 before they can safely serve users who do not trust the operator with their

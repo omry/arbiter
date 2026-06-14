@@ -25,12 +25,12 @@ const featuredPlugins = [
   {
     name: 'SMTP',
     body: 'Send mail through configured accounts and policy gates.',
-    to: '/docs/use/smtp',
+    to: '/docs/plugins/smtp',
   },
   {
     name: 'IMAP',
     body: 'Read and manage mailboxes through scoped operations.',
-    to: '/docs/use/imap',
+    to: '/docs/plugins/imap',
   },
 ];
 

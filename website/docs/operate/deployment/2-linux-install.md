@@ -49,7 +49,7 @@ Add `--replace-env` when the installed env file should also come from staging.
 
 ## Verify
 
-Test the installed MCP endpoint with the Arbiter client:
+Test the installed Arbiter server with the Arbiter client:
 
 ```bash
 arbiter arbiter.mcp_url=http://127.0.0.1:8025/mcp info --yaml plugins

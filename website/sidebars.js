@@ -37,10 +37,19 @@ const sidebars = {
       type: 'category',
       label: 'Plugins',
       collapsed: false,
-      link: {type: 'doc', id: 'use/plugins'},
+      link: {type: 'doc', id: 'plugins/index'},
       items: [
-        'use/smtp',
-        'use/imap',
+        {
+          type: 'category',
+          label: 'SMTP',
+          link: {type: 'doc', id: 'plugins/smtp/index'},
+          items: [
+            'plugins/smtp/configure',
+            'plugins/smtp/behavior',
+            'plugins/smtp/reference',
+          ],
+        },
+        'plugins/imap',
       ],
     },
     {

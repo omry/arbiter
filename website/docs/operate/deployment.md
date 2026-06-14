@@ -7,7 +7,7 @@ promoting that tested directory to a Linux system service.
 
 The staging directory is ordinary user-owned state: it contains the selected
 package bundle, generated Docker files, config, env placeholders, and a local
-helper script. You can start it locally, test the MCP endpoint, and iterate
+helper script. You can start it locally, test the Arbiter server, and iterate
 before anything is installed under `/opt`.
 
 When staging works, install copies that directory into place and rewrites it
@@ -22,7 +22,7 @@ from a staging identity to the installed service identity.
      plugin packages.
    - Bootstrap configuration for plugin accounts and policies.
    - Bring up the staged Docker instance.
-   - Test manually or with an agent against the staged MCP endpoint.
+   - Test manually or with an agent against the staged Arbiter server.
 2. [Linux Install](./deployment/2-linux-install.md): promote the checked
    staging directory to a system-installed service with `sudo`.
 

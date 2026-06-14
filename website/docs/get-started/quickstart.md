@@ -188,7 +188,7 @@ arbiter-server config check
 arbiter-server serve
 ```
 
-In another terminal, point the client at the MCP endpoint:
+In another terminal, point the Arbiter client at the local server:
 
 ```bash
 arbiter info arbiter.mcp_url=http://127.0.0.1:8000/mcp

@@ -165,19 +165,20 @@ to the config package.
 
 ## Start and test
 
-After adding config and env, start the staged service and smoke test the MCP
-endpoint:
+After adding config and env, start the staged service and smoke test the
+Arbiter server:
 
 ```bash
 ./arbiter-docker up
 ./arbiter-docker test
 ```
 
-`up` prints the MCP URL for this staged directory. `test` calls `version_info`
-through that URL and waits through transient startup connection failures.
+`up` prints the server URL for this staged directory. `test` calls
+`version_info` through that URL and waits through transient startup connection
+failures.
 
 You can also verify plugin discovery and plugin versions through the normal
-Arbiter client. Use the MCP URL printed by `up`:
+Arbiter client. Use the server URL printed by `up`:
 
 ```bash
 arbiter arbiter.mcp_url=http://127.0.0.1:18025/mcp info --yaml plugins
