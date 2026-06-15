@@ -326,7 +326,7 @@ jobs:
           python -m pip install
           "nox[pbs]>=2024.10,<2026.0"
           build
-          "agent-skill-installer>=0.2.0,<0.3.0"
+          "agent-skill-installer>=0.3.0,<0.4.0"
 
       - name: Run lint
         run: nox -s lint
