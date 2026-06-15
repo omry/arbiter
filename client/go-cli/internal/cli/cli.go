@@ -94,7 +94,7 @@ func Main(
 		}
 		return 0
 	case "--version":
-		fmt.Fprintf(stdout, "arbiter-go %s\n", Version)
+		fmt.Fprintf(stdout, "arbiter %s\n", Version)
 		return 0
 	case "bootstrap":
 		return runBootstrap(remaining[1:], options, stdout, stderr, lookupEnv, homeDir)
@@ -1546,7 +1546,7 @@ func newInitializedMCPClient(
 		return nil, err
 	}
 	client := newMCPClient(resolved.URL)
-	if err := client.Initialize(context.Background(), "arbiter-go", Version); err != nil {
+	if err := client.Initialize(context.Background(), "arbiter", Version); err != nil {
 		return nil, err
 	}
 	return client, nil
@@ -1865,8 +1865,6 @@ func printHelp(w io.Writer) {
 	fmt.Fprintln(w, "  artifact        safely read, process, or explicitly save artifacts")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Run 'arbiter --help --extended' for setup and advanced commands.")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "The Go client is experimental.")
 }
 
 func printExtendedHelp(w io.Writer) {
@@ -1885,8 +1883,6 @@ func printExtendedHelp(w io.Writer) {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "advanced:")
 	fmt.Fprintln(w, "  mcp              inspect or call raw MCP tools")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "The Go client is experimental.")
 }
 
 func helpArgsIncludeExtended(args []string) bool {

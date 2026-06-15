@@ -53,7 +53,7 @@ For a global Codex install, verify the copied native client:
 Example output:
 
 ```text
-arbiter-go <version>
+arbiter <version>
 ```
 
 The skill does not replace server configuration. Configure and run Arbiter as
@@ -78,7 +78,7 @@ arbiter --version
 Example output:
 
 ```text
-arbiter-go <version>
+arbiter <version>
 ```
 
 Installing `arbiter-client` directly installs only the client command. It does

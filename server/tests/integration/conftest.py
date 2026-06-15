@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import platform
+import shutil
 import socket
 import subprocess
 import sys
@@ -14,6 +16,9 @@ import pytest
 
 _MAX_START_ATTEMPTS = 3
 _MAX_LOG_CHARS = 20_000
+_GO_CLIENT_SMOKE_OUTDIR_ENV = "ARBITER_GO_CLIENT_SMOKE_OUTDIR"
+_GO_CLIENT_SMOKE_REUSE_ENV = "ARBITER_GO_CLIENT_SMOKE_REUSE"
+_BUILT_GO_CLIENT: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -228,12 +233,93 @@ def _arbiter_command() -> Path:
     command = os.environ.get("ARBITER_COMMAND")
     if command:
         return Path(command)
-    command_path = Path(sys.executable).with_name("arbiter-py")
+    command_path = Path(sys.executable).with_name("arbiter")
     if os.name == "nt" and not command_path.exists():
         command_path = command_path.with_suffix(".exe")
-    if not command_path.exists():
-        raise AssertionError(f"arbiter-py console script not found: {command_path}")
-    return command_path
+    if command_path.exists():
+        return command_path
+    return _build_current_go_client()
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def _current_go_target() -> tuple[str, str, str]:
+    goos_by_platform = {
+        "darwin": "darwin",
+        "linux": "linux",
+        "win32": "windows",
+    }
+    goarch_by_machine = {
+        "amd64": "amd64",
+        "x86_64": "amd64",
+        "aarch64": "arm64",
+        "arm64": "arm64",
+    }
+    try:
+        goos = goos_by_platform[sys.platform]
+        goarch = goarch_by_machine[platform.machine().lower()]
+    except KeyError:
+        pytest.skip(
+            f"unsupported Go client smoke platform: "
+            f"{sys.platform}/{platform.machine()}"
+        )
+    binary_name = "arbiter.exe" if goos == "windows" else "arbiter"
+    return goos, goarch, binary_name
+
+
+def _build_current_go_client() -> Path:
+    global _BUILT_GO_CLIENT
+    if _BUILT_GO_CLIENT is not None:
+        return _BUILT_GO_CLIENT
+    if shutil.which("go") is None:
+        pytest.skip("go is not installed")
+    goos, goarch, binary_name = _current_go_target()
+    configured_outdir = os.environ.get(_GO_CLIENT_SMOKE_OUTDIR_ENV)
+    if os.environ.get("CI") == "true" and not configured_outdir:
+        pytest.skip(f"{_GO_CLIENT_SMOKE_OUTDIR_ENV} is required in CI")
+    outdir = (
+        Path(configured_outdir)
+        if configured_outdir
+        else Path(os.environ.get("TMPDIR", "/tmp")) / "arbiter-go-client-smoke"
+    )
+    if not outdir.is_absolute():
+        outdir = _repo_root() / outdir
+    binary = outdir / f"{goos}-{goarch}" / binary_name
+    if os.environ.get(_GO_CLIENT_SMOKE_REUSE_ENV) == "1" and binary.exists():
+        return binary
+
+    env = os.environ.copy()
+    go_cache = outdir / ".gocache"
+    go_cache.mkdir(parents=True, exist_ok=True)
+    env.setdefault("GOCACHE", str(go_cache))
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(_repo_root() / "tools" / "build_go_client"),
+            "--root",
+            str(_repo_root()),
+            "--outdir",
+            str(outdir),
+            "--target",
+            f"{goos}-{goarch}",
+            "--skip-generate",
+        ],
+        check=False,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert result.returncode == 0, (
+        f"go client build failed with exit code {result.returncode}\n"
+        f"stdout:\n{result.stdout}\n"
+        f"stderr:\n{result.stderr}"
+    )
+    assert binary.exists()
+    _BUILT_GO_CLIENT = binary
+    return binary
 
 
 def _free_tcp_port() -> int:

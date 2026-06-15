@@ -17,7 +17,7 @@ func TestMainPrintsVersion(t *testing.T) {
 	if result.Code != 0 {
 		t.Fatalf("expected exit code 0, got %d", result.Code)
 	}
-	if result.Stdout != fmt.Sprintf("arbiter-go %s\n", cli.Version) {
+	if result.Stdout != fmt.Sprintf("arbiter %s\n", cli.Version) {
 		t.Fatalf("unexpected stdout: %q", result.Stdout)
 	}
 	if result.Stderr != "" {

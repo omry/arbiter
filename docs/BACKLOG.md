@@ -393,18 +393,6 @@ This file is the day-to-day queue for design and implementation gaps.
       schema-driven CLI generation from optional task-specific wrapper
       behavior.
 
-- [ ] `P2` Bring the Go CLI client to parity with the Python CLI.
-      The Go CLI is expected to become the canonical distributable Arbiter
-      client, while the Python CLI is transitional and repo-local. Before the
-      Python CLI can be removed or fully demoted, the Go CLI should cover the
-      working user-facing behavior that currently exists there.
-      Acceptance checks: compare command, flag, config, override, output, error,
-      and version-warning behavior between `client/python-cli` and
-      `client/go-cli`; close or explicitly defer each gap; ensure the native
-      `arbiter-client` wheel exercises the canonical CLI in release smoke
-      tests; update docs to prefer the Go CLI; and either remove the Python CLI
-      or document the remaining repo-local reason it exists.
-
 - [ ] `P2` Add plugin-authored workflow discovery.
       Service plugins should be able to describe domain-specific manual
       workflows that help agents choose and sequence existing atomic
@@ -457,7 +445,11 @@ This file is the day-to-day queue for design and implementation gaps.
 - [x] Document Arbiter client installation.
       The public docs now cover the common Agent Skill Installer path from PyPI
       and direct `arbiter-client` installation, including verification that the
-      installed client reports `arbiter-go`.
+      installed client reports `arbiter`.
+
+- [x] Remove the retired repo-local client.
+      The native Go `arbiter` client is the canonical client; the retired
+      package and its release-tool/test references have been removed.
 
 - [x] Split SMTP and IMAP into independently installable service-plugin
       packages. Future service packages should follow this plugin distribution

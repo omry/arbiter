@@ -18,7 +18,7 @@ publishes only the `arbiter-suite` package.
 
 The native client and skill package versions come from `arbiter-server`. They
 are generated wheel-only artifacts and do not have separate towncrier release
-notes. The transitional Python CLI client is repo-local and is not published.
+notes.
 
 This page describes publishing mechanics only.
 

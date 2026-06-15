@@ -1,5 +1,4 @@
 -e ./server
--e ./client/python-cli
 -e ./plugins/smtp
 -e ./plugins/imap
 

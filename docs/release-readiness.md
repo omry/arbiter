@@ -40,7 +40,7 @@ run, it is not done.
   Codex. ASI resolved the external `arbiter-client==0.9.1.dev2` companion
   wheel from PyPI, copied `arbiter_client/bin/arbiter` to
   `.codex/skills/arbiter/bin/arbiter`, wrote the Codex `AGENTS.md` hook, and
-  the copied binary reported `arbiter-go 0.9.1.dev2`.
+  the copied binary reported `arbiter 0.9.1.dev2`.
 
 ## Required gates
 
@@ -180,11 +180,10 @@ failure does not hide which artifact set failed. Keep `fail-fast: false` on the
 publish matrix.
 
 The native client publishing key is `client`, which publishes the
-`arbiter-client` platform wheel set. The transitional Python CLI client is not
-published. The skill publishing key is `skill`, which publishes the
-platform-neutral `arbiter-skill` package. The skill declares `arbiter-client`
-as an ASI companion wheel, so ASI should resolve the platform-specific native
-client through `arbiter-client` during skill install.
+`arbiter-client` platform wheel set. The skill publishing key is `skill`, which
+publishes the platform-neutral `arbiter-skill` package. The skill declares
+`arbiter-client` as an ASI companion wheel, so ASI should resolve the
+platform-specific native client through `arbiter-client` during skill install.
 
 Before the final initial release, publish and validate the intended skill
 package surface: publish `client`, publish `skill`, then verify ASI installs

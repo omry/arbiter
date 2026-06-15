@@ -41,7 +41,7 @@ The test starts a lightweight local IMAP server, generates a Docker deployment
 with `arbiter-server deploy docker`, runs generated helper preflight commands
 without a privileged install, starts the generated `arbiter-docker` helper,
 checks the server URL, verifies that the current-platform native `arbiter`
-client reports `arbiter-go`, and verifies an IMAP operation through that
+client reports `arbiter`, and verifies an IMAP operation through that
 client. Release validation still needs the platform-wheel matrix for every
 published `arbiter-client` target.
 

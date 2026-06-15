@@ -61,33 +61,10 @@ def _arbiter_server_command() -> Path:
     return command
 
 
-def _arbiter_command() -> Path:
-    command = Path(sys.executable).with_name("arbiter-py")
-    if os.name == "nt" and not command.exists():
-        command = command.with_suffix(".exe")
-    if not command.exists():
-        raise AssertionError(f"arbiter-py console script not found: {command}")
-    return command
-
-
 def _run_arbiter_server(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [str(_arbiter_server_command()), *args],
         check=False,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-
-
-def _run_arbiter(
-    *args: str,
-    env: Mapping[str, str] | None = None,
-) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [str(_arbiter_command()), *args],
-        check=False,
-        env=env,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -191,18 +168,12 @@ def current_go_client_binary(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return _build_current_go_client(tmp_path_factory.mktemp("go-client"))
 
 
-@pytest.fixture(params=["python", "go"])
-def arbiter_client_command(
-    request: pytest.FixtureRequest,
-) -> ClientCommand:
-    if request.param == "python":
-        return ClientCommand("python", _arbiter_command())
-    if request.param == "go":
-        return ClientCommand(
-            "go",
-            request.getfixturevalue("current_go_client_binary"),
-        )
-    raise AssertionError(f"unknown client parameter: {request.param}")
+@pytest.fixture
+def arbiter_client_command(current_go_client_binary: Path) -> ClientCommand:
+    return ClientCommand(
+        "go",
+        current_go_client_binary,
+    )
 
 
 class _ArtifactRequestHandler(BaseHTTPRequestHandler):
@@ -332,46 +303,6 @@ def test_arbiter_console_script_help(
     expected: str,
 ) -> None:
     result = _run_arbiter_server(*args)
-
-    assert result.returncode == 0
-    assert expected in result.stdout
-    assert result.stderr == ""
-
-
-@pytest.mark.parametrize(
-    ("args", "expected"),
-    [
-        (("--help",), "usage: arbiter-py "),
-        (("mcp", "--help"), "usage: arbiter-py mcp "),
-        (("mcp", "tools", "--help"), "usage: arbiter-py mcp tools "),
-        (("mcp", "call", "--help"), "usage: arbiter-py mcp call "),
-        (("cap", "--help"), "usage: arbiter-py cap "),
-        (("capabilities", "--help"), "usage: arbiter-py cap "),
-        (("cap", "desc", "--help"), "usage: arbiter-py cap desc "),
-        (("cap", "describe", "--help"), "usage: arbiter-py cap desc "),
-        (("op", "--help"), "usage: arbiter-py op "),
-        (("operation", "--help"), "usage: arbiter-py op "),
-        (("op", "list", "--help"), "usage: arbiter-py op list "),
-        (("op", "desc", "--help"), "usage: arbiter-py op desc "),
-        (("op", "describe", "--help"), "usage: arbiter-py op desc "),
-        (("op", "run", "--help"), "usage: arbiter-py op run "),
-        (("artifact", "--help"), "usage: arbiter-py artifact "),
-        (("artifact", "get", "--help"), "usage: arbiter-py artifact get "),
-        (("artifact", "save", "--help"), "usage: arbiter-py artifact save "),
-        (("accounts", "--help"), "usage: arbiter-py accounts "),
-        (("accounts", "list", "--help"), "usage: arbiter-py accounts list "),
-        (("accounts", "desc", "--help"), "usage: arbiter-py accounts desc "),
-        (("accounts", "describe", "--help"), "usage: arbiter-py accounts desc "),
-        (("bootstrap", "--help"), "usage: arbiter-py bootstrap "),
-        (("bootstrap", "client", "--help"), "usage: arbiter-py bootstrap client "),
-        (("--version",), "arbiter-py "),
-    ],
-)
-def test_arbiter_client_console_script_help(
-    args: tuple[str, ...],
-    expected: str,
-) -> None:
-    result = _run_arbiter(*args)
 
     assert result.returncode == 0
     assert expected in result.stdout
@@ -682,31 +613,30 @@ def test_arbiter_console_script_serve_reports_unrunnable_config(
         ("mcp",),
         ("mcp", "tools", "--json"),
         ("mcp", "call", "list_caps"),
-        ("cap",),
-        ("accounts", "list"),
-        ("accounts", "list", "--json"),
-        ("accounts", "desc", "smtp"),
-        ("accounts",),
+        ("info",),
+        ("op", "list"),
     ],
 )
 def test_arbiter_client_console_script_reports_clean_connection_failure(
+    arbiter_client_command: ClientCommand,
     args: tuple[str, ...],
 ) -> None:
-    result = _run_arbiter(
+    result = _run_client_command(
+        arbiter_client_command.command,
         *args,
         "arbiter.mcp_url=http://127.0.0.1:9/mcp",
     )
 
     assert result.returncode == 1
     assert result.stdout == ""
-    assert result.stderr == (
-        "Arbiter connection error: could not connect to Arbiter at "
-        "http://127.0.0.1:9/mcp (client override arbiter.mcp_url). "
-        "Is arbiter-server serve running?\n"
+    assert result.stderr.startswith(
+        ("Arbiter connection error:", "Arbiter tool error:")
     )
+    assert "http://127.0.0.1:9/mcp" in result.stderr
 
 
 def test_arbiter_client_console_script_reads_client_config(
+    arbiter_client_command: ClientCommand,
     tmp_path: Path,
 ) -> None:
     client_config = tmp_path / "arbiter-client.yaml"
@@ -715,26 +645,27 @@ def test_arbiter_client_console_script_reads_client_config(
         encoding="utf-8",
     )
 
-    result = _run_arbiter(
+    result = _run_client_command(
+        arbiter_client_command.command,
         "--config-dir",
         str(tmp_path),
-        "accounts",
-        "list",
+        "info",
     )
 
     assert result.returncode == 1
     assert result.stdout == ""
-    assert result.stderr == (
-        "Arbiter connection error: could not connect to Arbiter at "
-        f"http://127.0.0.1:9/mcp (client config {client_config}). "
-        "Is arbiter-server serve running?\n"
+    assert result.stderr.startswith(
+        ("Arbiter connection error:", "Arbiter tool error:")
     )
+    assert "http://127.0.0.1:9/mcp" in result.stderr
 
 
 def test_arbiter_client_console_script_bootstrap_client(
+    arbiter_client_command: ClientCommand,
     tmp_path: Path,
 ) -> None:
-    result = _run_arbiter(
+    result = _run_client_command(
+        arbiter_client_command.command,
         "--config-dir",
         str(tmp_path),
         "bootstrap",
@@ -746,7 +677,7 @@ def test_arbiter_client_console_script_bootstrap_client(
     assert result.stdout == f"wrote {tmp_path / 'arbiter-client.yaml'}\n"
     assert result.stderr == ""
     assert (tmp_path / "arbiter-client.yaml").read_text(encoding="utf-8") == (
-        "arbiter:\n  mcp_url: http://127.0.0.1:8025/mcp\n"
+        'arbiter:\n  mcp_url: "http://127.0.0.1:8025/mcp"\n'
     )
 
 

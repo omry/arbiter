@@ -22,7 +22,6 @@ from release_packages import (  # noqa: E402
 
 SUITE_PYPROJECT = Path("meta/arbiter-suite/pyproject.toml")
 SKILL_PYPROJECT = Path("skill/pyproject.toml")
-PYTHON_CLIENT_PYPROJECT = Path("client/python-cli/pyproject.toml")
 GO_CLIENT_VERSION = Path("client/go-cli/internal/cli/version_generated.go")
 GREEN = "\033[32m"
 RED = "\033[31m"
@@ -151,7 +150,6 @@ def _package_files(root: Path) -> tuple[Path, ...]:
         SUITE_PYPROJECT,
         Path("server/pyproject.toml"),
         SKILL_PYPROJECT,
-        PYTHON_CLIENT_PYPROJECT,
         *_plugin_package_files(root),
     )
 
@@ -371,20 +369,6 @@ def _update_go_client_version(text: str, target: PackageVersion) -> str:
     )
 
 
-def _update_python_client_version(
-    text: str,
-    target: PackageVersion,
-    *,
-    root: Path,
-) -> str:
-    return _update_pyproject(
-        text,
-        PYTHON_CLIENT_PYPROJECT,
-        root=root,
-        version_target=target,
-    )
-
-
 def _selected_dependency_targets(
     root: Path,
     target_by_path: dict[Path, PackageVersion],
@@ -480,12 +464,6 @@ def build_changes(
         after = _update_go_client_version(before, target)
         if after != before:
             changes.append(Change(path=GO_CLIENT_VERSION, before=before, after=after))
-        before = _read(root, PYTHON_CLIENT_PYPROJECT)
-        after = _update_python_client_version(before, target, root=root)
-        if after != before:
-            changes.append(
-                Change(path=PYTHON_CLIENT_PYPROJECT, before=before, after=after)
-            )
     return changes
 
 
@@ -537,16 +515,6 @@ def check_release_state(
                 f"{GO_CLIENT_VERSION} version is {go_client_version}, "
                 f"expected {target.text}"
             )
-        python_client_version = _extract_version(
-            _read(root, PYTHON_CLIENT_PYPROJECT),
-            PYTHON_CLIENT_PYPROJECT,
-        )
-        if python_client_version != target.text:
-            raise ValueError(
-                f"{PYTHON_CLIENT_PYPROJECT} version is {python_client_version}, "
-                f"expected {target.text}"
-            )
-
     if _uses_all_packages(root, packages):
         expected_api = f'SERVER_API_VERSION = "{target.line.text}"'
         for path in _plugin_runtime_files(root):
@@ -587,7 +555,7 @@ def _check_summary_lines(
     if server_selected:
         lines.append(
             "checked derived artifacts: arbiter-client dynamic version, "
-            "Go CLI embedded version, Python CLI version"
+            "native client embedded version"
         )
         selected_plugins = sorted(
             package.key

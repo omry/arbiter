@@ -28,6 +28,13 @@ func TestInfoPluginsCallsInfoTool(t *testing.T) {
 	if fake.url != "http://server.test/mcp" {
 		t.Fatalf("unexpected MCP URL: %q", fake.url)
 	}
+	if fake.initializedName != "arbiter" || fake.initializedVersion != Version {
+		t.Fatalf(
+			"unexpected client identity: %q %q",
+			fake.initializedName,
+			fake.initializedVersion,
+		)
+	}
 	if fake.calls[0].name != "info" {
 		t.Fatalf("unexpected tool: %q", fake.calls[0].name)
 	}
@@ -527,11 +534,13 @@ func runTestCLI(args ...string) cliResult {
 }
 
 type fakeClient struct {
-	url        string
-	tools      []mcp.Tool
-	callResult mcp.ToolCallResult
-	callErr    error
-	calls      []fakeCall
+	url                string
+	initializedName    string
+	initializedVersion string
+	tools              []mcp.Tool
+	callResult         mcp.ToolCallResult
+	callErr            error
+	calls              []fakeCall
 }
 
 type fakeCall struct {
@@ -553,7 +562,9 @@ func installFakeMCPClient(t *testing.T) *fakeClient {
 	return fake
 }
 
-func (f *fakeClient) Initialize(context.Context, string, string) error {
+func (f *fakeClient) Initialize(_ context.Context, name string, version string) error {
+	f.initializedName = name
+	f.initializedVersion = version
 	return nil
 }
 

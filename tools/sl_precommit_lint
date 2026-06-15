@@ -9,8 +9,6 @@ from pathlib import Path
 
 PYREFLY_TARGETS = [
     "client/hatch_build.py",
-    "client/python-cli/src",
-    "client/python-cli/tests",
     "server/src",
     "server/tests",
     "plugins/smtp/src",

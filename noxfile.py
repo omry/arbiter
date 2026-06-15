@@ -11,8 +11,6 @@ SERVER_PYPROJECT = nox.project.load_toml("server/pyproject.toml")
 
 BLACK_TARGETS = [
     "client/hatch_build.py",
-    "client/python-cli/src",
-    "client/python-cli/tests",
     "server/src",
     "server/tests",
     "plugins/smtp/src",
@@ -33,14 +31,12 @@ BLACK_TARGETS = [
     "tools/upgrade_release_line",
 ]
 TEST_TARGETS = [
-    "client/python-cli/tests",
     "server/tests",
     "plugins/smtp/tests",
     "plugins/imap/tests",
     "examples/plugins/echo/tests",
 ]
 UNIT_TEST_TARGETS = [
-    "client/python-cli/tests/unit",
     "server/tests/unit",
     "plugins/smtp/tests/unit",
     "plugins/imap/tests/unit",
@@ -59,8 +55,6 @@ INTEGRATION_TEST_TARGETS = [
 SUPPORTED_PYTHONS = nox.project.python_versions(SERVER_PYPROJECT)
 PYREFLY_TARGETS = [
     "client/hatch_build.py",
-    "client/python-cli/src",
-    "client/python-cli/tests",
     "server/src",
     "server/tests",
     "plugins/smtp/src",
@@ -90,7 +84,6 @@ def install_project(session: nox.Session) -> None:
         "pytest>=7.4,<9.0",
         "tomli>=2.0,<3.0",
     )
-    session.install("-e", "client/python-cli")
     session.install("-e", "server")
     session.install("-e", "plugins/smtp")
     session.install("-e", "plugins/imap")

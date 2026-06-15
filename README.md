@@ -20,8 +20,7 @@ Current implementation status:
 - IMAP list/get/search/move/mark-read/delete tools scoped to configured accounts and folders
 - `arbiter.account.<service>` and reusable `arbiter.policy.<service>` objects
   for per-service account policy
-- `arbiter-py` Python client CLI, native `arbiter` client CLI, and
-  `arbiter-server` server/operator CLI
+- native `arbiter` client CLI and `arbiter-server` server/operator CLI
 - Docker deployment tooling for staged and installed Arbiter services
 
 Known open gaps:
@@ -42,9 +41,14 @@ Create and use the repo-local virtualenv with:
 - `.venv/bin/python -m pip install -r requirements-dev.txt`
 
 The repository root is a workspace, not an Arbiter runtime package. The dev
-requirements file installs `server`, `client/python-cli`, `plugins/smtp`, and `plugins/imap`
-editably so the `arbiter-py` and `arbiter-server` commands come from this
+requirements file installs `server`, `plugins/smtp`, and `plugins/imap`
+editably so the `arbiter-server` command and service plugins come from this
 checkout.
+
+Install the native client separately when you need the repo-local `arbiter`
+command:
+
+- `.venv/bin/python -m pip install -e client`
 
 Run the test suite from the repo root with:
 
@@ -64,7 +68,7 @@ The Docusaurus website lives in [website/](website/):
 - `cd website && npm run start`
 - `cd website && npm run build`
 
-The experimental native Go CLI client lives in [client/go-cli/](client/go-cli/).
+The native client implementation lives in [client/go-cli/](client/go-cli/).
 Build all default release targets from the repo root with:
 
 - `tools/build_go_client --clean`
@@ -89,11 +93,6 @@ The native client can also be packaged as the `arbiter-client` PyPI project:
 This builds one platform-tagged wheel per native target. Each wheel installs the
 native `arbiter` executable directly as a wheel script; it does not contain a
 Python wrapper.
-
-The transitional Python CLI client lives in
-[client/python-cli/](client/python-cli/). It owns the repo-local `arbiter-py`
-command for development, but it is not part of the release publishing surface.
-The canonical distributable client is the native `arbiter-client` package.
 
 The user-facing documentation lives in [website/docs/](website/docs/). The
 root [docs/](docs/) directory is reserved for internal planning and future
@@ -178,9 +177,9 @@ validating a config. Once the server is running, use the client CLI against the
 MCP endpoint:
 
 ```bash
-arbiter-py mcp tools arbiter.mcp_url=http://127.0.0.1:8025/mcp
-arbiter-py info arbiter.mcp_url=http://127.0.0.1:8025/mcp
-arbiter-py info plugins arbiter.mcp_url=http://127.0.0.1:8025/mcp
+arbiter mcp tools arbiter.mcp_url=http://127.0.0.1:8025/mcp
+arbiter info arbiter.mcp_url=http://127.0.0.1:8025/mcp
+arbiter info plugins arbiter.mcp_url=http://127.0.0.1:8025/mcp
 ```
 
 The client can also read the endpoint from a small config file:
@@ -195,7 +194,7 @@ Override config values with Hydra-style `key=value` arguments after the
 command, or bootstrap the client config:
 
 ```bash
-arbiter-py bootstrap client arbiter.mcp_url=http://127.0.0.1:8025/mcp
+arbiter bootstrap client arbiter.mcp_url=http://127.0.0.1:8025/mcp
 ```
 
 IMAP operations use folder-scoped UIDs returned by `imap:list_messages` and

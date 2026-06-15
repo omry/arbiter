@@ -1,5 +1,4 @@
 search-path = [
-    "client/python-cli/src",
     "server/src",
     "plugins/smtp/src",
     "plugins/imap/src",
