@@ -109,13 +109,13 @@ metadata.
 Run the normal release checks:
 
 ```bash
-.venv/bin/python -m pytest server/tests plugins/smtp/tests plugins/imap/tests
+.venv/bin/python -m nox -s tests
 .venv/bin/python -m nox -s lint
 .venv/bin/python -m nox -s compat
 ```
 
-Run the Docker deploy smoke when deployment scaffolding, package installation,
-or generated helper scripts changed:
+Run the Docker deployment test before deploying, and when deployment
+scaffolding, package installation, or generated helper scripts changed:
 
 ```bash
 .venv/bin/python -m nox -s deploy-test

@@ -1972,9 +1972,14 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
     assert 'if [ -n "$${ARBITER_PUBLIC_BASE_URL:-}" ]; then' in compose_text
     assert 'python -m venv "$$runtime_venv"' in compose_text
     assert 'config check "$$@"' in compose_text
+    assert "ARBITER_CONTAINER_ACTION:-serve" in compose_text
+    assert "ARBITER_CONFIG_OVERRIDES_FILE" in compose_text
     assert (
-        "fatal configuration error; stopping container without Docker restart"
+        "configuration check failed; Arbiter will not start until the config passes"
         in compose_text
+    )
+    assert (
+        "run arbiter-docker config check from the deployment directory" in compose_text
     )
     assert (
         'exec "$$runtime_venv/bin/arbiter-server" --config-dir /config '
@@ -4333,7 +4338,76 @@ def test_cli_deploy_docker_generated_helper_test_calls_version_info(
     assert result.stderr == ""
 
 
-def test_cli_deploy_docker_generated_helper_config_check_execs_container(
+def test_cli_deploy_docker_generated_helper_config_check_uses_one_shot_container(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    config_dir = deploy_dir / "conf"
+    (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
+    (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker_calls = tmp_path / "docker-calls"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env sh\n"
+        f'printf "%s\\n" "$*" >> "{docker_calls}"\n'
+        'if [ "$1" = info ]; then exit 0; fi\n'
+        'if [ "$1" = compose ]; then exit 0; fi\n'
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+
+    result = subprocess.run(
+        [
+            deploy_dir / "arbiter-docker",
+            "config",
+            "check",
+            "arbiter.server.bind.port=9000",
+        ],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    docker_call_text = docker_calls.read_text(encoding="utf-8")
+    assert "info\n" in docker_call_text
+    assert (
+        f"compose --env-file {deploy_dir / 'docker.env'} "
+        f"-f {deploy_dir / 'compose.yaml'} run --rm --no-deps "
+        "-e ARBITER_CONTAINER_ACTION=config-check "
+        "-e ARBITER_CONFIG_OVERRIDES_FILE=/tmp/arbiter-config-overrides "
+        "-v "
+    ) in docker_call_text
+    assert "--network" not in docker_call_text
+    assert ":/tmp/arbiter-config-overrides:ro arbiter\n" in docker_call_text
+    assert result.stdout == ""
+    assert result.stderr == ""
+
+
+def test_cli_deploy_docker_generated_helper_live_config_check_execs_container(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -4567,7 +4641,7 @@ def test_cli_deploy_docker_generated_helper_up_reports_other_deployment_owner(
         "image=python:3.11-slim\n"
         "created=2026-06-03T06:15:38Z\n"
         "status=exited\n"
-        "restart=unless-stopped\n"
+        "restart=on-failure\n"
         "EOF\n"
         "  exit 0\n"
         "fi\n"
@@ -4604,6 +4678,68 @@ def test_cli_deploy_docker_generated_helper_up_reports_other_deployment_owner(
     assert "docker ps shows only running containers" in result.stderr
     assert "docker ps -a --filter name=^/arbiter-staging$" in result.stderr
     assert f"set ARBITER_CONTAINER_NAME in {deploy_dir / 'docker.env'}" in result.stderr
+
+
+def test_cli_deploy_docker_generated_helper_up_fails_before_compose_up_on_config_error(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    config_dir = deploy_dir / "conf"
+    (config_dir / "arbiter-server.yaml").write_text("bad config\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
+    (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker_calls = tmp_path / "docker-calls"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env sh\n"
+        f'printf "%s\\n" "$*" >> "{docker_calls}"\n'
+        'if [ "$1" = info ]; then exit 0; fi\n'
+        'if [ "$1" = network ] && [ "$2" = ls ]; then exit 0; fi\n'
+        'if [ "$1" = inspect ]; then exit 1; fi\n'
+        'if [ "$1" = compose ] && [ "$6" = run ]; then\n'
+        "  printf 'config composition failed\\n' >&2\n"
+        "  exit 78\n"
+        "fi\n"
+        'if [ "$1" = compose ]; then exit 0; fi\n'
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "up"],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 78
+    assert "config composition failed\n" in result.stderr
+    docker_call_text = docker_calls.read_text(encoding="utf-8")
+    assert " run --rm --no-deps " in docker_call_text
+    assert " up -d\n" not in docker_call_text
+    assert result.stdout == ""
 
 
 def test_cli_deploy_docker_generated_helper_info_reports_other_deployment_owner(
@@ -4643,7 +4779,7 @@ def test_cli_deploy_docker_generated_helper_info_reports_other_deployment_owner(
         "image=python:3.11-slim\n"
         "created=2026-06-03T06:15:38Z\n"
         "status=exited\n"
-        "restart=unless-stopped\n"
+        "restart=on-failure\n"
         "EOF\n"
         "  exit 0\n"
         "fi\n"
@@ -5919,10 +6055,27 @@ def test_cli_deploy_docker_generated_helper_install_dry_run_plans_promotion(
     assert "would write systemd unit: /etc/systemd/system/arbiter.service\n" in (
         result.stdout
     )
+    assert (
+        "would check candidate config before install: installed config if present\n"
+        in result.stdout
+    )
     assert "would run: systemctl restart arbiter.service\n" in result.stdout
     assert "would run: /opt/arbiter/arbiter-docker config check --live\n" in (
         result.stdout
     )
+    static_index = result.stdout.index(
+        "would check candidate config before install: installed config if present\n"
+    )
+    copy_index = result.stdout.index(
+        f"would copy deployment: {deploy_dir} -> /opt/arbiter\n"
+    )
+    restart_index = result.stdout.index(
+        "would run: systemctl restart arbiter.service\n"
+    )
+    live_index = result.stdout.index(
+        "would run: /opt/arbiter/arbiter-docker config check --live\n"
+    )
+    assert static_index < copy_index < restart_index < live_index
 
 
 def test_cli_deploy_docker_generated_helper_install_replace_env_requires_replace_config(
@@ -5963,6 +6116,125 @@ def test_cli_deploy_docker_generated_helper_install_replace_env_requires_replace
 
     assert result.returncode == 2
     assert result.stderr == "error: --replace-env requires --replace-config\n"
+
+
+def test_cli_deploy_docker_generated_helper_install_preflights_replacement_config(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    install_dir = tmp_path / "opt" / "arbiter"
+    systemd_dir = tmp_path / "systemd"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    staging_config_dir = deploy_dir / "conf"
+    (staging_config_dir / "arbiter-server.yaml").write_text(
+        "bad staging config\n",
+        encoding="utf-8",
+    )
+    (staging_config_dir / "arbiter-server.yaml").chmod(0o640)
+    (staging_config_dir / ".env").write_text("SECRET=staging\n", encoding="utf-8")
+    (staging_config_dir / ".env").chmod(0o600)
+    installed_config_dir = install_dir / "conf"
+    installed_config_dir.mkdir(parents=True)
+    installed_config = installed_config_dir / "arbiter-server.yaml"
+    installed_config.write_text("installed config\n", encoding="utf-8")
+    installed_env = installed_config_dir / ".env"
+    installed_env.write_text("SECRET=installed\n", encoding="utf-8")
+    (install_dir / "docker.env").write_text(
+        "ARBITER_CONFIG_DIR=./conf\n"
+        "ARBITER_APP_ENV_FILE=./conf/.env\n"
+        "ARBITER_CONFIG_NAME=arbiter-server\n",
+        encoding="utf-8",
+    )
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "id").write_text(
+        "#!/usr/bin/env sh\n"
+        'if [ "$1" = -u ] && [ "$#" = 1 ]; then printf "0\\n"; exit 0; fi\n'
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    candidate_env = tmp_path / "candidate-env"
+    candidate_compose = tmp_path / "candidate-compose.yaml"
+    docker_calls = tmp_path / "docker-calls"
+    (fake_bin / "docker").write_text(
+        "#!/usr/bin/env sh\n"
+        f'printf "%s\\n" "$*" >> "{docker_calls}"\n'
+        'command="$1"\n'
+        'env_file=""\n'
+        'compose_file=""\n'
+        'while [ "$#" -gt 0 ]; do\n'
+        '  if [ "$1" = "--env-file" ]; then shift; env_file="$1"; fi\n'
+        '  if [ "$1" = "-f" ]; then shift; compose_file="$1"; fi\n'
+        "  shift\n"
+        "done\n"
+        f'[ -n "$env_file" ] && cat "$env_file" > "{candidate_env}"\n'
+        f'[ -n "$compose_file" ] && cat "$compose_file" > "{candidate_compose}"\n'
+        'if [ "$command" = info ]; then exit 0; fi\n'
+        'printf "candidate config failed\\n" >&2\n'
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    systemctl_calls = tmp_path / "systemctl-calls"
+    (fake_bin / "systemctl").write_text(
+        "#!/usr/bin/env sh\n"
+        f'printf "%s\\n" "$*" >> "{systemctl_calls}"\n'
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    for fake_command in ("id", "docker", "systemctl"):
+        (fake_bin / fake_command).chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+    env["ARBITER_SYSTEMD_DIR"] = str(systemd_dir)
+
+    result = subprocess.run(
+        [
+            deploy_dir / "arbiter-docker",
+            "install",
+            "--to",
+            str(install_dir),
+            "--user",
+            "arbiter",
+            "--replace-config",
+            "--no-start",
+        ],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert "candidate config failed\n" in result.stderr
+    assert installed_config.read_text(encoding="utf-8") == "installed config\n"
+    assert installed_env.read_text(encoding="utf-8") == "SECRET=installed\n"
+    assert "ARBITER_CONFIG_DIR=./conf\n" in (install_dir / "docker.env").read_text(
+        encoding="utf-8"
+    )
+    assert not systemctl_calls.exists()
+    candidate_env_text = candidate_env.read_text(encoding="utf-8")
+    assert f"ARBITER_CONFIG_DIR={staging_config_dir}\n" in candidate_env_text
+    assert f"ARBITER_APP_ENV_FILE={installed_env}\n" in candidate_env_text
+    candidate_compose_text = candidate_compose.read_text(encoding="utf-8")
+    assert "networks:\n  arbiter:\n" in candidate_compose_text
+    assert "ARBITER_DOCKER_NETWORK_NAME" not in candidate_compose_text
+    assert "ARBITER_DOCKER_BRIDGE_NAME" not in candidate_compose_text
+    assert "ARBITER_DOCKER_SUBNET" not in candidate_compose_text
 
 
 @pytest.mark.parametrize(
@@ -6020,9 +6292,30 @@ def test_cli_deploy_docker_generated_helper_install_handles_missing_docker_unit(
         'exec /usr/bin/grep "$@"\n',
         encoding="utf-8",
     )
+    (fake_bin / "stat").write_text(
+        "#!/usr/bin/env sh\n"
+        'case "$*" in\n'
+        f'  *"{install_dir / "data/plugins"}"*)\n'
+        '    if [ "$1" = -c ] && [ "$2" = "%u %g %a" ]; then '
+        'printf "123 123 700\\n"; exit 0; fi\n'
+        '    if [ "$1" = -c ] && [ "$2" = "%a" ]; then '
+        'printf "700\\n"; exit 0; fi\n'
+        "    ;;\n"
+        "esac\n"
+        'exec /usr/bin/stat "$@"\n',
+        encoding="utf-8",
+    )
     docker_calls = tmp_path / "docker-calls"
     (fake_bin / "docker").write_text(
-        "#!/usr/bin/env sh\n" f'printf "%s\\n" "$*" >> "{docker_calls}"\n' "exit 0\n",
+        "#!/usr/bin/env sh\n"
+        f'printf "%s\\n" "$*" >> "{docker_calls}"\n'
+        'if [ "$1" = compose ]; then\n'
+        '  printf "Looking in links: /wheels\\n"\n'
+        '  printf "server: pass\\n"\n'
+        '  printf "result | plugin | account | policy | message\\n"\n'
+        '  printf "time=\\"2026-06-15T12:10:47+08:00\\" level=warning msg=\\"Compose chatter\\"\\n" >&2\n'
+        "fi\n"
+        "exit 0\n",
         encoding="utf-8",
     )
     systemctl_calls = tmp_path / "systemctl-calls"
@@ -6039,6 +6332,7 @@ def test_cli_deploy_docker_generated_helper_install_handles_missing_docker_unit(
         "id",
         "getent",
         "grep",
+        "stat",
         "docker",
         "systemctl",
         "arbiter",
@@ -6082,8 +6376,11 @@ def test_cli_deploy_docker_generated_helper_install_handles_missing_docker_unit(
         assert docker_unit_warning not in result.stdout
         assert "docker.service not found" not in result.stdout
     assert "Installing server into " in result.stdout
-    assert "Performing live config check" in result.stdout
-    assert "Testing server URL" in result.stdout
+    static_index = result.stdout.index("Performing static config check")
+    restart_index = result.stdout.index("Restarting Arbiter service")
+    server_test_index = result.stdout.index("Testing server URL")
+    live_index = result.stdout.index("Performing live config check")
+    assert static_index < restart_index < server_test_index < live_index
     assert ": done\n" not in result.stdout
     assert "success: installed Arbiter Docker deployment\n" not in result.stdout
     assert f"installed to: {install_dir}\n" not in result.stdout
@@ -6096,6 +6393,10 @@ def test_cli_deploy_docker_generated_helper_install_handles_missing_docker_unit(
     assert "MCP test:" not in result.stdout
     assert "MCP URL:" not in result.stdout
     assert "Server URL: \033[94mhttp://127.0.0.1:8025\033[0m\n" in result.stdout
+    assert "Looking in links:" not in result.stdout
+    assert "server: pass" not in result.stdout
+    assert "result | plugin" not in result.stdout
+    assert "level=warning" not in result.stderr
     assert result.stderr == ""
     installed_compose = (install_dir / "compose.yaml").read_text(encoding="utf-8")
     assert "arbiter.deployment_scope=installed" in installed_compose
@@ -6126,8 +6427,11 @@ def test_cli_deploy_docker_generated_helper_install_handles_missing_docker_unit(
     assert "Requires=docker.service\n" not in unit_text
     assert "After=docker.service\n" not in unit_text
     assert f"WorkingDirectory={install_dir}\n" in unit_text
-    assert docker_calls.read_text(encoding="utf-8") == (
-        "info\n"
+    docker_call_text = docker_calls.read_text(encoding="utf-8")
+    static_check_index = docker_call_text.index(
+        "compose --env-file /tmp/arbiter-install-check."
+    )
+    wheelhouse_check_index = docker_call_text.index(
         "run --rm --user 123:123 "
         f"-v {install_dir / 'requirements.txt'}:/requirements.txt:ro "
         f"-v {install_dir / 'wheels'}:/wheels:ro "
@@ -6135,14 +6439,24 @@ def test_cli_deploy_docker_generated_helper_install_handles_missing_docker_unit(
         "install --no-cache-dir "
         "--target /tmp/arbiter-wheelhouse-check --no-index --find-links /wheels "
         "-r /requirements.txt\n"
+    )
+    compose_down_index = docker_call_text.index(
         f"compose --env-file {install_dir / 'docker.env'} "
         f"-f {install_dir / 'compose.yaml'} down --remove-orphans\n"
-        "info\n"
+    )
+    live_check_index = docker_call_text.index(
         f"compose --env-file {install_dir / 'docker.env'} "
         f"-f {install_dir / 'compose.yaml'} exec -T arbiter sh -lc "
         'exec "$ARBITER_RUNTIME_VENV/bin/arbiter-server" --config-dir /config '
         '--config-name "$ARBITER_CONFIG_NAME" config check "$@" '
         "arbiter-config-check --live\n"
+    )
+    assert "-e ARBITER_CONTAINER_ACTION=config-check arbiter\n" in docker_call_text
+    assert (
+        static_check_index
+        < wheelhouse_check_index
+        < compose_down_index
+        < live_check_index
     )
     assert systemctl_calls.read_text(encoding="utf-8") == (
         "daemon-reload\n"
@@ -6257,6 +6571,119 @@ def test_cli_deploy_docker_generated_helper_install_preserves_existing_config(
     assert "ARBITER_APP_ENV_FILE=./conf/.env\n" in installed_docker_env
     assert "ARBITER_CONFIG_NAME=installed-server\n" in installed_docker_env
     assert "ARBITER_PLUGIN_DATA_DIR=./state/plugins\n" in installed_docker_env
+
+
+@pytest.mark.parametrize("replace_args", [(), ("--replace-config",)])
+def test_cli_deploy_docker_generated_helper_install_does_not_stage_env_in_tmp(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    replace_args: tuple[str, ...],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    install_dir = tmp_path / "opt" / "arbiter"
+    systemd_dir = tmp_path / "systemd"
+    tmpdir = tmp_path / "tmp"
+    tmpdir.mkdir()
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    staging_config_dir = deploy_dir / "conf"
+    (staging_config_dir / "arbiter-server.yaml").write_text(
+        "staging config\n",
+        encoding="utf-8",
+    )
+    (staging_config_dir / "arbiter-server.yaml").chmod(0o640)
+    (staging_config_dir / ".env").write_text("SECRET=staging\n", encoding="utf-8")
+    (staging_config_dir / ".env").chmod(0o600)
+
+    installed_config_dir = install_dir / "conf"
+    installed_config_dir.mkdir(parents=True)
+    (installed_config_dir / "arbiter-server.yaml").write_text(
+        "installed config\n",
+        encoding="utf-8",
+    )
+    (installed_config_dir / ".env").write_text("SECRET=installed\n", encoding="utf-8")
+    (install_dir / "docker.env").write_text(
+        "ARBITER_CONFIG_DIR=./conf\n"
+        "ARBITER_APP_ENV_FILE=./conf/.env\n"
+        "ARBITER_CONFIG_NAME=arbiter-server\n",
+        encoding="utf-8",
+    )
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "id").write_text(
+        "#!/usr/bin/env sh\n"
+        'if [ "$1" = -u ] && [ "$#" = 1 ]; then printf "0\\n"; exit 0; fi\n'
+        'if [ "$1" = -u ] && [ "$2" = arbiter ]; then printf "123\\n"; exit 0; fi\n'
+        'if [ "$1" = -g ] && [ "$2" = arbiter ]; then printf "123\\n"; exit 0; fi\n'
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "getent").write_text(
+        "#!/usr/bin/env sh\n"
+        'if [ "$1" = group ] && [ "$2" = arbiter ]; then '
+        'printf "arbiter:x:123:\\n"; exit 0; fi\n'
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    mktemp_calls = tmp_path / "mktemp-calls"
+    (fake_bin / "mktemp").write_text(
+        "#!/usr/bin/env sh\n"
+        f'printf "%s\\n" "$*" >> "{mktemp_calls}"\n'
+        'exec /usr/bin/mktemp "$@"\n',
+        encoding="utf-8",
+    )
+    (fake_bin / "docker").write_text("#!/usr/bin/env sh\nexit 0\n", encoding="utf-8")
+    (fake_bin / "systemctl").write_text(
+        "#!/usr/bin/env sh\nexit 0\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "chown").write_text("#!/usr/bin/env sh\nexit 0\n", encoding="utf-8")
+    for fake_command in ("id", "getent", "mktemp", "docker", "systemctl", "chown"):
+        (fake_bin / fake_command).chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+    env["ARBITER_SYSTEMD_DIR"] = str(systemd_dir)
+    env["TMPDIR"] = str(tmpdir)
+
+    result = subprocess.run(
+        [
+            deploy_dir / "arbiter-docker",
+            "install",
+            "--to",
+            str(install_dir),
+            "--user",
+            "arbiter",
+            *replace_args,
+            "--no-start",
+        ],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    mktemp_text = mktemp_calls.read_text(encoding="utf-8")
+    assert f"{tmpdir}/arbiter-install-config." not in mktemp_text
+    assert f"{install_dir / 'backup' / '.preserve'}." in mktemp_text
+    for leaked_file in tmpdir.rglob("*"):
+        if leaked_file.is_file():
+            leaked_text = leaked_file.read_text(encoding="utf-8", errors="ignore")
+            assert "SECRET=installed" not in leaked_text
+            assert "SECRET=staging" not in leaked_text
 
 
 def test_cli_deploy_docker_generated_helper_install_symlink_failure_keeps_config(
@@ -7139,7 +7566,7 @@ def test_cli_deploy_docker_update_preserves_local_config_and_env_values(
         "ARBITER_IMAGE=python:3.11-slim\n"
         "ARBITER_CONTAINER_NAME=arbiter-staging\n"
         f"ARBITER_CONTAINER_USER={_default_container_user()}\n"
-        "ARBITER_RESTART=unless-stopped\n"
+        "ARBITER_RESTART=on-failure\n"
         "ARBITER_APP_ENV_FILE=./conf/.env\n"
         "ARBITER_CONFIG_DIR=./conf\n"
         "ARBITER_CONFIG_NAME=arbiter-server\n"

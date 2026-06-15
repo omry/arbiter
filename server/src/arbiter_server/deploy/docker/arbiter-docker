@@ -23,7 +23,7 @@ Commands:
   edit-env      Edit the configured env file with $ARBITER_EDITOR, $EDITOR, or vi
   edit-docker   Edit docker.env with $ARBITER_EDITOR, $EDITOR, or vi
   config check [--live] [override...]
-                Validate the running deployment config inside the container
+                Validate config inside a container; --live uses the running service
   up            Start or update the Docker Compose service
   restart       Recreate the Docker Compose service
   test          Call version_info through the computed MCP URL
@@ -1661,6 +1661,16 @@ env_file_value() {
   ' "$env_path"
 }
 
+make_sibling_temp_file() {
+  local target_path="$1"
+  local target_parent
+  local target_name
+
+  target_parent="$(dirname -- "$target_path")"
+  target_name="$(basename -- "$target_path")"
+  mktemp "$target_parent/.${target_name}.XXXXXX"
+}
+
 set_env_file_value() {
   local env_path="$1"
   local key="$2"
@@ -1668,7 +1678,7 @@ set_env_file_value() {
   local tmp_path
 
   require_file "$env_path"
-  tmp_path="$(mktemp "${TMPDIR:-/tmp}/arbiter-env.XXXXXX")"
+  tmp_path="$(make_sibling_temp_file "$env_path")"
   awk -v key="$key" -v value="$value" '
     index($0, key "=") == 1 {
       print key "=" value
@@ -1860,10 +1870,47 @@ print_config_check_ok() {
   printf ' Config check\n'
 }
 
-config_check() {
+config_check_static() {
+  local override_file=""
+  local status=0
+  local compose_args=(
+    run
+    --rm
+    --no-deps
+    -e
+    ARBITER_CONTAINER_ACTION=config-check
+  )
+
+  if (($#)); then
+    override_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-config-overrides.XXXXXX")"
+    printf '%s\n' "$@" >"$override_file"
+    compose_args+=(
+      -e
+      ARBITER_CONFIG_OVERRIDES_FILE=/tmp/arbiter-config-overrides
+      -v
+      "$override_file:/tmp/arbiter-config-overrides:ro"
+    )
+  fi
+
+  compose "${compose_args[@]}" arbiter || status=$?
+  if [[ -n "$override_file" ]]; then
+    rm -f "$override_file"
+  fi
+  return "$status"
+}
+
+config_check_live() {
   compose exec -T arbiter sh -lc \
     'exec "$ARBITER_RUNTIME_VENV/bin/arbiter-server" --config-dir /config --config-name "$ARBITER_CONFIG_NAME" config check "$@"' \
     arbiter-config-check "$@"
+}
+
+config_check() {
+  if [[ "${1:-}" == "--live" ]]; then
+    config_check_live "$@"
+  else
+    config_check_static "$@"
+  fi
 }
 
 config_command() {
@@ -1882,7 +1929,8 @@ Usage: arbiter-docker config COMMAND
 
 Commands:
   check [--live] [override...]
-      Validate the running deployment config inside the container.
+      Validate the deployment config inside a container.
+      With --live, also test configured accounts in the running service container.
 EOF
       ;;
     *)
@@ -2167,7 +2215,9 @@ compose() {
   require_file "$requirements_file"
   validate_requirements_file "$requirements_file"
   if [[ "${1:-}" == up ]]; then
-    ensure_plugin_data_dir_ready
+    ensure_plugin_data_dir_ready || return
+  elif [[ "${1:-}" == run ]]; then
+    ensure_plugin_data_dir_exists || return
   fi
   require_docker_access
   if [[ "${1:-}" == up ]]; then
@@ -2609,14 +2659,10 @@ container_user_can_write_dir() {
   (( (10#$digit & 2) != 0 && (10#$digit & 1) != 0 ))
 }
 
-ensure_plugin_data_dir_ready() {
+ensure_plugin_data_dir_exists() {
   local path
-  local container_user
-  local write_check
 
   path="$(plugin_data_dir_path)"
-  container_user="$(env_file_value "$compose_env_file" ARBITER_CONTAINER_USER || true)"
-
   if ! mkdir -p "$path"; then
     printf 'error: could not create plugin data directory: %s\n' "$path" >&2
     return 1
@@ -2626,6 +2672,17 @@ ensure_plugin_data_dir_ready() {
     printf '       chown it to the deployment helper user or run this command as root\n' >&2
     return 1
   fi
+}
+
+ensure_plugin_data_dir_ready() {
+  local path
+  local container_user
+  local write_check
+
+  ensure_plugin_data_dir_exists || return
+
+  path="$(plugin_data_dir_path)"
+  container_user="$(env_file_value "$compose_env_file" ARBITER_CONTAINER_USER || true)"
 
   write_check="$path/.arbiter-write-check.$$"
   if ! : >"$write_check" 2>/dev/null; then
@@ -3286,45 +3343,76 @@ install_cleanup_active_spinner() {
   fi
 }
 
+install_replay_success_warnings() {
+  local file="$1"
+  local stream="$2"
+  local line
+  local color_warn
+
+  color_warn=$'\033[33mwarn\033[0m'
+  [[ -f "$file" ]] || return
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == warn:\ * || "$line" == "$color_warn":\ * ]]; then
+      if [[ "$stream" == stderr ]]; then
+        printf '%s\n' "$line" >&2
+      else
+        printf '%s\n' "$line"
+      fi
+    fi
+  done <"$file"
+}
+
 install_run_step() {
   local action="$1"
   local stdout_file
   local stderr_file
   local spinner_pid
   local status
+  local show_progress=0
   shift
 
-  if ! install_progress_enabled; then
+  if [[ "${install_dry_run:-0}" -eq 1 ]]; then
     "$@"
     return
   fi
 
   stdout_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-install-stdout.XXXXXX")"
   stderr_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-install-stderr.XXXXXX")"
-  printf '\r\033[K%s |' "$action"
-  install_spinner_loop "$action" 1 &
-  spinner_pid="$!"
-  install_active_spinner_pid="$spinner_pid"
-  trap install_cleanup_active_spinner EXIT
-
-  if (set -euo pipefail; "$@") >"$stdout_file" 2>"$stderr_file"; then
-    status=0
-  else
-    status="$?"
+  if install_progress_enabled; then
+    show_progress=1
+    printf '\r\033[K%s |' "$action"
+    install_spinner_loop "$action" 1 &
+    spinner_pid="$!"
+    install_active_spinner_pid="$spinner_pid"
+    trap install_cleanup_active_spinner EXIT
   fi
 
-  install_cleanup_active_spinner
-  trap - EXIT
+  set +e
+  (set -euo pipefail; "$@") >"$stdout_file" 2>"$stderr_file"
+  status="$?"
+  set -e
+
+  if [[ "$show_progress" -eq 1 ]]; then
+    install_cleanup_active_spinner
+    trap - EXIT
+  fi
   if [[ "$status" -eq 0 ]]; then
-    printf '\r\033[K'
+    if [[ "$show_progress" -eq 1 ]]; then
+      printf '\r\033[K'
+    fi
+    install_replay_success_warnings "$stdout_file" stdout
+    install_replay_success_warnings "$stderr_file" stderr
   else
-    printf '\r\033[K%s: failed\n' "$action"
-  fi
-  if [[ -s "$stdout_file" ]]; then
-    cat "$stdout_file"
-  fi
-  if [[ -s "$stderr_file" ]]; then
-    cat "$stderr_file" >&2
+    if [[ "$show_progress" -eq 1 ]]; then
+      printf '\r\033[K'
+    fi
+    printf '%s: failed\n' "$action" >&2
+    if [[ -s "$stdout_file" ]]; then
+      cat "$stdout_file"
+    fi
+    if [[ -s "$stderr_file" ]]; then
+      cat "$stderr_file" >&2
+    fi
   fi
   rm -f "$stdout_file" "$stderr_file"
   return "$status"
@@ -3831,6 +3919,30 @@ install_backup_existing_path() {
   elif [[ -f "$backup_path/.env" ]]; then
     chmod 0600 "$backup_path/.env"
   fi
+  printf '%s\n' "$backup_path"
+}
+
+install_make_protected_preserve_dir() {
+  local backup_parent
+  local scratch_dir
+
+  backup_parent="$install_target_dir/backup"
+  mkdir -p "$backup_parent"
+  chmod 0750 "$backup_parent"
+  chown "$install_user:$install_group" "$backup_parent"
+
+  scratch_dir="$(mktemp -d "$backup_parent/.preserve.XXXXXX")"
+  chmod 0700 "$scratch_dir"
+  chown "$install_user:$install_group" "$scratch_dir"
+  printf '%s\n' "$scratch_dir"
+}
+
+install_restore_preserved_env_file() {
+  local source_path="$1"
+  local target_path="$2"
+
+  mkdir -p "$(dirname -- "$target_path")"
+  install_copy_file_protected "$source_path" "$target_path" 0600
 }
 
 install_copy_deployment() {
@@ -3847,7 +3959,8 @@ install_copy_deployment() {
   local preserve_plugin_data_dir
   local staging_config_dir
   local staging_app_env
-  local preserve_tmp_dir=""
+  local preserve_scratch_dir=""
+  local preserve_config_backup_dir=""
   local preserve_config=0
   local preserve_env=0
   local replace_config_dir=0
@@ -3906,7 +4019,7 @@ install_copy_deployment() {
     fi
     if [[ "$install_replace_config" -eq 0 && ( -e "$preserve_config_dir" || -e "$preserve_app_env" ) ]]; then
       preserve_config=1
-      preserve_tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/arbiter-install-config.XXXXXX")"
+      preserve_scratch_dir="$(install_make_protected_preserve_dir)"
       if [[ -e "$preserve_app_env" ]]; then
         preserve_config_dir_real="$(normalize_path_allow_missing "$preserve_config_dir")"
         preserve_app_env_real="$(normalize_path_allow_missing "$preserve_app_env")"
@@ -3915,22 +4028,21 @@ install_copy_deployment() {
             preserve_app_env_config_rel="${preserve_app_env_real#"$preserve_config_dir_real"/}"
             ;;
           *)
-            cp -a "$preserve_app_env" "$preserve_tmp_dir/app-env"
+            cp -a "$preserve_app_env" "$preserve_scratch_dir/app-env"
             ;;
         esac
       fi
       if [[ -e "$preserve_config_dir" ]]; then
-        cp -a "$preserve_config_dir" "$preserve_tmp_dir/config-dir"
-        install_backup_existing_path \
+        preserve_config_backup_dir="$(install_backup_existing_path \
           "$preserve_config_dir" \
           conf \
-          "$preserve_app_env_config_rel"
+          "$preserve_app_env_config_rel")"
       fi
     elif [[ "$install_replace_config" -eq 1 ]]; then
       if [[ "$install_replace_env" -eq 0 && -e "$preserve_app_env" ]]; then
         preserve_env=1
-        preserve_tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/arbiter-install-config.XXXXXX")"
-        cp -a "$preserve_app_env" "$preserve_tmp_dir/app-env"
+        preserve_scratch_dir="$(install_make_protected_preserve_dir)"
+        cp -a "$preserve_app_env" "$preserve_scratch_dir/app-env"
       fi
       if [[ "$target_is_source" -eq 0 && -e "$preserve_config_dir" ]]; then
         replace_config_dir=1
@@ -3961,31 +4073,75 @@ install_copy_deployment() {
         ;;
     esac
 
-    if [[ -e "$preserve_tmp_dir/config-dir" ]]; then
+    if [[ -n "$preserve_config_backup_dir" && -e "$preserve_config_backup_dir" ]]; then
       mkdir -p "$(dirname -- "$preserve_config_dir")"
       rm -rf "$preserve_config_dir"
       install_copy_tree_protected \
-        "$preserve_tmp_dir/config-dir" \
+        "$preserve_config_backup_dir" \
         "$preserve_config_dir" \
         "$preserve_app_env_config_rel"
     fi
-    if [[ -e "$preserve_tmp_dir/app-env" ]]; then
-      mkdir -p "$(dirname -- "$preserve_app_env")"
-      install_copy_file_protected "$preserve_tmp_dir/app-env" "$preserve_app_env" 0600
+    if [[ -n "$preserve_scratch_dir" && -e "$preserve_scratch_dir/app-env" ]]; then
+      install_restore_preserved_env_file "$preserve_scratch_dir/app-env" "$preserve_app_env"
     fi
     set_env_file_value "$target_docker_env_file" ARBITER_CONFIG_DIR "$preserve_config_dir_value"
     set_env_file_value "$target_docker_env_file" ARBITER_APP_ENV_FILE "$preserve_app_env_value"
     set_env_file_value "$target_docker_env_file" ARBITER_CONFIG_NAME "$preserve_config_name_value"
-    rm -rf "$preserve_tmp_dir"
+    if [[ -n "$preserve_scratch_dir" ]]; then
+      rm -rf "$preserve_scratch_dir"
+    fi
   elif [[ "$preserve_env" -eq 1 ]]; then
-    mkdir -p "$(dirname -- "$preserve_app_env")"
-    install_copy_file_protected "$preserve_tmp_dir/app-env" "$preserve_app_env" 0600
+    install_restore_preserved_env_file "$preserve_scratch_dir/app-env" "$preserve_app_env"
     set_env_file_value "$target_docker_env_file" ARBITER_APP_ENV_FILE "$preserve_app_env_value"
-    rm -rf "$preserve_tmp_dir"
+    rm -rf "$preserve_scratch_dir"
   fi
   if [[ "$preserve_plugin_data_dir_env" -eq 1 ]]; then
     set_env_file_value "$target_docker_env_file" ARBITER_PLUGIN_DATA_DIR "$preserve_plugin_data_dir_value"
   fi
+}
+
+install_rewrite_compose_for_installed_scope() {
+  local target_compose_file="$1"
+  local tmp_path
+
+  require_file "$target_compose_file"
+  tmp_path="$(mktemp "${TMPDIR:-/tmp}/arbiter-compose.XXXXXX")"
+  sed \
+    -e 's/arbiter\.deployment_scope=staged/arbiter.deployment_scope=installed/g' \
+    -e 's/ARBITER_CONTAINER_NAME:-arbiter-staging/ARBITER_CONTAINER_NAME:-arbiter/g' \
+    -e 's/ARBITER_HOST_PORT:-18025/ARBITER_HOST_PORT:-8025/g' \
+    -e 's/ARBITER_DOCKER_NETWORK_NAME:-arbiter-staging/ARBITER_DOCKER_NETWORK_NAME:-arbiter/g' \
+    -e 's/ARBITER_DOCKER_BRIDGE_NAME:-arbiter-stg0/ARBITER_DOCKER_BRIDGE_NAME:-arbiter0/g' \
+    -e 's#ARBITER_DOCKER_SUBNET:-172\.31\.251\.0/24#ARBITER_DOCKER_SUBNET:-172.31.250.0/24#g' \
+    "$target_compose_file" >"$tmp_path"
+  mv "$tmp_path" "$target_compose_file"
+}
+
+install_rewrite_compose_for_config_check_candidate() {
+  local target_compose_file="$1"
+  local tmp_path
+
+  install_rewrite_compose_for_installed_scope "$target_compose_file"
+  tmp_path="$(mktemp "${TMPDIR:-/tmp}/arbiter-compose.XXXXXX")"
+  awk '
+    /^networks:$/ {
+      in_networks = 1
+      print
+      next
+    }
+    in_networks && /^  arbiter:$/ {
+      print
+      next
+    }
+    in_networks && /^    / {
+      next
+    }
+    {
+      in_networks = 0
+      print
+    }
+  ' "$target_compose_file" >"$tmp_path"
+  mv "$tmp_path" "$target_compose_file"
 }
 
 install_mark_deployment_installed() {
@@ -4001,20 +4157,10 @@ install_mark_deployment_installed() {
     return
   fi
 
-  require_file "$target_compose_file"
-  tmp_path="$(mktemp "${TMPDIR:-/tmp}/arbiter-compose.XXXXXX")"
-  sed \
-    -e 's/arbiter\.deployment_scope=staged/arbiter.deployment_scope=installed/g' \
-    -e 's/ARBITER_CONTAINER_NAME:-arbiter-staging/ARBITER_CONTAINER_NAME:-arbiter/g' \
-    -e 's/ARBITER_HOST_PORT:-18025/ARBITER_HOST_PORT:-8025/g' \
-    -e 's/ARBITER_DOCKER_NETWORK_NAME:-arbiter-staging/ARBITER_DOCKER_NETWORK_NAME:-arbiter/g' \
-    -e 's/ARBITER_DOCKER_BRIDGE_NAME:-arbiter-stg0/ARBITER_DOCKER_BRIDGE_NAME:-arbiter0/g' \
-    -e 's#ARBITER_DOCKER_SUBNET:-172\.31\.251\.0/24#ARBITER_DOCKER_SUBNET:-172.31.250.0/24#g' \
-    "$target_compose_file" >"$tmp_path"
-  mv "$tmp_path" "$target_compose_file"
+  install_rewrite_compose_for_installed_scope "$target_compose_file"
 
   require_file "$target_docker_env_file"
-  tmp_path="$(mktemp "${TMPDIR:-/tmp}/arbiter-docker-env.XXXXXX")"
+  tmp_path="$(make_sibling_temp_file "$target_docker_env_file")"
   sed \
     -e 's/^ARBITER_CONTAINER_NAME=.*/ARBITER_CONTAINER_NAME=arbiter/' \
     -e 's/^ARBITER_HOST_BIND=.*/ARBITER_HOST_BIND=127.0.0.1/' \
@@ -4146,7 +4292,110 @@ install_test_server() {
   done
 }
 
-install_config_check() {
+install_select_static_config_check_source() {
+  local target_docker_env_file="$install_target_dir/docker.env"
+  local installed_config_dir_value
+  local installed_app_env_value
+  local installed_config_name_value
+  local installed_config_dir
+  local installed_app_env
+
+  install_static_config_check_config_dir=""
+  install_static_config_check_app_env=""
+  install_static_config_check_config_name=""
+  install_static_config_check_source_label="staging config"
+
+  if [[ "$install_replace_config" -eq 0 && -f "$target_docker_env_file" ]]; then
+    installed_config_dir_value="$(env_file_value "$target_docker_env_file" ARBITER_CONFIG_DIR || printf './conf\n')"
+    installed_app_env_value="$(env_file_value "$target_docker_env_file" ARBITER_APP_ENV_FILE || printf './conf/.env\n')"
+    installed_config_name_value="$(env_file_value "$target_docker_env_file" ARBITER_CONFIG_NAME || printf 'arbiter-server\n')"
+    installed_config_dir="$(install_target_path_from_compose_value "$installed_config_dir_value")"
+    installed_app_env="$(install_target_path_from_compose_value "$installed_app_env_value")"
+    if [[ -e "$installed_config_dir" || -e "$installed_app_env" ]]; then
+      install_static_config_check_config_dir="$installed_config_dir"
+      install_static_config_check_app_env="$installed_app_env"
+      install_static_config_check_config_name="$installed_config_name_value"
+      install_static_config_check_source_label="installed config"
+      return
+    fi
+  fi
+
+  install_static_config_check_config_dir="$(config_dir_path)"
+  install_static_config_check_app_env="$(app_env_path)"
+  install_static_config_check_config_name="$(config_name_value)"
+
+  if [[ "$install_replace_config" -eq 1 && "$install_replace_env" -eq 0 && -f "$target_docker_env_file" ]]; then
+    installed_app_env_value="$(env_file_value "$target_docker_env_file" ARBITER_APP_ENV_FILE || printf './conf/.env\n')"
+    installed_app_env="$(install_target_path_from_compose_value "$installed_app_env_value")"
+    if [[ -f "$installed_app_env" ]]; then
+      install_static_config_check_app_env="$installed_app_env"
+      install_static_config_check_source_label="staging config with installed env"
+    fi
+  fi
+}
+
+install_copy_static_config_check_candidate() {
+  local candidate_dir="$1"
+  local candidate_env_file="$candidate_dir/docker.env"
+  local active_requirements_file
+  local active_wheels_dir
+
+  mkdir -p "$candidate_dir"
+  cp "$deploy_dir/arbiter-docker" "$candidate_dir/arbiter-docker"
+  chmod 0750 "$candidate_dir/arbiter-docker"
+  cp "$compose_file" "$candidate_dir/compose.yaml"
+  cp "$bundle_plugins_file" "$candidate_dir/bundle-plugins.tsv"
+  install_rewrite_compose_for_config_check_candidate "$candidate_dir/compose.yaml"
+  cp "$compose_env_file" "$candidate_env_file"
+  if [[ -f "$compose_override_file" ]] && ! grep -q '/source/arbiter' "$compose_override_file"; then
+    cp "$compose_override_file" "$candidate_dir/compose.override.yaml"
+  fi
+
+  active_requirements_file="$(deploy_path_from_compose_value "$(compose_env_value ARBITER_REQUIREMENTS_FILE ./requirements.txt)")"
+  if [[ -n "$install_local_checkout_requirements_file" ]]; then
+    active_requirements_file="$install_local_checkout_requirements_file"
+  fi
+  active_wheels_dir="$(wheels_dir_path)"
+  cp "$active_requirements_file" "$candidate_dir/requirements.txt"
+
+  set_env_file_value "$candidate_env_file" ARBITER_CONFIG_DIR "$install_static_config_check_config_dir"
+  set_env_file_value "$candidate_env_file" ARBITER_APP_ENV_FILE "$install_static_config_check_app_env"
+  set_env_file_value "$candidate_env_file" ARBITER_CONFIG_NAME "$install_static_config_check_config_name"
+  set_env_file_value "$candidate_env_file" ARBITER_REQUIREMENTS_FILE ./requirements.txt
+  set_env_file_value "$candidate_env_file" ARBITER_WHEELS_DIR "$active_wheels_dir"
+  set_env_file_value "$candidate_env_file" ARBITER_PLUGIN_DATA_DIR ./data/plugins
+  set_env_file_value "$candidate_env_file" ARBITER_CONTAINER_USER 0:0
+  set_env_file_value "$candidate_env_file" ARBITER_CONTAINER_NAME "arbiter-install-check-$$"
+}
+
+install_static_config_check() {
+  local candidate_dir
+  local status=0
+  local project_name
+
+  if [[ "${install_dry_run:-0}" -eq 1 ]]; then
+    if [[ "$install_replace_config" -eq 1 ]]; then
+      printf 'would check candidate config before install: staging config\n'
+    else
+      printf 'would check candidate config before install: installed config if present\n'
+    fi
+    return 0
+  fi
+
+  install_select_static_config_check_source
+  candidate_dir="$(mktemp -d "${TMPDIR:-/tmp}/arbiter-install-check.XXXXXX")"
+  project_name="arbiter-install-check-$$"
+  if install_copy_static_config_check_candidate "$candidate_dir" &&
+    COMPOSE_PROJECT_NAME="$project_name" "$candidate_dir/arbiter-docker" config check; then
+    status=0
+  else
+    status="$?"
+  fi
+  rm -rf "$candidate_dir"
+  return "$status"
+}
+
+install_live_config_check() {
   local output_file
   local timeout
   local start_time
@@ -4167,7 +4416,7 @@ install_config_check() {
     if ((SECONDS - start_time >= timeout)); then
       cat "$output_file" >&2
       rm -f "$output_file"
-      printf 'error: installed config check did not pass within %s seconds\n' "$timeout" >&2
+      printf 'error: installed live config check did not pass within %s seconds\n' "$timeout" >&2
       printf '       inspect service logs with: %s logs\n' "$install_target_dir/arbiter-docker" >&2
       return 1
     fi
@@ -4928,14 +5177,13 @@ install_deployment() {
     install_require_root
   fi
 
+  install_run_step "Performing static config check" install_static_config_check
+  install_config_check_passed=1
   install_run_step "Installing server into $install_target_dir" install_server_into_target
   if [[ "$install_start" -eq 1 ]]; then
     install_run_step "Restarting Arbiter service" install_restart_server_service
-    install_run_step "Performing live config check" install_config_check
-    install_config_check_passed=1
-  fi
-  if [[ "$install_start" -eq 1 ]]; then
     install_run_step "Testing server URL" install_test_server
+    install_run_step "Performing live config check" install_live_config_check
   fi
   install_report_success
 }
@@ -4974,11 +5222,21 @@ case "$command" in
     config_command "$@"
     ;;
   up)
+    ensure_plugin_data_dir_ready
+    require_docker_access
+    ensure_staging_subnet_available
+    check_container_name_owner error
+    config_check_static
     compose up -d
     print_staging_port_note
     print_mcp_url
     ;;
   restart)
+    ensure_plugin_data_dir_ready
+    require_docker_access
+    ensure_staging_subnet_available
+    check_container_name_owner error
+    config_check_static
     compose up -d --force-recreate
     print_staging_port_note
     print_mcp_url

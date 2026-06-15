@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -182,6 +183,59 @@ def _docker_compose_logs(deploy_dir: Path) -> subprocess.CompletedProcess[str]:
     return _run(args, cwd=deploy_dir, timeout=20)
 
 
+def _assert_deployment_preflight(
+    *,
+    repo_root: Path,
+    helper: Path,
+    deploy_dir: Path,
+    install_target: Path,
+    check_bundle: bool,
+) -> None:
+    info = _run([helper, "info"], cwd=repo_root, timeout=20)
+    _assert_ok(info)
+    assert f"deploy dir: {deploy_dir}" in info.stdout
+    assert f"docker env file: {deploy_dir / 'docker.env'}" in info.stdout
+
+    doctor = _run([helper, "doctor"], cwd=repo_root, timeout=20)
+    _assert_ok(doctor)
+    assert "ok: compose file exists:" in doctor.stdout
+    assert "warn: skipping agent permission checks" in doctor.stdout
+
+    preinstall = _run([helper, "doctor", "--preinstall"], cwd=repo_root, timeout=20)
+    _assert_ok(preinstall)
+    assert "ok: preinstall checks passed" in preinstall.stdout
+
+    config_check = _run([helper, "config", "check"], cwd=repo_root, timeout=240)
+    _assert_ok(config_check)
+
+    if check_bundle:
+        bundle_check = _run([helper, "bundle", "check"], cwd=repo_root, timeout=120)
+        _assert_ok(bundle_check)
+        assert "bundle check passed:" in bundle_check.stdout
+
+    install_plan = _run(
+        [
+            helper,
+            "install",
+            "--dry-run",
+            "--to",
+            install_target,
+            "--user",
+            "arbiter",
+            "--no-start",
+        ],
+        cwd=repo_root,
+        timeout=120,
+    )
+    _assert_ok(install_plan)
+    assert f"would copy deployment: {deploy_dir} -> {install_target}" in (
+        install_plan.stdout
+    )
+    assert "would check candidate config before install:" in install_plan.stdout
+    assert "would run: systemctl restart" not in install_plan.stdout
+    assert install_plan.stderr == ""
+
+
 def _write_imap_only_config(path: Path, imap_server: Any) -> None:
     path.write_text(
         "defaults:\n"
@@ -317,6 +371,8 @@ def _assert_imap_deployment_operation(
     helper: Path,
     imap_server: Any,
 ) -> None:
+    helper_test = _run([helper, "test"], cwd=repo_root, timeout=60)
+    _assert_ok(helper_test)
     result = _wait_for_imap_operation(
         repo_root=repo_root,
         mcp_url=mcp_url,
@@ -444,15 +500,13 @@ def test_docker_deployment_serves_real_imap_operation(
     _configure_deploy_network(deploy_dir, host_port)
 
     helper = deploy_dir / "arbiter-docker"
-    info = _run([helper, "info"], cwd=repo_root, timeout=20)
-    _assert_ok(info)
-    assert f"deploy dir: {deploy_dir}" in info.stdout
-    assert f"docker env file: {deploy_dir / 'docker.env'}" in info.stdout
-
-    doctor = _run([helper, "doctor"], cwd=repo_root, timeout=20)
-    _assert_ok(doctor)
-    assert "ok: compose file exists:" in doctor.stdout
-    assert "warn: skipping agent permission checks" in doctor.stdout
+    _assert_deployment_preflight(
+        repo_root=repo_root,
+        helper=helper,
+        deploy_dir=deploy_dir,
+        install_target=tmp_path / "install-target",
+        check_bundle=False,
+    )
 
     try:
         up = _run([helper, "up"], cwd=repo_root, timeout=240)
@@ -496,24 +550,26 @@ def test_docker_deployment_serves_real_imap_operation_from_wheelhouse(
     )
     _assert_ok(init)
 
+    deploy_wheelhouse = deploy_dir / "wheels"
+    for wheel in wheelhouse.glob("*.whl"):
+        shutil.copy2(wheel, deploy_wheelhouse / wheel.name)
+
     config_dir = deploy_dir / "conf"
     config_dir.mkdir(exist_ok=True)
     _write_imap_only_config(config_dir / "arbiter-server.yaml", imap_server)
     (config_dir / ".env").write_text("", encoding="utf-8")
     (config_dir / ".env").chmod(0o600)
-    (deploy_dir / "compose.override.yaml").write_text(
-        "services:\n"
-        "  arbiter:\n"
-        "    volumes:\n"
-        f"      - {wheelhouse}:/wheels:ro\n",
-        encoding="utf-8",
-    )
     host_port = free_tcp_port_factory()
     _configure_deploy_network(deploy_dir, host_port)
 
     helper = deploy_dir / "arbiter-docker"
-    doctor = _run([helper, "doctor"], cwd=repo_root, timeout=20)
-    _assert_ok(doctor)
+    _assert_deployment_preflight(
+        repo_root=repo_root,
+        helper=helper,
+        deploy_dir=deploy_dir,
+        install_target=tmp_path / "install-target",
+        check_bundle=True,
+    )
     try:
         up = _run([helper, "up"], cwd=repo_root, timeout=240)
         _assert_ok(up)

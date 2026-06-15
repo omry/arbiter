@@ -80,6 +80,8 @@ sudo systemctl restart arbiter.service
 `install` requires root unless `--dry-run` is used. It:
 
 - creates the configured system user/group if missing
+- checks the config that will be used after install before copying files or
+  restarting the service
 - copies the prepared deployment directory to the install target
 - preserves an existing installed config package unless `--replace-config` is
   passed
@@ -90,6 +92,7 @@ sudo systemctl restart arbiter.service
 - writes `/etc/systemd/system/arbiter.service`
 - reloads and enables systemd
 - restarts the service by default
+- checks the running service config and configured accounts after restart
 
 ## Privilege Model
 

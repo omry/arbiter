@@ -117,7 +117,7 @@ DOCKER_COMPOSE_ENV_DEFAULTS = [
     ("ARBITER_IMAGE", "python:3.11-slim"),
     ("ARBITER_CONTAINER_NAME", "arbiter-staging"),
     ("ARBITER_CONTAINER_USER", _default_container_user()),
-    ("ARBITER_RESTART", "unless-stopped"),
+    ("ARBITER_RESTART", "on-failure"),
     ("ARBITER_APP_ENV_FILE", "./conf/.env"),
     ("ARBITER_CONFIG_DIR", "./conf"),
     ("ARBITER_CONFIG_NAME", "arbiter-server"),

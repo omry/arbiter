@@ -3,7 +3,7 @@ services:
     image: ${ARBITER_IMAGE:-python:3.11-slim}
     container_name: ${ARBITER_CONTAINER_NAME:-arbiter-staging}
     user: ${ARBITER_CONTAINER_USER:-10001:10001}
-    restart: ${ARBITER_RESTART:-unless-stopped}
+    restart: ${ARBITER_RESTART:-on-failure}
     env_file:
       - ${ARBITER_APP_ENV_FILE:-./conf/.env}
     environment:
@@ -83,10 +83,16 @@ services:
       case "$$public_host" in 0.0.0.0) public_host=127.0.0.1;; *:*) public_host="[$$public_host]";; esac &&
       set -- "arbiter.server.bind.host=$$ARBITER_SERVER_HOST" "arbiter.server.bind.port=$$ARBITER_CONTAINER_PORT" "arbiter.server.public.scheme=$${ARBITER_PUBLIC_SCHEME:-http}" "arbiter.server.public.host=$$public_host" "arbiter.server.public.port=$${ARBITER_HOST_PORT:-18025}" "arbiter.storage.plugin_data_dir=/data/plugins" "arbiter.deployment_scope=staged" &&
       if [ -n "$${ARBITER_PUBLIC_BASE_URL:-}" ]; then set -- "$$@" "arbiter.server.public.base_url=$$ARBITER_PUBLIC_BASE_URL"; fi &&
+      if [ -n "$${ARBITER_CONFIG_OVERRIDES_FILE:-}" ]; then
+        while IFS= read -r override; do set -- "$$@" "$$override"; done < "$$ARBITER_CONFIG_OVERRIDES_FILE";
+      fi &&
       if ! "$$runtime_venv/bin/arbiter-server" --config-dir /config --config-name "$$ARBITER_CONFIG_NAME" config check "$$@"; then
-        echo "fatal configuration error; stopping container without Docker restart" >&2;
+        if [ "$${ARBITER_CONTAINER_ACTION:-serve}" = config-check ]; then exit 1; fi;
+        echo "configuration check failed; Arbiter will not start until the config passes" >&2;
+        echo "run arbiter-docker config check from the deployment directory" >&2;
         exit 0;
       fi &&
+      if [ "$${ARBITER_CONTAINER_ACTION:-serve}" = config-check ]; then exit 0; fi &&
       exec "$$runtime_venv/bin/arbiter-server" --config-dir /config --config-name "$$ARBITER_CONFIG_NAME" serve "$$@"'
 
 networks:

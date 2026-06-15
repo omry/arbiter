@@ -27,20 +27,21 @@ are already installed locally.
 .venv/bin/python -m pytest server/tests/unit/test_config.py
 ```
 
-## User-initiated Docker deployment check
+## Docker Deployment Check
 
-The Docker deployment integration test is skipped by default because it builds
-and starts a real container. Run it explicitly when changing deployment
-scaffolding:
+The Docker deployment integration test is skipped by default during normal
+pytest runs because it builds and starts a real container. Treat it as the
+pre-deploy gate, and run it when changing deployment scaffolding:
 
 ```bash
 .venv/bin/python -m nox -s deploy-test
 ```
 
 The test starts a lightweight local IMAP server, generates a Docker deployment
-with `arbiter-server deploy docker`, starts the generated
-`arbiter-docker` helper, and verifies an IMAP operation through the MCP
-endpoint.
+with `arbiter-server deploy docker`, runs generated helper preflight commands
+without a privileged install, starts the generated `arbiter-docker` helper,
+checks the server URL, and verifies an IMAP operation through the Arbiter
+client.
 
 Run the full suite before release or before committing broad interface changes.
 

@@ -320,6 +320,51 @@ This file is the day-to-day queue for design and implementation gaps.
       `.watchmanconfig`; preserve release and CI behavior; and document the
       cleanup command or policy for the central scratch root.
 
+- [ ] `P2` Convert the Docker helper to a Python-backed deployment tool.
+      The generated `arbiter-docker` Bash helper has grown into a large
+      deployment application with duplicated rules for env parsing,
+      requirements, bundle metadata, wheelhouse state, generated-file manifests,
+      Docker Compose, systemd install, doctor checks, and host permissions.
+      Convert it in phases so the operator command surface remains stable while
+      deployment semantics move into testable Python owned by `arbiter-server`.
+      Keep the generated helper usable on conservative hosts: target a
+      primitive Python subset compatible with Python 3.6, avoid optional modern
+      runtime dependencies, and keep the bootstrap path clear when Python or
+      Arbiter packages are not yet installed.
+      Plan: first extract the current Docker deploy generation logic from
+      `arbiter_server.main` into a dedicated deployment module without changing
+      behavior; define the host contract for the generated helper, including
+      whether it may require `/usr/bin/env python3`, whether it may run Python
+      inside the Arbiter container, and which commands must remain pure
+      bootstrap; add characterization tests for the current Bash helper's public
+      commands and important failure messages; replace duplicated data rules
+      with generated metadata files or shared Python functions, starting with
+      compose defaults, plugin bundle metadata, meta-package expansion,
+      requirement validation, env-file parsing, path resolution, and deploy
+      manifest hashes; introduce a Python implementation for low-risk local
+      commands such as `info`, `bundle list`, requirement editing/validation,
+      and manifest inspection while the Bash wrapper delegates to it; migrate
+      wheelhouse, bundle upgrade, doctor, install, and systemd behavior only
+      after the Python implementation can run in dry-run mode and produce the
+      same plans as Bash; keep `arbiter-docker COMMAND` as the user-facing
+      entrypoint throughout; and remove the old Bash bodies only after command
+      parity is covered by tests and docs.
+      Acceptance checks: the generated deployment still contains an executable
+      `arbiter-docker` entrypoint; supported hosts with Python 3.6 can run the
+      helper without installing extra Python packages; deployments that only
+      have Docker access can still prepare, check, install, and operate without
+      requiring a globally installed Arbiter package; server-side generation and
+      helper-side execution share one source of truth for requirement syntax,
+      meta-package expansion, bundle plugin metadata, compose defaults, env-file
+      parsing, path resolution, and manifest ownership; existing Docker helper
+      tests pass with updated expectations; new tests cover dry-run install
+      plans, doctor findings, wheelhouse validation commands, local checkout
+      source handling, generated-file drift, and missing-Python error guidance;
+      docs explain the helper runtime requirements and upgrade path; and
+      follow-up Docker items such as uninstall, upgrade, and bundle locking are
+      either implemented on the Python foundation or explicitly deferred until
+      after the conversion.
+
 - [ ] `P2` Add Docker deployment uninstall support.
       Operators who use `arbiter-docker install` need a matching cleanup path.
       Acceptance checks: `arbiter-docker uninstall` stops and disables the
