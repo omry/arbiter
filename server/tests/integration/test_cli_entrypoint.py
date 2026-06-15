@@ -163,6 +163,105 @@ def _build_current_go_client(tmp_path: Path) -> Path:
     return binary
 
 
+def _build_current_platform_client_wheel(
+    tmp_path: Path,
+    *,
+    binary: Path,
+) -> Path:
+    pytest.importorskip("build")
+    pytest.importorskip("hatchling")
+    goos, goarch, _ = _current_go_target()
+    outdir = tmp_path / "client-wheel"
+    env = os.environ.copy()
+    env.update(
+        {
+            "ARBITER_CLIENT_BINARY": str(binary),
+            "ARBITER_CLIENT_TARGET": f"{goos}-{goarch}",
+        }
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "build",
+            "--wheel",
+            "--no-isolation",
+            "--outdir",
+            str(outdir),
+            str(_repo_root() / "client"),
+        ],
+        check=False,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    assert result.returncode == 0, (
+        f"arbiter-client wheel build failed with exit code {result.returncode}\n"
+        f"stdout:\n{result.stdout}\n"
+        f"stderr:\n{result.stderr}"
+    )
+    wheels = sorted(outdir.glob("arbiter_client-*.whl"))
+    assert len(wheels) == 1, f"expected one arbiter-client wheel in {outdir}"
+    return wheels[0]
+
+
+def _venv_python(venv_dir: Path) -> Path:
+    if os.name == "nt":
+        return venv_dir / "Scripts" / "python.exe"
+    return venv_dir / "bin" / "python"
+
+
+def _venv_script(venv_dir: Path, name: str) -> Path:
+    if os.name == "nt":
+        return venv_dir / "Scripts" / f"{name}.exe"
+    return venv_dir / "bin" / name
+
+
+def _install_client_wheel(tmp_path: Path, wheel: Path) -> Path:
+    venv_dir = tmp_path / "client-venv"
+    create = subprocess.run(
+        [sys.executable, "-m", "venv", str(venv_dir)],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert create.returncode == 0, (
+        f"client smoke venv creation failed with exit code {create.returncode}\n"
+        f"stdout:\n{create.stdout}\n"
+        f"stderr:\n{create.stderr}"
+    )
+
+    install = subprocess.run(
+        [
+            str(_venv_python(venv_dir)),
+            "-m",
+            "pip",
+            "install",
+            "--no-index",
+            "--no-deps",
+            str(wheel),
+        ],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert install.returncode == 0, (
+        f"arbiter-client wheel install failed with exit code {install.returncode}\n"
+        f"wheel: {wheel}\n"
+        f"stdout:\n{install.stdout}\n"
+        f"stderr:\n{install.stderr}"
+    )
+
+    command = _venv_script(venv_dir, "arbiter")
+    assert command.is_file(), f"arbiter script was not installed: {command}"
+    return command
+
+
 @pytest.fixture(scope="module")
 def current_go_client_binary(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return _build_current_go_client(tmp_path_factory.mktemp("go-client"))
@@ -174,6 +273,20 @@ def arbiter_client_command(current_go_client_binary: Path) -> ClientCommand:
         "go",
         current_go_client_binary,
     )
+
+
+@pytest.fixture(scope="module")
+def packaged_arbiter_client_command(
+    tmp_path_factory: pytest.TempPathFactory,
+    current_go_client_binary: Path,
+) -> ClientCommand:
+    tmp_path = tmp_path_factory.mktemp("packaged-client")
+    wheel = _build_current_platform_client_wheel(
+        tmp_path,
+        binary=current_go_client_binary,
+    )
+    command = _install_client_wheel(tmp_path, wheel)
+    return ClientCommand("packaged-wheel", command)
 
 
 class _ArtifactRequestHandler(BaseHTTPRequestHandler):
@@ -698,6 +811,33 @@ def test_local_arbiter_server_fixture_serves_version_info(
     assert result.stderr == ""
     payload = json.loads(result.stdout)
     assert "structuredContent" in payload
+
+
+def test_packaged_arbiter_client_wheel_smoke(
+    packaged_arbiter_client_command: ClientCommand,
+    local_arbiter_server_factory: LocalArbiterServerFactory,
+) -> None:
+    version = _run_client_command(
+        packaged_arbiter_client_command.command,
+        "--version",
+    )
+
+    assert version.returncode == 0
+    assert version.stdout.startswith("arbiter ")
+    assert version.stderr == ""
+
+    server = local_arbiter_server_factory.start()
+    info = server.run_client(
+        "info",
+        "--short",
+        command=packaged_arbiter_client_command.command,
+    )
+
+    assert info.returncode == 0
+    assert info.stderr == ""
+    payload = json.loads(info.stdout)
+    assert payload["kind"] == "overview_short"
+    assert payload["server_url"] == server.mcp_url
 
 
 def test_arbiter_clients_info_short(

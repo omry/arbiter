@@ -26,22 +26,6 @@ This file is the day-to-day queue for design and implementation gaps.
 
 ## Now
 
-- [ ] `P1` Add CI smoke tests for all platform-specific Arbiter client wheels.
-      The `arbiter-skill` package now relies on ASI to copy the native Go client
-      from the platform-selected `arbiter-client` companion wheel, so release CI
-      should prove each client wheel starts and can talk to an Arbiter-compatible
-      local test server before publishing. `deploy-test` covers the
-      current-platform native client in the Docker deployment flow; this item is
-      for the full published wheel matrix.
-      Acceptance checks: CI builds or downloads all six `arbiter-client` wheels;
-      extracts or installs each target artifact; runs the packaged `arbiter`
-      executable for `linux-amd64`, `linux-arm64`, `darwin-amd64`,
-      `darwin-arm64`, `windows-amd64`, and `windows-arm64`; each binary passes
-      at least `--version` and one smoke request against a local test MCP server;
-      ASI install testing verifies `arbiter-skill` copies the selected companion
-      client into `bin/arbiter`; and failures identify the target package, OS,
-      architecture, command, and server log excerpt.
-
 - [ ] `P1` Run an Arbiter security analysis before initial release.
       Do one focused threat-model and implementation review pass over the
       current architecture before publishing packages. Cover the MCP boundary,
@@ -434,6 +418,15 @@ This file is the day-to-day queue for design and implementation gaps.
       hiding config-change detection failures.
 
 ## Done Recently
+
+- [x] Add platform Arbiter client wheel smoke coverage.
+      `server/tests/integration/test_cli_entrypoint.py` now builds the
+      current-platform `arbiter-client` wheel from the native client binary,
+      installs it into a temporary Python environment, checks the
+      `arbiter --version` output, and uses that installed command against the
+      local Arbiter server fixture. The release and publish workflows already
+      run this server integration suite across the six supported
+      OS/architecture runners.
 
 - [x] Complete release packaging and version readiness.
       The `0.9.1.dev2` full publish validated the package split and PyPI

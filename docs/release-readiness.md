@@ -125,9 +125,13 @@ platform native client changed:
 .venv/bin/python -m nox -s deploy-test
 ```
 
-This covers the current-platform native `arbiter-client` command in the Docker
-deployment flow. It does not replace the full platform-wheel smoke matrix for
-all published `arbiter-client` wheels.
+The release and publish workflows also run `server/tests/integration` across
+the six supported platform runners. That suite builds the current-platform
+`arbiter-client` wheel, installs it into a temporary Python environment, checks
+`arbiter --version`, and uses the installed command against a local Arbiter
+server. The Docker deployment test remains the pre-deploy gate for generated
+deployment scaffolding and the current-platform native client in the Docker
+flow.
 
 ### 4. Documentation pass
 

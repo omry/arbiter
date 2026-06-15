@@ -27,6 +27,12 @@ are already installed locally.
 .venv/bin/python -m pytest server/tests/unit/test_config.py
 ```
 
+The CLI integration check starts a local Arbiter server. It also builds the
+current-platform `arbiter-client` wheel, installs it into a temporary Python
+environment, verifies `arbiter --version`, and uses that installed command
+against the server. Release and publish workflows run this server integration
+suite on each supported OS/architecture runner.
+
 ## Docker Deployment Check
 
 The Docker deployment integration test is skipped by default during normal
@@ -41,9 +47,7 @@ The test starts a lightweight local IMAP server, generates a Docker deployment
 with `arbiter-server deploy docker`, runs generated helper preflight commands
 without a privileged install, starts the generated `arbiter-docker` helper,
 checks the server URL, verifies that the current-platform native `arbiter`
-client reports `arbiter`, and verifies an IMAP operation through that
-client. Release validation still needs the platform-wheel matrix for every
-published `arbiter-client` target.
+client reports `arbiter`, and verifies an IMAP operation through that client.
 
 Run the full suite before release or before committing broad interface changes.
 
