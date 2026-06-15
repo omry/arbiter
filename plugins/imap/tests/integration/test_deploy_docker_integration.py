@@ -349,6 +349,12 @@ def _run_delete_message(
     )
 
 
+def _assert_native_arbiter_client(repo_root: Path) -> None:
+    result = _run([_command("arbiter"), "--version"], cwd=repo_root, timeout=20)
+    _assert_ok(result)
+    assert result.stdout.startswith("arbiter-go "), result.stdout
+
+
 def _operation_payload(stdout: str) -> dict[str, Any]:
     payload = json.loads(stdout)
     if isinstance(payload, dict) and "account" in payload:
@@ -371,6 +377,7 @@ def _assert_imap_deployment_operation(
     helper: Path,
     imap_server: Any,
 ) -> None:
+    _assert_native_arbiter_client(repo_root)
     helper_test = _run([helper, "test"], cwd=repo_root, timeout=60)
     _assert_ok(helper_test)
     result = _wait_for_imap_operation(

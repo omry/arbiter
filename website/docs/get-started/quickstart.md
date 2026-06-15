@@ -27,6 +27,8 @@ explicitly.
 :::
 
 Use the virtualenv commands directly, or activate it before running examples.
+For agent skill and standalone client installation, see
+[Installing Arbiter Client](./client-install.md).
 
 ## Security boundary
 

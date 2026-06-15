@@ -26,23 +26,13 @@ This file is the day-to-day queue for design and implementation gaps.
 
 ## Now
 
-- [ ] `P1` Prepare release packaging and version readiness.
-      The `0.9.1.dev2` full publish validated the package split and PyPI
-      trusted-publisher path for `arbiter-server`, `arbiter-imap`,
-      `arbiter-smtp`, `arbiter-suite`, `arbiter-skill`, and `arbiter-client`.
-      A standalone ASI install from PyPI also validated that `arbiter-skill`
-      resolves and copies the `arbiter-client` companion wheel.
-      Remaining readiness work is the final-release pass, not the dev publish
-      mechanics. Acceptance checks: the intended final version target is
-      chosen; package metadata and deployment requirements docs agree; release
-      notes and status notes are current; local build/install smoke is verified;
-      and PyPI post-publish verification uses release-specific endpoints.
-
 - [ ] `P1` Add CI smoke tests for all platform-specific Arbiter client wheels.
       The `arbiter-skill` package now relies on ASI to copy the native Go client
       from the platform-selected `arbiter-client` companion wheel, so release CI
       should prove each client wheel starts and can talk to an Arbiter-compatible
-      local test server before publishing.
+      local test server before publishing. `deploy-test` covers the
+      current-platform native client in the Docker deployment flow; this item is
+      for the full published wheel matrix.
       Acceptance checks: CI builds or downloads all six `arbiter-client` wheels;
       extracts or installs each target artifact; runs the packaged `arbiter`
       executable for `linux-amd64`, `linux-arm64`, `darwin-amd64`,
@@ -64,33 +54,32 @@ This file is the day-to-day queue for design and implementation gaps.
       explicit accepted risks for the initial release; and confirm operator
       docs do not overstate the current security model.
 
-- [ ] `P1` Promote artifact delivery into a first-class server surface.
-      IMAP attachments are the first artifact-producing workflow, but artifact
-      delivery is a reusable client-facing facility rather than an IMAP-specific
-      detail. Acceptance checks: expose artifact delivery in server/plugin
-      discovery with description, guidance, one-time URL semantics, HEAD metadata
-      expectations, default TTLs, size/text safety rules, and recommended client
-      commands; add config options for artifact behavior and guidance; let
-      artifact-producing operations declare that they return `arbiter_artifact`
-      delivery; guide agents to avoid consuming large artifacts directly and to
-      pipe artifacts to appropriate tools when explicit artifact access is
-      needed; document how plugins can produce artifacts without redefining the
-      artifact contract from scratch; evaluate whether client commands should
-      take an artifact ID resolved through Arbiter instead of a raw artifact URL,
-      and remove raw URL handling if the ID-based contract is better for agents
-      and sandboxing; coordinate Codex sandbox loopback
-      allowlisting so local Arbiter MCP and artifact URLs such as
-      `http://127.0.0.1:8025/...` do not require per-command escalation.
-
 - [ ] `P1` Complete the website documentation readiness pass.
       The Docusaurus site is the user-facing documentation home, but it still
       needs a release-readiness pass across operator and plugin-author
-      workflows. Acceptance checks: quickstart, package installation, Docker
-      deployment, config, CLI, security, plugin author, testing, and release docs
-      use current package names, command names, config paths, version examples,
-      and security claims; stale examples are fixed or removed.
+      workflows. Acceptance checks: quickstart, package installation, client and
+      skill installation, Docker deployment, config, CLI, security, plugin
+      author, testing, and release docs use current package names, command
+      names, config paths, version examples, and security claims; stale examples
+      are fixed or removed.
 
 ## Post-v1
+
+- [ ] `P2` Finish artifact delivery discovery and client contract.
+      IMAP attachments can already produce Arbiter artifacts, but artifact
+      delivery still needs a cleaner reusable product contract. Acceptance
+      checks: expose artifact delivery in server/plugin discovery with
+      description, guidance, one-time URL semantics, HEAD metadata expectations,
+      default TTLs, size/text safety rules, and recommended client commands; add
+      config options for artifact behavior and guidance; let artifact-producing
+      operations declare that they return `arbiter_artifact` delivery; document
+      how plugins can produce artifacts without redefining the artifact contract
+      from scratch; evaluate whether client commands should take an artifact ID
+      resolved through Arbiter instead of a raw artifact URL, and remove raw URL
+      handling if the ID-based contract is better for agents and sandboxing; and
+      coordinate Codex sandbox loopback allowlisting so local Arbiter MCP and
+      artifact URLs such as `http://127.0.0.1:8025/...` do not require
+      per-command escalation.
 
 - [ ] `P2` Add real OS/process isolation for plugin writable storage.
       The server now gives each plugin a scoped storage capability, but
@@ -457,6 +446,18 @@ This file is the day-to-day queue for design and implementation gaps.
       hiding config-change detection failures.
 
 ## Done Recently
+
+- [x] Complete release packaging and version readiness.
+      The `0.9.1.dev2` full publish validated the package split and PyPI
+      trusted-publisher path for `arbiter-server`, `arbiter-imap`,
+      `arbiter-smtp`, `arbiter-suite`, `arbiter-skill`, and `arbiter-client`.
+      A standalone ASI install from PyPI also validated that `arbiter-skill`
+      resolves and copies the `arbiter-client` companion wheel.
+
+- [x] Document Arbiter client installation.
+      The public docs now cover the common Agent Skill Installer path from PyPI
+      and direct `arbiter-client` installation, including verification that the
+      installed client reports `arbiter-go`.
 
 - [x] Split SMTP and IMAP into independently installable service-plugin
       packages. Future service packages should follow this plugin distribution

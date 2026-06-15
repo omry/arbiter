@@ -11,6 +11,7 @@ const sidebars = {
         'intro',
         'get-started/concepts',
         'get-started/quickstart',
+        'get-started/client-install',
       ],
     },
     {

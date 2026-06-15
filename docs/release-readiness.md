@@ -10,8 +10,8 @@ run, it is not done.
 ## Current blockers for the initial release
 
 - Local release rehearsal from built artifacts has not been run end to end.
-- Documentation pass across the published-package install and deployment path
-  has not been completed.
+- Documentation pass across the published-package install, client and skill
+  installation, and deployment path has not been completed.
 - Security analysis has not been completed.
 - Cleanup of the earlier platform-specific skill package attempt has not been
   planned or executed.
@@ -45,6 +45,8 @@ run, it is not done.
 ## Required gates
 
 ### 1. Version and package readiness
+
+Status: complete.
 
 - Choose the target release version and package keys.
 - Confirm package versions are on the intended release line.
@@ -87,11 +89,12 @@ Install from the built wheelhouse into a fresh virtualenv and run installed
 entry points:
 
 ```bash
+VERSION=0.9.1
 .venv/bin/python -m venv /tmp/arbiter-release/venv
 /tmp/arbiter-release/venv/bin/python -m pip install --upgrade pip
 /tmp/arbiter-release/venv/bin/python -m pip install \
   --find-links /tmp/arbiter-release/dist \
-  /tmp/arbiter-release/dist/arbiter_suite-0.9.0.dev2-py3-none-any.whl
+  "/tmp/arbiter-release/dist/arbiter_suite-${VERSION}-py3-none-any.whl"
 /tmp/arbiter-release/venv/bin/arbiter-server version --json
 ```
 
@@ -115,17 +118,23 @@ Run the normal release checks:
 ```
 
 Run the Docker deployment test before deploying, and when deployment
-scaffolding, package installation, or generated helper scripts changed:
+scaffolding, package installation, generated helper scripts, or the current
+platform native client changed:
 
 ```bash
 .venv/bin/python -m nox -s deploy-test
 ```
+
+This covers the current-platform native `arbiter-client` command in the Docker
+deployment flow. It does not replace the full platform-wheel smoke matrix for
+all published `arbiter-client` wheels.
 
 ### 4. Documentation pass
 
 Review the public docs against the installed-package world:
 
 - quickstart
+- client and skill installation
 - package installation and Docker deployment
 - config bootstrap and configuration model
 - CLI reference and command names
@@ -193,9 +202,10 @@ package, and record the cleanup action taken.
 After publishing, verify a clean install from PyPI:
 
 ```bash
+VERSION=0.9.1
 python -m venv /tmp/arbiter-pypi-smoke
 /tmp/arbiter-pypi-smoke/bin/python -m pip install --upgrade pip
-/tmp/arbiter-pypi-smoke/bin/python -m pip install arbiter-suite==0.9.0
+/tmp/arbiter-pypi-smoke/bin/python -m pip install "arbiter-suite==${VERSION}"
 /tmp/arbiter-pypi-smoke/bin/arbiter-server version --json
 ```
 
