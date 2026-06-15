@@ -6428,9 +6428,10 @@ def test_cli_deploy_docker_generated_helper_install_handles_missing_docker_unit(
     assert "After=docker.service\n" not in unit_text
     assert f"WorkingDirectory={install_dir}\n" in unit_text
     docker_call_text = docker_calls.read_text(encoding="utf-8")
-    static_check_index = docker_call_text.index(
-        "compose --env-file /tmp/arbiter-install-check."
-    )
+    static_check_index = docker_call_text.index("compose --env-file ")
+    assert "arbiter-install-check." in docker_call_text[
+        static_check_index : docker_call_text.index("\n", static_check_index)
+    ]
     wheelhouse_check_index = docker_call_text.index(
         "run --rm --user 123:123 "
         f"-v {install_dir / 'requirements.txt'}:/requirements.txt:ro "
