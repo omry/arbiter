@@ -2,11 +2,12 @@
 
 |  | Description |
 | --- | --- |
-| Project | [![PyPI version](https://badge.fury.io/py/arbiter-suite.svg)](https://badge.fury.io/py/arbiter-suite)[![Downloads](https://pepy.tech/badge/arbiter-server/month)](https://pepy.tech/project/arbiter-server)![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue) |
-| Packages | [![arbiter-server](https://img.shields.io/pypi/v/arbiter-server.svg?label=arbiter-server)](https://pypi.org/project/arbiter-server/)[![arbiter-smtp](https://img.shields.io/pypi/v/arbiter-smtp.svg?label=arbiter-smtp)](https://pypi.org/project/arbiter-smtp/)[![arbiter-imap](https://img.shields.io/pypi/v/arbiter-imap.svg?label=arbiter-imap)](https://pypi.org/project/arbiter-imap/) |
-| Code quality | [![CI](https://github.com/omry/arbiter/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/omry/arbiter/actions/workflows/ci.yml) |
-| Docs and support | [![Documentation](https://img.shields.io/badge/docs-arbiter.yadan.net-blue)](https://arbiter.yadan.net/) |
-| License | [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) |
+| Meta packages | [![arbiter-suite](https://img.shields.io/pypi/v/arbiter-suite.svg?label=arbiter-suite)](https://pypi.org/project/arbiter-suite/) |
+| Core packages | [![arbiter-server](https://img.shields.io/pypi/v/arbiter-server.svg?label=arbiter-server)](https://pypi.org/project/arbiter-server/)[![arbiter-client](https://img.shields.io/pypi/v/arbiter-client.svg?label=arbiter-client)](https://pypi.org/project/arbiter-client/)[![arbiter-skill](https://img.shields.io/pypi/v/arbiter-skill.svg?label=arbiter-skill)](https://pypi.org/project/arbiter-skill/) |
+| Plugins | [![arbiter-imap](https://img.shields.io/pypi/v/arbiter-imap.svg?label=arbiter-imap)](https://pypi.org/project/arbiter-imap/)[![arbiter-smtp](https://img.shields.io/pypi/v/arbiter-smtp.svg?label=arbiter-smtp)](https://pypi.org/project/arbiter-smtp/) |
+| Python | ![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue) |
+| Docs and support | [![Website](https://img.shields.io/badge/website-arbiter.yadan.net-blue)](https://arbiter.yadan.net/)[![Zulip chat](https://img.shields.io/badge/chat-Zulip-2e77d0?logo=zulip)](https://hydra-framework.zulipchat.com/#narrow/stream/arbiter) |
+| General | [![CI](https://github.com/omry/arbiter/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/omry/arbiter/actions/workflows/ci.yml)[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) |
 
 Arbiter is a capability firewall between AI agents and services. Today it exposes policy-controlled access through MCP and a client CLI; additional interfaces may be added later. The current service surface covers sending mail over SMTP and reading IMAP folders through explicit account policies.
 
