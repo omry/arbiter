@@ -135,11 +135,11 @@ arbiter-server config show
 arbiter:
   server:
     name: arbiter
-    transport: streamable-http
+    transport: http
     bind:
       host: 127.0.0.1
-      port: 8000
-      path: /mcp
+      port: 8075
+      path: ""
   account:
     smtp:
       bot:
@@ -195,6 +195,6 @@ arbiter-server serve
 In another terminal, point the Arbiter client at the local server:
 
 ```bash
-arbiter info arbiter.mcp_url=http://127.0.0.1:8000/mcp
-arbiter info plugin smtp arbiter.mcp_url=http://127.0.0.1:8000/mcp
+arbiter info arbiter.url=http://127.0.0.1:8075
+arbiter info plugin smtp arbiter.url=http://127.0.0.1:8075
 ```

@@ -5,18 +5,6 @@ from typing import Protocol, cast
 from .services import RuntimeRegistry
 
 
-SERVER_TOOL_NAMES = (
-    "info",
-    "version_info",
-    "list_caps",
-    "describe_caps",
-    "describe_cap",
-    "describe_op",
-    "run_op",
-    "check_op",
-)
-
-
 class AccountSummariesRuntime(Protocol):
     def account_summaries(self) -> dict[str, object]: ...
 
@@ -29,9 +17,6 @@ class ArbiterApp:
         runtime_registry: RuntimeRegistry,
     ) -> None:
         self.runtime_registry = runtime_registry
-
-    def tool_names(self) -> list[str]:
-        return list(SERVER_TOOL_NAMES)
 
     def list_accounts(self) -> dict[str, object]:
         summaries: dict[str, object] = {}

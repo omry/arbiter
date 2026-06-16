@@ -46,7 +46,6 @@ func TestGoClientHelp(t *testing.T) {
 			unexpected: []string{
 				"bootstrap",
 				"config",
-				"mcp",
 			},
 		},
 		{
@@ -58,8 +57,8 @@ func TestGoClientHelp(t *testing.T) {
 				"setup:",
 				"bootstrap",
 				"config",
-				"advanced:",
-				"mcp",
+			},
+			unexpected: []string{
 			},
 		},
 		{
@@ -83,15 +82,15 @@ func TestGoClientHelp(t *testing.T) {
 			args: []string{"config", "--help"},
 			expected: []string{
 				"usage: arbiter config",
-				"mcp-url",
+				"url",
 			},
 		},
 		{
-			name: "config mcp-url",
-			args: []string{"config", "mcp-url", "--help"},
+			name: "config url",
+			args: []string{"config", "url", "--help"},
 			expected: []string{
-				"usage: arbiter config mcp-url",
-				"MCP URL resolved",
+				"usage: arbiter config url",
+				"URL resolved",
 			},
 		},
 		{
@@ -102,7 +101,6 @@ func TestGoClientHelp(t *testing.T) {
 				"--short",
 				"--yaml",
 				"plugins",
-				"accounts",
 				"ops",
 			},
 		},
@@ -112,15 +110,6 @@ func TestGoClientHelp(t *testing.T) {
 			expected: []string{
 				"usage: arbiter info plugin",
 				"<plugin>",
-			},
-		},
-		{
-			name: "info account",
-			args: []string{"info", "account", "--help"},
-			expected: []string{
-				"usage: arbiter info account",
-				"<plugin>",
-				"<account>",
 			},
 		},
 		{
@@ -169,31 +158,6 @@ func TestGoClientHelp(t *testing.T) {
 			expected: []string{
 				"usage: arbiter op run",
 				"arbiter op list <plugin>",
-				"--args",
-			},
-		},
-		{
-			name: "mcp",
-			args: []string{"mcp", "--help"},
-			expected: []string{
-				"usage: arbiter mcp",
-				"tools",
-				"call",
-			},
-		},
-		{
-			name: "mcp tools",
-			args: []string{"mcp", "tools", "--help"},
-			expected: []string{
-				"usage: arbiter mcp tools",
-				"--json",
-			},
-		},
-		{
-			name: "mcp call",
-			args: []string{"mcp", "call", "--help"},
-			expected: []string{
-				"usage: arbiter mcp call",
 				"--args",
 			},
 		},
@@ -258,7 +222,7 @@ func TestBootstrapClientWritesConfig(t *testing.T) {
 		"client-conf",
 		"bootstrap",
 		"client",
-		"arbiter.mcp_url=http://example.test/mcp",
+		"arbiter.url=http://example.test",
 	)
 
 	if result.Code != 0 {
@@ -272,7 +236,7 @@ func TestBootstrapClientWritesConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != "arbiter:\n  mcp_url: \"http://example.test/mcp\"\n" {
+	if string(data) != "arbiter:\n  url: \"http://example.test\"\n" {
 		t.Fatalf("unexpected config:\n%s", data)
 	}
 }
@@ -309,7 +273,7 @@ func serverPyprojectVersion(t *testing.T) string {
 
 func TestBootstrapClientRefusesOverwrite(t *testing.T) {
 	env := testutil.NewCLIEnvironment(t)
-	env.WriteClientConfig("arbiter:\n  mcp_url: http://old.test/mcp\n")
+	env.WriteClientConfig("arbiter:\n  url: http://old.test\n")
 
 	result := testutil.RunCLI(t, env, "bootstrap", "client")
 
@@ -321,12 +285,12 @@ func TestBootstrapClientRefusesOverwrite(t *testing.T) {
 	}
 }
 
-func TestResolveMCPURLPrefersOverride(t *testing.T) {
+func TestResolveURLPrefersOverride(t *testing.T) {
 	env := testutil.NewCLIEnvironment(t)
-	env.SetEnv(cli.MCPURLEnvVar, "http://env.test/mcp")
+	env.SetEnv(cli.URLEnvVar, "http://env.test")
 
-	resolved, err := cli.ResolveMCPURL(
-		[]string{"arbiter.mcp_url=http://example.test/mcp"},
+	resolved, err := cli.ResolveURL(
+		[]string{"arbiter.url=http://example.test"},
 		env.LookupEnv,
 		env.HomeDir,
 	)
@@ -334,7 +298,7 @@ func TestResolveMCPURLPrefersOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved.URL != "http://example.test/mcp" {
+	if resolved.URL != "http://example.test" {
 		t.Fatalf("unexpected URL: %q", resolved.URL)
 	}
 	if resolved.Source != "override" {
@@ -342,11 +306,11 @@ func TestResolveMCPURLPrefersOverride(t *testing.T) {
 	}
 }
 
-func TestResolveMCPURLUsesEnvironment(t *testing.T) {
+func TestResolveURLUsesEnvironment(t *testing.T) {
 	env := testutil.NewCLIEnvironment(t)
-	env.SetEnv(cli.MCPURLEnvVar, "http://env.test/mcp")
+	env.SetEnv(cli.URLEnvVar, "http://env.test")
 
-	resolved, err := cli.ResolveMCPURL(
+	resolved, err := cli.ResolveURL(
 		nil,
 		env.LookupEnv,
 		env.HomeDir,
@@ -355,24 +319,24 @@ func TestResolveMCPURLUsesEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved.URL != "http://env.test/mcp" {
+	if resolved.URL != "http://env.test" {
 		t.Fatalf("unexpected URL: %q", resolved.URL)
 	}
-	if resolved.Source != cli.MCPURLEnvVar {
+	if resolved.Source != cli.URLEnvVar {
 		t.Fatalf("unexpected source: %q", resolved.Source)
 	}
 }
 
-func TestResolveMCPURLUsesClientConfig(t *testing.T) {
+func TestResolveURLUsesClientConfig(t *testing.T) {
 	env := testutil.NewCLIEnvironment(t)
-	configPath := env.WriteClientConfig("arbiter:\n  mcp_url: 'http://config.test/mcp'\n")
+	configPath := env.WriteClientConfig("arbiter:\n  url: 'http://config.test'\n")
 
-	resolved, err := cli.ResolveMCPURL(nil, env.LookupEnv, env.HomeDir)
+	resolved, err := cli.ResolveURL(nil, env.LookupEnv, env.HomeDir)
 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved.URL != "http://config.test/mcp" {
+	if resolved.URL != "http://config.test" {
 		t.Fatalf("unexpected URL: %q", resolved.URL)
 	}
 	if resolved.Source != configPath {
@@ -380,81 +344,81 @@ func TestResolveMCPURLUsesClientConfig(t *testing.T) {
 	}
 }
 
-func TestResolveMCPURLRejectsTopLevelMCPURL(t *testing.T) {
+func TestResolveURLRejectsTopLevelURL(t *testing.T) {
 	env := testutil.NewCLIEnvironment(t)
-	env.WriteClientConfig("mcp_url: http://config.test/mcp\n")
+	env.WriteClientConfig("url: http://config.test\n")
 
-	_, err := cli.ResolveMCPURL(nil, env.LookupEnv, env.HomeDir)
+	_, err := cli.ResolveURL(nil, env.LookupEnv, env.HomeDir)
 
 	if err == nil {
-		t.Fatal("expected top-level mcp_url to fail")
+		t.Fatal("expected top-level url to fail")
 	}
 }
 
-func TestResolveMCPURLRejectsUnknownClientConfigKeys(t *testing.T) {
+func TestResolveURLRejectsUnknownClientConfigKeys(t *testing.T) {
 	env := testutil.NewCLIEnvironment(t)
-	env.WriteClientConfig("other:\n  mcp_url: http://config.test/mcp\n")
+	env.WriteClientConfig("other:\n  url: http://config.test\n")
 
-	_, err := cli.ResolveMCPURL(nil, env.LookupEnv, env.HomeDir)
+	_, err := cli.ResolveURL(nil, env.LookupEnv, env.HomeDir)
 
 	if err == nil {
 		t.Fatal("expected unknown top-level key to fail")
 	}
 }
 
-func TestResolveMCPURLRejectsUnknownArbiterConfigKeys(t *testing.T) {
+func TestResolveURLRejectsUnknownArbiterConfigKeys(t *testing.T) {
 	env := testutil.NewCLIEnvironment(t)
-	env.WriteClientConfig("arbiter:\n  other: http://config.test/mcp\n")
+	env.WriteClientConfig("arbiter:\n  other: http://config.test\n")
 
-	_, err := cli.ResolveMCPURL(nil, env.LookupEnv, env.HomeDir)
+	_, err := cli.ResolveURL(nil, env.LookupEnv, env.HomeDir)
 
 	if err == nil {
 		t.Fatal("expected unknown arbiter key to fail")
 	}
 }
 
-func TestResolveMCPURLRejectsUnknownArbiterConfigKeysAfterMCPURL(t *testing.T) {
+func TestResolveURLRejectsUnknownArbiterConfigKeysAfterURL(t *testing.T) {
 	env := testutil.NewCLIEnvironment(t)
-	env.WriteClientConfig("arbiter:\n  mcp_url: http://config.test/mcp\n  other: value\n")
+	env.WriteClientConfig("arbiter:\n  url: http://config.test\n  other: value\n")
 
-	_, err := cli.ResolveMCPURL(nil, env.LookupEnv, env.HomeDir)
+	_, err := cli.ResolveURL(nil, env.LookupEnv, env.HomeDir)
 
 	if err == nil {
 		t.Fatal("expected trailing unknown arbiter key to fail")
 	}
 }
 
-func TestResolveMCPURLRejectsNonStringMCPURL(t *testing.T) {
+func TestResolveURLRejectsNonStringURL(t *testing.T) {
 	env := testutil.NewCLIEnvironment(t)
-	env.WriteClientConfig("arbiter:\n  mcp_url: 123\n")
+	env.WriteClientConfig("arbiter:\n  url: 123\n")
 
-	_, err := cli.ResolveMCPURL(nil, env.LookupEnv, env.HomeDir)
+	_, err := cli.ResolveURL(nil, env.LookupEnv, env.HomeDir)
 
 	if err == nil {
-		t.Fatal("expected non-string mcp_url to fail")
+		t.Fatal("expected non-string url to fail")
 	}
 }
 
-func TestResolveMCPURLRejectsScalarArbiterConfig(t *testing.T) {
+func TestResolveURLRejectsScalarArbiterConfig(t *testing.T) {
 	env := testutil.NewCLIEnvironment(t)
-	env.WriteClientConfig("arbiter: http://config.test/mcp\n")
+	env.WriteClientConfig("arbiter: http://config.test\n")
 
-	_, err := cli.ResolveMCPURL(nil, env.LookupEnv, env.HomeDir)
+	_, err := cli.ResolveURL(nil, env.LookupEnv, env.HomeDir)
 
 	if err == nil {
 		t.Fatal("expected scalar arbiter config to fail")
 	}
 }
 
-func TestResolveMCPURLDefaults(t *testing.T) {
+func TestResolveURLDefaults(t *testing.T) {
 	env := testutil.NewCLIEnvironment(t)
 
-	resolved, err := cli.ResolveMCPURL(nil, env.LookupEnv, env.HomeDir)
+	resolved, err := cli.ResolveURL(nil, env.LookupEnv, env.HomeDir)
 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved.URL != cli.DefaultMCPURL {
+	if resolved.URL != cli.DefaultURL {
 		t.Fatalf("unexpected URL: %q", resolved.URL)
 	}
 	if resolved.Source != "default" {

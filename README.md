@@ -9,13 +9,13 @@
 | Docs and support | [![Website](https://img.shields.io/badge/website-arbiter.yadan.net-blue)](https://arbiter.yadan.net/)[![Zulip chat](https://img.shields.io/badge/chat-Zulip-2e77d0?logo=zulip)](https://hydra-framework.zulipchat.com/#narrow/stream/arbiter) |
 | General | [![CI](https://github.com/omry/arbiter/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/omry/arbiter/actions/workflows/ci.yml)[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) |
 
-Arbiter is a capability firewall between AI agents and services. Today it exposes policy-controlled access through MCP and a client CLI; additional interfaces may be added later. The current service surface covers sending mail over SMTP and reading IMAP folders through explicit account policies.
+Arbiter is a capability firewall between AI agents and services. Today it exposes policy-controlled access through an Arbiter server and client CLI; additional interfaces may be added later. The current service surface covers sending mail over SMTP and reading IMAP folders through explicit account policies.
 
 ## Project Status
 
 Current implementation status:
 
-- MCP server over stdio, SSE, or streamable HTTP via FastMCP
+- Arbiter server over a native HTTP API
 - capability discovery with SMTP and IMAP account and operation metadata
 - SMTP submission with configured sender identity, TLS/auth settings, text/HTML bodies, and Bcc kept out of message headers
 - IMAP list/get/search/move/mark-read/delete tools scoped to configured accounts and folders
@@ -29,7 +29,7 @@ Known open gaps:
 - durable audit storage is parked for post-v1, while startup/runtime logging is
   the v1 observability focus
 - normalized error-code responses are still a design contract, while the
-  implementation currently surfaces Python/MCP errors
+  implementation currently surfaces Python and transport errors
 - the agent-facing skill integration path is intentionally not implemented in
   this repository yet
 
@@ -104,13 +104,13 @@ design notes:
 - [docs/release-readiness.md](docs/release-readiness.md)
 - [docs/future/](docs/future/)
 
-## Local Streamable HTTP Run
+## Local Native HTTP Run
 
-For local Codex or VS Code integration, run Arbiter as a streamable HTTP MCP
-server and point the client at:
+For local Codex or VS Code integration, run Arbiter over native HTTP and
+point the client at:
 
 ```text
-http://127.0.0.1:8025/mcp
+http://127.0.0.1:8075
 ```
 
 Arbiter does not ship a runnable service config. Bootstrap a Hydra
@@ -174,13 +174,12 @@ arbiter-server serve
 `config check` and `serve` require at least one configured service account.
 
 Use `arbiter-server plugins list` to inspect installed service plugins before
-validating a config. Once the server is running, use the client CLI against the
-MCP endpoint:
+validating a config. Once the server is running, point the client CLI at the
+server URL:
 
 ```bash
-arbiter mcp tools arbiter.mcp_url=http://127.0.0.1:8025/mcp
-arbiter info arbiter.mcp_url=http://127.0.0.1:8025/mcp
-arbiter info plugins arbiter.mcp_url=http://127.0.0.1:8025/mcp
+arbiter info arbiter.url=http://127.0.0.1:8075
+arbiter info plugins arbiter.url=http://127.0.0.1:8075
 ```
 
 The client can also read the endpoint from a small config file:
@@ -188,14 +187,14 @@ The client can also read the endpoint from a small config file:
 
 ```yaml
 arbiter:
-  mcp_url: http://127.0.0.1:8025/mcp
+  url: http://127.0.0.1:8075
 ```
 
 Override config values with Hydra-style `key=value` arguments after the
 command, or bootstrap the client config:
 
 ```bash
-arbiter bootstrap client arbiter.mcp_url=http://127.0.0.1:8025/mcp
+arbiter bootstrap client arbiter.url=http://127.0.0.1:8075
 ```
 
 IMAP operations use folder-scoped UIDs returned by `imap:list_messages` and

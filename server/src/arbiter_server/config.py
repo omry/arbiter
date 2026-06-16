@@ -22,8 +22,8 @@ LOGGER = logging.getLogger(__name__)
 class HTTPServerConfig:
     scheme: str = "http"
     host: str = "127.0.0.1"
-    port: int = 8000
-    path: str = "/mcp"
+    port: int = 8075
+    path: str = ""
     base_url: str = "${.scheme}://${.host}:${.port}"
 
 
@@ -40,13 +40,11 @@ def _public_http_server_config() -> HTTPServerConfig:
 
 
 @dataclass
-class FastMCPConfig:
+class ServerConfig:
     name: str = "arbiter"
-    transport: str = "streamable-http"
+    transport: str = "http"
     bind: HTTPServerConfig = field(default_factory=_bind_http_server_config)
     public: HTTPServerConfig = field(default_factory=_public_http_server_config)
-    stateless_http: bool = True
-    json_response: bool = True
 
 
 @dataclass
@@ -80,7 +78,7 @@ class Policy:
 @dataclass
 class ArbiterConfig:
     env_file: str | None = None
-    server: FastMCPConfig = field(default_factory=FastMCPConfig)
+    server: ServerConfig = field(default_factory=ServerConfig)
     deployment_scope: DeploymentScope = DeploymentScope.unknown
     discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
@@ -176,28 +174,14 @@ def _register_server_configs(config_store: ConfigStore) -> None:
     config_store.store(
         group="arbiter/server",
         name="schema",
-        node=FastMCPConfig,
+        node=ServerConfig,
         package="arbiter.server",
         provider="arbiter-server",
     )
     config_store.store(
         group="arbiter/server",
-        name="streamable-http",
-        node=FastMCPConfig(),
-        package="arbiter.server",
-        provider="arbiter-server",
-    )
-    config_store.store(
-        group="arbiter/server",
-        name="stdio",
-        node=FastMCPConfig(transport="stdio"),
-        package="arbiter.server",
-        provider="arbiter-server",
-    )
-    config_store.store(
-        group="arbiter/server",
-        name="sse",
-        node=FastMCPConfig(transport="sse"),
+        name="http",
+        node=ServerConfig(),
         package="arbiter.server",
         provider="arbiter-server",
     )

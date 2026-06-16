@@ -4,7 +4,7 @@ title: Architecture
 
 Arbiter is a policy-controlled service access runtime. Its capabilities
 are loaded through service plugins, activated by config, and currently exposed
-through MCP and CLI surfaces.
+through native HTTP and CLI surfaces.
 
 ## Server responsibilities
 
@@ -12,8 +12,8 @@ through MCP and CLI surfaces.
 - register structured config schemas
 - discover installed service plugins
 - activate configured services
-- expose the current MCP and CLI access surfaces
-- dispatch `run_op` calls to service runtimes
+- expose the current native HTTP and CLI access surfaces
+- dispatch operation calls to service runtimes
 
 ## Plugin responsibilities
 
@@ -22,11 +22,14 @@ through MCP and CLI surfaces.
 - describe capabilities and operations
 - validate service semantics and enforce service policy
 
-## Canonical MCP surface
+## Canonical HTTP Surface
 
-- `info`
-- `version_info`
-- `run_op`
+- `GET /_health_`
+- `GET /api/v1/info`
+- `GET /api/v1/plugins`
+- `GET /api/v1/plugins/{plugin}/operations`
+- `GET /api/v1/operations/{operation}`
+- `POST /api/v1/operations/{operation}`
 
 Service operations use ids such as `smtp:send_email` and
 `imap:list_messages`.

@@ -1,6 +1,6 @@
 # Source Layout
 
-Use this directory for the mail gateway MCP server implementation.
+Use this directory for the Arbiter HTTP server implementation.
 
 Suggested subdirectories:
 
@@ -10,4 +10,4 @@ Suggested subdirectories:
 - `transports/`
 - `policies/`
 
-Keep MCP tool handlers thin and move shared behavior into services, transports, and policies.
+Keep HTTP handlers thin and move shared behavior into services, transports, and policies.

@@ -47,7 +47,7 @@ the helper.
 | Command | Purpose |
 | --- | --- |
 | `up` | Start or update the staged Compose service, then print the server URL. |
-| `test` | Call `version_info` through the computed server URL, retrying through transient startup failures. |
+| `test` | Call the Arbiter client through the computed server URL, retrying through transient startup failures. |
 | `ps` | Show Docker Compose service status. |
 | `logs` | Follow Docker Compose logs with Docker timestamps. |
 | `restart` | Recreate the container, reinstalling the configured requirements, then print the server URL. |

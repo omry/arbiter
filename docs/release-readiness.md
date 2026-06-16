@@ -153,7 +153,7 @@ points, config shape, version expectations, and security claims.
 
 Complete a focused security analysis before the initial release. Cover:
 
-- MCP boundary and caller trust assumptions
+- native HTTP boundary and caller trust assumptions
 - local and Docker deployment modes
 - config and environment file handling
 - plugin discovery and loading

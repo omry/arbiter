@@ -5,7 +5,7 @@ from typing import Any, cast
 import pytest
 
 from arbiter_server.artifacts import ArtifactDescriptor, PluginArtifactStore
-from arbiter_server.app import SERVER_TOOL_NAMES, ArbiterApp
+from arbiter_server.app import ArbiterApp
 from arbiter_imap.config import (
     IMAPAccessPolicyConfig,
     IMAPConfig,
@@ -626,12 +626,6 @@ def test_imap_service_plugin_invocation_dispatches_runtime_arguments() -> None:
         plugin.invoke_operation("not_real", {}, context)
 
 
-def test_tool_names_contains_server_discovery_tools() -> None:
-    app = _app(smtp_runtime=_smtp_runtime(), imap_runtime=_imap_runtime())
-
-    assert app.tool_names() == list(SERVER_TOOL_NAMES)
-
-
 def test_list_accounts_returns_service_grouped_summaries() -> None:
     app = _app(smtp_runtime=_smtp_runtime(), imap_runtime=_imap_runtime())
 
@@ -689,7 +683,6 @@ def test_list_accounts_accepts_entry_point_supplied_service_runtime() -> None:
 
     app = ArbiterApp(RuntimeRegistry({"external": FakeRuntime()}))
 
-    assert app.tool_names() == list(SERVER_TOOL_NAMES)
     assert app.list_accounts() == {
         "external": {
             "primary": {

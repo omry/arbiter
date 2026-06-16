@@ -93,10 +93,10 @@ Use an override with `serve` when you want a one-off runtime change without
 editing the config files:
 
 ```bash
-arbiter-server serve arbiter.server.bind.port=8025
+arbiter-server serve arbiter.server.bind.port=8075
 ```
 
-That command starts the server on port `8025` for that process only.
+That command starts the server on port `8075` for that process only.
 
 Hydra also supports config group overrides. Arbiter uses config groups for
 server settings, accounts, and policies, but normal account activation should go

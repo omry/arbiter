@@ -173,23 +173,20 @@ Arbiter server:
 ./arbiter-docker test
 ```
 
-`up` prints the server URL for this staged directory. `test` calls
-`version_info` through that URL and waits through transient startup connection
-failures.
+`up` prints the server URL for this staged directory. `test` calls the Arbiter
+client through that URL and waits through transient startup connection failures.
 
 You can also verify plugin discovery and plugin versions through the normal
 Arbiter client. Use the server URL printed by `up`:
 
 ```bash
-arbiter arbiter.mcp_url=http://127.0.0.1:18025/mcp info --yaml plugins
-# Heads up: connected to staged Arbiter at http://127.0.0.1:18025/mcp.
-# server_url: http://127.0.0.1:18025/mcp
+arbiter arbiter.url=http://127.0.0.1:18075 info --yaml plugins
+# Heads up: connected to staged Arbiter at http://127.0.0.1:18075.
+# server_url: http://127.0.0.1:18075
 # kind: plugins
 # plugins:
 # - id: imap
-#   version: 0.9.0
 # - id: smtp
-#   version: 0.9.0
 ```
 
 Once the staged service works locally, promote it to a host service with the

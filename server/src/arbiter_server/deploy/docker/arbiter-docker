@@ -26,7 +26,7 @@ Commands:
                 Validate config inside a container; --live uses the running service
   up            Start or update the Docker Compose service
   restart       Recreate the Docker Compose service
-  test          Call version_info through the computed MCP URL
+  test          Call the Arbiter client through the computed URL
   down          Stop and remove the Docker Compose service
   ps            Show Docker Compose service status
   logs          Follow Docker Compose logs
@@ -1769,35 +1769,35 @@ server_host_url_value() {
   esac
 }
 
-mcp_url_value() {
-  printf 'http://%s:%s/mcp\n' \
+server_url_value() {
+  printf 'http://%s:%s\n' \
     "$(server_host_url_value)" \
-    "$(compose_env_value ARBITER_HOST_PORT 18025)"
+    "$(compose_env_value ARBITER_HOST_PORT 18075)"
 }
 
-print_mcp_url_value() {
+print_url_value() {
   local url="$1"
 
   printf ' '
   doctor_prefix 32 "✔"
-  printf ' MCP URL: '
+  printf ' URL: '
   doctor_prefix 94 "$url"
   printf '\n'
 }
 
-print_mcp_url() {
-  print_mcp_url_value "$(mcp_url_value)"
+print_url() {
+  print_url_value "$(server_url_value)"
 }
 
 print_staging_port_note() {
   local host_port
 
   deployment_is_staged || return 0
-  host_port="$(compose_env_value ARBITER_HOST_PORT 18025)"
-  [[ "$host_port" != 8025 ]] || return 0
+  host_port="$(compose_env_value ARBITER_HOST_PORT 18075)"
+  [[ "$host_port" != 8075 ]] || return 0
   printf ' '
   doctor_prefix 32 "✔"
-  printf ' Staging MCP port: 8025 -> %s to prevent collision\n' "$host_port"
+  printf ' Staging port: 8075 -> %s to prevent collision\n' "$host_port"
 }
 
 resolve_arbiter_client_command() {
@@ -1837,11 +1837,11 @@ test_server_url() {
   timeout="${ARBITER_TEST_TIMEOUT:-60}"
   start_time="$SECONDS"
   while true; do
-    if "$client_command" mcp call version_info "arbiter.mcp_url=$url" >"$output_file" 2>&1; then
+    if ARBITER_URL="$url" "$client_command" info >"$output_file" 2>&1; then
       rm -f "$output_file"
       printf ' '
       doctor_prefix 32 "✔"
-      printf ' MCP test: '
+      printf ' Server test: '
       doctor_prefix 94 "$url"
       printf '\n'
       return 0
@@ -1854,14 +1854,14 @@ test_server_url() {
   rm -f "$output_file"
   printf ' '
   doctor_prefix 31 "✘"
-  printf ' MCP test: '
+  printf ' Server test: '
   doctor_prefix 94 "$url"
   printf '\n'
   return 1
 }
 
 test_server() {
-  test_server_url "$(mcp_url_value)"
+  test_server_url "$(server_url_value)"
 }
 
 print_config_check_ok() {
@@ -2452,7 +2452,7 @@ info() {
   printf 'requirements file: %s\n' "$requirements_file"
   printf 'wheels dir: %s\n' "$(wheels_dir_path)"
   printf 'plugin data dir: %s\n' "$(plugin_data_dir_path)"
-  print_mcp_url
+  print_url
   if command -v docker >/dev/null && docker info >/dev/null 2>&1; then
     check_container_name_owner warn || true
   fi
@@ -3751,7 +3751,7 @@ install_env_value() {
         return
         ;;
       ARBITER_HOST_PORT)
-        printf '8025\n'
+        printf '8075\n'
         return
         ;;
     esac
@@ -3776,16 +3776,16 @@ install_server_host_url_value() {
   esac
 }
 
-install_mcp_url_value() {
-  printf 'http://%s:%s/mcp\n' \
+install_url_value() {
+  printf 'http://%s:%s\n' \
     "$(install_server_host_url_value)" \
-    "$(install_env_value ARBITER_HOST_PORT 8025)"
+    "$(install_env_value ARBITER_HOST_PORT 8075)"
 }
 
 install_server_url_value() {
   printf 'http://%s:%s\n' \
     "$(install_server_host_url_value)" \
-    "$(install_env_value ARBITER_HOST_PORT 8025)"
+    "$(install_env_value ARBITER_HOST_PORT 8075)"
 }
 
 install_ensure_identity() {
@@ -4109,7 +4109,7 @@ install_rewrite_compose_for_installed_scope() {
   sed \
     -e 's/arbiter\.deployment_scope=staged/arbiter.deployment_scope=installed/g' \
     -e 's/ARBITER_CONTAINER_NAME:-arbiter-staging/ARBITER_CONTAINER_NAME:-arbiter/g' \
-    -e 's/ARBITER_HOST_PORT:-18025/ARBITER_HOST_PORT:-8025/g' \
+    -e 's/ARBITER_HOST_PORT:-18075/ARBITER_HOST_PORT:-8075/g' \
     -e 's/ARBITER_DOCKER_NETWORK_NAME:-arbiter-staging/ARBITER_DOCKER_NETWORK_NAME:-arbiter/g' \
     -e 's/ARBITER_DOCKER_BRIDGE_NAME:-arbiter-stg0/ARBITER_DOCKER_BRIDGE_NAME:-arbiter0/g' \
     -e 's#ARBITER_DOCKER_SUBNET:-172\.31\.251\.0/24#ARBITER_DOCKER_SUBNET:-172.31.250.0/24#g' \
@@ -4164,7 +4164,7 @@ install_mark_deployment_installed() {
   sed \
     -e 's/^ARBITER_CONTAINER_NAME=.*/ARBITER_CONTAINER_NAME=arbiter/' \
     -e 's/^ARBITER_HOST_BIND=.*/ARBITER_HOST_BIND=127.0.0.1/' \
-    -e 's/^ARBITER_HOST_PORT=.*/ARBITER_HOST_PORT=8025/' \
+    -e 's/^ARBITER_HOST_PORT=.*/ARBITER_HOST_PORT=8075/' \
     -e 's/^ARBITER_DOCKER_NETWORK_NAME=.*/ARBITER_DOCKER_NETWORK_NAME=arbiter/' \
     -e 's/^ARBITER_DOCKER_BRIDGE_NAME=.*/ARBITER_DOCKER_BRIDGE_NAME=arbiter0/' \
     -e 's#^ARBITER_DOCKER_SUBNET=.*#ARBITER_DOCKER_SUBNET=172.31.250.0/24#' \
@@ -4202,7 +4202,7 @@ ARBITER_INSTALL_SERVICE=$(install_metadata_quote "$install_service")
 ARBITER_INSTALL_SYSTEMD_UNIT=$(install_metadata_quote "$systemd_unit_dir/${install_service}.service")
 ARBITER_INSTALL_USER=$(install_metadata_quote "$install_user")
 ARBITER_INSTALL_GROUP=$(install_metadata_quote "$install_group")
-ARBITER_INSTALL_MCP_URL=$(install_metadata_quote "$(install_mcp_url_value)")
+ARBITER_INSTALL_URL=$(install_metadata_quote "$(install_url_value)")
 ARBITER_INSTALLED_AT=$(install_metadata_quote "$installed_at")
 ARBITER_INSTALLED_FROM=$(install_metadata_quote "$source_dir")
 EOF
@@ -4263,14 +4263,14 @@ install_test_server() {
   local timeout
   local start_time
 
-  url="$(install_mcp_url_value)"
+  url="$(install_url_value)"
   if [[ "${install_dry_run:-0}" -eq 1 ]]; then
-    printf 'would test MCP URL: %s\n' "$url"
+    printf 'would test URL: %s\n' "$url"
     return 0
   fi
 
   if ! client_command="$(resolve_arbiter_client_command)"; then
-    doctor_warn "skipping MCP test; Arbiter client command not found"
+    doctor_warn "skipping server test; Arbiter client command not found"
     return 0
   fi
 
@@ -4278,14 +4278,14 @@ install_test_server() {
   timeout="${ARBITER_TEST_TIMEOUT:-60}"
   start_time="$SECONDS"
   while true; do
-    if "$client_command" mcp call version_info "arbiter.mcp_url=$url" >"$output_file" 2>&1; then
+    if ARBITER_URL="$url" "$client_command" info >"$output_file" 2>&1; then
       rm -f "$output_file"
       return 0
     fi
     if ((SECONDS - start_time >= timeout)); then
       cat "$output_file" >&2
       rm -f "$output_file"
-      printf 'error: MCP test did not pass within %s seconds: %s\n' "$timeout" "$url" >&2
+      printf 'error: server test did not pass within %s seconds: %s\n' "$timeout" "$url" >&2
       return 1
     fi
     sleep 1
@@ -5229,7 +5229,7 @@ case "$command" in
     config_check_static
     compose up -d
     print_staging_port_note
-    print_mcp_url
+    print_url
     ;;
   restart)
     ensure_plugin_data_dir_ready
@@ -5239,7 +5239,7 @@ case "$command" in
     config_check_static
     compose up -d --force-recreate
     print_staging_port_note
-    print_mcp_url
+    print_url
     ;;
   test)
     test_server

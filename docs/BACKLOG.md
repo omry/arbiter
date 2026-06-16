@@ -26,12 +26,24 @@ This file is the day-to-day queue for design and implementation gaps.
 
 ## Now
 
+- [ ] `P0` Support HTTP for the initial release, possibly as the only transport.
+      The release line should have one clear server transport story. Prefer the
+      simplest supported public surface: native HTTP with `arbiter.url`, no
+      user-facing MCP endpoint, and no duplicate transport path unless there is
+      a concrete compatibility reason to keep one. Acceptance checks: decide
+      whether HTTP is the only initial-release transport; remove or explicitly
+      quarantine unsupported transport config, tests, docs, and generated
+      deployment paths; confirm the client, skill, Docker helper, and docs use
+      the HTTP base URL contract; and prove the chosen transport in local
+      release rehearsal from built artifacts.
+
 - [ ] `P1` Run an Arbiter security analysis before initial release.
       Do one focused threat-model and implementation review pass over the
-      current architecture before publishing packages. Cover the MCP boundary,
-      local and Docker deployment modes, config and env-file handling, plugin
-      discovery/loading, package supply chain assumptions, secret handling,
-      SMTP/IMAP operation policies, logging, and known audit gaps.
+      current architecture before publishing packages. Cover the native HTTP
+      boundary, any remaining MCP compatibility boundary, local and Docker
+      deployment modes, config and env-file handling, plugin discovery/loading,
+      package supply chain assumptions, secret handling, SMTP/IMAP operation
+      policies, logging, and known audit gaps.
       Acceptance checks: produce a short written security analysis with trust
       boundaries, assets, attacker assumptions, and prioritized findings; turn
       concrete fixes into backlog items or immediate patches; document any

@@ -18,12 +18,12 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/omry/arbiter/client/go-cli/internal/mcp"
+	"github.com/omry/arbiter/client/go-cli/internal/arbiterhttp"
 )
 
 const (
-	DefaultMCPURL                             = "http://127.0.0.1:8000/mcp"
-	MCPURLEnvVar                              = "ARBITER_MCP_URL"
+	DefaultURL                                = "http://127.0.0.1:8075"
+	URLEnvVar                                 = "ARBITER_URL"
 	DefaultConfigDir                          = ".arbiter"
 	DefaultClientConfigName                   = "arbiter-client.yaml"
 	DefaultArtifactMaxBytes                   = 16 * 1024
@@ -33,19 +33,25 @@ const (
 type EnvLookup func(string) (string, bool)
 type HomeDirFunc func() (string, error)
 
-type ResolvedMCPURL struct {
+type ResolvedURL struct {
 	URL    string
 	Source string
 }
 
-type mcpClient interface {
-	Initialize(context.Context, string, string) error
-	ListTools(context.Context) ([]mcp.Tool, error)
-	CallTool(context.Context, string, map[string]any) (mcp.ToolCallResult, error)
+type arbiterClient interface {
+	Info(context.Context) (map[string]any, error)
+	Plugins(context.Context) (map[string]any, error)
+	PluginOperations(context.Context, string) (map[string]any, error)
+	OperationDetails(context.Context, string) (map[string]any, error)
+	RunOperation(context.Context, string, map[string]any) (map[string]any, error)
 }
 
-var newMCPClient = func(url string) mcpClient {
-	return mcp.NewClient(url)
+var newArbiterClient = func(url string) arbiterClient {
+	return arbiterhttp.NewClient(url)
+}
+
+var newArtifactHTTPClient = func() *http.Client {
+	return &http.Client{Timeout: 30 * time.Second}
 }
 
 type globalOptions struct {
@@ -106,8 +112,6 @@ func Main(
 		return runOperation(remaining[1:], options, stdout, stderr, lookupEnv, homeDir)
 	case "artifact":
 		return runArtifact(remaining[1:], stdout, stderr)
-	case "mcp":
-		return runMCP(remaining[1:], options, stdout, stderr, lookupEnv, homeDir)
 	default:
 		fmt.Fprintf(stderr, "Arbiter usage error: unknown command: %s\n", remaining[0])
 		printShortUsage(stderr)
@@ -238,13 +242,13 @@ func runBootstrap(
 		fmt.Fprintf(stderr, "Arbiter client config error: %v\n", err)
 		return 1
 	}
-	mcpURL := DefaultMCPURL
-	if override, ok := mcpURLOverride(options.Overrides); ok {
-		mcpURL = override
-	} else if value, ok := lookupEnv(MCPURLEnvVar); ok && value != "" {
-		mcpURL = value
+	serverURL := DefaultURL
+	if override, ok := urlOverride(options.Overrides); ok {
+		serverURL = override
+	} else if value, ok := lookupEnv(URLEnvVar); ok && value != "" {
+		serverURL = value
 	}
-	content := fmt.Sprintf("arbiter:\n  mcp_url: %q\n", mcpURL)
+	content := fmt.Sprintf("arbiter:\n  url: %q\n", serverURL)
 	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
 		fmt.Fprintf(stderr, "Arbiter client config error: %v\n", err)
 		return 1
@@ -265,16 +269,16 @@ func runConfig(
 		printConfigHelp(stdout)
 		return 0
 	}
-	if len(args) == 2 && args[0] == "mcp-url" && isHelpFlag(args[1]) {
-		printConfigMCPURLHelp(stdout)
+	if len(args) == 2 && args[0] == "url" && isHelpFlag(args[1]) {
+		printConfigURLHelp(stdout)
 		return 0
 	}
-	if len(args) != 1 || args[0] != "mcp-url" {
-		printUsageError(stderr, "expected: arbiter config mcp-url", "arbiter config")
+	if len(args) != 1 || args[0] != "url" {
+		printUsageError(stderr, "expected: arbiter config url", "arbiter config")
 		return 2
 	}
 
-	resolved, err := ResolveMCPURL(options.Overrides, lookupEnv, homeDir, options)
+	resolved, err := ResolveURL(options.Overrides, lookupEnv, homeDir, options)
 	if err != nil {
 		fmt.Fprintf(stderr, "Arbiter client config error: %v\n", err)
 		return 1
@@ -332,6 +336,7 @@ parsedFlags:
 		return 1
 	}
 	payload = withServerURL(payload, options, lookupEnv, homeDir)
+	printStagedDeploymentWarning(stderr, payload, options, lookupEnv, homeDir)
 	if short {
 		payload = shortInfoPayload(payload)
 	}
@@ -476,120 +481,44 @@ func listOperationPayload(
 	return map[string]any{"plugins": pluginIDs}, pluginIDs, nil
 }
 
-func runMCP(
-	args []string,
-	options globalOptions,
-	stdout io.Writer,
-	stderr io.Writer,
-	lookupEnv EnvLookup,
-	homeDir HomeDirFunc,
-) int {
-	if len(args) == 1 && isHelpFlag(args[0]) {
-		printMCPHelp(stdout)
-		return 0
-	}
-	if len(args) == 0 {
-		args = []string{"tools"}
-	}
-	switch args[0] {
-	case "tools":
-		if len(args) == 2 && isHelpFlag(args[1]) {
-			printMCPToolsHelp(stdout)
-			return 0
-		}
-		jsonOutput := len(args) > 1 && args[1] == "--json"
-		if len(args) > 1 && !jsonOutput {
-			printUsageError(stderr, "expected: arbiter mcp tools [--json]", "arbiter mcp tools")
-			return 2
-		}
-		client, err := newInitializedMCPClient(options, lookupEnv, homeDir)
-		if err != nil {
-			fmt.Fprintf(stderr, "Arbiter connection error: %s\n", err)
-			return 1
-		}
-		tools, err := client.ListTools(context.Background())
-		if err != nil {
-			fmt.Fprintf(stderr, "Arbiter tool error: %s\n", err)
-			return 1
-		}
-		if jsonOutput {
-			printJSON(stdout, map[string]any{"tools": tools})
-			return 0
-		}
-		for _, tool := range tools {
-			fmt.Fprintln(stdout, tool.Name)
-		}
-		return 0
-	case "call":
-		if len(args) == 2 && isHelpFlag(args[1]) {
-			printMCPCallHelp(stdout)
-			return 0
-		}
-		if len(args) < 2 {
-			printUsageError(stderr, "expected: arbiter mcp call <tool-name> [--args <json-object>]", "arbiter mcp call")
-			return 2
-		}
-		toolName := args[1]
-		toolArgs, err := parseArgsFlag(args[2:])
-		if err != nil {
-			fmt.Fprintf(stderr, "Arbiter usage error: %v\n", err)
-			return 2
-		}
-		result, err := callToolRaw(toolName, toolArgs, options, lookupEnv, homeDir)
-		if err != nil {
-			fmt.Fprintf(stderr, "Arbiter tool error: %s\n", err)
-			return 1
-		}
-		if result.Raw != nil {
-			printJSON(stdout, result.Raw)
-		} else {
-			printJSON(stdout, result)
-		}
-		return 0
-	default:
-		printUsageError(stderr, fmt.Sprintf("unknown mcp command: %s", args[0]), "arbiter mcp")
-		return 2
-	}
-}
-
-func ResolveMCPURL(
+func ResolveURL(
 	args []string,
 	lookupEnv EnvLookup,
 	homeDir HomeDirFunc,
 	options ...globalOptions,
-) (ResolvedMCPURL, error) {
+) (ResolvedURL, error) {
 	configOptions := defaultGlobalOptions()
 	if len(options) > 0 {
 		configOptions = options[0]
 	}
-	if override, ok := mcpURLOverride(args); ok {
-		return ResolvedMCPURL{
+	if override, ok := urlOverride(args); ok {
+		return ResolvedURL{
 			URL:    override,
 			Source: "override",
 		}, nil
 	}
 
-	if value, ok := lookupEnv(MCPURLEnvVar); ok && value != "" {
-		return ResolvedMCPURL{URL: value, Source: MCPURLEnvVar}, nil
+	if value, ok := lookupEnv(URLEnvVar); ok && value != "" {
+		return ResolvedURL{URL: value, Source: URLEnvVar}, nil
 	}
 
 	configPath, err := clientConfigPath(configOptions, homeDir)
 	if err != nil {
-		return ResolvedMCPURL{}, err
+		return ResolvedURL{}, err
 	}
-	if value, ok, err := readMCPURLFromConfig(configPath); err != nil {
-		return ResolvedMCPURL{}, err
+	if value, ok, err := readURLFromConfig(configPath); err != nil {
+		return ResolvedURL{}, err
 	} else if ok {
-		return ResolvedMCPURL{URL: value, Source: configPath}, nil
+		return ResolvedURL{URL: value, Source: configPath}, nil
 	}
 
-	return ResolvedMCPURL{URL: DefaultMCPURL, Source: "default"}, nil
+	return ResolvedURL{URL: DefaultURL, Source: "default"}, nil
 }
 
-func mcpURLOverride(args []string) (string, bool) {
+func urlOverride(args []string) (string, bool) {
 	for _, arg := range args {
-		if strings.HasPrefix(arg, "arbiter.mcp_url=") {
-			return strings.TrimPrefix(arg, "arbiter.mcp_url="), true
+		if strings.HasPrefix(arg, "arbiter.url=") {
+			return strings.TrimPrefix(arg, "arbiter.url="), true
 		}
 	}
 	return "", false
@@ -657,7 +586,7 @@ func parseGlobalOptions(args []string) (globalOptions, []string, error) {
 			index++
 		case strings.HasPrefix(arg, "--config-name="):
 			options.ConfigName = strings.TrimPrefix(arg, "--config-name=")
-		case strings.HasPrefix(arg, "arbiter.mcp_url="):
+		case strings.HasPrefix(arg, "arbiter.url="):
 			options.Overrides = append(options.Overrides, arg)
 		default:
 			remaining = append(remaining, arg)
@@ -688,30 +617,6 @@ func infoArguments(args []string) (map[string]any, error) {
 			return nil, fmt.Errorf("expected: arbiter info plugin <plugin>")
 		}
 		return map[string]any{"kind": "plugin", "plugin": args[1]}, nil
-	case "accounts":
-		if len(args) != 2 {
-			return nil, fmt.Errorf("expected: arbiter info accounts <plugin>")
-		}
-		return map[string]any{"kind": "accounts", "plugin": args[1]}, nil
-	case "account":
-		if len(args) != 3 {
-			return nil, fmt.Errorf("expected: arbiter info account <plugin> <account>")
-		}
-		return map[string]any{"kind": "account", "plugin": args[1], "account": args[2]}, nil
-	case "tests":
-		if len(args) != 1 {
-			return nil, fmt.Errorf("expected: arbiter info tests")
-		}
-		return map[string]any{"kind": "tests"}, nil
-	case "test":
-		if len(args) < 2 || len(args) > 3 {
-			return nil, fmt.Errorf("expected: arbiter info test <plugin> [account]")
-		}
-		arguments := map[string]any{"kind": "test", "plugin": args[1]}
-		if len(args) == 3 {
-			arguments["account"] = args[2]
-		}
-		return arguments, nil
 	case "ops":
 		if len(args) != 2 {
 			return nil, fmt.Errorf("expected: arbiter info ops <plugin>")
@@ -1106,7 +1011,7 @@ func runArtifactWithTemp(
 	stdout io.Writer,
 	stderr io.Writer,
 ) error {
-	httpClient := &http.Client{Timeout: 30 * time.Second}
+	httpClient := newArtifactHTTPClient()
 	getReq, err := http.NewRequestWithContext(ctx, http.MethodGet, options.URL, nil)
 	if err != nil {
 		return err
@@ -1258,7 +1163,7 @@ func runArtifactWithStdin(
 	stdout io.Writer,
 	stderr io.Writer,
 ) error {
-	httpClient := &http.Client{Timeout: 30 * time.Second}
+	httpClient := newArtifactHTTPClient()
 	getReq, err := http.NewRequestWithContext(ctx, http.MethodGet, options.URL, nil)
 	if err != nil {
 		return err
@@ -1398,7 +1303,7 @@ func writeArtifactToStdout(
 	maxBytes int64,
 	stdout io.Writer,
 ) error {
-	httpClient := &http.Client{Timeout: 30 * time.Second}
+	httpClient := newArtifactHTTPClient()
 	headReq, err := http.NewRequestWithContext(ctx, http.MethodHead, artifactURL, nil)
 	if err != nil {
 		return err
@@ -1454,7 +1359,7 @@ func saveArtifactToFile(
 	artifactURL string,
 	outputPath string,
 ) error {
-	httpClient := &http.Client{Timeout: 30 * time.Second}
+	httpClient := newArtifactHTTPClient()
 	getReq, err := http.NewRequestWithContext(ctx, http.MethodGet, artifactURL, nil)
 	if err != nil {
 		return err
@@ -1515,45 +1420,178 @@ func callToolPayload(
 	lookupEnv EnvLookup,
 	homeDir HomeDirFunc,
 ) (any, error) {
-	result, err := callToolRaw(name, arguments, options, lookupEnv, homeDir)
+	client, err := newInitializedArbiterClient(options, lookupEnv, homeDir)
 	if err != nil {
 		return nil, err
 	}
-	return mcp.Payload(result), nil
+	ctx := context.Background()
+	switch name {
+	case "info":
+		return nativeInfoPayload(ctx, client, arguments)
+	case "describe_op":
+		operationID, ok := arguments["id"].(string)
+		if !ok || operationID == "" {
+			return nil, fmt.Errorf("operation id must be non-empty")
+		}
+		return client.OperationDetails(ctx, operationID)
+	case "run_op":
+		operationID, ok := arguments["id"].(string)
+		if !ok || operationID == "" {
+			return nil, fmt.Errorf("operation id must be non-empty")
+		}
+		operationArgs, ok := arguments["arguments"].(map[string]any)
+		if !ok || operationArgs == nil {
+			operationArgs = map[string]any{}
+		}
+		payload, err := client.RunOperation(ctx, operationID, operationArgs)
+		if err != nil {
+			return nil, err
+		}
+		return payload, nil
+	default:
+		return nil, fmt.Errorf("unsupported Arbiter client action: %s", name)
+	}
 }
 
-func callToolRaw(
-	name string,
+func newInitializedArbiterClient(
+	options globalOptions,
+	lookupEnv EnvLookup,
+	homeDir HomeDirFunc,
+) (arbiterClient, error) {
+	resolved, err := ResolveURL(options.Overrides, lookupEnv, homeDir, options)
+	if err != nil {
+		return nil, err
+	}
+	return newArbiterClient(resolved.URL), nil
+}
+
+func nativeInfoPayload(
+	ctx context.Context,
+	client arbiterClient,
 	arguments map[string]any,
-	options globalOptions,
-	lookupEnv EnvLookup,
-	homeDir HomeDirFunc,
-) (mcp.ToolCallResult, error) {
-	client, err := newInitializedMCPClient(options, lookupEnv, homeDir)
-	if err != nil {
-		return mcp.ToolCallResult{}, err
+) (any, error) {
+	kind, _ := arguments["kind"].(string)
+	if kind == "" {
+		kind = "overview"
 	}
-	return client.CallTool(context.Background(), name, arguments)
+	switch kind {
+	case "overview":
+		info, err := client.Info(ctx)
+		if err != nil {
+			return nil, err
+		}
+		plugins, err := client.Plugins(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"kind":    "overview",
+			"server":  info,
+			"plugins": plugins["plugins"],
+		}, nil
+	case "plugins":
+		plugins, err := client.Plugins(ctx)
+		if err != nil {
+			return nil, err
+		}
+		payload := copyStringMap(plugins)
+		payload["kind"] = "plugins"
+		return payload, nil
+	case "plugin":
+		plugin, ok := arguments["plugin"].(string)
+		if !ok || plugin == "" {
+			return nil, fmt.Errorf("plugin id must be non-empty")
+		}
+		return nativePluginPayload(ctx, client, plugin)
+	case "ops":
+		plugin, ok := arguments["plugin"].(string)
+		if !ok || plugin == "" {
+			return nil, fmt.Errorf("plugin id must be non-empty")
+		}
+		return nativeOperationsPayload(ctx, client, plugin)
+	case "op":
+		plugin, pluginOK := arguments["plugin"].(string)
+		operation, operationOK := arguments["operation"].(string)
+		if !pluginOK || !operationOK || plugin == "" || operation == "" {
+			return nil, fmt.Errorf("operation id must be non-empty")
+		}
+		return client.OperationDetails(ctx, plugin+":"+operation)
+	default:
+		return nil, fmt.Errorf("unknown info kind: %s", kind)
+	}
 }
 
-func newInitializedMCPClient(
-	options globalOptions,
-	lookupEnv EnvLookup,
-	homeDir HomeDirFunc,
-) (mcpClient, error) {
-	resolved, err := ResolveMCPURL(options.Overrides, lookupEnv, homeDir, options)
+func nativePluginPayload(
+	ctx context.Context,
+	client arbiterClient,
+	plugin string,
+) (map[string]any, error) {
+	plugins, err := client.Plugins(ctx)
 	if err != nil {
 		return nil, err
 	}
-	client := newMCPClient(resolved.URL)
-	if err := client.Initialize(context.Background(), "arbiter", Version); err != nil {
+	var selected map[string]any
+	for _, item := range anySlice(plugins["plugins"]) {
+		candidate, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if candidate["id"] == plugin {
+			selected = candidate
+			break
+		}
+	}
+	if selected == nil {
+		return nil, fmt.Errorf("unknown plugin: %s", plugin)
+	}
+	operations, err := nativeOperationsPayload(ctx, client, plugin)
+	if err != nil {
 		return nil, err
 	}
-	return client, nil
+	payload := map[string]any{
+		"kind":       "plugin",
+		"id":         plugin,
+		"operations": operations["operations"],
+	}
+	if summary, ok := selected["summary"].(string); ok && summary != "" {
+		payload["description"] = summary
+	}
+	return payload, nil
+}
+
+func nativeOperationsPayload(
+	ctx context.Context,
+	client arbiterClient,
+	plugin string,
+) (map[string]any, error) {
+	operations, err := client.PluginOperations(ctx, plugin)
+	if err != nil {
+		return nil, err
+	}
+	payload := copyStringMap(operations)
+	payload["kind"] = "ops"
+	payload["plugin"] = plugin
+	return payload, nil
+}
+
+func copyStringMap(source map[string]any) map[string]any {
+	target := make(map[string]any, len(source)+1)
+	for key, value := range source {
+		target[key] = value
+	}
+	return target
+}
+
+func anySlice(value any) []any {
+	items, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	return items
 }
 
 func withServerURL(payload any, options globalOptions, lookupEnv EnvLookup, homeDir HomeDirFunc) any {
-	resolved, err := ResolveMCPURL(options.Overrides, lookupEnv, homeDir, options)
+	resolved, err := ResolveURL(options.Overrides, lookupEnv, homeDir, options)
 	if err != nil {
 		return payload
 	}
@@ -1567,17 +1605,81 @@ func withServerURL(payload any, options globalOptions, lookupEnv EnvLookup, home
 	return payload
 }
 
-func toolErrorForCLI(err error, infoArgs []string, options globalOptions, lookupEnv EnvLookup, homeDir HomeDirFunc) string {
-	message := err.Error()
-	if len(infoArgs) > 0 && (infoArgs[0] == "test" || infoArgs[0] == "tests") && strings.HasPrefix(message, "unknown info kind:") {
-		resolved, resolveErr := ResolveMCPURL(options.Overrides, lookupEnv, homeDir, options)
-		url := "the configured server"
-		if resolveErr == nil {
+func printStagedDeploymentWarning(
+	stderr io.Writer,
+	payload any,
+	options globalOptions,
+	lookupEnv EnvLookup,
+	homeDir HomeDirFunc,
+) {
+	if deploymentScope, known := deploymentScopeFromPayload(payload); known {
+		if deploymentScope == "staged" {
+			printStagedDeploymentWarningForPayload(stderr, payload, options, lookupEnv, homeDir)
+		}
+		return
+	}
+
+	client, err := newInitializedArbiterClient(options, lookupEnv, homeDir)
+	if err != nil {
+		return
+	}
+	info, err := client.Info(context.Background())
+	if err != nil {
+		return
+	}
+	if deploymentScope, known := deploymentScopeFromPayload(info); known && deploymentScope == "staged" {
+		printStagedDeploymentWarningForPayload(stderr, payload, options, lookupEnv, homeDir)
+	}
+}
+
+func printStagedDeploymentWarningForPayload(
+	stderr io.Writer,
+	payload any,
+	options globalOptions,
+	lookupEnv EnvLookup,
+	homeDir HomeDirFunc,
+) {
+	url := serverURLFromPayload(payload)
+	if url == "" {
+		if resolved, err := ResolveURL(options.Overrides, lookupEnv, homeDir, options); err == nil {
 			url = resolved.URL
 		}
-		return message + "\n" +
-			fmt.Sprintf("The local Arbiter client understands 'info %s', but the server at %s does not. This usually means the running server is older than the client or was not restarted after updating the wheelhouse.", infoArgs[0], url)
 	}
+	if url == "" {
+		fmt.Fprintln(stderr, "Heads up: connected to staged Arbiter.")
+		return
+	}
+	fmt.Fprintf(stderr, "Heads up: connected to staged Arbiter at %s.\n", url)
+}
+
+func deploymentScopeFromPayload(payload any) (string, bool) {
+	mapping, ok := payload.(map[string]any)
+	if !ok {
+		return "", false
+	}
+	if deploymentScope, ok := mapping["deployment_scope"].(string); ok {
+		return deploymentScope, true
+	}
+	if server, ok := mapping["server"].(map[string]any); ok {
+		if deploymentScope, ok := server["deployment_scope"].(string); ok {
+			return deploymentScope, true
+		}
+		return "", true
+	}
+	return "", false
+}
+
+func serverURLFromPayload(payload any) string {
+	mapping, ok := payload.(map[string]any)
+	if !ok {
+		return ""
+	}
+	url, _ := mapping["server_url"].(string)
+	return url
+}
+
+func toolErrorForCLI(err error, infoArgs []string, options globalOptions, lookupEnv EnvLookup, homeDir HomeDirFunc) string {
+	message := err.Error()
 	return message
 }
 
@@ -1747,7 +1849,7 @@ func normalizeInfoOutputFlags(args []string) []string {
 	)
 }
 
-func readMCPURLFromConfig(path string) (string, bool, error) {
+func readURLFromConfig(path string) (string, bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -1756,14 +1858,14 @@ func readMCPURLFromConfig(path string) (string, bool, error) {
 		return "", false, err
 	}
 
-	return parseMCPURLConfig(path, string(data))
+	return parseURLConfig(path, string(data))
 }
 
-func parseMCPURLConfig(path string, data string) (string, bool, error) {
+func parseURLConfig(path string, data string) (string, bool, error) {
 	inArbiter := false
 	foundArbiter := false
-	foundMCPURL := false
-	mcpURL := ""
+	foundURL := false
+	serverURL := ""
 	for _, line := range strings.Split(data, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
@@ -1799,30 +1901,30 @@ func parseMCPURLConfig(path string, data string) (string, bool, error) {
 			return "", false, fmt.Errorf("unsupported client config arbiter entry in %s: %s", path, trimmed)
 		}
 		key = strings.TrimSpace(key)
-		if key != "mcp_url" {
+		if key != "url" {
 			return "", false, fmt.Errorf("unsupported client config arbiter key(s) in %s: %s", path, key)
 		}
-		if foundMCPURL {
-			return "", false, fmt.Errorf("duplicate client config arbiter key in %s: mcp_url", path)
+		if foundURL {
+			return "", false, fmt.Errorf("duplicate client config arbiter key in %s: url", path)
 		}
-		parsedMCPURL, err := parseConfigStringScalar(strings.TrimSpace(value), path)
+		parsedURL, err := parseConfigStringScalar(strings.TrimSpace(value), path)
 		if err != nil {
 			return "", false, err
 		}
-		foundMCPURL = true
-		mcpURL = parsedMCPURL
+		foundURL = true
+		serverURL = parsedURL
 	}
-	return mcpURL, foundMCPURL, nil
+	return serverURL, foundURL, nil
 }
 
 func parseConfigStringScalar(value string, path string) (string, error) {
 	if value == "" {
-		return "", fmt.Errorf("client config arbiter.mcp_url must be a string: %s", path)
+		return "", fmt.Errorf("client config arbiter.url must be a string: %s", path)
 	}
 	if strings.HasPrefix(value, `"`) || strings.HasPrefix(value, `'`) {
 		quote := value[:1]
 		if !strings.HasSuffix(value, quote) || len(value) == 1 {
-			return "", fmt.Errorf("client config arbiter.mcp_url must be a string: %s", path)
+			return "", fmt.Errorf("client config arbiter.url must be a string: %s", path)
 		}
 		return strings.TrimSuffix(strings.TrimPrefix(value, quote), quote), nil
 	}
@@ -1834,10 +1936,10 @@ func parseConfigStringScalar(value string, path string) (string, error) {
 		normalized == "false" ||
 		normalized == "null" ||
 		normalized == "~" {
-		return "", fmt.Errorf("client config arbiter.mcp_url must be a string: %s", path)
+		return "", fmt.Errorf("client config arbiter.url must be a string: %s", path)
 	}
 	if _, err := strconv.ParseFloat(value, 64); err == nil {
-		return "", fmt.Errorf("client config arbiter.mcp_url must be a string: %s", path)
+		return "", fmt.Errorf("client config arbiter.url must be a string: %s", path)
 	}
 	return value, nil
 }
@@ -1868,7 +1970,7 @@ func printHelp(w io.Writer) {
 }
 
 func printExtendedHelp(w io.Writer) {
-	fmt.Fprintln(w, "usage: arbiter [--version] {info,op,artifact,bootstrap,config,mcp} ...")
+	fmt.Fprintln(w, "usage: arbiter [--version] {info,op,artifact,bootstrap,config} ...")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Native Arbiter client.")
 	fmt.Fprintln(w)
@@ -1879,10 +1981,7 @@ func printExtendedHelp(w io.Writer) {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "setup:")
 	fmt.Fprintln(w, "  bootstrap client create the Arbiter client config")
-	fmt.Fprintln(w, "  config mcp-url   print the resolved MCP URL")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "advanced:")
-	fmt.Fprintln(w, "  mcp              inspect or call raw MCP tools")
+	fmt.Fprintln(w, "  config url   print the resolved URL")
 }
 
 func helpArgsIncludeExtended(args []string) bool {
@@ -1917,36 +2016,32 @@ func printBootstrapClientHelp(w io.Writer) {
 }
 
 func printConfigHelp(w io.Writer) {
-	fmt.Fprintln(w, "usage: arbiter config {mcp-url} ...")
+	fmt.Fprintln(w, "usage: arbiter config {url} ...")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Inspect Arbiter client configuration.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "commands:")
-	fmt.Fprintln(w, "  mcp-url  print the resolved MCP URL")
+	fmt.Fprintln(w, "  url  print the resolved URL")
 }
 
-func printConfigMCPURLHelp(w io.Writer) {
-	fmt.Fprintln(w, "usage: arbiter config mcp-url")
+func printConfigURLHelp(w io.Writer) {
+	fmt.Fprintln(w, "usage: arbiter config url")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Print the MCP URL resolved from overrides, environment, config, or default.")
+	fmt.Fprintln(w, "Print the URL resolved from overrides, environment, config, or default.")
 }
 
 func printInfoHelp(w io.Writer) {
 	fmt.Fprintln(w, "usage: arbiter info [--short] [--yaml] [subcommand ...]")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Discover Arbiter server identity, plugins, accounts, tests, and operations.")
+	fmt.Fprintln(w, "Discover Arbiter server identity, plugins, and operations.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "options:")
-	fmt.Fprintln(w, "  --short  print compact overview account summary only")
+	fmt.Fprintln(w, "  --short  print compact overview summary only")
 	fmt.Fprintln(w, "  --yaml   print YAML-like output instead of JSON")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "subcommands:")
 	fmt.Fprintln(w, "  plugins                    list plugins")
 	fmt.Fprintln(w, "  plugin <plugin>            describe one plugin")
-	fmt.Fprintln(w, "  accounts <plugin>          list plugin accounts")
-	fmt.Fprintln(w, "  account <plugin> <account> describe one account")
-	fmt.Fprintln(w, "  tests                      list plugin tests")
-	fmt.Fprintln(w, "  test <plugin> [account]    describe plugin tests")
 	fmt.Fprintln(w, "  ops <plugin>               list plugin operations")
 	fmt.Fprintln(w, "  op <plugin> <operation>    describe one operation")
 }
@@ -1961,22 +2056,6 @@ func printInfoSubcommandHelp(w io.Writer, commandName string) {
 		fmt.Fprintln(w, "usage: arbiter info plugin <plugin> [--yaml]")
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "Describe one configured plugin.")
-	case "accounts":
-		fmt.Fprintln(w, "usage: arbiter info accounts <plugin> [--yaml]")
-		fmt.Fprintln(w)
-		fmt.Fprintln(w, "List accounts for one plugin.")
-	case "account":
-		fmt.Fprintln(w, "usage: arbiter info account <plugin> <account> [--yaml]")
-		fmt.Fprintln(w)
-		fmt.Fprintln(w, "Describe one plugin account.")
-	case "tests":
-		fmt.Fprintln(w, "usage: arbiter info tests [--yaml]")
-		fmt.Fprintln(w)
-		fmt.Fprintln(w, "List plugin tests.")
-	case "test":
-		fmt.Fprintln(w, "usage: arbiter info test <plugin> [account] [--yaml]")
-		fmt.Fprintln(w)
-		fmt.Fprintln(w, "Describe tests for one plugin or account.")
 	case "ops":
 		fmt.Fprintln(w, "usage: arbiter info ops <plugin> [--yaml]")
 		fmt.Fprintln(w)
@@ -2036,34 +2115,6 @@ func printOperationRunHelp(w io.Writer) {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "options:")
 	fmt.Fprintln(w, "  --args JSON  operation arguments as a JSON object")
-}
-
-func printMCPHelp(w io.Writer) {
-	fmt.Fprintln(w, "usage: arbiter mcp {tools,call} ...")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Inspect or call raw MCP tools.")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "commands:")
-	fmt.Fprintln(w, "  tools [--json]              list MCP tools")
-	fmt.Fprintln(w, "  call <tool-name> [--args JSON] call one MCP tool")
-}
-
-func printMCPToolsHelp(w io.Writer) {
-	fmt.Fprintln(w, "usage: arbiter mcp tools [--json]")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "List raw MCP tool names.")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "options:")
-	fmt.Fprintln(w, "  --json  print full tool metadata as JSON")
-}
-
-func printMCPCallHelp(w io.Writer) {
-	fmt.Fprintln(w, "usage: arbiter mcp call <tool-name> [--args <json-object>]")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Call one raw MCP tool.")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "options:")
-	fmt.Fprintln(w, "  --args JSON  tool arguments as a JSON object")
 }
 
 func printArtifactHelp(w io.Writer) {

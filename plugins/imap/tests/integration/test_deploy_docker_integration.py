@@ -240,21 +240,19 @@ def _write_imap_only_config(path: Path, imap_server: Any) -> None:
     path.write_text(
         "defaults:\n"
         "  - arbiter_app_config_schema\n"
-        "  - /arbiter/server: streamable-http\n"
+        "  - /arbiter/server: http\n"
         "  - /arbiter/account/imap/schema@arbiter.account.imap.primary\n"
         "  - /arbiter/policy/imap/schema@arbiter.policy.imap.bot\n"
         "  - _self_\n"
         "\n"
         "arbiter:\n"
         "  server:\n"
-        "    name: arbiter-mcp\n"
-        "    transport: streamable-http\n"
+        "    name: arbiter\n"
+        "    transport: http\n"
         "    bind:\n"
         "      host: 0.0.0.0\n"
-        "      port: 8025\n"
-        "      path: /mcp\n"
-        "    stateless_http: true\n"
-        "    json_response: true\n"
+        "      port: 8075\n"
+        '      path: ""\n'
         "  account:\n"
         "    imap:\n"
         "      primary:\n"
@@ -291,7 +289,7 @@ def _write_imap_only_config(path: Path, imap_server: Any) -> None:
 def _wait_for_imap_operation(
     *,
     repo_root: Path,
-    mcp_url: str,
+    url: str,
     helper: Path,
 ) -> subprocess.CompletedProcess[str]:
     deadline = time.monotonic() + 120
@@ -305,7 +303,7 @@ def _wait_for_imap_operation(
                 "imap:list_messages",
                 "--args",
                 '{"account":"primary","folder":"INBOX","limit":1}',
-                f"arbiter.mcp_url={mcp_url}",
+                f"arbiter.url={url}",
             ],
             cwd=repo_root,
             timeout=20,
@@ -329,7 +327,7 @@ def _wait_for_imap_operation(
 def _run_delete_message(
     *,
     repo_root: Path,
-    mcp_url: str,
+    url: str,
 ) -> subprocess.CompletedProcess[str]:
     return _run(
         [
@@ -342,7 +340,7 @@ def _run_delete_message(
                 '{"account":"primary","folder":"INBOX",'
                 f'"message_id":"{DEPLOYMENT_TEST_UID}"}}'
             ),
-            f"arbiter.mcp_url={mcp_url}",
+            f"arbiter.url={url}",
         ],
         cwd=repo_root,
         timeout=20,
@@ -373,7 +371,7 @@ def _operation_payload(stdout: str) -> dict[str, Any]:
 def _assert_imap_deployment_operation(
     *,
     repo_root: Path,
-    mcp_url: str,
+    url: str,
     helper: Path,
     imap_server: Any,
 ) -> None:
@@ -382,7 +380,7 @@ def _assert_imap_deployment_operation(
     _assert_ok(helper_test)
     result = _wait_for_imap_operation(
         repo_root=repo_root,
-        mcp_url=mcp_url,
+        url=url,
         helper=helper,
     )
     payload = _operation_payload(result.stdout)
@@ -397,7 +395,7 @@ def _assert_imap_deployment_operation(
     assert "bot.followed_up" not in message["flags"]
     assert any("LOGIN user@example.com" in command for command in imap_server.commands)
     assert any(command.endswith('EXAMINE "INBOX"') for command in imap_server.commands)
-    delete = _run_delete_message(repo_root=repo_root, mcp_url=mcp_url)
+    delete = _run_delete_message(repo_root=repo_root, url=url)
     assert delete.returncode == 1
     assert "delete_message is not allowed for account: primary" in delete.stderr
     assert not any(
@@ -449,11 +447,6 @@ def _build_deploy_wheelhouse(repo_root: Path, wheelhouse: Path) -> dict[str, Pat
         "smtp": "arbiter_smtp-",
         "imap": "arbiter_imap-",
         "hydra": "hydra_core-",
-        "mcp": "mcp-",
-        # These are transitive runtime dependencies through mcp, not direct
-        # plugin dependencies.
-        "pydantic": "pydantic-",
-        "pydantic-core": "pydantic_core-",
     }
     wheels: dict[str, Path] = {}
     for label, prefix in expected_prefixes.items():
@@ -518,10 +511,10 @@ def test_docker_deployment_serves_real_imap_operation(
     try:
         up = _run([helper, "up"], cwd=repo_root, timeout=240)
         _assert_ok(up)
-        mcp_url = f"http://127.0.0.1:{host_port}/mcp"
+        url = f"http://127.0.0.1:{host_port}"
         _assert_imap_deployment_operation(
             repo_root=repo_root,
-            mcp_url=mcp_url,
+            url=url,
             helper=helper,
             imap_server=imap_server,
         )
@@ -580,10 +573,10 @@ def test_docker_deployment_serves_real_imap_operation_from_wheelhouse(
     try:
         up = _run([helper, "up"], cwd=repo_root, timeout=240)
         _assert_ok(up)
-        mcp_url = f"http://127.0.0.1:{host_port}/mcp"
+        url = f"http://127.0.0.1:{host_port}"
         _assert_imap_deployment_operation(
             repo_root=repo_root,
-            mcp_url=mcp_url,
+            url=url,
             helper=helper,
             imap_server=imap_server,
         )

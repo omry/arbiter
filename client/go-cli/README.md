@@ -11,9 +11,9 @@ Current scope:
 
 - no third-party Go dependencies
 - CLI shell for the native `arbiter` client
-- MCP URL resolution from command-line override, environment, or client config
-- minimal MCP Streamable HTTP transport
-- `info`, `op`, explicit `artifact`, and raw `mcp` commands
+- URL resolution from command-line override, environment, or client config
+- native HTTP transport
+- `info`, `op`, and explicit `artifact` commands
 
 ## Build
 

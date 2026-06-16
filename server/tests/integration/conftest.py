@@ -7,6 +7,8 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,7 +32,7 @@ class PluginAccount:
 @dataclass
 class RunningArbiterServer:
     config_dir: Path
-    mcp_url: str
+    url: str
     process: subprocess.Popen[str]
     stdout_path: Path
     stderr_path: Path
@@ -45,10 +47,11 @@ class RunningArbiterServer:
         timeout: float = 10,
     ) -> subprocess.CompletedProcess[str]:
         client_env = os.environ.copy()
+        client_env["ARBITER_URL"] = self.url
         if env is not None:
             client_env.update(env)
         return subprocess.run(
-            [str(command), *args, f"arbiter.mcp_url={self.mcp_url}"],
+            [str(command), *args],
             check=False,
             env=client_env,
             text=True,
@@ -159,7 +162,7 @@ class LocalArbiterServerFactory:
             )
         return RunningArbiterServer(
             config_dir=config_dir,
-            mcp_url=f"http://127.0.0.1:{port}/mcp",
+            url=f"http://127.0.0.1:{port}",
             process=process,
             stdout_path=stdout_path,
             stderr_path=stderr_path,
@@ -167,7 +170,7 @@ class LocalArbiterServerFactory:
 
     def _wait_until_ready(self, server: RunningArbiterServer) -> None:
         deadline = time.monotonic() + 15
-        last_result: subprocess.CompletedProcess[str] | None = None
+        last_error: str | None = None
         last_timeout: subprocess.TimeoutExpired | None = None
         while time.monotonic() < deadline:
             if server.process.poll() is not None:
@@ -178,31 +181,31 @@ class LocalArbiterServerFactory:
                     retryable=_looks_like_address_in_use(server.stderr),
                 )
             try:
-                last_result = server.run_client(
-                    "mcp",
-                    "call",
-                    "version_info",
-                    command=_arbiter_command(),
+                with urllib.request.urlopen(
+                    f"{server.url}/_health_",
                     timeout=5,
-                )
+                ) as response:
+                    if response.status == 200:
+                        return
+                    last_error = f"HTTP {response.status}"
                 last_timeout = None
+            except urllib.error.URLError as exc:
+                last_error = str(exc)
+                time.sleep(0.25)
+                continue
             except subprocess.TimeoutExpired as exc:
                 last_timeout = exc
                 time.sleep(0.25)
                 continue
-            if last_result.returncode == 0:
-                return
             time.sleep(0.25)
 
         server.stop()
-        last_stdout = "" if last_result is None else last_result.stdout
-        last_stderr = "" if last_result is None else last_result.stderr
+        last_error_text = "" if last_error is None else f"{last_error}\n"
         last_timeout_text = "" if last_timeout is None else f"{last_timeout}\n"
         raise ArbiterServerStartError(
             "arbiter-server did not become ready\n"
             f"last client timeout:\n{last_timeout_text}"
-            f"last client stdout:\n{last_stdout}\n"
-            f"last client stderr:\n{last_stderr}\n"
+            f"last health error:\n{last_error_text}"
             f"{server.diagnostics()}",
             retryable=_looks_like_address_in_use(server.stderr),
         )
@@ -227,18 +230,6 @@ def _arbiter_server_command() -> Path:
     if not command_path.exists():
         raise AssertionError(f"arbiter-server console script not found: {command_path}")
     return command_path
-
-
-def _arbiter_command() -> Path:
-    command = os.environ.get("ARBITER_COMMAND")
-    if command:
-        return Path(command)
-    command_path = Path(sys.executable).with_name("arbiter")
-    if os.name == "nt" and not command_path.exists():
-        command_path = command_path.with_suffix(".exe")
-    if command_path.exists():
-        return command_path
-    return _build_current_go_client()
 
 
 def _repo_root() -> Path:

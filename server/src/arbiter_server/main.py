@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import inspect
 import json
@@ -12,14 +13,14 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import AsyncGenerator, Callable, Iterator, Mapping, Sequence
+from dataclasses import asdict, dataclass, is_dataclass
 from importlib.metadata import PackageNotFoundError, distribution, entry_points
 from importlib.resources import files
 from pathlib import Path
 from tempfile import TemporaryDirectory, mkstemp
-from typing import TYPE_CHECKING, Any, Literal, cast
-from urllib.parse import urlparse
+from typing import Any, Literal, cast
+from urllib.parse import parse_qs, quote, urlparse
 from urllib.request import url2pathname
 
 from hydra import compose, initialize_config_dir
@@ -65,12 +66,8 @@ from .services import (
 from .storage import PluginStorage, default_plugin_data_root
 from .version import arbiter_server_version, source_info
 
-if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
-
-
 LOGGER = logging.getLogger(__name__)
-TransportMode = Literal["stdio", "sse", "streamable-http"]
+TransportMode = Literal["http"]
 HydraConfig = AppConfig | DictConfig
 BootstrapObjectKind = Literal["account", "policy"]
 CLI_COMMANDS = {"serve", "config", "plugins", "bootstrap", "env", "deploy", "version"}
@@ -94,7 +91,10 @@ DEFAULT_SERVER_CONFIG_NAME = "arbiter-server"
 CONFIG_FILE_MODE = 0o640
 ENV_FILE_MODE = 0o600
 DEFAULT_DOCKER_DEPLOY_DIR = "./arbiter-docker"
-ARTIFACT_ROUTE_PREFIX = "/_arbiter/artifacts"
+API_ROUTE_PREFIX = "/api/v1"
+ARTIFACT_ROUTE_PREFIX = f"{API_ROUTE_PREFIX}/artifacts"
+HEALTH_ROUTE = "/_health_"
+INLINE_ARTIFACT_MAX_BYTES = 5 * 1024
 DEPLOY_MANIFEST_FILE_NAME = ".arbiter-deploy.json"
 ARBITER_SERVER_PACKAGE = "arbiter-server"
 ARBITER_ALL_META_PACKAGE = "arbiter-suite"
@@ -125,8 +125,8 @@ DOCKER_COMPOSE_ENV_DEFAULTS = [
     ("ARBITER_WHEELS_DIR", "./wheels"),
     ("ARBITER_PLUGIN_DATA_DIR", "./data/plugins"),
     ("ARBITER_HOST_BIND", "127.0.0.1"),
-    ("ARBITER_HOST_PORT", "18025"),
-    ("ARBITER_CONTAINER_PORT", "8025"),
+    ("ARBITER_HOST_PORT", "18075"),
+    ("ARBITER_CONTAINER_PORT", "8075"),
     ("ARBITER_PUBLIC_SCHEME", "http"),
     ("ARBITER_PUBLIC_BASE_URL", ""),
     ("ARBITER_DOCKER_NETWORK_NAME", "arbiter-staging"),
@@ -142,7 +142,7 @@ MAIN_CONFIG_TEMPLATE = """defaults:
 # Inspect the composed config with:
 #   arbiter-server --config-dir <dir> --config-name arbiter-server config show
 # Override composed values with Hydra overrides, for example:
-#   arbiter-server --config-dir <dir> serve arbiter.server.bind.port=8025
+#   arbiter-server --config-dir <dir> serve arbiter.server.bind.port=8075
 # Optionally load a config-dir-relative dotenv file before composition:
 #   arbiter:
 #     env_file: local.env
@@ -153,13 +153,11 @@ MAIN_CONFIG_TEMPLATE = """defaults:
 SERVER_CONFIG_TEMPLATE = """# @package arbiter
 server:
   name: arbiter
-  transport: streamable-http
+  transport: http
   bind:
     host: 127.0.0.1
-    port: 8000
-    path: /mcp
-  stateless_http: true
-  json_response: true
+    port: 8075
+    path: ""
 deployment_scope: unknown
 discovery:
   max_account_preview_limit: 25
@@ -191,6 +189,13 @@ class DockerBundlePlugin:
     name: str
     package: str
     description: str
+
+
+@dataclass(frozen=True)
+class NativeHTTPServer:
+    app: object
+    host: str
+    port: int
 
 
 @dataclass(frozen=True)
@@ -729,22 +734,11 @@ def _service_accounts_summary(cfg: HydraConfig) -> str:
     return ";".join(summaries) if summaries else "none"
 
 
-def _server_mcp_url(cfg: HydraConfig) -> str:
-    if cfg.arbiter.server.transport == "stdio":
-        return "stdio"
-    return f"{_server_base_url(cfg)}{_server_public_path(cfg)}"
-
-
-def _server_public_path(cfg: HydraConfig) -> str:
-    public_path = cfg.arbiter.server.public.path
-    if "${" in public_path:
-        public_path = cfg.arbiter.server.bind.path
-    return public_path
+def _server_url(cfg: HydraConfig) -> str:
+    return _server_base_url(cfg)
 
 
 def _server_base_url(cfg: HydraConfig) -> str:
-    if cfg.arbiter.server.transport == "stdio":
-        raise ValueError("stdio transport does not expose HTTP artifact URLs")
     public_base_url = cfg.arbiter.server.public.base_url.strip()
     if "${" in public_base_url:
         public_port = str(cfg.arbiter.server.public.port)
@@ -775,14 +769,14 @@ def log_startup_summary(cfg: HydraConfig) -> None:
 
     LOGGER.info(
         "Arbiter starting version=%s deployment_scope=%s transport=%s bind=%s:%s%s "
-        "mcp_url=%s services=%s service_accounts=%s",
+        "url=%s services=%s service_accounts=%s",
         arbiter_server_version(),
         _deployment_scope_value(cfg.arbiter.deployment_scope),
         cfg.arbiter.server.transport,
         cfg.arbiter.server.bind.host,
         cfg.arbiter.server.bind.port,
         cfg.arbiter.server.bind.path,
-        _server_mcp_url(cfg),
+        _server_url(cfg),
         _csv_or_none(active_services),
         _service_accounts_summary(cfg),
     )
@@ -1241,136 +1235,518 @@ def _print_runtime_version_info(
         )
 
 
-def _register_server_tools(
-    server: "FastMCP",
+def _jsonable(value: object) -> object:
+    if is_dataclass(value) and not isinstance(value, type):
+        return _jsonable(asdict(value))
+    if isinstance(value, Mapping):
+        return {str(key): _jsonable(item) for key, item in value.items()}
+    if isinstance(value, list | tuple | set):
+        return [_jsonable(item) for item in value]
+    if isinstance(value, Path):
+        return str(value)
+    enum_value = getattr(value, "value", None)
+    if isinstance(enum_value, str | int | float | bool):
+        return enum_value
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
+
+
+def _native_response(payload: object, *, status_code: int = 200) -> object:
+    from starlette.responses import JSONResponse
+
+    return JSONResponse(_jsonable(payload), status_code=status_code)
+
+
+def _native_error_payload(
+    *,
+    code: str,
+    message: str,
+    details: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    error: dict[str, object] = {
+        "code": code,
+        "message": message,
+    }
+    if details:
+        error["details"] = dict(details)
+    return {"error": error}
+
+
+def _native_error_response(
+    *,
+    status_code: int,
+    code: str,
+    message: str,
+    details: Mapping[str, object] | None = None,
+) -> object:
+    return _native_response(
+        _native_error_payload(code=code, message=message, details=details),
+        status_code=status_code,
+    )
+
+
+def _native_exception_response(
+    exc: BaseException,
+    *,
+    validation_status_code: int = 400,
+) -> object:
+    if isinstance(exc, ArtifactConsumed):
+        return _native_error_response(
+            status_code=410,
+            code="artifact_consumed",
+            message="Artifact is no longer available.",
+        )
+    if isinstance(exc, ArtifactExpired):
+        return _native_error_response(
+            status_code=410,
+            code="artifact_expired",
+            message="Artifact has expired.",
+        )
+    if isinstance(exc, ArtifactNotFound):
+        return _native_error_response(
+            status_code=404,
+            code="artifact_not_found",
+            message="Artifact was not found.",
+        )
+    if isinstance(exc, ValueError):
+        message = str(exc)
+        status_code = (
+            404 if message.startswith("unknown ") else validation_status_code
+        )
+        code = "not_found" if status_code == 404 else "validation_error"
+        return _native_error_response(
+            status_code=status_code,
+            code=code,
+            message=message,
+        )
+    LOGGER.exception("native HTTP request failed", exc_info=exc)
+    return _native_error_response(
+        status_code=500,
+        code="internal_error",
+        message="Internal Arbiter server error.",
+    )
+
+
+def _operation_details_payload(catalog: OperationCatalog, operation_ref: str) -> object:
+    details = catalog.describe_operation(operation_ref)
+    plugin = details.get("capability", "")
+    description = str(details.get("description", ""))
+    return {
+        "id": details["id"],
+        "plugin": plugin,
+        "name": details["name"],
+        "summary": description,
+        "description": description,
+        "input_schema": details["input_schema"],
+        "output_schema": {},
+        "artifact_policy": {
+            "inline_max_bytes": INLINE_ARTIFACT_MAX_BYTES,
+            "supports_uploads": False,
+        },
+    }
+
+
+def _operation_response_payload(
+    result: object,
+    *,
+    artifact_store: ArtifactStore,
+) -> dict[str, object]:
+    json_result = _jsonable(result)
+    return {
+        "result": json_result,
+        "artifacts": _operation_artifacts(json_result, artifact_store=artifact_store),
+        "warnings": [],
+    }
+
+
+def _operation_artifacts(
+    result: object,
+    *,
+    artifact_store: ArtifactStore,
+) -> list[dict[str, object]]:
+    if not isinstance(result, Mapping):
+        return []
+    candidates: list[object] = []
+    if "artifact" in result:
+        candidates.append(result["artifact"])
+    artifact_items = result.get("artifacts")
+    if isinstance(artifact_items, Sequence) and not isinstance(
+        artifact_items,
+        str | bytes | bytearray,
+    ):
+        candidates.extend(artifact_items)
+    artifacts: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        artifact = _native_artifact_from_descriptor(
+            candidate,
+            artifact_store=artifact_store,
+        )
+        if artifact is None:
+            continue
+        artifact_id = str(artifact["id"])
+        if artifact_id in seen:
+            continue
+        seen.add(artifact_id)
+        artifacts.append(artifact)
+    return artifacts
+
+
+def _native_artifact_from_descriptor(
+    descriptor: object,
+    *,
+    artifact_store: ArtifactStore,
+) -> dict[str, object] | None:
+    if not isinstance(descriptor, Mapping):
+        return None
+    artifact_id = _string_or_none_value(descriptor.get("id"))
+    nonce = _artifact_nonce_from_url(_string_or_none_value(descriptor.get("url")))
+    if artifact_id is None or nonce is None:
+        return None
+    content_type = _string_or_none_value(descriptor.get("content_type"))
+    size = descriptor.get("size")
+    sha256 = _string_or_none_value(descriptor.get("sha256"))
+    if not isinstance(size, int) or size < 0 or sha256 is None:
+        return None
+
+    artifact: dict[str, object] = {
+        "id": artifact_id,
+        "name": descriptor.get("filename"),
+        "mime_type": content_type or "application/octet-stream",
+        "size": size,
+        "sha256": sha256,
+        "content_url": _native_artifact_content_url(artifact_id, nonce),
+    }
+    inline = _inline_artifact_payload(
+        artifact_id,
+        nonce,
+        artifact_store=artifact_store,
+    )
+    if inline is not None:
+        artifact["inline"] = inline
+    return artifact
+
+
+def _artifact_nonce_from_url(url: str | None) -> str | None:
+    if url is None:
+        return None
+    values = parse_qs(urlparse(url).query).get("nonce", [])
+    if not values or values[0] == "":
+        return None
+    return values[0]
+
+
+def _inline_artifact_payload(
+    artifact_id: str,
+    nonce: str,
+    *,
+    artifact_store: ArtifactStore,
+) -> dict[str, object] | None:
+    try:
+        artifact = artifact_store.inspect(artifact_id, nonce)
+    except (ArtifactConsumed, ArtifactExpired, ArtifactNotFound):
+        return None
+    if artifact.size > INLINE_ARTIFACT_MAX_BYTES:
+        return None
+    try:
+        content = artifact.path.read_bytes()
+    except OSError:
+        return None
+    if len(content) > INLINE_ARTIFACT_MAX_BYTES:
+        return None
+    if _is_textual_artifact_content_type(artifact.content_type):
+        try:
+            return {
+                "encoding": "utf-8",
+                "data": content.decode("utf-8"),
+            }
+        except UnicodeDecodeError:
+            pass
+    return {
+        "encoding": "base64",
+        "data": base64.b64encode(content).decode("ascii"),
+    }
+
+
+def _is_textual_artifact_content_type(content_type: str) -> bool:
+    media_type = content_type.split(";", 1)[0].strip().lower()
+    if media_type.startswith("text/"):
+        return True
+    return (
+        media_type
+        in {
+            "application/json",
+            "application/ld+json",
+            "application/xml",
+            "application/yaml",
+            "application/x-yaml",
+            "application/toml",
+            "application/javascript",
+        }
+        or media_type.endswith("+json")
+        or media_type.endswith("+xml")
+    )
+
+
+def _string_or_none_value(value: object) -> str | None:
+    return value if isinstance(value, str) and value != "" else None
+
+
+async def _read_operation_arguments(request: object) -> Mapping[str, Any]:
+    from json import JSONDecodeError
+
+    try:
+        payload = await cast(Any, request).json()
+    except JSONDecodeError as exc:
+        raise ValueError("request body must be valid JSON") from exc
+    if not isinstance(payload, Mapping):
+        raise ValueError("request body must be a JSON object")
+    args = payload.get("args", {})
+    if args is None:
+        args = {}
+    if not isinstance(args, Mapping):
+        raise ValueError("operation args must be a JSON object")
+    return cast(Mapping[str, Any], args)
+
+
+def _native_artifact_metadata(
+    *,
+    artifact_id: str,
+    artifact: object,
+    nonce: str,
+) -> dict[str, object]:
+    read = cast(Any, artifact)
+    return {
+        "id": artifact_id,
+        "name": read.filename,
+        "mime_type": read.content_type,
+        "size": read.size,
+        "sha256": read.sha256,
+        "content_url": _native_artifact_content_url(artifact_id, nonce),
+    }
+
+
+def _native_artifact_content_url(artifact_id: str, nonce: str) -> str:
+    encoded_id = quote(artifact_id, safe="")
+    encoded_nonce = quote(nonce, safe="")
+    return f"{ARTIFACT_ROUTE_PREFIX}/{encoded_id}/content?nonce={encoded_nonce}"
+
+
+def _attachment_content_disposition(filename: str | None) -> str:
+    if filename is None:
+        return "attachment"
+    fallback = "".join(
+        char if 0x20 <= ord(char) <= 0x7E else "_" for char in filename
+    )
+    fallback = fallback.replace("\\", "\\\\").replace('"', '\\"')
+    encoded = quote(filename, safe="")
+    return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{encoded}"
+
+
+def _create_native_http_app(
+    *,
     catalog: OperationCatalog,
     service_plugins: Sequence[ServicePlugin],
     deployment_scope: DeploymentScope | str,
-) -> None:
-    @server.tool(
-        description=(
-            "Return Arbiter server and loaded service plugin version " "information."
-        )
-    )
-    def version_info() -> dict[str, object]:
-        return runtime_version_info(
+    artifact_store: ArtifactStore,
+) -> object:
+    from starlette.applications import Starlette
+    from starlette.requests import Request
+    from starlette.responses import Response, StreamingResponse
+    from starlette.routing import Route
+
+    async def health(_request: Request) -> object:
+        return _native_response({"status": "ok"})
+
+    async def info(_request: Request) -> object:
+        version_info = runtime_version_info(
             service_plugins,
             deployment_scope=deployment_scope,
         )
-
-    @server.tool(
-        description=(
-            "Discover Arbiter server identity, installed plugins, accounts, "
-            "account policy summaries, read-only account test results, and "
-            "operation schemas."
+        server_info = cast(Mapping[str, object], version_info["server"])
+        return _native_response(
+            {
+                "name": "arbiter",
+                "version": server_info["version"],
+                "api_version": server_info["api_version"],
+                "deployment_scope": version_info["deployment_scope"],
+            }
         )
-    )
-    def info(
-        kind: str = "overview",
-        plugin: str | None = None,
-        account: str | None = None,
-        operation: str | None = None,
-    ) -> dict[str, object]:
-        return catalog.info(
-            kind=kind,
-            plugin=plugin,
-            account=account,
-            operation=operation,
-            version_info=runtime_version_info(
-                service_plugins,
-                deployment_scope=deployment_scope,
+
+    async def plugins(_request: Request) -> object:
+        capabilities = cast(
+            Sequence[Mapping[str, object]],
+            catalog.describe_capabilities(
+                operation_preview_limit=0,
+                account_preview_limit=0,
+            )["capabilities"],
+        )
+        return _native_response(
+            {
+                "plugins": [
+                    {
+                        "id": capability["id"],
+                        "summary": capability.get("description", ""),
+                        "operations_url": (
+                            f"{API_ROUTE_PREFIX}/plugins/{capability['id']}/operations"
+                        ),
+                    }
+                    for capability in capabilities
+                ]
+            }
+        )
+
+    async def plugin_operations(request: Request) -> object:
+        plugin = request.path_params["plugin_id"]
+        try:
+            payload = catalog.info(kind="ops", plugin=plugin)
+            operations = cast(Sequence[Mapping[str, object]], payload["operations"])
+            return _native_response(
+                {
+                    "plugin": plugin,
+                    "operations": [
+                        {
+                            "id": operation["id"],
+                            "summary": operation.get("description", ""),
+                            "when_to_use": operation.get("description", ""),
+                            "details_url": (
+                                f"{API_ROUTE_PREFIX}/operations/{operation['id']}"
+                            ),
+                        }
+                        for operation in operations
+                    ],
+                }
+            )
+        except Exception as exc:
+            return _native_exception_response(exc)
+
+    async def operation_details(request: Request) -> object:
+        try:
+            return _native_response(
+                _operation_details_payload(catalog, request.path_params["operation_id"])
+            )
+        except Exception as exc:
+            return _native_exception_response(exc)
+
+    async def invoke_operation(request: Request) -> object:
+        operation_id_value = request.path_params["operation_id"]
+        try:
+            args = await _read_operation_arguments(request)
+        except Exception as exc:
+            return _native_exception_response(exc)
+        try:
+            result = catalog.invoke_operation(operation_id_value, args)
+            return _native_response(
+                _operation_response_payload(result, artifact_store=artifact_store)
+            )
+        except Exception as exc:
+            return _native_exception_response(exc, validation_status_code=422)
+
+    async def artifact_metadata(request: Request) -> object:
+        artifact_id = request.path_params["artifact_id"]
+        nonce = request.query_params.get("nonce", "")
+        if not nonce:
+            return _native_error_response(
+                status_code=404,
+                code="artifact_not_found",
+                message="Artifact was not found.",
+            )
+        try:
+            artifact = artifact_store.inspect(artifact_id, nonce)
+            return _native_response(
+                _native_artifact_metadata(
+                    artifact_id=artifact_id,
+                    artifact=artifact,
+                    nonce=nonce,
+                )
+            )
+        except Exception as exc:
+            return _native_exception_response(exc)
+
+    async def artifact_content(request: Request) -> object:
+        artifact_id = request.path_params["artifact_id"]
+        nonce = request.query_params.get("nonce", "")
+        if not nonce:
+            return _native_error_response(
+                status_code=404,
+                code="artifact_not_found",
+                message="Artifact was not found.",
+            )
+        try:
+            if request.method == "HEAD":
+                artifact = artifact_store.inspect(artifact_id, nonce)
+                response = Response(status_code=200, media_type=artifact.content_type)
+                response.headers["Content-Length"] = str(artifact.size)
+                response.headers["Cache-Control"] = "no-store"
+                response.headers["X-Content-Type-Options"] = "nosniff"
+                response.headers["Digest"] = f"sha-256={artifact.sha256}"
+                response.headers["X-Arbiter-Artifact-SHA256"] = artifact.sha256
+                return response
+            artifact = artifact_store.open_once(artifact_id, nonce)
+
+            async def content_chunks() -> AsyncGenerator[bytes, None]:
+                with artifact.path.open("rb") as handle:
+                    while chunk := handle.read(64 * 1024):
+                        yield chunk
+
+            response = StreamingResponse(
+                content_chunks(),
+                media_type=artifact.content_type,
+            )
+            if artifact.filename is not None:
+                response.headers["Content-Disposition"] = (
+                    _attachment_content_disposition(artifact.filename)
+                )
+            else:
+                response.headers["Content-Disposition"] = "attachment"
+            response.headers["Content-Length"] = str(artifact.size)
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["Digest"] = f"sha-256={artifact.sha256}"
+            response.headers["X-Arbiter-Artifact-SHA256"] = artifact.sha256
+            return response
+        except Exception as exc:
+            return _native_exception_response(exc)
+
+    return Starlette(
+        routes=[
+            Route(HEALTH_ROUTE, health, methods=["GET"]),
+            Route(f"{API_ROUTE_PREFIX}/info", info, methods=["GET"]),
+            Route(f"{API_ROUTE_PREFIX}/plugins", plugins, methods=["GET"]),
+            Route(
+                f"{API_ROUTE_PREFIX}/plugins/{{plugin_id}}/operations",
+                plugin_operations,
+                methods=["GET"],
             ),
-        )
-
-    @server.tool(
-        description=(
-            "Return the available Arbiter capability names. Use "
-            "describe_caps or describe_cap to drill down before "
-            "choosing an operation."
-        )
+            Route(
+                f"{API_ROUTE_PREFIX}/operations/{{operation_id}}",
+                operation_details,
+                methods=["GET"],
+            ),
+            Route(
+                f"{API_ROUTE_PREFIX}/operations/{{operation_id}}",
+                invoke_operation,
+                methods=["POST"],
+            ),
+            Route(
+                f"{ARTIFACT_ROUTE_PREFIX}/{{artifact_id}}",
+                artifact_metadata,
+                methods=["GET"],
+            ),
+            Route(
+                f"{ARTIFACT_ROUTE_PREFIX}/{{artifact_id}}/content",
+                artifact_content,
+                methods=["GET", "HEAD"],
+            ),
+        ]
     )
-    def list_caps() -> dict[str, object]:
-        return catalog.list_capabilities()
-
-    @server.tool(
-        description=(
-            "Return bounded summaries of all Arbiter capabilities, including "
-            "account and operation previews."
-        )
-    )
-    def describe_caps(
-        operation_preview_limit: int = 8,
-        account_preview_limit: int = 8,
-    ) -> dict[str, object]:
-        return catalog.describe_capabilities(
-            operation_preview_limit=operation_preview_limit,
-            account_preview_limit=account_preview_limit,
-        )
-
-    @server.tool(
-        description=(
-            "Return focused account and operation context for one Arbiter "
-            "capability."
-        )
-    )
-    def describe_cap(capability: str) -> dict[str, object]:
-        return catalog.describe_capability(capability)
-
-    @server.tool(
-        description=(
-            "Return the description and input schema for one Arbiter "
-            "operation. Operation ids use CAPABILITY:OPERATION syntax."
-        )
-    )
-    def describe_op(id: str) -> dict[str, object]:
-        return catalog.describe_operation(id)
-
-    @server.tool(
-        description=(
-            "Run one Arbiter operation by id. Operation ids use "
-            "CAPABILITY:OPERATION syntax."
-        )
-    )
-    def run_op(
-        id: str,
-        arguments: dict[str, Any] | None = None,
-    ) -> object:
-        return catalog.invoke_operation(id, arguments)
-
-    @server.tool(
-        description=(
-            "Check whether one Arbiter operation would be allowed by policy "
-            "without calling external services or mutating state."
-        )
-    )
-    def check_op(
-        id: str,
-        arguments: dict[str, Any] | None = None,
-    ) -> object:
-        return catalog.check_operation(id, arguments)
-
-
-def _create_fastmcp_server(cfg: HydraConfig) -> "FastMCP":
-    from mcp.server.fastmcp import FastMCP
-
-    server = FastMCP(
-        cfg.arbiter.server.name,
-        stateless_http=cfg.arbiter.server.stateless_http,
-        json_response=cfg.arbiter.server.json_response,
-    )
-    server.settings.host = cfg.arbiter.server.bind.host
-    server.settings.port = int(cfg.arbiter.server.bind.port)
-    server.settings.streamable_http_path = cfg.arbiter.server.bind.path
-    mcp_server = getattr(server, "_mcp_server", None)
-    if mcp_server is not None:
-        mcp_server.version = arbiter_server_version()
-    return server
 
 
 def build_server(
     cfg: HydraConfig,
     service_plugins: Sequence[ServicePlugin] | None = None,
-) -> "FastMCP":
+) -> NativeHTTPServer:
     available_service_plugins = (
         discover_service_plugins() if service_plugins is None else service_plugins
     )
@@ -1378,107 +1754,48 @@ def build_server(
         cfg,
         available_service_plugins,
     )
-    artifact_store: ArtifactStore | None = None
     runtime_dependencies: dict[str, object] = {}
-    if cfg.arbiter.server.transport != "stdio":
-        artifact_store = ArtifactStore(
-            root=_plugin_data_root(_storage_config(cfg)),
-            base_url=_artifact_base_url(cfg),
-        )
-        runtime_dependencies["artifact_store"] = artifact_store
+    artifact_store = ArtifactStore(
+        root=_plugin_data_root(_storage_config(cfg)),
+        base_url=_artifact_base_url(cfg),
+    )
+    runtime_dependencies["artifact_store"] = artifact_store
     app = build_app(
         cfg,
         service_plugins=active_service_plugins,
         runtime_dependencies=runtime_dependencies,
     )
-    server = _create_fastmcp_server(cfg)
-    if artifact_store is not None:
-        _register_artifact_route(server, artifact_store)
     catalog = OperationCatalog(
         active_service_plugins,
         ServicePluginContext(runtimes=app.runtime_registry),
         max_account_preview_limit=cfg.arbiter.discovery.max_account_preview_limit,
         max_operation_preview_limit=cfg.arbiter.discovery.max_operation_preview_limit,
     )
-    _register_server_tools(
-        server,
-        catalog,
-        active_service_plugins,
-        cfg.arbiter.deployment_scope,
+    native_app = _create_native_http_app(
+        catalog=catalog,
+        service_plugins=active_service_plugins,
+        deployment_scope=cfg.arbiter.deployment_scope,
+        artifact_store=artifact_store,
     )
 
-    return server
-
-
-def _register_artifact_route(server: "FastMCP", artifact_store: ArtifactStore) -> None:
-    from starlette.requests import Request
-    from starlette.responses import FileResponse, PlainTextResponse, Response
-
-    @server.custom_route(
-        f"{ARTIFACT_ROUTE_PREFIX}/{{artifact_id}}",
-        methods=["GET", "HEAD"],
-        include_in_schema=False,
+    return NativeHTTPServer(
+        app=native_app,
+        host=str(cfg.arbiter.server.bind.host),
+        port=int(cfg.arbiter.server.bind.port),
     )
-    async def get_artifact(request: Request) -> Response:
-        artifact_id = request.path_params["artifact_id"]
-        nonce = request.query_params.get("nonce", "")
-        if not nonce:
-            return PlainTextResponse("not found", status_code=404)
-        try:
-            if request.method == "HEAD":
-                artifact = artifact_store.inspect(artifact_id, nonce)
-            else:
-                artifact = artifact_store.open_once(artifact_id, nonce)
-        except ArtifactConsumed:
-            return PlainTextResponse("gone", status_code=410)
-        except (ArtifactExpired, ArtifactNotFound):
-            return PlainTextResponse("not found", status_code=404)
-        if request.method == "HEAD":
-            response = Response(status_code=200, media_type=artifact.content_type)
-            response.headers["Content-Length"] = str(artifact.size)
-            response.headers["Cache-Control"] = "no-store"
-            response.headers["X-Content-Type-Options"] = "nosniff"
-            response.headers["X-Arbiter-Artifact-SHA256"] = artifact.sha256
-            return response
-        response = FileResponse(
-            artifact.path,
-            media_type=artifact.content_type,
-            filename=artifact.filename,
-            content_disposition_type="attachment",
-        )
-        response.headers.setdefault("Content-Disposition", "attachment")
-        response.headers["Cache-Control"] = "no-store"
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Arbiter-Artifact-SHA256"] = artifact.sha256
-        return response
 
 
-async def _serve_uvicorn_app(server: "FastMCP", starlette_app: object) -> None:
+def _run_server(server: NativeHTTPServer, transport: TransportMode) -> None:
+    if transport != "http":
+        raise ValueError(f"unsupported Arbiter HTTP transport: {transport}")
     import uvicorn
 
-    config = uvicorn.Config(
-        cast(Any, starlette_app),
-        host=server.settings.host,
-        port=server.settings.port,
-        log_level=server.settings.log_level.lower(),
+    uvicorn.run(
+        cast(Any, server.app),
+        host=server.host,
+        port=server.port,
         log_config=None,
     )
-    uvicorn_server = uvicorn.Server(config)
-    await uvicorn_server.serve()
-
-
-def _run_server(server: "FastMCP", transport: TransportMode) -> None:
-    if transport == "stdio":
-        server.run(transport=transport)
-        return
-
-    import anyio
-
-    if transport == "streamable-http":
-        anyio.run(_serve_uvicorn_app, server, server.streamable_http_app())
-        return
-
-    anyio.run(_serve_uvicorn_app, server, server.sse_app(None))
 
 
 def _strip_arg_separator(args: Sequence[str]) -> list[str]:
@@ -3581,7 +3898,7 @@ def _extract_global_config_args(args: Sequence[str]) -> list[str]:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="arbiter-server",
-        description="Policy-controlled MCP gateway for agent-accessible services.",
+        description="Policy-controlled HTTP gateway for agent-accessible services.",
     )
     parser.add_argument(
         "--config-dir",
@@ -3600,7 +3917,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     subcommands = parser.add_subparsers(dest="command", required=True)
 
-    serve = subcommands.add_parser("serve", help="run the Arbiter MCP server")
+    serve = subcommands.add_parser("serve", help="run the Arbiter HTTP server")
     _add_override_arguments(
         serve,
         help_text="Hydra-style config overrides applied before serving",

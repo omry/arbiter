@@ -50,7 +50,7 @@ def _compose_config(overrides: list[str] | None = None) -> DictConfig:
             """
 defaults:
   - arbiter_app_config_schema
-  - /arbiter/server: streamable-http
+  - /arbiter/server: http
   - _self_
 
 arbiter:
@@ -101,17 +101,17 @@ def test_compose_config_returns_hydra_config() -> None:
 
     assert isinstance(cfg, DictConfig)
     assert cfg.arbiter.server.name == "arbiter"
-    assert cfg.arbiter.server.transport == "streamable-http"
+    assert cfg.arbiter.server.transport == "http"
     assert cfg.arbiter.server.bind.scheme == "http"
     assert cfg.arbiter.server.bind.host == "127.0.0.1"
-    assert cfg.arbiter.server.bind.port == 8000
-    assert cfg.arbiter.server.bind.path == "/mcp"
-    assert cfg.arbiter.server.bind.base_url == "http://127.0.0.1:8000"
+    assert cfg.arbiter.server.bind.port == 8075
+    assert cfg.arbiter.server.bind.path == ""
+    assert cfg.arbiter.server.bind.base_url == "http://127.0.0.1:8075"
     assert cfg.arbiter.server.public.scheme == "http"
     assert cfg.arbiter.server.public.host == "127.0.0.1"
-    assert cfg.arbiter.server.public.port == 8000
-    assert cfg.arbiter.server.public.path == "/mcp"
-    assert cfg.arbiter.server.public.base_url == "http://127.0.0.1:8000"
+    assert cfg.arbiter.server.public.port == 8075
+    assert cfg.arbiter.server.public.path == ""
+    assert cfg.arbiter.server.public.base_url == "http://127.0.0.1:8075"
     assert cfg.arbiter.deployment_scope == DeploymentScope.unknown
     assert cfg.arbiter.storage.plugin_data_dir is None
     assert cfg.arbiter.account == {}
@@ -126,7 +126,7 @@ def test_compose_config_applies_overrides() -> None:
             "+arbiter/account/imap@arbiter.account.imap.primary=schema",
             "+arbiter/policy/smtp@arbiter.policy.smtp.bot=schema",
             "+arbiter/policy/imap@arbiter.policy.imap.bot=schema",
-            "arbiter.server.transport=stdio",
+            "arbiter.server.transport=http",
             "arbiter.server.bind.port=9000",
             "arbiter.server.public.scheme=https",
             "arbiter.server.public.host=arbiter.example.test",
@@ -143,7 +143,7 @@ def test_compose_config_applies_overrides() -> None:
         ]
     )
 
-    assert cfg.arbiter.server.transport == "stdio"
+    assert cfg.arbiter.server.transport == "http"
     assert cfg.arbiter.server.bind.port == 9000
     assert cfg.arbiter.server.public.base_url == "https://arbiter.example.test:443"
     assert cfg.arbiter.account.smtp.primary.host == "smtp.example.com"
@@ -198,7 +198,7 @@ def test_standard_deployment_config_composes(
     ):
         cfg = compose(config_name="config")
 
-    assert cfg.arbiter.server.name == "arbiter-mcp"
+    assert cfg.arbiter.server.name == "arbiter"
     assert cfg.arbiter.policy.smtp.bot.limits.max_messages_per_minute is None
     assert cfg.arbiter.policy.smtp.personal.limits.max_messages_per_minute is None
     assert set(cfg.arbiter.account.smtp) == {"primary", "personal"}

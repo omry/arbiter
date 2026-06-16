@@ -6,7 +6,7 @@ backend-path = ["."]
 [project]
 name = "arbiter-skill"
 version = "0.9.2.dev1"
-description = "Agent skill for Arbiter MCP access"
+description = "Agent skill for Arbiter service access"
 requires-python = ">=3.10,<3.15"
 license = "MIT"
 authors = [
@@ -15,7 +15,7 @@ authors = [
 maintainers = [
   { name = "Omry Yadan", email = "omry@yadan.net" },
 ]
-keywords = ["agent", "skill", "mcp", "access-control", "arbiter"]
+keywords = ["agent", "skill", "http", "access-control", "arbiter"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",

@@ -15,7 +15,7 @@ authors = [
 maintainers = [
   { name = "Omry Yadan", email = "omry@yadan.net" },
 ]
-keywords = ["agent", "mcp", "imap", "email"]
+keywords = ["agent", "http", "imap", "email"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",

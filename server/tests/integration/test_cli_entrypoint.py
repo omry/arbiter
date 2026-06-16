@@ -37,7 +37,7 @@ class ArtifactHTTPState:
 
 
 class RunningArbiterServer(Protocol):
-    mcp_url: str
+    url: str
 
     def run_client(
         self,
@@ -433,9 +433,6 @@ def test_arbiter_console_script_help(
         (("op", "list", "--help"), ("usage:", "op list", "[plugin]")),
         (("op", "desc", "--help"), ("usage:", "op desc")),
         (("op", "run", "--help"), ("usage:", "op run", "--args")),
-        (("mcp", "--help"), ("usage:", "mcp", "tools", "call")),
-        (("mcp", "tools", "--help"), ("usage:", "mcp tools")),
-        (("mcp", "call", "--help"), ("usage:", "mcp call", "--args")),
     ],
 )
 def test_arbiter_clients_shared_help(
@@ -722,10 +719,6 @@ def test_arbiter_console_script_serve_reports_unrunnable_config(
 @pytest.mark.parametrize(
     "args",
     [
-        ("mcp", "tools"),
-        ("mcp",),
-        ("mcp", "tools", "--json"),
-        ("mcp", "call", "list_caps"),
         ("info",),
         ("op", "list"),
     ],
@@ -737,7 +730,7 @@ def test_arbiter_client_console_script_reports_clean_connection_failure(
     result = _run_client_command(
         arbiter_client_command.command,
         *args,
-        "arbiter.mcp_url=http://127.0.0.1:9/mcp",
+        "arbiter.url=http://127.0.0.1:9",
     )
 
     assert result.returncode == 1
@@ -745,7 +738,7 @@ def test_arbiter_client_console_script_reports_clean_connection_failure(
     assert result.stderr.startswith(
         ("Arbiter connection error:", "Arbiter tool error:")
     )
-    assert "http://127.0.0.1:9/mcp" in result.stderr
+    assert "http://127.0.0.1:9" in result.stderr
 
 
 def test_arbiter_client_console_script_reads_client_config(
@@ -754,7 +747,7 @@ def test_arbiter_client_console_script_reads_client_config(
 ) -> None:
     client_config = tmp_path / "arbiter-client.yaml"
     client_config.write_text(
-        "arbiter:\n  mcp_url: http://127.0.0.1:9/mcp\n",
+        "arbiter:\n  url: http://127.0.0.1:9\n",
         encoding="utf-8",
     )
 
@@ -770,7 +763,7 @@ def test_arbiter_client_console_script_reads_client_config(
     assert result.stderr.startswith(
         ("Arbiter connection error:", "Arbiter tool error:")
     )
-    assert "http://127.0.0.1:9/mcp" in result.stderr
+    assert "http://127.0.0.1:9" in result.stderr
 
 
 def test_arbiter_client_console_script_bootstrap_client(
@@ -783,34 +776,33 @@ def test_arbiter_client_console_script_bootstrap_client(
         str(tmp_path),
         "bootstrap",
         "client",
-        "arbiter.mcp_url=http://127.0.0.1:8025/mcp",
+        "arbiter.url=http://127.0.0.1:8075",
     )
 
     assert result.returncode == 0
     assert result.stdout == f"wrote {tmp_path / 'arbiter-client.yaml'}\n"
     assert result.stderr == ""
     assert (tmp_path / "arbiter-client.yaml").read_text(encoding="utf-8") == (
-        'arbiter:\n  mcp_url: "http://127.0.0.1:8025/mcp"\n'
+        'arbiter:\n  url: "http://127.0.0.1:8075"\n'
     )
 
 
-def test_local_arbiter_server_fixture_serves_version_info(
+def test_local_arbiter_server_fixture_serves_info(
     arbiter_client_command: ClientCommand,
     local_arbiter_server_factory: LocalArbiterServerFactory,
 ) -> None:
     server = local_arbiter_server_factory.start()
 
     result = server.run_client(
-        "mcp",
-        "call",
-        "version_info",
+        "info",
         command=arbiter_client_command.command,
     )
 
     assert result.returncode == 0
     assert result.stderr == ""
     payload = json.loads(result.stdout)
-    assert "structuredContent" in payload
+    assert payload["server"]["name"] == "arbiter"
+    assert payload["server_url"] == server.url
 
 
 def test_packaged_arbiter_client_wheel_smoke(
@@ -837,7 +829,7 @@ def test_packaged_arbiter_client_wheel_smoke(
     assert info.stderr == ""
     payload = json.loads(info.stdout)
     assert payload["kind"] == "overview_short"
-    assert payload["server_url"] == server.mcp_url
+    assert payload["server_url"] == server.url
 
 
 def test_arbiter_clients_info_short(
@@ -856,13 +848,11 @@ def test_arbiter_clients_info_short(
     assert json_result.stderr == ""
     payload = json.loads(json_result.stdout)
     assert payload["kind"] == "overview_short"
-    assert payload["server_url"] == server.mcp_url
+    assert payload["server_url"] == server.url
     assert "plugins" not in payload
     assert "operations" not in payload
     accounts = payload["accounts"]
-    assert isinstance(accounts, list)
-    primary = next(account for account in accounts if account["id"] == "smtp:primary")
-    assert isinstance(primary.get("description"), str)
+    assert accounts == []
 
     yaml_result = server.run_client(
         "info",
@@ -874,8 +864,8 @@ def test_arbiter_clients_info_short(
     assert yaml_result.returncode == 0
     assert yaml_result.stderr == ""
     assert "kind: overview_short\n" in yaml_result.stdout
-    assert f"server_url: {server.mcp_url}\n" in yaml_result.stdout
-    assert "id: smtp:primary\n" in yaml_result.stdout
+    assert f"server_url: {server.url}\n" in yaml_result.stdout
+    assert "accounts:\n" in yaml_result.stdout
 
 
 def test_arbiter_clients_op_list(

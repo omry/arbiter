@@ -52,14 +52,12 @@ Add `--replace-env` when the installed env file should also come from staging.
 Test the installed Arbiter server with the Arbiter client:
 
 ```bash
-arbiter arbiter.mcp_url=http://127.0.0.1:8025/mcp info --yaml plugins
-# server_url: http://127.0.0.1:8025/mcp
+arbiter arbiter.url=http://127.0.0.1:8075 info --yaml plugins
+# server_url: http://127.0.0.1:8075
 # kind: plugins
 # plugins:
 # - id: imap
-#   version: 0.9.0
 # - id: smtp
-#   version: 0.9.0
 ```
 
 Installed service operations use systemd:

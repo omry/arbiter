@@ -41,8 +41,8 @@ group as root-equivalent. If a coding agent should not be able to manipulate the
 deployment, run that agent as a user without `sudo` and without Docker socket
 access.
 
-This also protects the host files, not the MCP API. Any local process that can
-reach `http://127.0.0.1:8025/mcp` can use whatever Arbiter tools the
+This also protects the host files, not the Arbiter HTTP API. Any local process
+that can reach `http://127.0.0.1:8075` can use whatever Arbiter operations the
 configured policy allows.
 
 ## Operator helper
@@ -195,7 +195,8 @@ Set at least:
 
 ## Run the service
 
-This keeps the service on VM loopback at `http://127.0.0.1:8025/mcp` with the generated env defaults.
+This keeps the service on VM loopback at `http://127.0.0.1:8075` with the
+generated env defaults.
 
 ```bash
 arbiterctl up
@@ -234,7 +235,7 @@ The Compose service:
 
 - installs the requested package target with `pip`
 - starts the Arbiter server with the mounted `config.yaml`
-- binds the container to `0.0.0.0` internally and publishes it only on host loopback via `127.0.0.1:8025:8025`
+- binds the container to `0.0.0.0` internally and publishes it only on host loopback via `127.0.0.1:8075:8075`
 - uses a deterministic Docker bridge by default so host firewall rules can target a stable interface and subnet
 
 Default Docker network values:
@@ -278,13 +279,14 @@ Confirm the container is running:
 arbiterctl ps
 ```
 
-Codex or another MCP client should then use:
+Codex or another Arbiter client should then use:
 
 ```text
-http://127.0.0.1:8025/mcp
+http://127.0.0.1:8075
 ```
 
-If you change `ARBITER_SERVER_PORT` or `ARBITER_SERVER_PATH` in the env file, keep the Docker port mapping and MCP client endpoint in sync.
+If you change `ARBITER_SERVER_PORT` in the env file, keep the Docker port
+mapping and client endpoint in sync.
 
 If you change the install target, recreate the container so it installs the new target on startup:
 

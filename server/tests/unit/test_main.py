@@ -20,7 +20,6 @@ from arbiter_server.config import (
     DiscoveryConfig,
     StorageConfig,
 )
-from arbiter_server.app import SERVER_TOOL_NAMES
 from arbiter_server.file_protection.windows import (
     _WindowsAccessAce,
     _windows_icacls_remediation,
@@ -34,7 +33,6 @@ from arbiter_server.main import (
     _build_local_source_wheel,
     _default_container_user,
     _docker_bundle_plugin,
-    _register_artifact_route,
     _run_config_check,
     _run_server,
     _write_text_with_mode,
@@ -294,7 +292,7 @@ def test_build_app_accepts_hydra_config() -> None:
 
     app = build_app(cfg, service_plugins=_test_service_plugins())
 
-    assert app.tool_names() == list(SERVER_TOOL_NAMES)
+    assert set(app.runtime_registry.keys()) == {"imap", "smtp"}
 
 
 def test_build_app_uses_dictconfig_plugin_storage_root(tmp_path: Path) -> None:
@@ -470,7 +468,6 @@ def test_build_app_activates_dynamic_entry_point_service() -> None:
     assert plugin.policies is not None
     assert set(plugin.accounts) == {"bot"}
     assert set(plugin.policies) == {"bot"}
-    assert app.tool_names() == list(SERVER_TOOL_NAMES)
     assert app.list_accounts() == {"whatsapp": {"bot": {"enabled": True}}}
 
 
@@ -1415,7 +1412,7 @@ def test_cli_serve_rejects_world_readable_config_file(
         pytest.skip("POSIX permission checks are not available")
     config_file = tmp_path / "arbiter-server.yaml"
     config_file.write_text(
-        "arbiter:\n  server:\n    transport: stdio\n", encoding="utf-8"
+        "arbiter:\n  server:\n    transport: http\n", encoding="utf-8"
     )
     config_file.chmod(0o644)
     monkeypatch.setattr(
@@ -1437,7 +1434,7 @@ def test_cli_serve_rejects_group_writable_config_file(
         pytest.skip("POSIX permission checks are not available")
     config_file = tmp_path / "arbiter-server.yaml"
     config_file.write_text(
-        "arbiter:\n  server:\n    transport: stdio\n", encoding="utf-8"
+        "arbiter:\n  server:\n    transport: http\n", encoding="utf-8"
     )
     config_file.chmod(0o660)
     monkeypatch.setattr(
@@ -1459,7 +1456,7 @@ def test_cli_serve_rejects_group_readable_env_file(
         pytest.skip("POSIX permission checks are not available")
     config_file = tmp_path / "arbiter-server.yaml"
     config_file.write_text(
-        "arbiter:\n" "  env_file: local.env\n" "  server:\n" "    transport: stdio\n",
+        "arbiter:\n" "  env_file: local.env\n" "  server:\n" "    transport: http\n",
         encoding="utf-8",
     )
     config_file.chmod(0o640)
@@ -1485,7 +1482,7 @@ def test_cli_serve_rejects_world_writable_config_directory(
         pytest.skip("POSIX permission checks are not available")
     config_file = tmp_path / "arbiter-server.yaml"
     config_file.write_text(
-        "arbiter:\n  server:\n    transport: stdio\n", encoding="utf-8"
+        "arbiter:\n  server:\n    transport: http\n", encoding="utf-8"
     )
     config_file.chmod(0o640)
     tmp_path.chmod(0o777)
@@ -1511,7 +1508,7 @@ def test_cli_serve_rejects_group_writable_config_directory(
         pytest.skip("POSIX permission checks are not available")
     config_file = tmp_path / "arbiter-server.yaml"
     config_file.write_text(
-        "arbiter:\n  server:\n    transport: stdio\n", encoding="utf-8"
+        "arbiter:\n  server:\n    transport: http\n", encoding="utf-8"
     )
     config_file.chmod(0o640)
     tmp_path.chmod(0o770)
@@ -1590,7 +1587,7 @@ def test_windows_permissions_reject_broad_config_acl(
 ) -> None:
     config_file = tmp_path / "arbiter-server.yaml"
     config_file.write_text(
-        "arbiter:\n  server:\n    transport: stdio\n", encoding="utf-8"
+        "arbiter:\n  server:\n    transport: http\n", encoding="utf-8"
     )
     monkeypatch.setattr(
         "arbiter_server.file_protection.windows._windows_unallowed_permission_reason",
@@ -1617,7 +1614,7 @@ def test_windows_permissions_reject_unverified_env_file_acl(
 ) -> None:
     config_file = tmp_path / "arbiter-server.yaml"
     config_file.write_text(
-        "arbiter:\n" "  env_file: local.env\n" "  server:\n" "    transport: stdio\n",
+        "arbiter:\n" "  env_file: local.env\n" "  server:\n" "    transport: http\n",
         encoding="utf-8",
     )
     env_file = tmp_path / "local.env"
@@ -1683,7 +1680,7 @@ def test_windows_real_acl_rejects_broad_config_before_serve(
         pytest.skip("real ACL checks require Windows")
     config_file = tmp_path / "arbiter-server.yaml"
     config_file.write_text(
-        "arbiter:\n  server:\n    transport: stdio\n", encoding="utf-8"
+        "arbiter:\n  server:\n    transport: http\n", encoding="utf-8"
     )
     current_user = subprocess.check_output(["whoami"], text=True).strip()
     for path in (tmp_path, config_file):
@@ -1953,7 +1950,7 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
     assert "user: ${ARBITER_CONTAINER_USER:-10001:10001}" in compose_text
     assert "ARBITER_SERVER_HOST: 0.0.0.0" in compose_text
     assert "ARBITER_HOST_BIND: ${ARBITER_HOST_BIND:-127.0.0.1}" in compose_text
-    assert "ARBITER_HOST_PORT: ${ARBITER_HOST_PORT:-18025}" in compose_text
+    assert "ARBITER_HOST_PORT: ${ARBITER_HOST_PORT:-18075}" in compose_text
     assert "ARBITER_PUBLIC_SCHEME: ${ARBITER_PUBLIC_SCHEME:-http}" in compose_text
     assert "ARBITER_PUBLIC_BASE_URL: ${ARBITER_PUBLIC_BASE_URL:-}" in compose_text
     assert "ARBITER_RUNTIME_VENV: ${ARBITER_RUNTIME_VENV:-/tmp/arbiter-venv}" in (
@@ -1968,7 +1965,7 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
         compose_text
     )
     assert '"arbiter.server.public.host=$$public_host"' in compose_text
-    assert '"arbiter.server.public.port=$${ARBITER_HOST_PORT:-18025}"' in compose_text
+    assert '"arbiter.server.public.port=$${ARBITER_HOST_PORT:-18075}"' in compose_text
     assert 'if [ -n "$${ARBITER_PUBLIC_BASE_URL:-}" ]; then' in compose_text
     assert 'python -m venv "$$runtime_venv"' in compose_text
     assert 'config check "$$@"' in compose_text
@@ -1987,7 +1984,7 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
     ) in compose_text
     assert (
         '"${ARBITER_HOST_BIND:-127.0.0.1}:'
-        '${ARBITER_HOST_PORT:-18025}:${ARBITER_CONTAINER_PORT:-8025}"'
+        '${ARBITER_HOST_PORT:-18075}:${ARBITER_CONTAINER_PORT:-8075}"'
     ) in compose_text
     assert "name: ${ARBITER_DOCKER_NETWORK_NAME:-arbiter-staging}" in compose_text
     assert (
@@ -2001,7 +1998,7 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
         '"arbiter.server.bind.port=$$ARBITER_CONTAINER_PORT" '
         '"arbiter.server.public.scheme=$${ARBITER_PUBLIC_SCHEME:-http}" '
         '"arbiter.server.public.host=$$public_host" '
-        '"arbiter.server.public.port=$${ARBITER_HOST_PORT:-18025}" '
+        '"arbiter.server.public.port=$${ARBITER_HOST_PORT:-18075}" '
         '"arbiter.storage.plugin_data_dir=/data/plugins" '
         '"arbiter.deployment_scope=staged"'
     ) in compose_text
@@ -2015,7 +2012,7 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
     assert "ARBITER_CONTAINER_NAME=arbiter-staging\n" in docker_env
     assert f"ARBITER_CONTAINER_USER={_default_container_user()}\n" in docker_env
     assert "ARBITER_HOST_BIND=127.0.0.1\n" in docker_env
-    assert "ARBITER_HOST_PORT=18025\n" in docker_env
+    assert "ARBITER_HOST_PORT=18075\n" in docker_env
     assert "ARBITER_WHEELS_DIR=./wheels\n" in docker_env
     assert "ARBITER_PLUGIN_DATA_DIR=./data/plugins\n" in docker_env
     assert "ARBITER_PUBLIC_SCHEME=http\n" in docker_env
@@ -4120,7 +4117,7 @@ def test_cli_deploy_docker_generated_helper_up_rejects_unwritable_plugin_data_di
     assert not docker_calls.exists()
 
 
-def test_cli_deploy_docker_generated_helper_up_prints_mcp_url(
+def test_cli_deploy_docker_generated_helper_up_prints_url(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -4178,8 +4175,8 @@ def test_cli_deploy_docker_generated_helper_up_prints_mcp_url(
 
     assert result.returncode == 0
     assert result.stdout == (
-        " ✔ Staging MCP port: 8025 -> 18025 to prevent collision\n"
-        " ✔ MCP URL: http://127.0.0.1:18025/mcp\n"
+        " ✔ Staging port: 8075 -> 18075 to prevent collision\n"
+        " ✔ URL: http://127.0.0.1:18075\n"
     )
     assert result.stderr == ""
 
@@ -4195,16 +4192,16 @@ def test_cli_deploy_docker_generated_helper_up_prints_mcp_url(
 
     assert result.returncode == 0
     assert result.stdout == (
-        " \033[32m✔\033[0m Staging MCP port: 8025 -> 18025 to prevent collision\n"
-        " \033[32m✔\033[0m MCP URL: "
-        "\033[94mhttp://127.0.0.1:18025/mcp\033[0m\n"
+        " \033[32m✔\033[0m Staging port: 8075 -> 18075 to prevent collision\n"
+        " \033[32m✔\033[0m URL: "
+        "\033[94mhttp://127.0.0.1:18075\033[0m\n"
     )
     assert result.stderr == ""
 
     docker_env.write_text(
         docker_env.read_text(encoding="utf-8").replace(
-            "ARBITER_HOST_PORT=18025\n",
-            "ARBITER_HOST_PORT=8025\n",
+            "ARBITER_HOST_PORT=18075\n",
+            "ARBITER_HOST_PORT=8075\n",
         ),
         encoding="utf-8",
     )
@@ -4218,7 +4215,7 @@ def test_cli_deploy_docker_generated_helper_up_prints_mcp_url(
     )
 
     assert result.returncode == 0
-    assert result.stdout == " ✔ MCP URL: http://127.0.0.1:8025/mcp\n"
+    assert result.stdout == " ✔ URL: http://127.0.0.1:8075\n"
     assert result.stderr == ""
 
     docker_call_text = docker_calls.read_text(encoding="utf-8")
@@ -4253,7 +4250,7 @@ def test_cli_deploy_docker_generated_helper_test_calls_version_info(
     fake_arbiter_count = tmp_path / "arbiter-count"
     fake_arbiter.write_text(
         "#!/usr/bin/env sh\n"
-        f'printf "%s\\n" "$*" >> "{arbiter_calls}"\n'
+        f'printf "%s %s\\n" "$ARBITER_URL" "$*" >> "{arbiter_calls}"\n'
         "count=0\n"
         f'if [ -f "{fake_arbiter_count}" ]; then count="$(cat "{fake_arbiter_count}")"; fi\n'
         f'printf "%s\\n" "$((count + 1))" > "{fake_arbiter_count}"\n'
@@ -4262,7 +4259,7 @@ def test_cli_deploy_docker_generated_helper_test_calls_version_info(
         "  exit 1\n"
         "fi\n"
         'if [ "$count" -lt "${ARBITER_TEST_TRANSIENT_FAILURES:-0}" ]; then\n'
-        "  printf 'transient MCP startup error\\n' >&2\n"
+        "  printf 'transient server startup error\\n' >&2\n"
         "  exit 1\n"
         "fi\n"
         'exit "${ARBITER_TEST_STATUS:-0}"\n',
@@ -4282,10 +4279,10 @@ def test_cli_deploy_docker_generated_helper_test_calls_version_info(
     )
 
     assert result.returncode == 0
-    assert result.stdout == " ✔ MCP test: http://127.0.0.1:18025/mcp\n"
+    assert result.stdout == " ✔ Server test: http://127.0.0.1:18075\n"
     assert result.stderr == ""
     assert arbiter_calls.read_text(encoding="utf-8") == (
-        "mcp call version_info arbiter.mcp_url=http://127.0.0.1:18025/mcp\n"
+        "http://127.0.0.1:18075 info\n"
     )
 
     result = subprocess.run(
@@ -4298,7 +4295,7 @@ def test_cli_deploy_docker_generated_helper_test_calls_version_info(
     )
 
     assert result.returncode == 0
-    assert result.stdout == " ✔ MCP test: http://127.0.0.1:18025/mcp\n"
+    assert result.stdout == " ✔ Server test: http://127.0.0.1:18075\n"
     assert result.stderr == ""
     assert fake_arbiter_count.read_text(encoding="utf-8") == "3\n"
 
@@ -4313,7 +4310,7 @@ def test_cli_deploy_docker_generated_helper_test_calls_version_info(
     )
 
     assert result.returncode == 0
-    assert result.stdout == " ✔ MCP test: http://127.0.0.1:18025/mcp\n"
+    assert result.stdout == " ✔ Server test: http://127.0.0.1:18075\n"
     assert result.stderr == ""
     assert fake_arbiter_count.read_text(encoding="utf-8") == "3\n"
 
@@ -4333,7 +4330,7 @@ def test_cli_deploy_docker_generated_helper_test_calls_version_info(
 
     assert result.returncode == 1
     assert result.stdout == (
-        " \033[31m✘\033[0m MCP test: " "\033[94mhttp://127.0.0.1:18025/mcp\033[0m\n"
+        " \033[31m✘\033[0m Server test: " "\033[94mhttp://127.0.0.1:18075\033[0m\n"
     )
     assert result.stderr == ""
 
@@ -4502,7 +4499,8 @@ def test_cli_deploy_docker_generated_helper_test_finds_checkout_skill_launcher(
     arbiter_calls = tmp_path / "arbiter-calls"
     checkout_arbiter = skill_bin / "arbiter"
     checkout_arbiter.write_text(
-        "#!/usr/bin/env sh\n" f'printf "%s\\n" "$*" >> "{arbiter_calls}"\n',
+        "#!/usr/bin/env sh\n"
+        f'printf "%s %s\\n" "$ARBITER_URL" "$*" >> "{arbiter_calls}"\n',
         encoding="utf-8",
     )
     checkout_arbiter.chmod(0o755)
@@ -4519,10 +4517,10 @@ def test_cli_deploy_docker_generated_helper_test_finds_checkout_skill_launcher(
     )
 
     assert result.returncode == 0
-    assert result.stdout == " ✔ MCP test: http://127.0.0.1:18025/mcp\n"
+    assert result.stdout == " ✔ Server test: http://127.0.0.1:18075\n"
     assert result.stderr == ""
     assert arbiter_calls.read_text(encoding="utf-8") == (
-        "mcp call version_info arbiter.mcp_url=http://127.0.0.1:18025/mcp\n"
+        "http://127.0.0.1:18075 info\n"
     )
 
 
@@ -4588,8 +4586,8 @@ def test_cli_deploy_docker_generated_helper_up_auto_selects_staging_subnet(
         "updated staging Docker subnet: 172.31.251.0/24 -> 10.213.200.0/24\n"
         in result.stdout
     )
-    assert " ✔ Staging MCP port: 8025 -> 18025 to prevent collision\n" in result.stdout
-    assert " ✔ MCP URL: http://127.0.0.1:18025/mcp\n" in result.stdout
+    assert " ✔ Staging port: 8075 -> 18075 to prevent collision\n" in result.stdout
+    assert " ✔ URL: http://127.0.0.1:18075\n" in result.stdout
     assert result.stderr == ""
     assert "ARBITER_DOCKER_SUBNET=10.213.200.0/24\n" in (
         deploy_dir / "docker.env"
@@ -6390,9 +6388,8 @@ def test_cli_deploy_docker_generated_helper_install_handles_missing_docker_unit(
     assert f"systemd unit: {systemd_dir / 'arbiter.service'}\n" in result.stdout
     assert "service: arbiter.service" not in result.stdout
     assert "Config check: passed\n" in result.stdout
-    assert "MCP test:" not in result.stdout
-    assert "MCP URL:" not in result.stdout
-    assert "Server URL: \033[94mhttp://127.0.0.1:8025\033[0m\n" in result.stdout
+    assert "Server test:" not in result.stdout
+    assert "Server URL: \033[94mhttp://127.0.0.1:8075\033[0m\n" in result.stdout
     assert "Looking in links:" not in result.stdout
     assert "server: pass" not in result.stdout
     assert "result | plugin" not in result.stdout
@@ -6401,13 +6398,13 @@ def test_cli_deploy_docker_generated_helper_install_handles_missing_docker_unit(
     installed_compose = (install_dir / "compose.yaml").read_text(encoding="utf-8")
     assert "arbiter.deployment_scope=installed" in installed_compose
     assert "ARBITER_CONTAINER_NAME:-arbiter-staging" not in installed_compose
-    assert "ARBITER_HOST_PORT:-18025" not in installed_compose
+    assert "ARBITER_HOST_PORT:-18075" not in installed_compose
     assert "ARBITER_DOCKER_NETWORK_NAME:-arbiter-staging" not in installed_compose
     assert "ARBITER_DOCKER_BRIDGE_NAME:-arbiter-stg0" not in installed_compose
     assert "ARBITER_DOCKER_SUBNET:-172.31.251.0/24" not in installed_compose
     assert "ARBITER_CONTAINER_NAME:-arbiter" in installed_compose
     assert "ARBITER_HOST_BIND:-127.0.0.1" in installed_compose
-    assert "ARBITER_HOST_PORT:-8025" in installed_compose
+    assert "ARBITER_HOST_PORT:-8075" in installed_compose
     assert "ARBITER_DOCKER_NETWORK_NAME:-arbiter" in installed_compose
     assert "ARBITER_DOCKER_BRIDGE_NAME:-arbiter0" in installed_compose
     assert "ARBITER_DOCKER_SUBNET:-172.31.250.0/24" in installed_compose
@@ -6418,7 +6415,7 @@ def test_cli_deploy_docker_generated_helper_install_handles_missing_docker_unit(
     assert "ARBITER_CONTAINER_NAME=arbiter\n" in installed_docker_env
     assert "ARBITER_CONTAINER_USER=123:123\n" in installed_docker_env
     assert "ARBITER_HOST_BIND=127.0.0.1\n" in installed_docker_env
-    assert "ARBITER_HOST_PORT=8025\n" in installed_docker_env
+    assert "ARBITER_HOST_PORT=8075\n" in installed_docker_env
     assert "ARBITER_PLUGIN_DATA_DIR=./data/plugins\n" in installed_docker_env
     assert "ARBITER_DOCKER_NETWORK_NAME=arbiter\n" in installed_docker_env
     assert "ARBITER_DOCKER_BRIDGE_NAME=arbiter0\n" in installed_docker_env
@@ -7575,7 +7572,7 @@ def test_cli_deploy_docker_update_preserves_local_config_and_env_values(
         "ARBITER_PLUGIN_DATA_DIR=./data/plugins\n"
         "ARBITER_HOST_BIND=0.0.0.0\n"
         "ARBITER_HOST_PORT=9000\n"
-        "ARBITER_CONTAINER_PORT=8025\n"
+        "ARBITER_CONTAINER_PORT=8075\n"
         "ARBITER_PUBLIC_SCHEME=http\n"
         "ARBITER_PUBLIC_BASE_URL=\n"
         "ARBITER_DOCKER_NETWORK_NAME=arbiter-staging\n"
@@ -8024,7 +8021,7 @@ def test_cli_serve_subcommand_passes_config_and_overrides(
                 "--config-name",
                 "arbiter-server-local",
                 "serve",
-                "arbiter.server.bind.port=8025",
+                "arbiter.server.bind.port=8075",
             ]
         )
         == 0
@@ -8034,7 +8031,7 @@ def test_cli_serve_subcommand_passes_config_and_overrides(
         {
             "config_dir": "/tmp",
             "config_name": "arbiter-server-local",
-            "overrides": ["arbiter.server.bind.port=8025"],
+            "overrides": ["arbiter.server.bind.port=8075"],
             "skip_runtime_permission_checks": False,
         },
     ]
@@ -8072,7 +8069,7 @@ def test_cli_config_check_subcommand_passes_config_and_overrides(
                 "config",
                 "check",
                 "--live",
-                "arbiter.server.bind.port=8025",
+                "arbiter.server.bind.port=8075",
             ]
         )
         == 0
@@ -8082,7 +8079,7 @@ def test_cli_config_check_subcommand_passes_config_and_overrides(
         {
             "config_dir": "/tmp",
             "config_name": "arbiter-server",
-            "overrides": ["arbiter.server.bind.port=8025"],
+            "overrides": ["arbiter.server.bind.port=8075"],
             "live": True,
         },
     ]
@@ -8313,7 +8310,7 @@ def test_cli_config_show_subcommand_passes_config_and_overrides(
                 "config",
                 "show",
                 "--resolve",
-                "arbiter.server.bind.port=8025",
+                "arbiter.server.bind.port=8075",
             ]
         )
         == 0
@@ -8323,7 +8320,7 @@ def test_cli_config_show_subcommand_passes_config_and_overrides(
         {
             "config_dir": "/tmp",
             "config_name": "arbiter-server",
-            "overrides": ["arbiter.server.bind.port=8025"],
+            "overrides": ["arbiter.server.bind.port=8075"],
             "resolve": True,
         },
     ]
@@ -8364,7 +8361,7 @@ def test_cli_bootstrap_arbiter_writes_main_config(
         "# Inspect the composed config with:\n"
         "#   arbiter-server --config-dir <dir> --config-name arbiter-server config show\n"
         "# Override composed values with Hydra overrides, for example:\n"
-        "#   arbiter-server --config-dir <dir> serve arbiter.server.bind.port=8025\n"
+        "#   arbiter-server --config-dir <dir> serve arbiter.server.bind.port=8075\n"
         "# Optionally load a config-dir-relative dotenv file before composition:\n"
         "#   arbiter:\n"
         "#     env_file: local.env\n"
@@ -8377,13 +8374,11 @@ def test_cli_bootstrap_arbiter_writes_main_config(
         "# @package arbiter\n"
         "server:\n"
         "  name: arbiter\n"
-        "  transport: streamable-http\n"
+        "  transport: http\n"
         "  bind:\n"
         "    host: 127.0.0.1\n"
-        "    port: 8000\n"
-        "    path: /mcp\n"
-        "  stateless_http: true\n"
-        "  json_response: true\n"
+        "    port: 8075\n"
+        '    path: ""\n'
         "deployment_scope: unknown\n"
         "discovery:\n"
         "  max_account_preview_limit: 25\n"
@@ -9059,9 +9054,9 @@ def test_log_startup_summary_includes_safe_runtime_context(
     message = caplog.messages[0]
     assert "Arbiter starting version=1.2.3" in message
     assert "deployment_scope=unknown" in message
-    assert "transport=streamable-http" in message
-    assert "bind=127.0.0.1:8000/mcp" in message
-    assert "mcp_url=http://127.0.0.1:8000/mcp" in message
+    assert "transport=http" in message
+    assert "bind=127.0.0.1:8075" in message
+    assert "url=http://127.0.0.1:8075" in message
     assert "services=smtp" in message
     assert "service_accounts=smtp:primary" in message
     assert "super-secret" not in message
@@ -9073,29 +9068,29 @@ def test_log_startup_summary_uses_public_base_url(
 ) -> None:
     cfg = _app_config_with_smtp()
     cfg.arbiter.server.bind.host = "0.0.0.0"
-    cfg.arbiter.server.bind.port = 8025
+    cfg.arbiter.server.bind.port = 8075
     cfg.arbiter.server.public.base_url = "https://arbiter.example.test"
     caplog.set_level(logging.INFO, logger="arbiter_server.main")
 
     log_startup_summary(cfg)
 
     message = caplog.messages[0]
-    assert "bind=0.0.0.0:8025/mcp" in message
-    assert "mcp_url=https://arbiter.example.test/mcp" in message
+    assert "bind=0.0.0.0:8075" in message
+    assert "url=https://arbiter.example.test" in message
 
 
 def test_server_urls_default_to_loopback_base_url() -> None:
     cfg = _app_config_with_smtp()
     cfg.arbiter.server.bind.host = "0.0.0.0"
-    cfg.arbiter.server.bind.port = 8025
+    cfg.arbiter.server.bind.port = 8075
 
-    assert _artifact_base_url(cfg) == "http://127.0.0.1:8025/_arbiter/artifacts"
+    assert _artifact_base_url(cfg) == "http://127.0.0.1:8075/api/v1/artifacts"
 
 
 def test_empty_public_base_url_override_is_invalid() -> None:
     cfg = _app_config_with_smtp()
     cfg.arbiter.server.bind.host = "0.0.0.0"
-    cfg.arbiter.server.bind.port = 8025
+    cfg.arbiter.server.bind.port = 8075
     cfg.arbiter.server.public.base_url = " "
 
     with pytest.raises(ValueError, match="public.base_url must be non-empty"):
@@ -9105,72 +9100,13 @@ def test_empty_public_base_url_override_is_invalid() -> None:
 def test_artifact_base_url_uses_public_base_url() -> None:
     cfg = _app_config_with_smtp()
     cfg.arbiter.server.bind.host = "0.0.0.0"
-    cfg.arbiter.server.bind.port = 8025
+    cfg.arbiter.server.bind.port = 8075
     cfg.arbiter.server.public.base_url = "https://arbiter.example.test/root/"
 
     assert (
         _artifact_base_url(cfg)
-        == "https://arbiter.example.test/root/_arbiter/artifacts"
+        == "https://arbiter.example.test/root/api/v1/artifacts"
     )
-
-
-def test_artifact_route_forces_attachment_disposition_without_filename(
-    tmp_path: Path,
-) -> None:
-    import asyncio
-    from urllib.parse import parse_qs, urlparse
-
-    from starlette.requests import Request
-
-    artifact_store = ArtifactStore(
-        root=tmp_path,
-        base_url="http://127.0.0.1:8000/_arbiter/artifacts",
-    )
-    descriptor = artifact_store.create(
-        plugin="imap",
-        content=b"<script>alert(1)</script>",
-        filename=None,
-        content_type="text/html",
-        source={},
-    )
-    parsed_url = urlparse(descriptor.url)
-    artifact_id = parsed_url.path.rsplit("/", 1)[1]
-    nonce = parse_qs(parsed_url.query)["nonce"][0]
-    handler: Callable[[Request], object] | None = None
-
-    class RouteServer:
-        def custom_route(
-            self,
-            path: str,
-            methods: list[str],
-            name: str | None = None,
-            include_in_schema: bool = True,
-        ) -> Callable[[Callable[..., object]], Callable[..., object]]:
-            def decorator(func: Callable[..., object]) -> Callable[..., object]:
-                nonlocal handler
-                handler = cast(Callable[[Request], object], func)
-                return func
-
-            return decorator
-
-    _register_artifact_route(cast(Any, RouteServer()), artifact_store)
-    assert handler is not None
-
-    request = Request(
-        {
-            "type": "http",
-            "method": "GET",
-            "path": parsed_url.path,
-            "headers": [],
-            "query_string": f"nonce={nonce}".encode("ascii"),
-            "path_params": {"artifact_id": artifact_id},
-        }
-    )
-    response = asyncio.run(cast(Any, handler)(request))
-
-    assert response.status_code == 200
-    assert response.headers["content-disposition"] == "attachment"
-    assert response.headers["content-type"].startswith("text/html")
 
 
 def test_build_app_wires_smtp_sent_copy_to_matching_imap_account() -> None:
@@ -9320,1303 +9256,35 @@ def test_build_app_sent_copy_does_not_infer_folder_from_different_account() -> N
     }
 
 
-def test_build_server_registers_tools(monkeypatch: pytest.MonkeyPatch) -> None:
-    tools: dict[str, Callable[..., object]] = {}
-    list_accounts_calls = 0
-    send_email_calls: list[dict[str, object]] = []
-    list_folders_calls: list[dict[str, object]] = []
-    list_messages_calls: list[dict[str, object]] = []
-    get_message_calls: list[dict[str, object]] = []
-    get_attachment_calls: list[dict[str, object]] = []
-    search_folders_calls: list[dict[str, object]] = []
-    search_messages_calls: list[dict[str, object]] = []
-    move_message_calls: list[dict[str, object]] = []
-    mark_message_read_calls: list[dict[str, object]] = []
-    get_message_flags_calls: list[dict[str, object]] = []
-    update_message_flags_calls: list[dict[str, object]] = []
-    append_message_calls: list[dict[str, object]] = []
-    delete_message_calls: list[dict[str, object]] = []
-    fake_cfg = _app_config_with_smtp_imap()
-    smtp_accounts = fake_cfg.arbiter.account["smtp"]
-    smtp_policies = fake_cfg.arbiter.policy["smtp"]
-    imap_accounts = fake_cfg.arbiter.account["imap"]
-    imap_policies = fake_cfg.arbiter.policy["imap"]
-
-    class FakeSMTPRuntime(SMTPRuntime):
-        def test_accounts(
-            self,
-            *,
-            progress: Callable[[str], None] | None = None,
-        ) -> dict[str, object]:
-            return {
-                "primary": {
-                    "status": "ok",
-                    "stage": "connect_auth_noop",
-                    "delivery": "skipped",
-                }
-            }
-
-        def send_email(
-            self,
-            account: str,
-            to: list[str],
-            subject: str,
-            text_body: str | None = None,
-            html_body: str | None = None,
-            cc: list[str] | None = None,
-            bcc: list[str] | None = None,
-            idempotency_key: str | None = None,
-        ) -> SendEmailResult:
-            send_email_calls.append(
-                {
-                    "account": account,
-                    "to": to,
-                    "subject": subject,
-                    "text_body": text_body,
-                    "html_body": html_body,
-                    "cc": cc,
-                    "bcc": bcc,
-                    "idempotency_key": idempotency_key,
-                }
-            )
-            return SendEmailResult(
-                tool="send_email",
-                message_id="<message-id@example.com>",
-                recipient_count=len(to) + len(cc or []) + len(bcc or []),
-            )
-
-    class FakeIMAPRuntime(IMAPRuntime):
-        def artifact_delivery_available(self) -> bool:
-            return True
-
-        def test_accounts(
-            self,
-            *,
-            progress: Callable[[str], None] | None = None,
-        ) -> dict[str, object]:
-            return {
-                "primary": {
-                    "status": "skipped",
-                    "stage": "connect_auth_noop",
-                    "reason": "test disabled in fixture",
-                }
-            }
-
-        def list_messages(
-            self,
-            account: str,
-            folder: str | None = None,
-            limit: int = 20,
-        ) -> dict[str, object]:
-            list_messages_calls.append(
-                {"account": account, "folder": folder, "limit": limit}
-            )
-            return {"account": account, "folder": folder or "INBOX", "messages": []}
-
-        def list_folders(
-            self,
-            account: str,
-            root: str | None = None,
-            recursive: bool = False,
-            limit: int = 50,
-        ) -> dict[str, object]:
-            list_folders_calls.append(
-                {
-                    "account": account,
-                    "root": root,
-                    "recursive": recursive,
-                    "limit": limit,
-                }
-            )
-            return {
-                "account": account,
-                "root": root,
-                "recursive": recursive,
-                "limit": limit,
-                "truncated": False,
-                "folders": [],
-            }
-
-        def get_message(
-            self,
-            account: str,
-            message_id: str,
-            folder: str | None = None,
-        ) -> dict[str, object]:
-            get_message_calls.append(
-                {"account": account, "message_id": message_id, "folder": folder}
-            )
-            return {"account": account, "folder": folder or "INBOX", "message": {}}
-
-        def get_attachment(
-            self,
-            account: str,
-            message_id: str,
-            attachment_id: str,
-            folder: str | None = None,
-        ) -> dict[str, object]:
-            get_attachment_calls.append(
-                {
-                    "account": account,
-                    "message_id": message_id,
-                    "attachment_id": attachment_id,
-                    "folder": folder,
-                }
-            )
-            return {
-                "account": account,
-                "folder": folder or "INBOX",
-                "message_id": message_id,
-                "attachment": {"id": attachment_id},
-                "delivery": "arbiter_artifact",
-                "artifact": {
-                    "id": "art-1",
-                    "url": "http://127.0.0.1:8000/_arbiter/artifacts/art-1?nonce=nonce-1",
-                    "one_time": True,
-                },
-            }
-
-        def search_messages(
-            self,
-            account: str,
-            query: str,
-            folder: str | None = None,
-            limit: int = 20,
-        ) -> dict[str, object]:
-            search_messages_calls.append(
-                {
-                    "account": account,
-                    "query": query,
-                    "folder": folder,
-                    "limit": limit,
-                }
-            )
-            return {
-                "account": account,
-                "folder": folder or "INBOX",
-                "query": query,
-                "messages": [],
-            }
-
-        def search_folders(
-            self,
-            account: str,
-            query: str,
-            root: str | None = None,
-            recursive: bool = True,
-            limit: int = 20,
-        ) -> dict[str, object]:
-            search_folders_calls.append(
-                {
-                    "account": account,
-                    "query": query,
-                    "root": root,
-                    "recursive": recursive,
-                    "limit": limit,
-                }
-            )
-            return {
-                "account": account,
-                "query": query,
-                "root": root,
-                "recursive": recursive,
-                "limit": limit,
-                "truncated": False,
-                "folders": [],
-            }
-
-        def move_message(
-            self,
-            account: str,
-            message_id: str,
-            destination_folder: str,
-            folder: str | None = None,
-        ) -> dict[str, object]:
-            move_message_calls.append(
-                {
-                    "account": account,
-                    "message_id": message_id,
-                    "destination_folder": destination_folder,
-                    "folder": folder,
-                }
-            )
-            return {"ok": True}
-
-        def mark_message_read(
-            self,
-            account: str,
-            message_id: str,
-            folder: str | None = None,
-            read: bool = True,
-        ) -> dict[str, object]:
-            mark_message_read_calls.append(
-                {
-                    "account": account,
-                    "message_id": message_id,
-                    "folder": folder,
-                    "read": read,
-                }
-            )
-            return {"ok": True}
-
-        def get_message_flags(
-            self,
-            account: str,
-            message_id: str,
-            folder: str | None = None,
-        ) -> dict[str, object]:
-            get_message_flags_calls.append(
-                {"account": account, "message_id": message_id, "folder": folder}
-            )
-            return {"account": account, "folder": folder or "INBOX", "flags": []}
-
-        def update_message_flags(
-            self,
-            account: str,
-            message_id: str,
-            folder: str | None = None,
-            add_flags: Sequence[str] = (),
-            remove_flags: Sequence[str] = (),
-        ) -> dict[str, object]:
-            update_message_flags_calls.append(
-                {
-                    "account": account,
-                    "message_id": message_id,
-                    "folder": folder,
-                    "add_flags": tuple(add_flags),
-                    "remove_flags": tuple(remove_flags),
-                }
-            )
-            return {"ok": True}
-
-        def append_message(
-            self,
-            account: str,
-            message: str,
-            folder: str | None = None,
-            flags: Sequence[str] = (r"\Seen",),
-        ) -> dict[str, object]:
-            append_message_calls.append(
-                {
-                    "account": account,
-                    "message": message,
-                    "folder": folder,
-                    "flags": tuple(flags),
-                }
-            )
-            return {"ok": True}
-
-        def delete_message(
-            self,
-            account: str,
-            message_id: str,
-            folder: str | None = None,
-            permanent: bool = False,
-        ) -> dict[str, object]:
-            delete_message_calls.append(
-                {
-                    "account": account,
-                    "message_id": message_id,
-                    "folder": folder,
-                    "permanent": permanent,
-                }
-            )
-            return {"ok": True}
-
-    class FakeApp:
-        runtime_registry = RuntimeRegistry(
-            {
-                "smtp": FakeSMTPRuntime(
-                    accounts=smtp_accounts,
-                    policies=smtp_policies,
-                    smtp_client_factory=lambda config: cast(Any, object()),
-                ),
-                "imap": FakeIMAPRuntime(
-                    accounts=imap_accounts,
-                    policies=imap_policies,
-                ),
-            }
-        )
-
-        def list_accounts(self) -> dict[str, object]:
-            nonlocal list_accounts_calls
-            list_accounts_calls += 1
-            return {
-                "imap": {
-                    "primary": {
-                        "description": "Primary account",
-                        "policy": "bot",
-                        "enabled": True,
-                    },
-                },
-                "smtp": {
-                    "primary": {
-                        "description": "Primary account",
-                        "policy": "bot",
-                        "enabled": True,
-                        "send": "allowed",
-                    },
-                },
-            }
-
-        def send_email(
-            self,
-            *,
-            account: str,
-            to: list[str],
-            subject: str,
-            text_body: str | None = None,
-            html_body: str | None = None,
-            cc: list[str] | None = None,
-            bcc: list[str] | None = None,
-            idempotency_key: str | None = None,
-        ) -> SimpleNamespace:
-            send_email_calls.append(
-                {
-                    "account": account,
-                    "to": to,
-                    "subject": subject,
-                    "text_body": text_body,
-                    "html_body": html_body,
-                    "cc": cc,
-                    "bcc": bcc,
-                    "idempotency_key": idempotency_key,
-                }
-            )
-            return SimpleNamespace(
-                message_id="<message-id@example.com>",
-                recipient_count=len(to) + len(cc or []) + len(bcc or []),
-            )
-
-        def list_messages(
-            self,
-            *,
-            account: str,
-            folder: str | None = None,
-            limit: int = 20,
-        ) -> dict[str, object]:
-            list_messages_calls.append(
-                {"account": account, "folder": folder, "limit": limit}
-            )
-            return {"account": account, "folder": folder or "INBOX", "messages": []}
-
-        def list_folders(
-            self,
-            *,
-            account: str,
-            root: str | None = None,
-            recursive: bool = False,
-            limit: int = 50,
-        ) -> dict[str, object]:
-            list_folders_calls.append(
-                {
-                    "account": account,
-                    "root": root,
-                    "recursive": recursive,
-                    "limit": limit,
-                }
-            )
-            return {
-                "account": account,
-                "root": root,
-                "recursive": recursive,
-                "limit": limit,
-                "truncated": False,
-                "folders": [],
-            }
-
-        def get_message(
-            self,
-            *,
-            account: str,
-            message_id: str,
-            folder: str | None = None,
-        ) -> dict[str, object]:
-            get_message_calls.append(
-                {"account": account, "message_id": message_id, "folder": folder}
-            )
-            return {"account": account, "folder": folder or "INBOX", "message": {}}
-
-        def search_messages(
-            self,
-            *,
-            account: str,
-            query: str,
-            folder: str | None = None,
-            limit: int = 20,
-        ) -> dict[str, object]:
-            search_messages_calls.append(
-                {
-                    "account": account,
-                    "query": query,
-                    "folder": folder,
-                    "limit": limit,
-                }
-            )
-            return {
-                "account": account,
-                "folder": folder or "INBOX",
-                "query": query,
-                "messages": [],
-            }
-
-        def search_folders(
-            self,
-            *,
-            account: str,
-            query: str,
-            root: str | None = None,
-            recursive: bool = True,
-            limit: int = 20,
-        ) -> dict[str, object]:
-            search_folders_calls.append(
-                {
-                    "account": account,
-                    "query": query,
-                    "root": root,
-                    "recursive": recursive,
-                    "limit": limit,
-                }
-            )
-            return {
-                "account": account,
-                "query": query,
-                "root": root,
-                "recursive": recursive,
-                "limit": limit,
-                "truncated": False,
-                "folders": [],
-            }
-
-        def move_message(
-            self,
-            *,
-            account: str,
-            message_id: str,
-            destination_folder: str,
-            folder: str | None = None,
-        ) -> dict[str, object]:
-            move_message_calls.append(
-                {
-                    "account": account,
-                    "message_id": message_id,
-                    "destination_folder": destination_folder,
-                    "folder": folder,
-                }
-            )
-            return {"ok": True}
-
-        def mark_message_read(
-            self,
-            *,
-            account: str,
-            message_id: str,
-            folder: str | None = None,
-            read: bool = True,
-        ) -> dict[str, object]:
-            mark_message_read_calls.append(
-                {
-                    "account": account,
-                    "message_id": message_id,
-                    "folder": folder,
-                    "read": read,
-                }
-            )
-            return {"ok": True}
-
-        def delete_message(
-            self,
-            *,
-            account: str,
-            message_id: str,
-            folder: str | None = None,
-        ) -> dict[str, object]:
-            delete_message_calls.append(
-                {"account": account, "message_id": message_id, "folder": folder}
-            )
-            return {"ok": True}
-
-    class FakeFastMCP:
-        def __init__(
-            self,
-            name: str,
-            *,
-            stateless_http: bool,
-            json_response: bool,
-        ) -> None:
-            self.name = name
-            self.stateless_http = stateless_http
-            self.json_response = json_response
-            self.settings = SimpleNamespace(
-                host="",
-                port=0,
-                streamable_http_path="",
-            )
-            self._mcp_server = SimpleNamespace(version="")
-            self.run_transport = ""
-
-        def tool(
-            self, **kwargs: object
-        ) -> Callable[[Callable[..., object]], Callable[..., object]]:
-            def decorator(func: Callable[..., object]) -> Callable[..., object]:
-                tools[func.__name__] = func
-                return func
-
-            return decorator
-
-        def custom_route(
-            self,
-            path: str,
-            methods: list[str],
-            name: str | None = None,
-            include_in_schema: bool = True,
-        ) -> Callable[[Callable[..., object]], Callable[..., object]]:
-            def decorator(func: Callable[..., object]) -> Callable[..., object]:
-                return func
-
-            return decorator
-
-        def run(self, *, transport: str) -> None:
-            self.run_transport = transport
-
-    fastmcp_module = ModuleType("mcp.server.fastmcp")
-    setattr(fastmcp_module, "FastMCP", FakeFastMCP)
-    server_module = ModuleType("mcp.server")
-    mcp_module = ModuleType("mcp")
-
-    monkeypatch.setitem(sys.modules, "mcp", mcp_module)
-    monkeypatch.setitem(sys.modules, "mcp.server", server_module)
-    monkeypatch.setitem(sys.modules, "mcp.server.fastmcp", fastmcp_module)
-    monkeypatch.setattr(
-        "arbiter_server.main.build_app",
-        lambda cfg, service_plugins=None, runtime_dependencies=None: FakeApp(),
-    )
-    monkeypatch.setattr(
-        "arbiter_server.main.source_info",
-        lambda: SimpleNamespace(commit=None, dirty=None),
-    )
-
-    cfg = OmegaConf.structured(fake_cfg)
-
-    server = cast(Any, build_server(cfg, service_plugins=_test_service_plugins()))
-
-    assert server.name == "arbiter"
-    assert server.stateless_http is True
-    assert server.json_response is True
-    assert server.settings.host == "127.0.0.1"
-    assert server.settings.port == 8000
-    assert server.settings.streamable_http_path == "/mcp"
-    assert server._mcp_server.version != ""
-    assert sorted(tools) == sorted(SERVER_TOOL_NAMES)
-
-    assert tools["version_info"]() == _expected_version_info(
-        commit=None,
-        dirty=None,
-    )
-    overview = cast(dict[str, Any], tools["info"]())
-    assert overview["kind"] == "overview"
-    assert overview["deployment_scope"] == "unknown"
-    assert overview["plugins"][0] == {
-        "id": "imap",
-        "description": "Read and manage mail through configured IMAP accounts.",
-        "version": IMAPServicePlugin.version,
-        "account_count": 1,
-        "operations": [
-            "append_message",
-            "delete_message",
-            "get_attachment",
-            "get_message",
-            "get_message_flags",
-            "list_folders",
-            "list_messages",
-            "mark_message_read",
-            "move_message",
-            "search_folders",
-            "search_messages",
-            "update_message_flags",
-        ],
-        "accounts": [
-            {
-                "plugin": "imap",
-                "name": "primary",
-                "description": "",
-                "guidance": "",
-            }
-        ],
-    }
-    plugins_info = cast(dict[str, Any], tools["info"](kind="plugins"))
-    plugins = cast(list[dict[str, Any]], plugins_info["plugins"])
-    assert plugins[1] == {
-        "id": "smtp",
-        "description": "Send email through configured SMTP accounts.",
-        "version": SMTPServicePlugin.version,
-        "account_count": 1,
-        "operations": ["send_email"],
-    }
-    smtp_account_info = cast(
-        dict[str, Any],
-        tools["info"](kind="account", plugin="smtp", account="primary"),
-    )
-    assert smtp_account_info["kind"] == "account"
-    assert smtp_account_info["description"] == (
-        "Bot-owned account for automated email tasks."
-    )
-    assert smtp_account_info["policy"] == "bot"
-    assert smtp_account_info["guidance"] == ""
-    tests_info = cast(dict[str, Any], tools["info"](kind="tests"))
-    assert tests_info == {
-        "kind": "tests",
-        "plugins": [
-            {
-                "plugin": "imap",
-                "accounts": [
-                    {
-                        "plugin": "imap",
-                        "account": "primary",
-                        "status": "skipped",
-                        "stage": "connect_auth_noop",
-                        "reason": "test disabled in fixture",
-                    }
-                ],
-            },
-            {
-                "plugin": "smtp",
-                "accounts": [
-                    {
-                        "plugin": "smtp",
-                        "account": "primary",
-                        "status": "ok",
-                        "stage": "connect_auth_noop",
-                        "delivery": "skipped",
-                    }
-                ],
-            },
-        ],
-    }
-    smtp_account_test = cast(
-        dict[str, Any],
-        tools["info"](kind="test", plugin="smtp", account="primary"),
-    )
-    assert smtp_account_test == {
-        "kind": "test",
-        "plugin": "smtp",
-        "account": "primary",
-        "status": "ok",
-        "stage": "connect_auth_noop",
-        "delivery": "skipped",
-    }
-    smtp_operation_info = cast(
-        dict[str, Any],
-        tools["info"](kind="op", plugin="smtp", operation="send_email"),
-    )
-    assert smtp_operation_info["id"] == "smtp:send_email"
-    assert smtp_operation_info["input_schema"]["required"] == [
-        "account",
-        "to",
-        "subject",
-    ]
-    assert tools["list_caps"]() == {"capabilities": ["imap", "smtp"]}
-
-    capabilities = cast(dict[str, Any], tools["describe_caps"]())
-    assert capabilities["capabilities"] == [
-        {
-            "id": "imap",
-            "description": "Read and manage mail through configured IMAP accounts.",
-            "version": IMAPServicePlugin.version,
-            "account_count": 1,
-            "accounts": ["primary"],
-            "accounts_truncated": False,
-            "operation_count": 12,
-            "operations": [
-                "append_message",
-                "delete_message",
-                "get_attachment",
-                "get_message",
-                "get_message_flags",
-                "list_folders",
-                "list_messages",
-                "mark_message_read",
-            ],
-            "operations_truncated": True,
-        },
-        {
-            "id": "smtp",
-            "description": "Send email through configured SMTP accounts.",
-            "version": SMTPServicePlugin.version,
-            "account_count": 1,
-            "accounts": ["primary"],
-            "accounts_truncated": False,
-            "operation_count": 1,
-            "operations": ["send_email"],
-            "operations_truncated": False,
-        },
-    ]
-
-    limited_capabilities = cast(
-        dict[str, Any],
-        tools["describe_caps"](operation_preview_limit=3, account_preview_limit=1),
-    )
-    imap_limited = limited_capabilities["capabilities"][0]
-    assert imap_limited["id"] == "imap"
-    assert imap_limited["operations"] == [
-        "append_message",
-        "delete_message",
-        "get_attachment",
-    ]
-    assert imap_limited["operations_truncated"] is True
-
-    with pytest.raises(ValueError, match="operation_preview_limit must be >= 0"):
-        tools["describe_caps"](operation_preview_limit=-1)
-
-    smtp_capability = tools["describe_cap"](capability="smtp")
-    assert smtp_capability == {
-        "id": "smtp",
-        "description": "Send email through configured SMTP accounts.",
-        "accounts": {
-            "primary": {
-                "description": "Bot-owned account for automated email tasks.",
-                "guidance": "",
-                "policy": "bot",
-                "enabled": True,
-                "send": "allowed",
-            },
-        },
-        "operations": [
-            {
-                "id": "smtp:send_email",
-                "name": "send_email",
-                "description": (
-                    "Send a single email message through the configured SMTP "
-                    "submission server for the selected account. Use at least one "
-                    "recipient in to and at least one of text_body or html_body."
-                ),
-            },
-        ],
-    }
-
-    imap_capability = cast(
-        dict[str, Any],
-        tools["describe_cap"](capability="imap"),
-    )
-    assert imap_capability["accounts"] == {
-        "primary": {
-            "description": "",
-            "guidance": "",
-            "policy": "bot",
-            "enabled": True,
-            "message": {
-                "defaults": {
-                    "read": "allow",
-                    "search": "allow",
-                    "move": False,
-                    "mark_read": "deny",
-                    "delete": "deny",
-                    "folder_append": "deny",
-                    "flags": {
-                        "SEEN": "read_only",
-                        "FLAGGED": "read_only",
-                        "ANSWERED": "read_only",
-                        "DELETED": "read_only",
-                        "DRAFT": "read_only",
-                    },
-                },
-            },
-        }
-    }
-    assert [operation["id"] for operation in imap_capability["operations"]] == [
-        "imap:append_message",
-        "imap:delete_message",
-        "imap:get_attachment",
-        "imap:get_message",
-        "imap:get_message_flags",
-        "imap:list_folders",
-        "imap:list_messages",
-        "imap:mark_message_read",
-        "imap:move_message",
-        "imap:search_folders",
-        "imap:search_messages",
-        "imap:update_message_flags",
-    ]
-
-    smtp_operation = cast(
-        dict[str, Any],
-        tools["describe_op"](id="smtp:send_email"),
-    )
-    assert smtp_operation["input_schema"]["required"] == ["account", "to", "subject"]
-    assert "idempotency_key" in smtp_operation["input_schema"]["properties"]
-
-    send_result = tools["run_op"](
-        id="smtp:send_email",
-        arguments={
-            "account": "primary",
-            "to": ["to@example.com"],
-            "cc": ["cc@example.com"],
-            "bcc": ["bcc@example.com"],
-            "subject": "Hello",
-            "text_body": "Plain body",
-        },
-    )
-
-    assert send_result == {
-        "ok": True,
-        "message_id": "<message-id@example.com>",
-        "recipient_count": 3,
-        "sent_copy": None,
-        "idempotency_replayed": False,
-    }
-    assert send_email_calls == [
-        {
-            "account": "primary",
-            "to": ["to@example.com"],
-            "subject": "Hello",
-            "text_body": "Plain body",
-            "html_body": None,
-            "cc": ["cc@example.com"],
-            "bcc": ["bcc@example.com"],
-            "idempotency_key": None,
-        }
-    ]
-
-    send_idempotent_result = tools["run_op"](
-        id="smtp:send_email",
-        arguments={
-            "account": "primary",
-            "to": ["to@example.com"],
-            "subject": "Hello",
-            "text_body": "Plain body",
-            "idempotency_key": "send-1",
-        },
-    )
-
-    assert send_idempotent_result == {
-        "ok": True,
-        "message_id": "<message-id@example.com>",
-        "recipient_count": 1,
-        "sent_copy": None,
-        "idempotency_replayed": False,
-    }
-    assert send_email_calls[-1] == {
-        "account": "primary",
-        "to": ["to@example.com"],
-        "subject": "Hello",
-        "text_body": "Plain body",
-        "html_body": None,
-        "cc": None,
-        "bcc": None,
-        "idempotency_key": "send-1",
-    }
-
-    assert tools["run_op"](
-        id="imap:list_folders",
-        arguments={
-            "account": "primary",
-            "root": "Archive",
-            "recursive": True,
-            "limit": 5,
-        },
-    ) == {
-        "account": "primary",
-        "root": "Archive",
-        "recursive": True,
-        "limit": 5,
-        "truncated": False,
-        "folders": [],
-    }
-    assert list_folders_calls == [
-        {"account": "primary", "root": "Archive", "recursive": True, "limit": 5}
-    ]
-
-    assert tools["run_op"](
-        id="imap:list_messages",
-        arguments={"account": "primary", "folder": "INBOX", "limit": 5},
-    ) == {
-        "account": "primary",
-        "folder": "INBOX",
-        "messages": [],
-    }
-    assert list_messages_calls == [
-        {"account": "primary", "folder": "INBOX", "limit": 5}
-    ]
-
-    assert tools["run_op"](
-        id="imap:get_message",
-        arguments={"account": "primary", "folder": "INBOX", "message_id": "42"},
-    ) == {
-        "account": "primary",
-        "folder": "INBOX",
-        "message": {},
-    }
-
-    capped_tools: dict[str, Callable[..., object]] = {}
-
-    class CappedFakeFastMCP(FakeFastMCP):
-        def tool(
-            self, **kwargs: object
-        ) -> Callable[[Callable[..., object]], Callable[..., object]]:
-            def decorator(func: Callable[..., object]) -> Callable[..., object]:
-                capped_tools[func.__name__] = func
-                return func
-
-            return decorator
-
-    setattr(fastmcp_module, "FastMCP", CappedFakeFastMCP)
-    capped_cfg = _app_config_with_smtp_imap()
-    capped_cfg.arbiter.discovery = DiscoveryConfig(
-        max_account_preview_limit=25,
-        max_operation_preview_limit=2,
-    )
-    build_server(
-        OmegaConf.structured(capped_cfg), service_plugins=_test_service_plugins()
-    )
-    capped_capabilities = cast(
-        dict[str, Any],
-        capped_tools["describe_caps"](operation_preview_limit=99),
-    )
-    assert capped_capabilities["capabilities"][0]["operations"] == [
-        "append_message",
-        "delete_message",
-    ]
-    assert capped_capabilities["capabilities"][0]["operations_truncated"] is True
-    assert get_message_calls == [
-        {"account": "primary", "message_id": "42", "folder": "INBOX"}
-    ]
-
-    assert tools["run_op"](
-        id="imap:get_attachment",
-        arguments={
-            "account": "primary",
-            "folder": "INBOX",
-            "message_id": "42",
-            "attachment_id": "part-3",
-        },
-    ) == {
-        "account": "primary",
-        "folder": "INBOX",
-        "message_id": "42",
-        "attachment": {"id": "part-3"},
-        "delivery": "arbiter_artifact",
-        "artifact": {
-            "id": "art-1",
-            "url": "http://127.0.0.1:8000/_arbiter/artifacts/art-1?nonce=nonce-1",
-            "one_time": True,
-        },
-    }
-    assert get_attachment_calls == [
-        {
-            "account": "primary",
-            "message_id": "42",
-            "attachment_id": "part-3",
-            "folder": "INBOX",
-        }
-    ]
-
-    assert tools["run_op"](
-        id="imap:search_messages",
-        arguments={
-            "account": "primary",
-            "query": "invoice",
-            "folder": "INBOX",
-            "limit": 10,
-        },
-    ) == {
-        "account": "primary",
-        "folder": "INBOX",
-        "query": "invoice",
-        "messages": [],
-    }
-    assert search_messages_calls == [
-        {
-            "account": "primary",
-            "query": "invoice",
-            "folder": "INBOX",
-            "limit": 10,
-        }
-    ]
-
-    assert tools["run_op"](
-        id="imap:search_folders",
-        arguments={
-            "account": "primary",
-            "query": "archive",
-            "root": "Archive",
-            "recursive": False,
-            "limit": 10,
-        },
-    ) == {
-        "account": "primary",
-        "query": "archive",
-        "root": "Archive",
-        "recursive": False,
-        "limit": 10,
-        "truncated": False,
-        "folders": [],
-    }
-    assert search_folders_calls == [
-        {
-            "account": "primary",
-            "query": "archive",
-            "root": "Archive",
-            "recursive": False,
-            "limit": 10,
-        }
-    ]
-
-    assert tools["run_op"](
-        id="imap:move_message",
-        arguments={
-            "account": "primary",
-            "message_id": "42",
-            "destination_folder": "Archive",
-            "folder": "INBOX",
-        },
-    ) == {"ok": True}
-    assert move_message_calls == [
-        {
-            "account": "primary",
-            "message_id": "42",
-            "destination_folder": "Archive",
-            "folder": "INBOX",
-        }
-    ]
-
-    assert tools["run_op"](
-        id="imap:mark_message_read",
-        arguments={
-            "account": "primary",
-            "message_id": "42",
-            "folder": "INBOX",
-            "read": False,
-        },
-    ) == {"ok": True}
-    assert mark_message_read_calls == [
-        {
-            "account": "primary",
-            "message_id": "42",
-            "folder": "INBOX",
-            "read": False,
-        }
-    ]
-
-    assert tools["run_op"](
-        id="imap:get_message_flags",
-        arguments={"account": "primary", "message_id": "42", "folder": "INBOX"},
-    ) == {"account": "primary", "folder": "INBOX", "flags": []}
-    assert get_message_flags_calls == [
-        {"account": "primary", "message_id": "42", "folder": "INBOX"}
-    ]
-
-    assert tools["run_op"](
-        id="imap:update_message_flags",
-        arguments={
-            "account": "primary",
-            "message_id": "42",
-            "folder": "INBOX",
-            "add_flags": ["\\Seen"],
-            "remove_flags": ["custom"],
-        },
-    ) == {"ok": True}
-    assert update_message_flags_calls == [
-        {
-            "account": "primary",
-            "message_id": "42",
-            "folder": "INBOX",
-            "add_flags": ("\\Seen",),
-            "remove_flags": ("custom",),
-        }
-    ]
-
-    assert tools["run_op"](
-        id="imap:append_message",
-        arguments={
-            "account": "primary",
-            "folder": "Sent",
-            "message": "Subject: Hello\r\n\r\nBody",
-            "flags": ["\\Seen"],
-        },
-    ) == {"ok": True}
-    assert append_message_calls == [
-        {
-            "account": "primary",
-            "message": "Subject: Hello\r\n\r\nBody",
-            "folder": "Sent",
-            "flags": ("\\Seen",),
-        }
-    ]
-
-    assert tools["run_op"](
-        id="imap:delete_message",
-        arguments={
-            "account": "primary",
-            "message_id": "42",
-            "folder": "INBOX",
-            "permanent": True,
-        },
-    ) == {"ok": True}
-    assert delete_message_calls == [
-        {
-            "account": "primary",
-            "message_id": "42",
-            "folder": "INBOX",
-            "permanent": True,
-        }
-    ]
-
-    with pytest.raises(
-        ValueError,
-        match="smtp:send_email missing required argument\\(s\\): subject",
-    ):
-        tools["run_op"](
-            id="smtp:send_email",
-            arguments={"account": "primary", "to": ["to@example.com"]},
-        )
-
-    with pytest.raises(
-        ValueError,
-        match="smtp:send_email received unknown argument\\(s\\): reply_to",
-    ):
-        tools["run_op"](
-            id="smtp:send_email",
-            arguments={
-                "account": "primary",
-                "to": ["to@example.com"],
-                "subject": "Hello",
-                "reply_to": "reply@example.com",
-            },
-        )
-
-    assert tools["run_op"](
-        id="imap:list_messages",
-        arguments={"account": "primary", "limit": "5"},
-    ) == {
-        "account": "primary",
-        "folder": "INBOX",
-        "messages": [],
-    }
-    assert list_messages_calls[-1] == {
-        "account": "primary",
-        "folder": None,
-        "limit": 5,
-    }
-    with pytest.raises(
-        ValueError,
-        match="imap:list_messages invalid argument",
-    ):
-        tools["run_op"](
-            id="imap:list_messages",
-            arguments={"account": "primary", "limit": "many"},
-        )
-
-
-@pytest.mark.parametrize(
-    ("transport", "expected_app"),
-    [
-        ("streamable-http", "streamable-http-app"),
-        ("sse", "sse-app"),
-    ],
-)
-def test_run_server_preserves_hydra_logging_for_uvicorn_transports(
+def test_run_server_preserves_hydra_logging_for_http_transport(
     monkeypatch: pytest.MonkeyPatch,
-    transport: str,
-    expected_app: str,
 ) -> None:
     captured: dict[str, object] = {}
 
-    class FakeUvicornConfig:
-        def __init__(self, app: object, **kwargs: object) -> None:
-            captured["app"] = app
-            captured["config_kwargs"] = kwargs
-
-    class FakeUvicornServer:
-        def __init__(self, config: FakeUvicornConfig) -> None:
-            captured["config"] = config
-
-        async def serve(self) -> None:
-            captured["served"] = True
+    def fake_run(app: object, **kwargs: object) -> None:
+        captured["app"] = app
+        captured["run_kwargs"] = kwargs
 
     fake_uvicorn = ModuleType("uvicorn")
-    setattr(fake_uvicorn, "Config", FakeUvicornConfig)
-    setattr(fake_uvicorn, "Server", FakeUvicornServer)
+    setattr(fake_uvicorn, "run", fake_run)
     monkeypatch.setitem(sys.modules, "uvicorn", fake_uvicorn)
 
-    def streamable_http_app() -> str:
-        return "streamable-http-app"
-
-    def sse_app(mount_path: str | None) -> str:
-        captured["sse_mount_path"] = mount_path
-        return "sse-app"
-
     fake_server = SimpleNamespace(
-        settings=SimpleNamespace(host="127.0.0.1", port=8025, log_level="INFO"),
-        streamable_http_app=streamable_http_app,
-        sse_app=sse_app,
+        app="native-http-app",
+        host="127.0.0.1",
+        port=8075,
     )
 
-    _run_server(cast(Any, fake_server), cast(Any, transport))
+    _run_server(cast(Any, fake_server), cast(Any, "http"))
 
-    assert captured["app"] == expected_app
-    assert captured["served"] is True
-    assert captured["config_kwargs"] == {
+    assert captured["app"] == "native-http-app"
+    assert captured["run_kwargs"] == {
         "host": "127.0.0.1",
-        "port": 8025,
-        "log_level": "info",
+        "port": 8075,
         "log_config": None,
     }
-    if transport == "sse":
-        assert captured["sse_mount_path"] is None
 
 
-def test_run_server_keeps_stdio_on_fastmcp_runner() -> None:
-    class FakeServer:
-        def __init__(self) -> None:
-            self.transport = ""
-
-        def run(self, *, transport: str) -> None:
-            self.transport = transport
-
-    fake_server = FakeServer()
-
-    _run_server(cast(Any, fake_server), "stdio")
-
-    assert fake_server.transport == "stdio"
-
-
-def test_build_server_describes_send_email_tool_schema() -> None:
-    server = cast(
-        Any,
-        build_server(
-            OmegaConf.structured(_app_config_with_smtp_imap()),
-            service_plugins=_test_service_plugins(),
-        ),
-    )
-
-    assert sorted(server._tool_manager._tools) == sorted(SERVER_TOOL_NAMES)
-
-    describe_op_tool = server._tool_manager._tools["describe_op"]
-    assert "Operation ids use CAPABILITY:OPERATION syntax" in (
-        describe_op_tool.description
-    )
-    assert describe_op_tool.parameters["properties"]["id"]["type"] == "string"
-
-    run_op_tool = server._tool_manager._tools["run_op"]
-    assert "Run one Arbiter operation by id" in run_op_tool.description
-    run_parameters = run_op_tool.parameters["properties"]
-    assert run_parameters["id"]["type"] == "string"
-    assert run_parameters["arguments"]["anyOf"] == [
-        {
-            "additionalProperties": True,
-            "type": "object",
-        },
-        {"type": "null"},
-    ]
-
-    check_op_tool = server._tool_manager._tools["check_op"]
-    assert "without calling external services" in check_op_tool.description
-    check_parameters = check_op_tool.parameters["properties"]
-    assert check_parameters["id"]["type"] == "string"
-    assert check_parameters["arguments"]["anyOf"] == [
-        {
-            "additionalProperties": True,
-            "type": "object",
-        },
-        {"type": "null"},
-    ]
+def test_run_server_rejects_non_http_transport() -> None:
+    with pytest.raises(ValueError, match="unsupported Arbiter HTTP transport"):
+        _run_server(cast(Any, SimpleNamespace()), cast(Any, "websocket"))

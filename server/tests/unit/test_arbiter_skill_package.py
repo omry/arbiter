@@ -91,7 +91,7 @@ def test_skill_wheel_contains_only_asi_metadata_payload(tmp_path: Path) -> None:
     assert "Author: Omry Yadan\n" in wheel_metadata
     assert "Author-email: Omry Yadan <omry@yadan.net>\n" in wheel_metadata
     assert "Maintainer: Omry Yadan\n" in wheel_metadata
-    assert "Keywords: agent,skill,mcp,access-control,arbiter\n" in wheel_metadata
+    assert "Keywords: agent,skill,http,access-control,arbiter\n" in wheel_metadata
     assert "Classifier: Programming Language :: Python :: 3.10\n" in wheel_metadata
     assert (
         "Project-URL: Repository, https://github.com/omry/arbiter\n" in wheel_metadata

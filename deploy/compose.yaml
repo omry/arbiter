@@ -15,7 +15,7 @@ services:
       - ./config.yaml:/config/config.yaml:ro
       - ${ARBITER_LOCAL_SOURCE_DIR:-./empty-source}:/source/arbiter:ro
     ports:
-      - "127.0.0.1:8025:8025"
+      - "127.0.0.1:8075:8075"
     networks:
       - arbiter
     command: >

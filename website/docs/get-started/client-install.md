@@ -58,7 +58,7 @@ arbiter <version>
 
 The skill does not replace server configuration. Configure and run Arbiter as
 usual, then point the client at the server with `arbiter bootstrap client` or
-an `arbiter.mcp_url=...` command-line override.
+an `arbiter.url=...` command-line override.
 
 ## Python Environment
 

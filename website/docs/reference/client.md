@@ -5,17 +5,15 @@ title: Arbiter Client reference
 `arbiter` is the client-facing command for agents and humans. It connects to an
 Arbiter server and exposes discovery and operation execution.
 
-Most users and agents should start with `info`. The lower-level protocol
-commands are available for inspection and debugging.
+Most users and agents should start with `info`.
 
 Arbiter exposes a hierarchical discovery surface under `info`. Start with a
-server and account orientation summary, then drill into the plugin, account, or
-operation needed for the task:
+server and plugin orientation summary, then drill into the plugin or operation
+needed for the task:
 
 ```bash
 arbiter info
 arbiter info plugin smtp
-arbiter info account smtp bot
 arbiter info op smtp send_email
 ```
 
@@ -31,10 +29,10 @@ arbiter [--config-dir DIR] [--config-name NAME] <command>
 - `--version`: print the installed version.
 
 The client reads the server URL from its config. The current config key is
-`arbiter.mcp_url`; you can override it per command with a Hydra-style argument:
+`arbiter.url`; you can override it per command with a Hydra-style argument:
 
 ```bash
-arbiter info arbiter.mcp_url=http://127.0.0.1:8000/mcp
+arbiter info arbiter.url=http://127.0.0.1:8075
 ```
 
 When the server reports `deployment_scope=staged`, the client prints a small
@@ -50,7 +48,7 @@ Example:
 
 ```yaml
 arbiter:
-  mcp_url: http://127.0.0.1:8000/mcp
+  url: http://127.0.0.1:8075
 ```
 
 ## bootstrap
@@ -66,7 +64,7 @@ arbiter bootstrap client [--force] [override...]
 Example:
 
 ```bash
-arbiter bootstrap client arbiter.mcp_url=http://127.0.0.1:8000/mcp
+arbiter bootstrap client arbiter.url=http://127.0.0.1:8075
 ```
 
 ## Common flow
@@ -75,23 +73,18 @@ arbiter bootstrap client arbiter.mcp_url=http://127.0.0.1:8000/mcp
 arbiter info
 arbiter info plugins
 arbiter info plugin smtp
-arbiter info accounts smtp
-arbiter info account smtp bot
 arbiter info op smtp send_email
 arbiter op run smtp:send_email --args '{"account":"bot","to":["ops@example.com"],"subject":"Hello","text_body":"Hi"}'
 ```
 
 ## info
 
-Discover server identity, installed plugins, configured accounts, account
-policy summaries, and operation schemas.
+Discover server identity, installed plugins, and operation schemas.
 
 ```bash
 arbiter info [--yaml]
 arbiter info plugins
 arbiter info plugin <plugin>
-arbiter info accounts <plugin>
-arbiter info account <plugin> <account>
 arbiter info ops <plugin>
 arbiter info op <plugin> <operation>
 ```
@@ -109,13 +102,9 @@ Use `--yaml` when you want readable YAML output instead:
 arbiter info --yaml
 ```
 
-- `info`: summarize the server URL, deployment scope, installed plugins, and
-  account descriptions/guidance.
+- `info`: summarize the server URL, deployment scope, and installed plugins.
 - `info plugins`: list installed plugins.
-- `info plugin <plugin>`: describe one plugin, its accounts, and its
-  operations.
-- `info accounts <plugin>`: list accounts for one plugin.
-- `info account <plugin> <account>`: show one account plus its policy summary.
+- `info plugin <plugin>`: describe one plugin and its operations.
 - `info ops <plugin>`: list operations for one plugin.
 - `info op <plugin> <operation>`: show one operation and its input schema.
 
@@ -135,17 +124,3 @@ Example:
 ```bash
 arbiter op run smtp:send_email --args '{"account":"bot","to":["ops@example.com"],"subject":"Hello","text_body":"Hi"}'
 ```
-
-## Low-level protocol commands
-
-Inspect and call the raw protocol tools exposed by the server. Agents should
-normally use `info` and `op run` instead.
-
-```bash
-arbiter mcp [tools] [--json]
-arbiter mcp call <tool-name> --args '<json-object>'
-```
-
-- `mcp` and `mcp tools`: list raw protocol tools.
-- `mcp tools --json`: print full tool metadata as JSON.
-- `mcp call`: call a raw protocol tool by name.
