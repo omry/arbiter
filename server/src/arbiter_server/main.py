@@ -96,6 +96,7 @@ ARTIFACT_ROUTE_PREFIX = f"{API_ROUTE_PREFIX}/artifacts"
 HEALTH_ROUTE = "/_health_"
 INLINE_ARTIFACT_MAX_BYTES = 5 * 1024
 DEPLOY_MANIFEST_FILE_NAME = ".arbiter-deploy.json"
+BUILD_TIME_ENV_VAR = "ARBITER_BUILD_TIME"
 ARBITER_SERVER_PACKAGE = "arbiter-server"
 ARBITER_ALL_META_PACKAGE = "arbiter-suite"
 DOCKER_BUNDLE_PLUGINS_FILE_NAME = "bundle-plugins.tsv"
@@ -1188,6 +1189,7 @@ def runtime_version_info(
     deployment_scope: DeploymentScope | str = DeploymentScope.unknown,
 ) -> dict[str, object]:
     source = source_info()
+    build_time = os.environ.get(BUILD_TIME_ENV_VAR) or None
     if isinstance(deployment_scope, DeploymentScope):
         deployment_scope_value = deployment_scope.value
     else:
@@ -1201,6 +1203,7 @@ def runtime_version_info(
         "source": {
             "commit": source.commit,
             "dirty": source.dirty,
+            "build_time": build_time,
         },
         "plugins": service_plugin_infos(service_plugins),
     }
@@ -1308,6 +1311,12 @@ def _native_exception_response(
             status_code=404,
             code="artifact_not_found",
             message="Artifact was not found.",
+        )
+    if isinstance(exc, KeyError):
+        return _native_error_response(
+            status_code=404,
+            code="not_found",
+            message=str(exc.args[0]) if exc.args else str(exc),
         )
     if isinstance(exc, ValueError):
         message = str(exc)
@@ -1493,6 +1502,194 @@ def _string_or_none_value(value: object) -> str | None:
     return value if isinstance(value, str) and value != "" else None
 
 
+_REDACTED_CONFIG_VALUE = "<redacted>"
+_SECRET_CONFIG_KEY_PARTS = frozenset(
+    {
+        "api_key",
+        "apikey",
+        "authorization",
+        "credential",
+        "password",
+        "private_key",
+        "secret",
+        "token",
+    }
+)
+_INTERNAL_CONFIG_KEYS = frozenset(
+    {
+        "cache_dir",
+        "directory",
+        "dir",
+        "env_file",
+        "file",
+        "filename",
+        "path",
+    }
+)
+_INTERNAL_CONFIG_KEY_SUFFIXES = ("_dir", "_file", "_path")
+
+
+def _plain_config_value(value: object, *, resolve: bool) -> object:
+    if OmegaConf.is_config(value):
+        return OmegaConf.to_container(value, resolve=resolve, enum_to_str=True)
+    return _jsonable(value)
+
+
+def _is_redacted_config_key(key: str | None) -> bool:
+    if key is None:
+        return False
+    key_lower = key.lower()
+    return (
+        any(part in key_lower for part in _SECRET_CONFIG_KEY_PARTS)
+        or key_lower in _INTERNAL_CONFIG_KEYS
+        or key_lower.endswith(_INTERNAL_CONFIG_KEY_SUFFIXES)
+    )
+
+
+def _redact_config_value(value: object, *, key: str | None = None) -> object:
+    if _is_redacted_config_key(key):
+        return _REDACTED_CONFIG_VALUE
+    if isinstance(value, Mapping):
+        return {
+            str(item_key): _redact_config_value(item_value, key=str(item_key))
+            for item_key, item_value in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_config_value(item) for item in value]
+    return value
+
+
+def _resolve_redacted_config_value(value: object) -> object:
+    if not isinstance(value, (Mapping, list)):
+        return value
+    try:
+        return OmegaConf.to_container(
+            OmegaConf.create(value),
+            resolve=True,
+            enum_to_str=True,
+        )
+    except Exception:
+        return value
+
+
+def _redacted_config_payload(value: object) -> object:
+    unresolved = _plain_config_value(value, resolve=False)
+    return _resolve_redacted_config_value(_redact_config_value(unresolved))
+
+
+def _config_field_string(config: object, field_name: str) -> str:
+    if isinstance(config, Mapping):
+        value = config.get(field_name, "")
+    else:
+        value = getattr(config, field_name, "")
+    return value if isinstance(value, str) else ""
+
+
+def _native_plugin_capability(
+    catalog: OperationCatalog,
+    plugin: str,
+) -> Mapping[str, object] | None:
+    capabilities = cast(
+        Sequence[Mapping[str, object]],
+        catalog.describe_capabilities(
+            operation_preview_limit=0,
+            account_preview_limit=0,
+        )["capabilities"],
+    )
+    for capability in capabilities:
+        if capability.get("id") == plugin:
+            return capability
+    return None
+
+
+def _native_plugin_payload(
+    catalog: OperationCatalog,
+    plugin: str,
+) -> dict[str, object]:
+    capability = _native_plugin_capability(catalog, plugin)
+    if capability is None:
+        raise KeyError(f"unknown plugin: {plugin}")
+    return {
+        "id": capability["id"],
+        "summary": capability.get("description", ""),
+    }
+
+
+def _native_account_summary_payload(
+    *,
+    plugin: str,
+    account: str,
+    account_config: object,
+) -> dict[str, object]:
+    return {
+        "plugin": plugin,
+        "account": account,
+        "description": _config_field_string(account_config, "description"),
+        "guidance": _config_field_string(account_config, "guidance"),
+        "policy": _account_policy_name(account_config),
+    }
+
+
+def _native_plugin_accounts_payload(
+    cfg: HydraConfig,
+    plugin: str,
+) -> dict[str, object]:
+    accounts = service_accounts_for(cfg, plugin)
+    if accounts is None:
+        raise KeyError(f"unknown plugin or no accounts configured: {plugin}")
+    return {
+        "plugin": plugin,
+        "accounts": [
+            _native_account_summary_payload(
+                plugin=plugin,
+                account=str(account),
+                account_config=account_config,
+            )
+            for account, account_config in sorted(accounts.items())
+        ],
+    }
+
+
+def _native_policy_payload(
+    cfg: HydraConfig,
+    plugin: str,
+    policy: str,
+) -> dict[str, object]:
+    policies = service_policies_for(cfg, plugin)
+    if policy not in policies:
+        raise KeyError(f"unknown policy: {plugin}/{policy}")
+    return {
+        "kind": "policy",
+        "plugin": plugin,
+        "policy": policy,
+        "rules": _redacted_config_payload(policies[policy]),
+    }
+
+
+def _native_account_detail_payload(
+    cfg: HydraConfig,
+    plugin: str,
+    account: str,
+) -> dict[str, object]:
+    accounts = service_accounts_for(cfg, plugin)
+    if accounts is None or account not in accounts:
+        raise KeyError(f"unknown account: {plugin}/{account}")
+    account_config = accounts[account]
+    policy = _account_policy_name(account_config)
+    policy_payload = None
+    if policy is not None:
+        policy_payload = _native_policy_payload(cfg, plugin, policy)
+    return {
+        "kind": "account",
+        "plugin": plugin,
+        "account": account,
+        "description": _config_field_string(account_config, "description"),
+        "guidance": _config_field_string(account_config, "guidance"),
+        "config": _redacted_config_payload(account_config),
+        "policy": policy_payload,
+    }
+
+
 async def _read_operation_arguments(request: object) -> Mapping[str, Any]:
     from json import JSONDecodeError
 
@@ -1546,6 +1743,7 @@ def _attachment_content_disposition(filename: str | None) -> str:
 
 def _create_native_http_app(
     *,
+    cfg: HydraConfig,
     catalog: OperationCatalog,
     service_plugins: Sequence[ServicePlugin],
     deployment_scope: DeploymentScope | str,
@@ -1571,6 +1769,7 @@ def _create_native_http_app(
                 "version": server_info["version"],
                 "api_version": server_info["api_version"],
                 "deployment_scope": version_info["deployment_scope"],
+                "source": version_info["source"],
             }
         )
 
@@ -1588,14 +1787,51 @@ def _create_native_http_app(
                     {
                         "id": capability["id"],
                         "summary": capability.get("description", ""),
-                        "operations_url": (
-                            f"{API_ROUTE_PREFIX}/plugins/{capability['id']}/operations"
-                        ),
                     }
                     for capability in capabilities
                 ]
             }
         )
+
+    async def plugin_details(request: Request) -> object:
+        try:
+            return _native_response(
+                _native_plugin_payload(catalog, request.path_params["plugin_id"])
+            )
+        except Exception as exc:
+            return _native_exception_response(exc)
+
+    async def plugin_accounts(request: Request) -> object:
+        try:
+            return _native_response(
+                _native_plugin_accounts_payload(cfg, request.path_params["plugin_id"])
+            )
+        except Exception as exc:
+            return _native_exception_response(exc)
+
+    async def account_details(request: Request) -> object:
+        try:
+            return _native_response(
+                _native_account_detail_payload(
+                    cfg,
+                    request.path_params["plugin_id"],
+                    request.path_params["account"],
+                )
+            )
+        except Exception as exc:
+            return _native_exception_response(exc)
+
+    async def policy_details(request: Request) -> object:
+        try:
+            return _native_response(
+                _native_policy_payload(
+                    cfg,
+                    request.path_params["plugin_id"],
+                    request.path_params["policy"],
+                )
+            )
+        except Exception as exc:
+            return _native_exception_response(exc)
 
     async def plugin_operations(request: Request) -> object:
         plugin = request.path_params["plugin_id"]
@@ -1610,9 +1846,6 @@ def _create_native_http_app(
                             "id": operation["id"],
                             "summary": operation.get("description", ""),
                             "when_to_use": operation.get("description", ""),
-                            "details_url": (
-                                f"{API_ROUTE_PREFIX}/operations/{operation['id']}"
-                            ),
                         }
                         for operation in operations
                     ],
@@ -1715,6 +1948,26 @@ def _create_native_http_app(
             Route(f"{API_ROUTE_PREFIX}/info", info, methods=["GET"]),
             Route(f"{API_ROUTE_PREFIX}/plugins", plugins, methods=["GET"]),
             Route(
+                f"{API_ROUTE_PREFIX}/plugins/{{plugin_id}}",
+                plugin_details,
+                methods=["GET"],
+            ),
+            Route(
+                f"{API_ROUTE_PREFIX}/plugins/{{plugin_id}}/accounts",
+                plugin_accounts,
+                methods=["GET"],
+            ),
+            Route(
+                f"{API_ROUTE_PREFIX}/plugins/{{plugin_id}}/accounts/{{account}}",
+                account_details,
+                methods=["GET"],
+            ),
+            Route(
+                f"{API_ROUTE_PREFIX}/plugins/{{plugin_id}}/policies/{{policy}}",
+                policy_details,
+                methods=["GET"],
+            ),
+            Route(
                 f"{API_ROUTE_PREFIX}/plugins/{{plugin_id}}/operations",
                 plugin_operations,
                 methods=["GET"],
@@ -1772,6 +2025,7 @@ def build_server(
         max_operation_preview_limit=cfg.arbiter.discovery.max_operation_preview_limit,
     )
     native_app = _create_native_http_app(
+        cfg=cfg,
         catalog=catalog,
         service_plugins=active_service_plugins,
         deployment_scope=cfg.arbiter.deployment_scope,

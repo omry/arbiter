@@ -21,14 +21,14 @@ transport settings.
 Inspect the plugin and the send operation:
 
 ```bash
-arbiter info plugin smtp
-arbiter info op smtp send_email
+arbiter plugins smtp
+arbiter op desc smtp:send_email
 ```
 
 Inspect an account before using it:
 
 ```bash
-arbiter info account smtp bot
+arbiter plugins smtp account bot
 ```
 
 Send a message:

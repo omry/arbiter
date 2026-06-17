@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -53,8 +54,24 @@ func (c *Client) Plugins(ctx context.Context) (map[string]any, error) {
 	return c.get(ctx, apiPrefix+"/plugins")
 }
 
+func (c *Client) PluginDetails(ctx context.Context, plugin string) (map[string]any, error) {
+	return c.get(ctx, apiPrefix+"/plugins/"+url.PathEscape(plugin))
+}
+
+func (c *Client) PluginAccounts(ctx context.Context, plugin string) (map[string]any, error) {
+	return c.get(ctx, apiPrefix+"/plugins/"+url.PathEscape(plugin)+"/accounts")
+}
+
+func (c *Client) PluginAccount(ctx context.Context, plugin string, account string) (map[string]any, error) {
+	return c.get(ctx, apiPrefix+"/plugins/"+url.PathEscape(plugin)+"/accounts/"+url.PathEscape(account))
+}
+
+func (c *Client) PluginPolicy(ctx context.Context, plugin string, policy string) (map[string]any, error) {
+	return c.get(ctx, apiPrefix+"/plugins/"+url.PathEscape(plugin)+"/policies/"+url.PathEscape(policy))
+}
+
 func (c *Client) PluginOperations(ctx context.Context, plugin string) (map[string]any, error) {
-	return c.get(ctx, apiPrefix+"/plugins/"+plugin+"/operations")
+	return c.get(ctx, apiPrefix+"/plugins/"+url.PathEscape(plugin)+"/operations")
 }
 
 func (c *Client) OperationDetails(ctx context.Context, operationID string) (map[string]any, error) {

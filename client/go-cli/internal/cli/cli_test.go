@@ -39,6 +39,7 @@ func TestGoClientHelp(t *testing.T) {
 				"usage: arbiter",
 				"primary commands:",
 				"info",
+				"plugins",
 				"op",
 				"artifact",
 				"--help --extended",
@@ -58,8 +59,7 @@ func TestGoClientHelp(t *testing.T) {
 				"bootstrap",
 				"config",
 			},
-			unexpected: []string{
-			},
+			unexpected: []string{},
 		},
 		{
 			name: "bootstrap",
@@ -98,18 +98,29 @@ func TestGoClientHelp(t *testing.T) {
 			args: []string{"info", "--help"},
 			expected: []string{
 				"usage: arbiter info",
+				"server",
+			},
+			unexpected: []string{
 				"--short",
-				"--yaml",
-				"plugins",
 				"ops",
 			},
 		},
 		{
-			name: "info plugin",
-			args: []string{"info", "plugin", "--help"},
+			name: "info server",
+			args: []string{"info", "server", "--help"},
 			expected: []string{
-				"usage: arbiter info plugin",
-				"<plugin>",
+				"usage: arbiter info server",
+				"source metadata",
+			},
+		},
+		{
+			name: "plugins",
+			args: []string{"plugins", "--help"},
+			expected: []string{
+				"usage: arbiter plugins",
+				"accounts",
+				"policy NAME",
+				"--yaml",
 			},
 		},
 		{
@@ -129,6 +140,10 @@ func TestGoClientHelp(t *testing.T) {
 			expected: []string{
 				"usage: arbiter op list",
 				"[plugin]",
+				"--json",
+				"--yaml",
+			},
+			unexpected: []string{
 				"--plain",
 			},
 		},
@@ -141,6 +156,9 @@ func TestGoClientHelp(t *testing.T) {
 				"imap:get_message",
 				"--yaml",
 			},
+			unexpected: []string{
+				"--plain",
+			},
 		},
 		{
 			name: "op describe",
@@ -150,6 +168,9 @@ func TestGoClientHelp(t *testing.T) {
 				"<plugin-or-operation-id>",
 				"imap:get_message",
 				"--yaml",
+			},
+			unexpected: []string{
+				"--plain",
 			},
 		},
 		{
@@ -196,11 +217,26 @@ func TestGoClientInvalidSubcommandSuggestsHelp(t *testing.T) {
 	if result.Stdout != "" {
 		t.Fatalf("unexpected stdout: %q", result.Stdout)
 	}
-	if !strings.Contains(result.Stderr, "unknown info command: aa") {
+	if !strings.Contains(result.Stderr, "expected: arbiter info server") {
 		t.Fatalf("expected unknown command error, got %q", result.Stderr)
 	}
 	if !strings.Contains(result.Stderr, "Run 'arbiter info --help' for help.") {
 		t.Fatalf("expected help hint, got %q", result.Stderr)
+	}
+}
+
+func TestConfigWithoutSubcommandPrintsHelp(t *testing.T) {
+	result := testutil.RunCLI(t, nil, "config")
+
+	if result.Code != 0 {
+		t.Fatalf("expected exit code 0, got %d stderr=%q", result.Code, result.Stderr)
+	}
+	if result.Stderr != "" {
+		t.Fatalf("unexpected stderr: %q", result.Stderr)
+	}
+	if !strings.Contains(result.Stdout, "usage: arbiter config") ||
+		!strings.Contains(result.Stdout, "url") {
+		t.Fatalf("expected config help, got %q", result.Stdout)
 	}
 }
 
@@ -281,6 +317,74 @@ func TestBootstrapClientRefusesOverwrite(t *testing.T) {
 		t.Fatalf("expected exit code 1, got %d", result.Code)
 	}
 	if result.Stdout != "" {
+		t.Fatalf("unexpected stdout: %q", result.Stdout)
+	}
+}
+
+func TestConfigURLPrintsDefaultSource(t *testing.T) {
+	env := testutil.NewCLIEnvironment(t)
+
+	result := testutil.RunCLI(t, env, "config", "url")
+
+	if result.Code != 0 {
+		t.Fatalf("expected exit code 0, got %d stderr=%q", result.Code, result.Stderr)
+	}
+	if result.Stderr != "" {
+		t.Fatalf("unexpected stderr: %q", result.Stderr)
+	}
+	expected := "url: " + cli.DefaultURL + "\nsource: default\n"
+	if result.Stdout != expected {
+		t.Fatalf("unexpected stdout: %q", result.Stdout)
+	}
+}
+
+func TestConfigURLPrintsEnvironmentSource(t *testing.T) {
+	env := testutil.NewCLIEnvironment(t)
+	env.SetEnv(cli.URLEnvVar, "http://env.test")
+
+	result := testutil.RunCLI(t, env, "config", "url")
+
+	if result.Code != 0 {
+		t.Fatalf("expected exit code 0, got %d stderr=%q", result.Code, result.Stderr)
+	}
+	expected := "url: http://env.test\nsource: " + cli.URLEnvVar + "\n"
+	if result.Stdout != expected {
+		t.Fatalf("unexpected stdout: %q", result.Stdout)
+	}
+}
+
+func TestConfigURLPrintsClientConfigSource(t *testing.T) {
+	env := testutil.NewCLIEnvironment(t)
+	configPath := env.WriteClientConfig("arbiter:\n  url: 'http://config.test'\n")
+
+	result := testutil.RunCLI(t, env, "config", "url")
+
+	if result.Code != 0 {
+		t.Fatalf("expected exit code 0, got %d stderr=%q", result.Code, result.Stderr)
+	}
+	expected := "url: http://config.test\nsource: " + configPath + "\n"
+	if result.Stdout != expected {
+		t.Fatalf("unexpected stdout: %q", result.Stdout)
+	}
+}
+
+func TestConfigURLPrintsOverrideSource(t *testing.T) {
+	env := testutil.NewCLIEnvironment(t)
+	env.SetEnv(cli.URLEnvVar, "http://env.test")
+
+	result := testutil.RunCLI(
+		t,
+		env,
+		"config",
+		"url",
+		"arbiter.url=http://override.test",
+	)
+
+	if result.Code != 0 {
+		t.Fatalf("expected exit code 0, got %d stderr=%q", result.Code, result.Stderr)
+	}
+	expected := "url: http://override.test\nsource: override\n"
+	if result.Stdout != expected {
 		t.Fatalf("unexpected stdout: %q", result.Stdout)
 	}
 }

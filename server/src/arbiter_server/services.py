@@ -349,11 +349,11 @@ class OperationCatalog:
             }
         if kind == "plugin":
             if plugin is None:
-                raise ValueError("info plugin requires plugin")
+                raise ValueError("plugin info requires plugin")
             return self._info_plugin(plugin)
         if kind == "accounts":
             if plugin is None:
-                raise ValueError("info accounts requires plugin")
+                raise ValueError("account list requires plugin")
             return {
                 "kind": "accounts",
                 "plugin": plugin,
@@ -361,7 +361,7 @@ class OperationCatalog:
             }
         if kind == "account":
             if plugin is None or account is None:
-                raise ValueError("info account requires plugin and account")
+                raise ValueError("account info requires plugin and account")
             return self._info_account(plugin, account)
         if kind == "tests":
             return {
@@ -381,7 +381,7 @@ class OperationCatalog:
             return plugin_tests
         if kind == "ops":
             if plugin is None:
-                raise ValueError("info ops requires plugin")
+                raise ValueError("operation list requires plugin")
             self._require_capability(plugin)
             return {
                 "kind": "ops",
@@ -393,7 +393,7 @@ class OperationCatalog:
             }
         if kind == "op":
             if plugin is None or operation is None:
-                raise ValueError("info op requires plugin and operation")
+                raise ValueError("operation info requires plugin and operation")
             operation_info = self.describe_operation(operation_id(plugin, operation))
             operation_info["kind"] = "op"
             return operation_info

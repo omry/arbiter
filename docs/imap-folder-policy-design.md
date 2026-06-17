@@ -545,7 +545,7 @@ before subsequent operations run.
 Account discovery should expose enough policy context for agents to avoid
 probing inaccessible folders.
 
-For `info account imap <account>`, include:
+For `arbiter plugins imap account <account>`, include:
 
 - accessible folder count
 - default folder

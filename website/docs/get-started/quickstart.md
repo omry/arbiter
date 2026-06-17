@@ -195,6 +195,6 @@ arbiter-server serve
 In another terminal, point the Arbiter client at the local server:
 
 ```bash
-arbiter info arbiter.url=http://127.0.0.1:8075
-arbiter info plugin smtp arbiter.url=http://127.0.0.1:8075
+arbiter info server arbiter.url=http://127.0.0.1:8075
+arbiter plugins smtp arbiter.url=http://127.0.0.1:8075
 ```

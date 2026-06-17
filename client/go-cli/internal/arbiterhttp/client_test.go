@@ -28,6 +28,14 @@ func TestClientProgressiveDiscoveryAndInvocation(t *testing.T) {
 					return jsonResponse(200, `{"name":"arbiter","version":"1.2.3"}`), nil
 				case "GET /api/v1/plugins":
 					return jsonResponse(200, `{"plugins":[{"id":"smtp","summary":"Send mail"}]}`), nil
+				case "GET /api/v1/plugins/smtp":
+					return jsonResponse(200, `{"id":"smtp","summary":"Send mail"}`), nil
+				case "GET /api/v1/plugins/smtp/accounts":
+					return jsonResponse(200, `{"plugin":"smtp","accounts":[{"account":"bot"}]}`), nil
+				case "GET /api/v1/plugins/smtp/accounts/bot":
+					return jsonResponse(200, `{"kind":"account","plugin":"smtp","account":"bot"}`), nil
+				case "GET /api/v1/plugins/smtp/policies/bot_policy":
+					return jsonResponse(200, `{"kind":"policy","plugin":"smtp","policy":"bot_policy"}`), nil
 				case "GET /api/v1/plugins/smtp/operations":
 					return jsonResponse(200, `{"plugin":"smtp","operations":[{"id":"smtp:send_email"}]}`), nil
 				case "GET /api/v1/operations/smtp:send_email":
@@ -55,6 +63,22 @@ func TestClientProgressiveDiscoveryAndInvocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	plugin, err := client.PluginDetails(context.Background(), "smtp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	accounts, err := client.PluginAccounts(context.Background(), "smtp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	account, err := client.PluginAccount(context.Background(), "smtp", "bot")
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := client.PluginPolicy(context.Background(), "smtp", "bot_policy")
+	if err != nil {
+		t.Fatal(err)
+	}
 	operations, err := client.PluginOperations(context.Background(), "smtp")
 	if err != nil {
 		t.Fatal(err)
@@ -78,6 +102,18 @@ func TestClientProgressiveDiscoveryAndInvocation(t *testing.T) {
 	if len(plugins["plugins"].([]any)) != 1 {
 		t.Fatalf("unexpected plugins payload: %#v", plugins)
 	}
+	if plugin["id"] != "smtp" {
+		t.Fatalf("unexpected plugin payload: %#v", plugin)
+	}
+	if len(accounts["accounts"].([]any)) != 1 {
+		t.Fatalf("unexpected accounts payload: %#v", accounts)
+	}
+	if account["account"] != "bot" {
+		t.Fatalf("unexpected account payload: %#v", account)
+	}
+	if policy["policy"] != "bot_policy" {
+		t.Fatalf("unexpected policy payload: %#v", policy)
+	}
 	if operations["plugin"] != "smtp" {
 		t.Fatalf("unexpected operations payload: %#v", operations)
 	}
@@ -93,6 +129,10 @@ func TestClientProgressiveDiscoveryAndInvocation(t *testing.T) {
 	expectedRequests := strings.Join([]string{
 		"GET /api/v1/info",
 		"GET /api/v1/plugins",
+		"GET /api/v1/plugins/smtp",
+		"GET /api/v1/plugins/smtp/accounts",
+		"GET /api/v1/plugins/smtp/accounts/bot",
+		"GET /api/v1/plugins/smtp/policies/bot_policy",
 		"GET /api/v1/plugins/smtp/operations",
 		"GET /api/v1/operations/smtp:send_email",
 		"POST /api/v1/operations/smtp:send_email",

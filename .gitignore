@@ -17,6 +17,7 @@ website/node_modules/
 
 # Local checkout-specific agent instructions.
 LOCAL-AGENTS.md
+.awd
 
 # Local Docker deployment files. These may contain secrets or host-specific
 # commands and should not be committed.

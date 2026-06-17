@@ -1,17 +1,17 @@
 # Arbiter Native HTTP Protocol
 
-This document sketches the native Arbiter HTTP protocol that will replace the
-current MCP-based public surface.
+This document sketches the native Arbiter HTTP protocol that replaces the old
+public transport surface.
 
 Arbiter is still pre-release, so this design intentionally does not preserve
-the old MCP endpoint, command names, or URL contract unless a later release
+the old endpoint, command names, or URL contract unless a later release
 decision explicitly adds a compatibility bridge.
 
 ## Goals
 
 - Expose a simple native HTTP protocol.
-- Keep MCP out of user-facing URLs, commands, docs, errors, and generated
-  configuration.
+- Keep transport internals out of user-facing URLs, commands, docs, errors, and
+  generated configuration.
 - Make `arbiter.url` a stable server base URL, not a protocol endpoint.
 - Support progressive discovery so clients and agents do not fetch every full
   operation schema up front.
@@ -32,7 +32,7 @@ http://127.0.0.1:8075
 http://127.0.0.1:18075
 ```
 
-Do not append a protocol path such as `/mcp` to user-facing URLs.
+Do not append transport-specific path suffixes to user-facing URLs.
 
 ## Route Summary
 
@@ -41,6 +41,10 @@ GET  /_health_
 
 GET  /api/v1/info
 GET  /api/v1/plugins
+GET  /api/v1/plugins/{plugin_id}
+GET  /api/v1/plugins/{plugin_id}/accounts
+GET  /api/v1/plugins/{plugin_id}/accounts/{account}
+GET  /api/v1/plugins/{plugin_id}/policies/{policy}
 GET  /api/v1/plugins/{plugin_id}/operations
 
 GET  /api/v1/operations/{operation_id}
@@ -112,13 +116,11 @@ Example:
   "plugins": [
     {
       "id": "smtp",
-      "summary": "Send email through configured SMTP accounts.",
-      "operations_url": "/api/v1/plugins/smtp/operations"
+      "summary": "Send email through configured SMTP accounts."
     },
     {
       "id": "imap",
-      "summary": "Read and manage mailbox messages.",
-      "operations_url": "/api/v1/plugins/imap/operations"
+      "summary": "Read and manage mailbox messages."
     }
   ]
 }
@@ -141,8 +143,7 @@ Example:
     {
       "id": "smtp:send_email",
       "summary": "Send an email message.",
-      "when_to_use": "Use when you need Arbiter to send a plain text or MIME email through a configured SMTP account.",
-      "details_url": "/api/v1/operations/smtp:send_email"
+      "when_to_use": "Use when you need Arbiter to send a plain text or MIME email through a configured SMTP account."
     }
   ]
 }

@@ -425,10 +425,12 @@ def test_arbiter_console_script_help(
 @pytest.mark.parametrize(
     ("args", "expected"),
     [
-        (("--help",), ("usage:", "info", "op", "artifact")),
+        (("--help",), ("usage:", "info", "plugins", "op", "artifact")),
         (("bootstrap", "--help"), ("usage:", "bootstrap", "client")),
         (("bootstrap", "client", "--help"), ("usage:", "bootstrap client")),
-        (("info", "--help"), ("usage:", "info", "--yaml")),
+        (("info", "--help"), ("usage:", "info", "server")),
+        (("info", "server", "--help"), ("usage:", "info server", "--yaml")),
+        (("plugins", "--help"), ("usage:", "plugins", "accounts", "policy")),
         (("op", "--help"), ("usage:", "op", "list", "desc", "run")),
         (("op", "list", "--help"), ("usage:", "op list", "[plugin]")),
         (("op", "desc", "--help"), ("usage:", "op desc")),
@@ -719,7 +721,7 @@ def test_arbiter_console_script_serve_reports_unrunnable_config(
 @pytest.mark.parametrize(
     "args",
     [
-        ("info",),
+        ("info", "server"),
         ("op", "list"),
     ],
 )
@@ -756,6 +758,7 @@ def test_arbiter_client_console_script_reads_client_config(
         "--config-dir",
         str(tmp_path),
         "info",
+        "server",
     )
 
     assert result.returncode == 1
@@ -795,13 +798,14 @@ def test_local_arbiter_server_fixture_serves_info(
 
     result = server.run_client(
         "info",
+        "server",
         command=arbiter_client_command.command,
     )
 
     assert result.returncode == 0
     assert result.stderr == ""
     payload = json.loads(result.stdout)
-    assert payload["server"]["name"] == "arbiter"
+    assert payload["name"] == "arbiter"
     assert payload["server_url"] == server.url
 
 
@@ -821,18 +825,18 @@ def test_packaged_arbiter_client_wheel_smoke(
     server = local_arbiter_server_factory.start()
     info = server.run_client(
         "info",
-        "--short",
+        "server",
         command=packaged_arbiter_client_command.command,
     )
 
     assert info.returncode == 0
     assert info.stderr == ""
     payload = json.loads(info.stdout)
-    assert payload["kind"] == "overview_short"
+    assert payload["name"] == "arbiter"
     assert payload["server_url"] == server.url
 
 
-def test_arbiter_clients_info_short(
+def test_arbiter_clients_info_server_yaml(
     arbiter_client_command: ClientCommand,
     local_arbiter_server_factory: LocalArbiterServerFactory,
 ) -> None:
@@ -840,32 +844,27 @@ def test_arbiter_clients_info_short(
 
     json_result = server.run_client(
         "info",
-        "--short",
+        "server",
         command=arbiter_client_command.command,
     )
 
     assert json_result.returncode == 0
     assert json_result.stderr == ""
     payload = json.loads(json_result.stdout)
-    assert payload["kind"] == "overview_short"
+    assert payload["name"] == "arbiter"
     assert payload["server_url"] == server.url
-    assert "plugins" not in payload
-    assert "operations" not in payload
-    accounts = payload["accounts"]
-    assert accounts == []
 
     yaml_result = server.run_client(
         "info",
-        "--short",
+        "server",
         "--yaml",
         command=arbiter_client_command.command,
     )
 
     assert yaml_result.returncode == 0
     assert yaml_result.stderr == ""
-    assert "kind: overview_short\n" in yaml_result.stdout
+    assert "name: arbiter\n" in yaml_result.stdout
     assert f"server_url: {server.url}\n" in yaml_result.stdout
-    assert "accounts:\n" in yaml_result.stdout
 
 
 def test_arbiter_clients_op_list(
@@ -883,17 +882,6 @@ def test_arbiter_clients_op_list(
     assert all_result.returncode == 0
     assert all_result.stderr == ""
     assert json.loads(all_result.stdout) == {"plugins": ["smtp"]}
-
-    all_plain_result = server.run_client(
-        "op",
-        "list",
-        "--plain",
-        command=arbiter_client_command.command,
-    )
-
-    assert all_plain_result.returncode == 0
-    assert all_plain_result.stderr == ""
-    assert all_plain_result.stdout.splitlines() == ["smtp"]
 
     all_yaml_result = server.run_client(
         "op",
@@ -953,18 +941,6 @@ def test_arbiter_clients_op_list(
     assert smtp_yaml["plugin"] == "smtp"
     assert list(smtp_yaml["operations"]) == ["smtp:send_email"]
     assert "id: smtp:send_email\n" not in smtp_yaml_result.stdout
-
-    smtp_plain_result = server.run_client(
-        "op",
-        "list",
-        "smtp",
-        "--plain",
-        command=arbiter_client_command.command,
-    )
-
-    assert smtp_plain_result.returncode == 0
-    assert smtp_plain_result.stderr == ""
-    assert smtp_plain_result.stdout.splitlines() == ["smtp:send_email"]
 
 
 def test_arbiter_clients_require_explicit_stdout_for_artifacts(

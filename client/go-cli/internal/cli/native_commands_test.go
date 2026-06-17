@@ -7,11 +7,26 @@ import (
 	"testing"
 )
 
-func TestInfoPluginsCallsInfoTool(t *testing.T) {
-	fake := installFakeArbiterClient(t)
-	fake.plugins = map[string]any{"plugins": []any{map[string]any{"id": "smtp"}}}
+func TestInfoWithoutSubcommandPrintsHelp(t *testing.T) {
+	result := runTestCLI("info")
 
-	result := runTestCLI("info", "plugins", "arbiter.url=http://server.test")
+	if result.code != 0 {
+		t.Fatalf("expected exit code 0, got %d stderr=%q", result.code, result.stderr)
+	}
+	if result.stderr != "" {
+		t.Fatalf("unexpected stderr: %q", result.stderr)
+	}
+	if !strings.Contains(result.stdout, "usage: arbiter info") ||
+		!strings.Contains(result.stdout, "server") {
+		t.Fatalf("expected info help, got:\n%s", result.stdout)
+	}
+}
+
+func TestInfoServerCallsInfo(t *testing.T) {
+	fake := installFakeArbiterClient(t)
+	fake.info = map[string]any{"name": "arbiter", "deployment_scope": "installed"}
+
+	result := runTestCLI("info", "server", "arbiter.url=http://server.test")
 
 	if result.code != 0 {
 		t.Fatalf("expected exit code 0, got %d stderr=%q", result.code, result.stderr)
@@ -19,158 +34,157 @@ func TestInfoPluginsCallsInfoTool(t *testing.T) {
 	if fake.url != "http://server.test" {
 		t.Fatalf("unexpected URL: %q", fake.url)
 	}
-	if fake.calls[0].name != "plugins" {
-		t.Fatalf("unexpected native call: %q", fake.calls[0].name)
+	if len(fake.calls) != 1 || fake.calls[0].name != "info" {
+		t.Fatalf("unexpected native calls: %#v", fake.calls)
 	}
-	expected := `{"kind":"plugins","plugins":[{"id":"smtp"}],"server_url":"http://server.test"}` + "\n"
+	expected := `{"deployment_scope":"installed","name":"arbiter","server_url":"http://server.test"}` + "\n"
 	if result.stdout != expected {
 		t.Fatalf("unexpected stdout:\n%s", result.stdout)
 	}
 }
 
-func TestInfoPluginsPrintsStagedDeploymentWarning(t *testing.T) {
+func TestInfoServerYAMLFlagCanFollowSubcommand(t *testing.T) {
 	fake := installFakeArbiterClient(t)
-	fake.info = map[string]any{"name": "arbiter", "deployment_scope": "staged"}
-	fake.plugins = map[string]any{"plugins": []any{map[string]any{"id": "smtp"}}}
+	fake.info = map[string]any{"name": "arbiter"}
 
-	result := runTestCLI("info", "plugins", "arbiter.url=http://staged.test")
+	result := runTestCLI("info", "server", "--yaml")
 
 	if result.code != 0 {
 		t.Fatalf("expected exit code 0, got %d stderr=%q", result.code, result.stderr)
 	}
-	if fake.calls[0].name != "plugins" || fake.calls[1].name != "info" {
-		t.Fatalf("unexpected native calls: %#v", fake.calls)
+	if !strings.Contains(result.stdout, "name: arbiter\n") ||
+		!strings.Contains(result.stdout, "server_url: http://127.0.0.1:8075\n") {
+		t.Fatalf("expected YAML-ish output, got:\n%s", result.stdout)
+	}
+}
+
+func TestInfoServerPrintsStagedDeploymentWarning(t *testing.T) {
+	fake := installFakeArbiterClient(t)
+	fake.info = map[string]any{"name": "arbiter", "deployment_scope": "staged"}
+
+	result := runTestCLI("info", "server", "arbiter.url=http://staged.test")
+
+	if result.code != 0 {
+		t.Fatalf("expected exit code 0, got %d stderr=%q", result.code, result.stderr)
 	}
 	if result.stderr != "Heads up: connected to staged Arbiter at http://staged.test.\n" {
 		t.Fatalf("unexpected stderr:\n%s", result.stderr)
 	}
 }
 
-func TestInfoYAMLFlagCanFollowSubcommand(t *testing.T) {
-	fake := installFakeArbiterClient(t)
-	fake.plugins = map[string]any{
-		"plugins": []any{map[string]any{"id": "smtp", "summary": "Send mail"}},
-	}
-	fake.pluginOperations = map[string]map[string]any{
-		"smtp": {"operations": []any{}},
-	}
+func TestInfoRejectsOldSubcommands(t *testing.T) {
+	result := runTestCLI("info", "plugins", "arbiter.url=http://old.test")
 
-	result := runTestCLI("info", "plugin", "smtp", "--yaml")
-
-	if result.code != 0 {
-		t.Fatalf("expected exit code 0, got %d stderr=%q", result.code, result.stderr)
+	if result.code != 2 {
+		t.Fatalf("expected exit code 2, got %d", result.code)
 	}
-	if !strings.Contains(result.stdout, "kind: plugin\n") {
-		t.Fatalf("expected YAML-ish output, got:\n%s", result.stdout)
-	}
-	if fake.calls[0].name != "plugins" || fake.calls[1].name != "plugin_operations" {
-		t.Fatalf("unexpected native calls: %#v", fake.calls)
+	if !strings.Contains(result.stderr, "expected: arbiter info server") {
+		t.Fatalf("unexpected stderr:\n%s", result.stderr)
 	}
 }
 
-func TestInfoShortPrintsOnlyAccountSummary(t *testing.T) {
+func TestPluginsListCallsNativePlugins(t *testing.T) {
 	fake := installFakeArbiterClient(t)
-	fake.info = map[string]any{"name": "arbiter"}
-	fake.plugins = map[string]any{
-		"plugins": []any{
-			map[string]any{
-				"id":      "imap",
-				"summary": "Read mail",
-				"accounts": []any{
-					map[string]any{"name": "bot", "description": "Bot mailbox"},
-					map[string]any{"name": "personal"},
-				},
-			},
-			map[string]any{
-				"id":      "smtp",
-				"summary": "Send mail",
-				"accounts": []any{
-					map[string]any{"name": "bot", "description": "Bot sender"},
-				},
-			},
-		},
-	}
+	fake.plugins = map[string]any{"plugins": []any{map[string]any{"id": "smtp"}}}
 
-	result := runTestCLI("info", "--short", "arbiter.url=http://server.test")
+	result := runTestCLI("plugins", "arbiter.url=http://server.test")
 
 	if result.code != 0 {
 		t.Fatalf("expected exit code 0, got %d stderr=%q", result.code, result.stderr)
 	}
-	if fake.calls[0].name != "info" || fake.calls[1].name != "plugins" {
-		t.Fatalf("unexpected native calls: %#v", fake.calls)
+	if fake.calls[0].name != "plugins" {
+		t.Fatalf("unexpected native call: %q", fake.calls[0].name)
 	}
-	expected := `{"accounts":[{"description":"Bot mailbox","id":"imap:bot"},{"id":"imap:personal"},{"description":"Bot sender","id":"smtp:bot"}],"kind":"overview_short","server_url":"http://server.test"}` + "\n"
+	expected := `{"plugins":[{"id":"smtp"}]}` + "\n"
 	if result.stdout != expected {
 		t.Fatalf("unexpected stdout:\n%s", result.stdout)
 	}
 }
 
-func TestInfoShortYAMLFlagCanFollowSubcommand(t *testing.T) {
+func TestPluginsSubcommandsCallNativePluginRoutes(t *testing.T) {
 	fake := installFakeArbiterClient(t)
-	fake.info = map[string]any{"name": "arbiter"}
-	fake.plugins = map[string]any{
-		"plugins": []any{
-			map[string]any{
-				"id": "imap",
-				"accounts": []any{
-					map[string]any{"name": "bot", "description": "Bot mailbox"},
-				},
-			},
+	fake.pluginDetails = map[string]map[string]any{
+		"smtp": {"id": "smtp", "summary": "Send mail"},
+	}
+	fake.pluginAccounts = map[string]map[string]any{
+		"smtp": {"plugin": "smtp", "accounts": []any{map[string]any{"account": "bot"}}},
+	}
+	fake.pluginAccountDetails = map[string]map[string]any{
+		"smtp/bot": {"kind": "account", "plugin": "smtp", "account": "bot"},
+	}
+	fake.pluginPolicies = map[string]map[string]any{
+		"smtp/bot_policy": {"kind": "policy", "plugin": "smtp", "policy": "bot_policy"},
+	}
+
+	cases := []struct {
+		name     string
+		args     []string
+		callName string
+		callID   string
+		expected string
+	}{
+		{
+			name:     "plugin",
+			args:     []string{"plugins", "smtp"},
+			callName: "plugin_details",
+			callID:   "smtp",
+			expected: `{"id":"smtp","summary":"Send mail"}` + "\n",
+		},
+		{
+			name:     "accounts",
+			args:     []string{"plugins", "smtp", "accounts"},
+			callName: "plugin_accounts",
+			callID:   "smtp",
+			expected: `{"accounts":[{"account":"bot"}],"plugin":"smtp"}` + "\n",
+		},
+		{
+			name:     "account",
+			args:     []string{"plugins", "smtp", "account", "bot"},
+			callName: "plugin_account",
+			callID:   "smtp/bot",
+			expected: `{"account":"bot","kind":"account","plugin":"smtp"}` + "\n",
+		},
+		{
+			name:     "policy",
+			args:     []string{"plugins", "smtp", "policy", "bot_policy"},
+			callName: "plugin_policy",
+			callID:   "smtp/bot_policy",
+			expected: `{"kind":"policy","plugin":"smtp","policy":"bot_policy"}` + "\n",
 		},
 	}
 
-	result := runTestCLI("info", "--yaml", "--short")
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			fake.calls = nil
+			result := runTestCLI(tt.args...)
+
+			if result.code != 0 {
+				t.Fatalf("expected exit code 0, got %d stderr=%q", result.code, result.stderr)
+			}
+			if fake.calls[0].name != tt.callName || fake.calls[0].id != tt.callID {
+				t.Fatalf("unexpected native call: %#v", fake.calls[0])
+			}
+			if result.stdout != tt.expected {
+				t.Fatalf("unexpected stdout:\n%s", result.stdout)
+			}
+		})
+	}
+}
+
+func TestPluginsYAMLFlagCanFollowSubcommand(t *testing.T) {
+	fake := installFakeArbiterClient(t)
+	fake.pluginDetails = map[string]map[string]any{
+		"smtp": {"id": "smtp", "summary": "Send mail"},
+	}
+
+	result := runTestCLI("plugins", "smtp", "--yaml")
 
 	if result.code != 0 {
 		t.Fatalf("expected exit code 0, got %d stderr=%q", result.code, result.stderr)
 	}
-	if !strings.Contains(result.stdout, "kind: overview_short\n") {
-		t.Fatalf("expected short YAML output, got:\n%s", result.stdout)
-	}
-	if !strings.Contains(result.stdout, "id: imap:bot\n") {
-		t.Fatalf("expected account id in YAML output, got:\n%s", result.stdout)
-	}
-}
-
-func TestInfoShortPrintsEmptyAccountsList(t *testing.T) {
-	fake := installFakeArbiterClient(t)
-	fake.info = map[string]any{"name": "arbiter"}
-	fake.plugins = map[string]any{"plugins": []any{}}
-
-	result := runTestCLI("info", "--short")
-
-	if result.code != 0 {
-		t.Fatalf("expected exit code 0, got %d stderr=%q", result.code, result.stderr)
-	}
-	if result.stdout != `{"accounts":[],"kind":"overview_short","server_url":"http://127.0.0.1:8075"}`+"\n" {
-		t.Fatalf("unexpected stdout:\n%s", result.stdout)
-	}
-}
-
-func TestInfoShortRejectsSubcommands(t *testing.T) {
-	fake := installFakeArbiterClient(t)
-
-	result := runTestCLI("info", "plugin", "smtp", "--short")
-
-	if result.code != 2 {
-		t.Fatalf("expected exit code 2, got %d stderr=%q", result.code, result.stderr)
-	}
-	if len(fake.calls) != 0 {
-		t.Fatalf("expected no native calls, got %#v", fake.calls)
-	}
-	if !strings.Contains(result.stderr, "info --short is only valid for overview") {
-		t.Fatalf("unexpected stderr:\n%s", result.stderr)
-	}
-}
-
-func TestInfoTestsReportsUnknownCommand(t *testing.T) {
-	result := runTestCLI("info", "tests", "arbiter.url=http://old.test")
-
-	if result.code != 2 {
-		t.Fatalf("expected exit code 2, got %d", result.code)
-	}
-	if !strings.Contains(result.stderr, "unknown info command: tests") {
-		t.Fatalf("unexpected stderr:\n%s", result.stderr)
+	if !strings.Contains(result.stdout, "id: smtp\n") ||
+		!strings.Contains(result.stdout, "summary: Send mail\n") {
+		t.Fatalf("expected YAML-ish output, got:\n%s", result.stdout)
 	}
 }
 
@@ -206,8 +220,8 @@ func TestOperationRunCallsRunOp(t *testing.T) {
 
 func TestOperationDescForPluginCallsInfo(t *testing.T) {
 	fake := installFakeArbiterClient(t)
-	fake.plugins = map[string]any{
-		"plugins": []any{map[string]any{"id": "imap", "summary": "Read mail"}},
+	fake.pluginDetails = map[string]map[string]any{
+		"imap": {"id": "imap", "summary": "Read mail"},
 	}
 	fake.pluginOperations = map[string]map[string]any{
 		"imap": {"operations": []any{}},
@@ -221,39 +235,18 @@ func TestOperationDescForPluginCallsInfo(t *testing.T) {
 	if len(fake.calls) != 2 {
 		t.Fatalf("expected plugin and operation native calls, got %#v", fake.calls)
 	}
-	if fake.calls[0].name != "plugins" || fake.calls[1].name != "plugin_operations" {
+	if fake.calls[0].name != "plugin_details" || fake.calls[1].name != "plugin_operations" {
 		t.Fatalf("unexpected native calls: %#v", fake.calls)
 	}
-	if result.stdout != `{"description":"Read mail","id":"imap","kind":"plugin","operations":[]}`+"\n" {
-		t.Fatalf("unexpected stdout: %q", result.stdout)
-	}
-}
-
-func TestOperationDescForPluginPrintsPlain(t *testing.T) {
-	fake := installFakeArbiterClient(t)
-	fake.plugins = map[string]any{
-		"plugins": []any{map[string]any{"id": "imap", "summary": "Read mail"}},
-	}
-	fake.pluginOperations = map[string]map[string]any{
-		"imap": {
-			"operations": []any{map[string]any{"id": "imap:get_message"}},
-		},
-	}
-
-	result := runTestCLI("op", "desc", "imap", "--plain")
-
-	if result.code != 0 {
-		t.Fatalf("expected exit code 0, got %d stderr=%q", result.code, result.stderr)
-	}
-	if result.stdout != "imap\nRead mail\nimap:get_message\n" {
+	if result.stdout != `{"id":"imap","kind":"plugin","operations":[],"summary":"Read mail"}`+"\n" {
 		t.Fatalf("unexpected stdout: %q", result.stdout)
 	}
 }
 
 func TestOperationDescForPluginPrintsYAML(t *testing.T) {
 	fake := installFakeArbiterClient(t)
-	fake.plugins = map[string]any{
-		"plugins": []any{map[string]any{"id": "imap", "summary": "Read mail"}},
+	fake.pluginDetails = map[string]map[string]any{
+		"imap": {"id": "imap", "summary": "Read mail"},
 	}
 	fake.pluginOperations = map[string]map[string]any{
 		"imap": {"operations": []any{}},
@@ -264,7 +257,7 @@ func TestOperationDescForPluginPrintsYAML(t *testing.T) {
 	if result.code != 0 {
 		t.Fatalf("expected exit code 0, got %d stderr=%q", result.code, result.stderr)
 	}
-	if !strings.Contains(result.stdout, "description: Read mail\n") ||
+	if !strings.Contains(result.stdout, "summary: Read mail\n") ||
 		!strings.Contains(result.stdout, "id: imap\n") ||
 		!strings.Contains(result.stdout, "kind: plugin\n") {
 		t.Fatalf("expected YAML output, got:\n%s", result.stdout)
@@ -320,27 +313,6 @@ func TestOperationListForPluginPrintsJSONByDefault(t *testing.T) {
 	}
 	expected := `{"kind":"ops","operations":{"smtp:send_email":{},"smtp:verify_connection":{}},"plugin":"smtp"}` + "\n"
 	if result.stdout != expected {
-		t.Fatalf("unexpected stdout: %q", result.stdout)
-	}
-}
-
-func TestOperationListForPluginPrintsPlainOperationIDs(t *testing.T) {
-	fake := installFakeArbiterClient(t)
-	fake.pluginOperations = map[string]map[string]any{
-		"smtp": {
-			"operations": []any{
-				map[string]any{"id": "smtp:send_email"},
-				map[string]any{"id": "smtp:verify_connection"},
-			},
-		},
-	}
-
-	result := runTestCLI("op", "list", "smtp", "--plain")
-
-	if result.code != 0 {
-		t.Fatalf("expected exit code 0, got %d stderr=%q", result.code, result.stderr)
-	}
-	if result.stdout != "smtp:send_email\nsmtp:verify_connection\n" {
 		t.Fatalf("unexpected stdout: %q", result.stdout)
 	}
 }
@@ -401,25 +373,6 @@ func TestOperationListPrintsPluginsJSONByDefault(t *testing.T) {
 	}
 }
 
-func TestOperationListPrintsPlainPlugins(t *testing.T) {
-	fake := installFakeArbiterClient(t)
-	fake.plugins = map[string]any{
-		"plugins": []any{
-			map[string]any{"id": "smtp"},
-			map[string]any{"id": "imap"},
-		},
-	}
-
-	result := runTestCLI("op", "list", "--plain")
-
-	if result.code != 0 {
-		t.Fatalf("expected exit code 0, got %d stderr=%q", result.code, result.stderr)
-	}
-	if result.stdout != "imap\nsmtp\n" {
-		t.Fatalf("unexpected stdout: %q", result.stdout)
-	}
-}
-
 func TestOperationListPrintsPluginsYAML(t *testing.T) {
 	fake := installFakeArbiterClient(t)
 	fake.plugins = map[string]any{
@@ -436,6 +389,20 @@ func TestOperationListPrintsPluginsYAML(t *testing.T) {
 	}
 	if result.stdout != "plugins:\n  - imap\n  - smtp\n" {
 		t.Fatalf("unexpected stdout: %q", result.stdout)
+	}
+}
+
+func TestOperationOutputRejectsPlain(t *testing.T) {
+	result := runTestCLI("op", "list", "--plain")
+
+	if result.code != 2 {
+		t.Fatalf("expected exit code 2, got %d", result.code)
+	}
+	if result.stdout != "" {
+		t.Fatalf("unexpected stdout: %q", result.stdout)
+	}
+	if !strings.Contains(result.stderr, "unknown output option: --plain") {
+		t.Fatalf("expected plain rejection, got %q", result.stderr)
 	}
 }
 
@@ -471,24 +438,32 @@ type fakeCall struct {
 }
 
 type fakeArbiterClient struct {
-	url              string
-	info             map[string]any
-	plugins          map[string]any
-	pluginOperations map[string]map[string]any
-	operationDetails map[string]map[string]any
-	runResults       map[string]map[string]any
-	err              error
-	calls            []fakeCall
+	url                  string
+	info                 map[string]any
+	plugins              map[string]any
+	pluginDetails        map[string]map[string]any
+	pluginAccounts       map[string]map[string]any
+	pluginAccountDetails map[string]map[string]any
+	pluginPolicies       map[string]map[string]any
+	pluginOperations     map[string]map[string]any
+	operationDetails     map[string]map[string]any
+	runResults           map[string]map[string]any
+	err                  error
+	calls                []fakeCall
 }
 
 func installFakeArbiterClient(t *testing.T) *fakeArbiterClient {
 	t.Helper()
 	fake := &fakeArbiterClient{
-		info:             map[string]any{"name": "arbiter"},
-		plugins:          map[string]any{"plugins": []any{}},
-		pluginOperations: map[string]map[string]any{},
-		operationDetails: map[string]map[string]any{},
-		runResults:       map[string]map[string]any{},
+		info:                 map[string]any{"name": "arbiter"},
+		plugins:              map[string]any{"plugins": []any{}},
+		pluginDetails:        map[string]map[string]any{},
+		pluginAccounts:       map[string]map[string]any{},
+		pluginAccountDetails: map[string]map[string]any{},
+		pluginPolicies:       map[string]map[string]any{},
+		pluginOperations:     map[string]map[string]any{},
+		operationDetails:     map[string]map[string]any{},
+		runResults:           map[string]map[string]any{},
 	}
 	previous := newArbiterClient
 	newArbiterClient = func(url string) arbiterClient {
@@ -515,6 +490,52 @@ func (f *fakeArbiterClient) Plugins(context.Context) (map[string]any, error) {
 		return nil, f.err
 	}
 	return f.plugins, nil
+}
+
+func (f *fakeArbiterClient) PluginDetails(_ context.Context, plugin string) (map[string]any, error) {
+	f.calls = append(f.calls, fakeCall{name: "plugin_details", id: plugin})
+	if f.err != nil {
+		return nil, f.err
+	}
+	if payload, ok := f.pluginDetails[plugin]; ok {
+		return payload, nil
+	}
+	return map[string]any{"id": plugin}, nil
+}
+
+func (f *fakeArbiterClient) PluginAccounts(_ context.Context, plugin string) (map[string]any, error) {
+	f.calls = append(f.calls, fakeCall{name: "plugin_accounts", id: plugin})
+	if f.err != nil {
+		return nil, f.err
+	}
+	if payload, ok := f.pluginAccounts[plugin]; ok {
+		return payload, nil
+	}
+	return map[string]any{"plugin": plugin, "accounts": []any{}}, nil
+}
+
+func (f *fakeArbiterClient) PluginAccount(_ context.Context, plugin string, account string) (map[string]any, error) {
+	id := plugin + "/" + account
+	f.calls = append(f.calls, fakeCall{name: "plugin_account", id: id})
+	if f.err != nil {
+		return nil, f.err
+	}
+	if payload, ok := f.pluginAccountDetails[id]; ok {
+		return payload, nil
+	}
+	return map[string]any{"kind": "account", "plugin": plugin, "account": account}, nil
+}
+
+func (f *fakeArbiterClient) PluginPolicy(_ context.Context, plugin string, policy string) (map[string]any, error) {
+	id := plugin + "/" + policy
+	f.calls = append(f.calls, fakeCall{name: "plugin_policy", id: id})
+	if f.err != nil {
+		return nil, f.err
+	}
+	if payload, ok := f.pluginPolicies[id]; ok {
+		return payload, nil
+	}
+	return map[string]any{"kind": "policy", "plugin": plugin, "policy": policy}, nil
 }
 
 func (f *fakeArbiterClient) PluginOperations(_ context.Context, plugin string) (map[string]any, error) {

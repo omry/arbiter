@@ -178,8 +178,8 @@ validating a config. Once the server is running, point the client CLI at the
 server URL:
 
 ```bash
-arbiter info arbiter.url=http://127.0.0.1:8075
-arbiter info plugins arbiter.url=http://127.0.0.1:8075
+arbiter info server arbiter.url=http://127.0.0.1:8075
+arbiter plugins arbiter.url=http://127.0.0.1:8075
 ```
 
 The client can also read the endpoint from a small config file:

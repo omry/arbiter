@@ -214,7 +214,27 @@ async def _asgi_request(
 
 def _client(tmp_path: Path) -> ASGIClient:
     cfg = AppConfig()
-    cfg.arbiter.account = {"echo": {"primary": {}}}
+    cfg.arbiter.account = {
+        "echo": {
+            "primary": {
+                "policy": "primary_policy",
+                "description": "Primary echo account.",
+                "guidance": "Use for smoke tests.",
+                "password": "${oc.env:ARB_TEST_PASSWORD_DOES_NOT_EXIST}",
+            }
+        }
+    }
+    cfg.arbiter.policy = {
+        "echo": {
+            "primary_policy": {
+                "rules": {
+                    "repeat": "allow",
+                    "idempotency": {"cache_dir": "/tmp/arbiter-cache"},
+                },
+                "api_key": "${oc.env:ARB_TEST_POLICY_API_KEY_DOES_NOT_EXIST}",
+            }
+        }
+    }
     cfg.arbiter.storage.plugin_data_dir = str(tmp_path)
     server = build_server(
         OmegaConf.structured(cfg),
@@ -233,6 +253,7 @@ def test_native_http_protocol_exposes_health_info_and_progressive_discovery(
     info = client.get("/api/v1/info").json()
     assert info["name"] == "arbiter"
     assert info["deployment_scope"] == "unknown"
+    assert set(info["source"]) == {"commit", "dirty", "build_time"}
 
     plugins = client.get("/api/v1/plugins").json()
     assert plugins == {
@@ -240,10 +261,52 @@ def test_native_http_protocol_exposes_health_info_and_progressive_discovery(
             {
                 "id": "echo",
                 "summary": "Echo text and create test artifacts.",
-                "operations_url": "/api/v1/plugins/echo/operations",
             }
         ]
     }
+
+    plugin = client.get("/api/v1/plugins/echo").json()
+    assert plugin == {
+        "id": "echo",
+        "summary": "Echo text and create test artifacts.",
+    }
+
+    accounts = client.get("/api/v1/plugins/echo/accounts").json()
+    assert accounts == {
+        "plugin": "echo",
+        "accounts": [
+            {
+                "plugin": "echo",
+                "account": "primary",
+                "description": "Primary echo account.",
+                "guidance": "Use for smoke tests.",
+                "policy": "primary_policy",
+            }
+        ],
+    }
+
+    account = client.get("/api/v1/plugins/echo/accounts/primary").json()
+    assert account["kind"] == "account"
+    assert account["plugin"] == "echo"
+    assert account["account"] == "primary"
+    assert account["description"] == "Primary echo account."
+    assert account["guidance"] == "Use for smoke tests."
+    assert account["config"]["password"] == "<redacted>"
+    assert account["policy"] == {
+        "kind": "policy",
+        "plugin": "echo",
+        "policy": "primary_policy",
+        "rules": {
+            "rules": {
+                "repeat": "allow",
+                "idempotency": {"cache_dir": "<redacted>"},
+            },
+            "api_key": "<redacted>",
+        },
+    }
+
+    policy = client.get("/api/v1/plugins/echo/policies/primary_policy").json()
+    assert policy == account["policy"]
 
     operations = client.get("/api/v1/plugins/echo/operations").json()
     assert operations == {
@@ -253,13 +316,11 @@ def test_native_http_protocol_exposes_health_info_and_progressive_discovery(
                 "id": "echo:make_artifact",
                 "summary": "Create a streamed text artifact.",
                 "when_to_use": "Create a streamed text artifact.",
-                "details_url": "/api/v1/operations/echo:make_artifact",
             },
             {
                 "id": "echo:repeat",
                 "summary": "Repeat text.",
                 "when_to_use": "Repeat text.",
-                "details_url": "/api/v1/operations/echo:repeat",
             },
         ],
     }

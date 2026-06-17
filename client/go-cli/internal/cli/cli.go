@@ -41,6 +41,10 @@ type ResolvedURL struct {
 type arbiterClient interface {
 	Info(context.Context) (map[string]any, error)
 	Plugins(context.Context) (map[string]any, error)
+	PluginDetails(context.Context, string) (map[string]any, error)
+	PluginAccounts(context.Context, string) (map[string]any, error)
+	PluginAccount(context.Context, string, string) (map[string]any, error)
+	PluginPolicy(context.Context, string, string) (map[string]any, error)
 	PluginOperations(context.Context, string) (map[string]any, error)
 	OperationDetails(context.Context, string) (map[string]any, error)
 	RunOperation(context.Context, string, map[string]any) (map[string]any, error)
@@ -63,9 +67,8 @@ type globalOptions struct {
 type outputFormat string
 
 const (
-	outputJSON  outputFormat = "json"
-	outputYAML  outputFormat = "yaml"
-	outputPlain outputFormat = "plain"
+	outputJSON outputFormat = "json"
+	outputYAML outputFormat = "yaml"
 )
 
 func Main(
@@ -108,6 +111,8 @@ func Main(
 		return runConfig(remaining[1:], options, stdout, stderr, lookupEnv, homeDir)
 	case "info":
 		return runInfo(remaining[1:], options, stdout, stderr, lookupEnv, homeDir)
+	case "plugins":
+		return runPlugins(remaining[1:], options, stdout, stderr, lookupEnv, homeDir)
 	case "op":
 		return runOperation(remaining[1:], options, stdout, stderr, lookupEnv, homeDir)
 	case "artifact":
@@ -265,7 +270,7 @@ func runConfig(
 	lookupEnv EnvLookup,
 	homeDir HomeDirFunc,
 ) int {
-	if len(args) == 1 && isHelpFlag(args[0]) {
+	if len(args) == 0 || (len(args) == 1 && isHelpFlag(args[0])) {
 		printConfigHelp(stdout)
 		return 0
 	}
@@ -283,7 +288,7 @@ func runConfig(
 		fmt.Fprintf(stderr, "Arbiter client config error: %v\n", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "%s\n", resolved.URL)
+	fmt.Fprintf(stdout, "url: %s\nsource: %s\n", resolved.URL, resolved.Source)
 	return 0
 }
 
@@ -295,57 +300,94 @@ func runInfo(
 	lookupEnv EnvLookup,
 	homeDir HomeDirFunc,
 ) int {
-	if len(args) == 1 && isHelpFlag(args[0]) {
-		printInfoHelp(stdout)
-		return 0
-	}
 	yaml := false
-	short := false
 	for len(args) > 0 {
 		switch args[0] {
 		case "--yaml":
 			yaml = true
-		case "--short":
-			short = true
 		default:
 			goto parsedFlags
 		}
 		args = args[1:]
 	}
 parsedFlags:
-	if len(args) == 1 && isHelpFlag(args[0]) {
+	if len(args) == 0 || (len(args) == 1 && isHelpFlag(args[0])) {
 		printInfoHelp(stdout)
 		return 0
 	}
-	if len(args) == 2 && isHelpFlag(args[1]) {
-		printInfoSubcommandHelp(stdout, args[0])
+	if len(args) == 2 && args[0] == "server" && isHelpFlag(args[1]) {
+		printInfoServerHelp(stdout)
 		return 0
 	}
-	if short && len(args) > 0 {
-		fmt.Fprintln(stderr, "Arbiter usage error: info --short is only valid for overview")
+	if len(args) != 1 || args[0] != "server" {
+		printUsageError(stderr, "expected: arbiter info server", "arbiter info")
 		return 2
 	}
-	arguments, err := infoArguments(args)
-	if err != nil {
-		printUsageError(stderr, err.Error(), "arbiter info")
-		return 2
-	}
-	payload, err := callToolPayload("info", arguments, options, lookupEnv, homeDir)
+	payload, err := callToolPayload(
+		"info",
+		map[string]any{"kind": "server"},
+		options,
+		lookupEnv,
+		homeDir,
+	)
 	if err != nil {
 		fmt.Fprintf(stderr, "Arbiter tool error: %s\n", toolErrorForCLI(err, args, options, lookupEnv, homeDir))
 		return 1
 	}
 	payload = withServerURL(payload, options, lookupEnv, homeDir)
 	printStagedDeploymentWarning(stderr, payload, options, lookupEnv, homeDir)
-	if short {
-		payload = shortInfoPayload(payload)
-	}
 	if yaml {
 		printYAML(stdout, payload)
 		return 0
 	}
 	printJSON(stdout, payload)
 	return 0
+}
+
+func runPlugins(
+	args []string,
+	options globalOptions,
+	stdout io.Writer,
+	stderr io.Writer,
+	lookupEnv EnvLookup,
+	homeDir HomeDirFunc,
+) int {
+	if len(args) == 1 && isHelpFlag(args[0]) {
+		printPluginsHelp(stdout)
+		return 0
+	}
+	positionals, format, err := parseOutputFormatArgs(args, 4)
+	if err != nil {
+		printUsageError(stderr, err.Error(), "arbiter plugins")
+		return 2
+	}
+	if !validPluginsArgs(positionals) {
+		printUsageError(
+			stderr,
+			"expected: arbiter plugins [plugin [accounts|account NAME|policy NAME]]",
+			"arbiter plugins",
+		)
+		return 2
+	}
+	payload, err := pluginsPayload(positionals, options, lookupEnv, homeDir)
+	if err != nil {
+		fmt.Fprintf(stderr, "Arbiter tool error: %s\n", err)
+		return 1
+	}
+	printStagedDeploymentWarning(stderr, payload, options, lookupEnv, homeDir)
+	if format == outputYAML {
+		printYAML(stdout, payload)
+		return 0
+	}
+	printJSON(stdout, payload)
+	return 0
+}
+
+func validPluginsArgs(args []string) bool {
+	return len(args) == 0 ||
+		len(args) == 1 ||
+		(len(args) == 2 && args[1] == "accounts") ||
+		(len(args) == 3 && (args[1] == "account" || args[1] == "policy"))
 }
 
 func runOperation(
@@ -379,12 +421,12 @@ func runOperation(
 			printUsageError(stderr, "expected: arbiter op list [plugin]", "arbiter op list")
 			return 2
 		}
-		payload, plainItems, err := listOperationPayload(positionals, options, lookupEnv, homeDir)
+		payload, err := listOperationPayload(positionals, options, lookupEnv, homeDir)
 		if err != nil {
 			fmt.Fprintf(stderr, "Arbiter tool error: %s\n", err)
 			return 1
 		}
-		renderOperationPayload(stdout, payload, plainItems, format)
+		renderOperationPayload(stdout, payload, format)
 		return 0
 	case "desc", "describe":
 		if len(args) == 2 && isHelpFlag(args[1]) {
@@ -405,7 +447,7 @@ func runOperation(
 			fmt.Fprintf(stderr, "Arbiter tool error: %s\n", err)
 			return 1
 		}
-		renderOperationPayload(stdout, payload, operationDescPlainLines(payload), format)
+		renderOperationPayload(stdout, payload, format)
 		return 0
 	case "run":
 		if len(args) == 2 && isHelpFlag(args[1]) {
@@ -458,27 +500,27 @@ func listOperationPayload(
 	options globalOptions,
 	lookupEnv EnvLookup,
 	homeDir HomeDirFunc,
-) (any, []string, error) {
+) (any, error) {
 	if len(args) == 1 {
 		payload, err := callToolPayload("info", map[string]any{"kind": "ops", "plugin": args[0]}, options, lookupEnv, homeDir)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
-		structuredPayload, operationIDs, err := operationListStructuredPayload(payload)
+		structuredPayload, err := operationListStructuredPayload(payload)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
-		return structuredPayload, operationIDs, nil
+		return structuredPayload, nil
 	}
 	payload, err := callToolPayload("info", map[string]any{"kind": "plugins"}, options, lookupEnv, homeDir)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	pluginIDs, err := pluginIDsFromInfoPayload(payload)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return map[string]any{"plugins": pluginIDs}, pluginIDs, nil
+	return map[string]any{"plugins": pluginIDs}, nil
 }
 
 func ResolveURL(
@@ -602,54 +644,24 @@ func normalizeConfigName(name string) string {
 	return name + ".yaml"
 }
 
-func infoArguments(args []string) (map[string]any, error) {
-	if len(args) == 0 {
-		return map[string]any{"kind": "overview"}, nil
-	}
-	switch args[0] {
-	case "plugins":
-		if len(args) != 1 {
-			return nil, fmt.Errorf("expected: arbiter info plugins")
-		}
-		return map[string]any{"kind": "plugins"}, nil
-	case "plugin":
-		if len(args) != 2 {
-			return nil, fmt.Errorf("expected: arbiter info plugin <plugin>")
-		}
-		return map[string]any{"kind": "plugin", "plugin": args[1]}, nil
-	case "ops":
-		if len(args) != 2 {
-			return nil, fmt.Errorf("expected: arbiter info ops <plugin>")
-		}
-		return map[string]any{"kind": "ops", "plugin": args[1]}, nil
-	case "op":
-		if len(args) != 3 {
-			return nil, fmt.Errorf("expected: arbiter info op <plugin> <operation>")
-		}
-		return map[string]any{"kind": "op", "plugin": args[1], "operation": args[2]}, nil
-	default:
-		return nil, fmt.Errorf("unknown info command: %s", args[0])
-	}
-}
-
 func pluginIDsFromInfoPayload(payload any) ([]string, error) {
 	mapping, ok := payload.(map[string]any)
 	if !ok {
-		return nil, fmt.Errorf("unexpected info plugins payload")
+		return nil, fmt.Errorf("unexpected plugins payload")
 	}
 	pluginItems, ok := mapping["plugins"].([]any)
 	if !ok {
-		return nil, fmt.Errorf("unexpected info plugins payload")
+		return nil, fmt.Errorf("unexpected plugins payload")
 	}
 	plugins := []string{}
 	for _, pluginItem := range pluginItems {
 		plugin, ok := pluginItem.(map[string]any)
 		if !ok {
-			return nil, fmt.Errorf("unexpected info plugins payload")
+			return nil, fmt.Errorf("unexpected plugins payload")
 		}
 		pluginID, ok := plugin["id"].(string)
 		if !ok || pluginID == "" {
-			return nil, fmt.Errorf("unexpected info plugins payload")
+			return nil, fmt.Errorf("unexpected plugins payload")
 		}
 		plugins = append(plugins, pluginID)
 	}
@@ -657,47 +669,42 @@ func pluginIDsFromInfoPayload(payload any) ([]string, error) {
 	return plugins, nil
 }
 
-func operationIDsFromInfoPayload(payload any) ([]string, error) {
-	_, operationIDs, err := operationsByIDFromInfoPayload(payload)
-	return operationIDs, err
-}
-
-func operationListStructuredPayload(payload any) (any, []string, error) {
+func operationListStructuredPayload(payload any) (any, error) {
 	mapping, ok := payload.(map[string]any)
 	if !ok {
-		return nil, nil, fmt.Errorf("unexpected info ops payload")
+		return nil, fmt.Errorf("unexpected operations payload")
 	}
-	operationsByID, operationIDs, err := operationsByIDFromInfoPayload(payload)
+	operationsByID, _, err := operationsByIDFromInfoPayload(payload)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	structured := make(map[string]any, len(mapping))
 	for key, value := range mapping {
 		structured[key] = value
 	}
 	structured["operations"] = operationsByID
-	return structured, operationIDs, nil
+	return structured, nil
 }
 
 func operationsByIDFromInfoPayload(payload any) (map[string]any, []string, error) {
 	mapping, ok := payload.(map[string]any)
 	if !ok {
-		return nil, nil, fmt.Errorf("unexpected info ops payload")
+		return nil, nil, fmt.Errorf("unexpected operations payload")
 	}
 	operationItems, ok := mapping["operations"].([]any)
 	if !ok {
-		return nil, nil, fmt.Errorf("unexpected info ops payload")
+		return nil, nil, fmt.Errorf("unexpected operations payload")
 	}
 	operationsByID := map[string]any{}
 	operationIDs := []string{}
 	for _, operationItem := range operationItems {
 		operation, ok := operationItem.(map[string]any)
 		if !ok {
-			return nil, nil, fmt.Errorf("unexpected info ops payload")
+			return nil, nil, fmt.Errorf("unexpected operations payload")
 		}
 		operationID, ok := operation["id"].(string)
 		if !ok || operationID == "" {
-			return nil, nil, fmt.Errorf("unexpected info ops payload")
+			return nil, nil, fmt.Errorf("unexpected operations payload")
 		}
 		operationSummary := make(map[string]any, len(operation))
 		for key, value := range operation {
@@ -718,9 +725,9 @@ func parseOutputFormatArgs(args []string, maxPositionals int) ([]string, outputF
 	positionals := []string{}
 	for _, arg := range args {
 		switch arg {
-		case "--json", "--yaml", "--plain":
+		case "--json", "--yaml":
 			if selected != "" && selected != arg {
-				return nil, "", fmt.Errorf("choose only one output format: --json, --yaml, or --plain")
+				return nil, "", fmt.Errorf("choose only one output format: --json or --yaml")
 			}
 			selected = arg
 			switch arg {
@@ -728,8 +735,6 @@ func parseOutputFormatArgs(args []string, maxPositionals int) ([]string, outputF
 				format = outputJSON
 			case "--yaml":
 				format = outputYAML
-			case "--plain":
-				format = outputPlain
 			}
 		default:
 			if strings.HasPrefix(arg, "-") {
@@ -744,97 +749,13 @@ func parseOutputFormatArgs(args []string, maxPositionals int) ([]string, outputF
 	return positionals, format, nil
 }
 
-func renderOperationPayload(w io.Writer, payload any, plainLines []string, format outputFormat) {
+func renderOperationPayload(w io.Writer, payload any, format outputFormat) {
 	switch format {
-	case outputPlain:
-		for _, line := range plainLines {
-			fmt.Fprintln(w, line)
-		}
 	case outputYAML:
 		printYAML(w, payload)
 	default:
 		printJSON(w, payload)
 	}
-}
-
-func operationDescPlainLines(payload any) []string {
-	mapping, ok := payload.(map[string]any)
-	if !ok {
-		return []string{fmt.Sprint(payload)}
-	}
-	lines := []string{}
-	if id, ok := mapping["id"].(string); ok && id != "" {
-		lines = append(lines, id)
-	}
-	if description, ok := mapping["description"].(string); ok && description != "" {
-		lines = append(lines, description)
-	}
-	if operationItems, ok := mapping["operations"].([]any); ok {
-		for _, operationItem := range operationItems {
-			operation, ok := operationItem.(map[string]any)
-			if !ok {
-				continue
-			}
-			if operationID, ok := operation["id"].(string); ok && operationID != "" {
-				lines = append(lines, operationID)
-			}
-		}
-	}
-	if len(lines) == 0 {
-		lines = append(lines, fmt.Sprint(payload))
-	}
-	return lines
-}
-
-func shortInfoPayload(payload any) any {
-	mapping, ok := payload.(map[string]any)
-	if !ok {
-		return payload
-	}
-	short := map[string]any{"kind": "overview_short"}
-	if serverURL, ok := mapping["server_url"].(string); ok {
-		short["server_url"] = serverURL
-	}
-	short["accounts"] = shortInfoAccounts(mapping["plugins"])
-	return short
-}
-
-func shortInfoAccounts(plugins any) []any {
-	pluginItems, ok := plugins.([]any)
-	if !ok {
-		return []any{}
-	}
-	accounts := []any{}
-	for _, pluginItem := range pluginItems {
-		plugin, ok := pluginItem.(map[string]any)
-		if !ok {
-			continue
-		}
-		pluginID, ok := plugin["id"].(string)
-		if !ok || pluginID == "" {
-			continue
-		}
-		accountItems, ok := plugin["accounts"].([]any)
-		if !ok {
-			continue
-		}
-		for _, accountItem := range accountItems {
-			account, ok := accountItem.(map[string]any)
-			if !ok {
-				continue
-			}
-			name, ok := account["name"].(string)
-			if !ok || name == "" {
-				continue
-			}
-			entry := map[string]any{"id": pluginID + ":" + name}
-			if description, ok := account["description"].(string); ok && description != "" {
-				entry["description"] = description
-			}
-			accounts = append(accounts, entry)
-		}
-	}
-	return accounts
 }
 
 func parseArgsFlag(args []string) (map[string]any, error) {
@@ -1472,23 +1393,11 @@ func nativeInfoPayload(
 ) (any, error) {
 	kind, _ := arguments["kind"].(string)
 	if kind == "" {
-		kind = "overview"
+		kind = "server"
 	}
 	switch kind {
-	case "overview":
-		info, err := client.Info(ctx)
-		if err != nil {
-			return nil, err
-		}
-		plugins, err := client.Plugins(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]any{
-			"kind":    "overview",
-			"server":  info,
-			"plugins": plugins["plugins"],
-		}, nil
+	case "server":
+		return client.Info(ctx)
 	case "plugins":
 		plugins, err := client.Plugins(ctx)
 		if err != nil {
@@ -1526,23 +1435,9 @@ func nativePluginPayload(
 	client arbiterClient,
 	plugin string,
 ) (map[string]any, error) {
-	plugins, err := client.Plugins(ctx)
+	selected, err := client.PluginDetails(ctx, plugin)
 	if err != nil {
 		return nil, err
-	}
-	var selected map[string]any
-	for _, item := range anySlice(plugins["plugins"]) {
-		candidate, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		if candidate["id"] == plugin {
-			selected = candidate
-			break
-		}
-	}
-	if selected == nil {
-		return nil, fmt.Errorf("unknown plugin: %s", plugin)
 	}
 	operations, err := nativeOperationsPayload(ctx, client, plugin)
 	if err != nil {
@@ -1554,9 +1449,36 @@ func nativePluginPayload(
 		"operations": operations["operations"],
 	}
 	if summary, ok := selected["summary"].(string); ok && summary != "" {
-		payload["description"] = summary
+		payload["summary"] = summary
 	}
 	return payload, nil
+}
+
+func pluginsPayload(
+	args []string,
+	options globalOptions,
+	lookupEnv EnvLookup,
+	homeDir HomeDirFunc,
+) (any, error) {
+	client, err := newInitializedArbiterClient(options, lookupEnv, homeDir)
+	if err != nil {
+		return nil, err
+	}
+	ctx := context.Background()
+	switch {
+	case len(args) == 0:
+		return client.Plugins(ctx)
+	case len(args) == 1:
+		return client.PluginDetails(ctx, args[0])
+	case len(args) == 2 && args[1] == "accounts":
+		return client.PluginAccounts(ctx, args[0])
+	case len(args) == 3 && args[1] == "account":
+		return client.PluginAccount(ctx, args[0], args[2])
+	case len(args) == 3 && args[1] == "policy":
+		return client.PluginPolicy(ctx, args[0], args[2])
+	default:
+		return nil, fmt.Errorf("expected: arbiter plugins [plugin [accounts|account NAME|policy NAME]]")
+	}
 }
 
 func nativeOperationsPayload(
@@ -1834,7 +1756,7 @@ func normalizeInfoOutputFlags(args []string) []string {
 	var withoutOutputFlags []string
 	var outputFlags []string
 	for index, arg := range normalized {
-		if index > infoIndex && (arg == "--yaml" || arg == "--short") {
+		if index > infoIndex && arg == "--yaml" {
 			outputFlags = append(outputFlags, arg)
 			continue
 		}
@@ -1945,7 +1867,7 @@ func parseConfigStringScalar(value string, path string) (string, error) {
 }
 
 func printShortUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: arbiter {info,op,artifact} ...")
+	fmt.Fprintln(w, "usage: arbiter {info,plugins,op,artifact} ...")
 	fmt.Fprintln(w, "Run 'arbiter --help' for help, or 'arbiter --help --extended' for setup and advanced commands.")
 }
 
@@ -1957,12 +1879,13 @@ func printUsageError(w io.Writer, message string, helpCommand string) {
 }
 
 func printHelp(w io.Writer) {
-	fmt.Fprintln(w, "usage: arbiter [--version] {info,op,artifact} ...")
+	fmt.Fprintln(w, "usage: arbiter [--version] {info,plugins,op,artifact} ...")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Native Arbiter client.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "primary commands:")
-	fmt.Fprintln(w, "  info [--short]  discover Arbiter server identity and plugins")
+	fmt.Fprintln(w, "  info            inspect Arbiter server identity")
+	fmt.Fprintln(w, "  plugins         inspect Arbiter plugins, accounts, and policies")
 	fmt.Fprintln(w, "  op              inspect or run Arbiter operations")
 	fmt.Fprintln(w, "  artifact        safely read, process, or explicitly save artifacts")
 	fmt.Fprintln(w)
@@ -1970,18 +1893,19 @@ func printHelp(w io.Writer) {
 }
 
 func printExtendedHelp(w io.Writer) {
-	fmt.Fprintln(w, "usage: arbiter [--version] {info,op,artifact,bootstrap,config} ...")
+	fmt.Fprintln(w, "usage: arbiter [--version] {info,plugins,op,artifact,bootstrap,config} ...")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Native Arbiter client.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "primary commands:")
-	fmt.Fprintln(w, "  info [--short]   discover Arbiter server identity and plugins")
+	fmt.Fprintln(w, "  info             inspect Arbiter server identity")
+	fmt.Fprintln(w, "  plugins          inspect Arbiter plugins, accounts, and policies")
 	fmt.Fprintln(w, "  op               inspect or run Arbiter operations")
 	fmt.Fprintln(w, "  artifact         safely read, process, or explicitly save artifacts")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "setup:")
 	fmt.Fprintln(w, "  bootstrap client create the Arbiter client config")
-	fmt.Fprintln(w, "  config url   print the resolved URL")
+	fmt.Fprintln(w, "  config url   print the resolved URL and source")
 }
 
 func helpArgsIncludeExtended(args []string) bool {
@@ -2021,52 +1945,46 @@ func printConfigHelp(w io.Writer) {
 	fmt.Fprintln(w, "Inspect Arbiter client configuration.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "commands:")
-	fmt.Fprintln(w, "  url  print the resolved URL")
+	fmt.Fprintln(w, "  url  print the resolved URL and source")
 }
 
 func printConfigURLHelp(w io.Writer) {
 	fmt.Fprintln(w, "usage: arbiter config url")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Print the URL resolved from overrides, environment, config, or default.")
+	fmt.Fprintln(w, "The source is override, ARBITER_URL, a config file path, or default.")
 }
 
 func printInfoHelp(w io.Writer) {
-	fmt.Fprintln(w, "usage: arbiter info [--short] [--yaml] [subcommand ...]")
+	fmt.Fprintln(w, "usage: arbiter info {server} ...")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Discover Arbiter server identity, plugins, and operations.")
+	fmt.Fprintln(w, "Inspect Arbiter server identity.")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "options:")
-	fmt.Fprintln(w, "  --short  print compact overview summary only")
-	fmt.Fprintln(w, "  --yaml   print YAML-like output instead of JSON")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "subcommands:")
-	fmt.Fprintln(w, "  plugins                    list plugins")
-	fmt.Fprintln(w, "  plugin <plugin>            describe one plugin")
-	fmt.Fprintln(w, "  ops <plugin>               list plugin operations")
-	fmt.Fprintln(w, "  op <plugin> <operation>    describe one operation")
+	fmt.Fprintln(w, "commands:")
+	fmt.Fprintln(w, "  server  show server identity and connection URL")
 }
 
-func printInfoSubcommandHelp(w io.Writer, commandName string) {
-	switch commandName {
-	case "plugins":
-		fmt.Fprintln(w, "usage: arbiter info plugins [--yaml]")
-		fmt.Fprintln(w)
-		fmt.Fprintln(w, "List configured Arbiter plugins.")
-	case "plugin":
-		fmt.Fprintln(w, "usage: arbiter info plugin <plugin> [--yaml]")
-		fmt.Fprintln(w)
-		fmt.Fprintln(w, "Describe one configured plugin.")
-	case "ops":
-		fmt.Fprintln(w, "usage: arbiter info ops <plugin> [--yaml]")
-		fmt.Fprintln(w)
-		fmt.Fprintln(w, "List operations for one plugin.")
-	case "op":
-		fmt.Fprintln(w, "usage: arbiter info op <plugin> <operation> [--yaml]")
-		fmt.Fprintln(w)
-		fmt.Fprintln(w, "Describe one plugin operation.")
-	default:
-		printInfoHelp(w)
-	}
+func printInfoServerHelp(w io.Writer) {
+	fmt.Fprintln(w, "usage: arbiter info server [--yaml]")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Show Arbiter server identity, deployment scope, source metadata, and resolved URL.")
+}
+
+func printPluginsHelp(w io.Writer) {
+	fmt.Fprintln(w, "usage: arbiter plugins [plugin [accounts|account NAME|policy NAME]] [--json|--yaml]")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Inspect Arbiter plugins, accounts, and read-only policy details.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "commands:")
+	fmt.Fprintln(w, "  plugins                         list plugins")
+	fmt.Fprintln(w, "  plugins <plugin>                describe one plugin")
+	fmt.Fprintln(w, "  plugins <plugin> accounts       list plugin accounts")
+	fmt.Fprintln(w, "  plugins <plugin> account NAME   show one account")
+	fmt.Fprintln(w, "  plugins <plugin> policy NAME    show one policy")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "options:")
+	fmt.Fprintln(w, "  --json   print structured JSON (default)")
+	fmt.Fprintln(w, "  --yaml   print structured YAML")
 }
 
 func printOperationHelp(w io.Writer) {
@@ -2085,18 +2003,17 @@ func printOperationHelp(w io.Writer) {
 }
 
 func printOperationListHelp(w io.Writer) {
-	fmt.Fprintln(w, "usage: arbiter op list [plugin] [--json|--yaml|--plain]")
+	fmt.Fprintln(w, "usage: arbiter op list [plugin] [--json|--yaml]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "List plugins. Pass a plugin to list operation summaries keyed by operation id.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "options:")
 	fmt.Fprintln(w, "  --json   print structured JSON (default)")
 	fmt.Fprintln(w, "  --yaml   print structured YAML")
-	fmt.Fprintln(w, "  --plain  print one id per line")
 }
 
 func printOperationDescHelp(w io.Writer, commandName string) {
-	fmt.Fprintf(w, "usage: arbiter op %s <plugin-or-operation-id> [--json|--yaml|--plain]\n", commandName)
+	fmt.Fprintf(w, "usage: arbiter op %s <plugin-or-operation-id> [--json|--yaml]\n", commandName)
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Describe a plugin's operation surface or one Arbiter operation.")
 	fmt.Fprintln(w, "Use a plugin id such as imap, or an operation id such as imap:get_message.")
@@ -2104,7 +2021,6 @@ func printOperationDescHelp(w io.Writer, commandName string) {
 	fmt.Fprintln(w, "options:")
 	fmt.Fprintln(w, "  --json   print structured JSON (default)")
 	fmt.Fprintln(w, "  --yaml   print structured YAML")
-	fmt.Fprintln(w, "  --plain  print compact text")
 }
 
 func printOperationRunHelp(w io.Writer) {

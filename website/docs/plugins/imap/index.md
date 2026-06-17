@@ -32,14 +32,14 @@ but they do not provide IMAP credentials or transport settings.
 Inspect the plugin and an operation:
 
 ```bash
-arbiter info plugin imap
-arbiter info op imap list_messages
+arbiter plugins imap
+arbiter op desc imap:list_messages
 ```
 
 Inspect an account before using it:
 
 ```bash
-arbiter info account imap bot
+arbiter plugins imap account bot
 ```
 
 List folders, then list messages in one folder:

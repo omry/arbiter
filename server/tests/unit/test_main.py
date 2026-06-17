@@ -275,7 +275,7 @@ def _expected_version_info(
     return {
         "server": {"version": SERVER_VERSION, "api_version": SERVER_API_VERSION},
         "deployment_scope": "unknown",
-        "source": {"commit": commit, "dirty": dirty},
+        "source": {"commit": commit, "dirty": dirty, "build_time": None},
         "plugins": [
             {
                 "name": plugin.name,
