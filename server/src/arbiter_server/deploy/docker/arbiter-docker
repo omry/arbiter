@@ -11,7 +11,7 @@ compose_override_file="$deploy_dir/compose.override.yaml"
 
 usage() {
   cat <<'EOF'
-Usage: arbiter-docker COMMAND
+Usage: arbiter-docker [--verbose] COMMAND
 
 Commands:
   prepare       Shortcut for bundle prepare
@@ -22,10 +22,12 @@ Commands:
                 Edit Python requirements installed inside the container
   edit-env      Edit the configured env file with $ARBITER_EDITOR, $EDITOR, or vi
   edit-docker   Edit docker.env with $ARBITER_EDITOR, $EDITOR, or vi
-  config check [--live] [override...]
+  config check [--live] [--verbose] [override...]
                 Validate config inside a container; --live uses the running service
-  up            Start or update the Docker Compose service
-  restart       Recreate the Docker Compose service
+  up [--verbose]
+                Start or update the Docker Compose service
+  restart [--verbose]
+                Recreate the Docker Compose service
   test          Call the Arbiter client through the computed URL
   down          Stop and remove the Docker Compose service
   ps            Show Docker Compose service status
@@ -48,6 +50,7 @@ Install options:
   --replace-config    Replace installed config from this staging dir
   --replace-env       With --replace-config, also replace the installed env
   --dry-run           Print the install plan without changing the host
+  --verbose           Print pip install output inside startup containers
 
 Environment:
   ARBITER_DOCKER_DIR   Deployment directory, default script directory
@@ -55,7 +58,12 @@ Environment:
                       Arbiter client command for test, default arbiter,
                       then ../skill/bin/arbiter for checkout deployments
   ARBITER_EDITOR       Editor for edit-config/edit-env
+  ARBITER_PIP_VERBOSE  Print pip install output inside startup containers
 EOF
+}
+
+enable_pip_install_verbose() {
+  export ARBITER_PIP_VERBOSE=1
 }
 
 require_file() {
@@ -1082,6 +1090,10 @@ repo_root_from_start() {
 }
 
 find_repo_root() {
+  if [[ -n "${ARBITER_REPO_ROOT:-}" ]]; then
+    repo_root_from_start "$ARBITER_REPO_ROOT"
+    return
+  fi
   repo_root_from_start "$PWD" || repo_root_from_start "$deploy_dir"
 }
 
@@ -1837,7 +1849,7 @@ test_server_url() {
   timeout="${ARBITER_TEST_TIMEOUT:-60}"
   start_time="$SECONDS"
   while true; do
-    if ARBITER_URL="$url" "$client_command" info >"$output_file" 2>&1; then
+    if ARBITER_URL="$url" "$client_command" info server >"$output_file" 2>&1; then
       rm -f "$output_file"
       printf ' '
       doctor_prefix 32 "✔"
@@ -1899,6 +1911,21 @@ config_check_static() {
   return "$status"
 }
 
+config_check_static_quiet() {
+  local output_file
+  local status=0
+
+  output_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-config-check.XXXXXX")"
+  config_check_static >"$output_file" 2>&1 || status=$?
+  if [[ "$status" -eq 0 ]]; then
+    rm -f "$output_file"
+    return 0
+  fi
+  cat "$output_file" >&2
+  rm -f "$output_file"
+  return "$status"
+}
+
 config_check_live() {
   compose exec -T arbiter sh -lc \
     'exec "$ARBITER_RUNTIME_VENV/bin/arbiter-server" --config-dir /config --config-name "$ARBITER_CONFIG_NAME" config check "$@"' \
@@ -1906,10 +1933,33 @@ config_check_live() {
 }
 
 config_check() {
-  if [[ "${1:-}" == "--live" ]]; then
-    config_check_live "$@"
+  local live=0
+  local -a overrides=()
+
+  while (($#)); do
+    case "$1" in
+      --live)
+        live=1
+        ;;
+      --verbose)
+        enable_pip_install_verbose
+        ;;
+      --)
+        shift
+        overrides+=("$@")
+        break
+        ;;
+      *)
+        overrides+=("$1")
+        ;;
+    esac
+    shift
+  done
+
+  if [[ "$live" -eq 1 ]]; then
+    config_check_live "${overrides[@]}"
   else
-    config_check_static "$@"
+    config_check_static "${overrides[@]}"
   fi
 }
 
@@ -1928,9 +1978,10 @@ config_command() {
 Usage: arbiter-docker config COMMAND
 
 Commands:
-  check [--live] [override...]
+  check [--live] [--verbose] [override...]
       Validate the deployment config inside a container.
       With --live, also test configured accounts in the running service container.
+      With --verbose, print pip install output from the startup container.
 EOF
       ;;
     *)
@@ -1942,6 +1993,28 @@ EOF
 
 config_main_file() {
   printf '%s/%s.yaml\n' "$(config_dir_path)" "$(config_name_value)"
+}
+
+parse_start_options() {
+  local command_name="$1"
+  shift
+
+  while (($#)); do
+    case "$1" in
+      --verbose)
+        enable_pip_install_verbose
+        ;;
+      -h | --help)
+        printf 'Usage: arbiter-docker %s [--verbose]\n' "$command_name"
+        exit 0
+        ;;
+      *)
+        printf 'error: unknown %s option: %s\n' "$command_name" "$1" >&2
+        return 2
+        ;;
+    esac
+    shift
+  done
 }
 
 sync_env() {
@@ -2203,6 +2276,104 @@ ensure_staging_subnet_available() {
   return 1
 }
 
+docker_pool_overlap_error_matches() {
+  grep -Eiq 'invalid pool request|Pool overlaps with other one on this address space|failed to create network .*Pool overlaps' "$1"
+}
+
+next_staging_subnet_candidate() {
+  local current_subnet="$1"
+  local attempted_subnets="$2"
+  local configured_network
+  local candidate_subnet
+
+  configured_network="$(compose_env_value ARBITER_DOCKER_NETWORK_NAME arbiter-staging)"
+  while IFS= read -r candidate_subnet; do
+    [[ -n "$candidate_subnet" ]] || continue
+    [[ "$candidate_subnet" != "$current_subnet" ]] || continue
+    [[ " $attempted_subnets " != *" $candidate_subnet "* ]] || continue
+    if ! docker_subnet_conflict "$candidate_subnet" "$configured_network"; then
+      printf '%s\n' "$candidate_subnet"
+      return 0
+    fi
+  done < <(staging_subnet_candidates)
+
+  return 1
+}
+
+print_docker_pool_overlap_error() {
+  local output_file="$1"
+  local rejected_subnet="$2"
+  local configured_network
+
+  configured_network="$(compose_env_value ARBITER_DOCKER_NETWORK_NAME arbiter-staging)"
+  printf 'error: Docker could not create staging network %s\n' "$configured_network" >&2
+  printf '       Docker rejected subnet %s because it overlaps another Docker address space.\n' "$rejected_subnet" >&2
+  printf '       The helper retried alternate staging subnets but Docker still rejected them.\n' >&2
+  printf '       Edit %s and set ARBITER_DOCKER_SUBNET to an unused private CIDR, for example:\n' "$compose_env_file" >&2
+  printf '         ARBITER_DOCKER_SUBNET=10.214.200.0/24\n' >&2
+  printf '       Then rerun:\n' >&2
+  printf '         ./arbiter-docker up\n' >&2
+  printf '       To inspect Docker networks on this host:\n' >&2
+  printf '         docker network ls\n' >&2
+  printf "         docker network inspect <network> --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}'\n" >&2
+  if [[ -s "$output_file" ]]; then
+    printf '       Docker said:\n' >&2
+    sed 's/^/         /' "$output_file" >&2
+  fi
+}
+
+docker_compose_raw() {
+  if [[ -f "$compose_override_file" ]]; then
+    docker compose --env-file "$compose_env_file" -f "$compose_file" -f "$compose_override_file" "$@"
+  else
+    docker compose --env-file "$compose_env_file" -f "$compose_file" "$@"
+  fi
+}
+
+compose_with_subnet_retry() {
+  local output_file
+  local rejected_subnet
+  local next_subnet
+  local attempted_subnets=""
+  local retry_count=0
+  local retry_limit="${ARBITER_DOCKER_SUBNET_RETRY_LIMIT:-6}"
+  local status
+
+  [[ "$retry_limit" =~ ^[0-9]+$ ]] || retry_limit=6
+
+  while true; do
+    rejected_subnet="$(compose_env_value ARBITER_DOCKER_SUBNET 172.31.251.0/24)"
+    attempted_subnets="${attempted_subnets} ${rejected_subnet}"
+    output_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-docker-compose-up.XXXXXX")"
+    if docker_compose_raw "$@" >"$output_file" 2>&1; then
+      cat "$output_file"
+      rm -f "$output_file"
+      return 0
+    else
+      status=$?
+    fi
+
+    if ! docker_pool_overlap_error_matches "$output_file"; then
+      cat "$output_file" >&2
+      rm -f "$output_file"
+      return "$status"
+    fi
+
+    if ((retry_count >= retry_limit)) ||
+      ! next_subnet="$(next_staging_subnet_candidate "$rejected_subnet" "$attempted_subnets")"; then
+      print_docker_pool_overlap_error "$output_file" "$rejected_subnet"
+      rm -f "$output_file"
+      return 1
+    fi
+
+    rm -f "$output_file"
+    set_compose_env_value ARBITER_DOCKER_SUBNET "$next_subnet"
+    retry_count=$((retry_count + 1))
+    printf 'Docker rejected staging Docker subnet: %s\n' "$rejected_subnet" >&2
+    printf 'retrying with staging Docker subnet: %s -> %s\n' "$rejected_subnet" "$next_subnet" >&2
+  done
+}
+
 compose() {
   local active_config_dir
 
@@ -2220,16 +2391,18 @@ compose() {
     ensure_plugin_data_dir_exists || return
   fi
   require_docker_access
-  if [[ "${1:-}" == up ]]; then
+  if [[ "${1:-}" == up || "${1:-}" == run ]]; then
     ensure_staging_subnet_available
+  fi
+  if [[ "${1:-}" == up ]]; then
     check_container_name_owner error
   fi
 
   cd "$deploy_dir"
-  if [[ -f "$compose_override_file" ]]; then
-    docker compose --env-file "$compose_env_file" -f "$compose_file" -f "$compose_override_file" "$@"
+  if [[ "${1:-}" == up || "${1:-}" == run ]]; then
+    compose_with_subnet_retry "$@"
   else
-    docker compose --env-file "$compose_env_file" -f "$compose_file" "$@"
+    docker_compose_raw "$@"
   fi
 }
 
@@ -3379,6 +3552,16 @@ install_run_step() {
     "$@"
     return
   fi
+  if [[ -n "${ARBITER_PIP_VERBOSE:-}" ]]; then
+    set +e
+    "$@"
+    status="$?"
+    set -e
+    if [[ "$status" -ne 0 ]]; then
+      printf '%s: failed\n' "$action" >&2
+    fi
+    return "$status"
+  fi
 
   stdout_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-install-stdout.XXXXXX")"
   stderr_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-install-stderr.XXXXXX")"
@@ -4301,7 +4484,7 @@ install_test_server() {
   timeout="${ARBITER_TEST_TIMEOUT:-60}"
   start_time="$SECONDS"
   while true; do
-    if ARBITER_URL="$url" "$client_command" info >"$output_file" 2>&1; then
+    if ARBITER_URL="$url" "$client_command" info server >"$output_file" 2>&1; then
       rm -f "$output_file"
       return 0
     fi
@@ -5169,6 +5352,10 @@ install_deployment() {
         install_dry_run=1
         shift
         ;;
+      --verbose)
+        enable_pip_install_verbose
+        shift
+        ;;
       -h | --help)
         usage
         exit 0
@@ -5251,6 +5438,18 @@ install_deployment() {
   install_report_success
 }
 
+while (($#)); do
+  case "$1" in
+    --verbose)
+      enable_pip_install_verbose
+      shift
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
 command="${1:-}"
 if (($#)); then
   shift
@@ -5285,21 +5484,23 @@ case "$command" in
     config_command "$@"
     ;;
   up)
+    parse_start_options up "$@"
     ensure_plugin_data_dir_ready
     require_docker_access
     ensure_staging_subnet_available
     check_container_name_owner error
-    config_check_static
+    config_check_static_quiet
     compose up -d
     print_staging_port_note
     print_url
     ;;
   restart)
+    parse_start_options restart "$@"
     ensure_plugin_data_dir_ready
     require_docker_access
     ensure_staging_subnet_available
     check_container_name_owner error
-    config_check_static
+    config_check_static_quiet
     compose up -d --force-recreate
     print_staging_port_note
     print_url

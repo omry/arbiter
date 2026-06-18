@@ -18,6 +18,8 @@ services:
       ARBITER_PUBLIC_BASE_URL: ${ARBITER_PUBLIC_BASE_URL:-}
       ARBITER_CONFIG_NAME: ${ARBITER_CONFIG_NAME:-arbiter-server}
       ARBITER_RUNTIME_VENV: ${ARBITER_RUNTIME_VENV:-/tmp/arbiter-venv}
+      ARBITER_COLOR: ${ARBITER_COLOR:-}
+      ARBITER_PIP_VERBOSE: ${ARBITER_PIP_VERBOSE:-}
       HOME: ${ARBITER_CONTAINER_HOME:-/tmp/arbiter-home}
     volumes:
       - ${ARBITER_CONFIG_DIR:-./conf}:/config:ro
@@ -41,15 +43,26 @@ services:
       mkdir -p "$$HOME" &&
       python -m venv "$$runtime_venv" &&
       venv_python="$$runtime_venv/bin/python" &&
+      pip_log=/tmp/arbiter-pip-install.log &&
+      run_pip_install() {
+        if [ -n "$${ARBITER_PIP_VERBOSE:-}" ]; then
+          "$$venv_python" -m pip --disable-pip-version-check install "$$@";
+        elif "$$venv_python" -m pip --disable-pip-version-check install -q "$$@" >"$$pip_log" 2>&1; then
+          rm -f "$$pip_log";
+        else
+          cat "$$pip_log" >&2;
+          exit 1;
+        fi;
+      } &&
       if grep -Eq "^[[:space:]]*/source/arbiter(/|$)" /requirements.txt; then
         cp /requirements.txt /tmp/requirements.txt &&
         awk "!/^[[:space:]]*(#|$)/ && !/^[[:space:]]*\\/source\\/arbiter(\\/|$)/ { print }" /tmp/requirements.txt > /tmp/requirements.pinned &&
         awk "/^[[:space:]]*\\/source\\/arbiter(\\/|$)/ { sub(/^[[:space:]]*/, \"\"); sub(/[[:space:]]*$/, \"\"); print }" /tmp/requirements.txt > /tmp/requirements.editable &&
         if [ -s /tmp/requirements.pinned ]; then
           if [ -d /wheels ] && find /wheels -maxdepth 1 -name "*.whl" -print -quit | grep -q .; then
-            "$$venv_python" -m pip --disable-pip-version-check install --no-cache-dir --no-index --find-links /wheels -r /tmp/requirements.pinned;
+            run_pip_install --no-cache-dir --no-index --find-links /wheels -r /tmp/requirements.pinned;
           else
-            "$$venv_python" -m pip --disable-pip-version-check install --no-cache-dir -r /tmp/requirements.pinned;
+            run_pip_install --no-cache-dir -r /tmp/requirements.pinned;
           fi;
         fi &&
         rm -rf /tmp/arbiter-source &&
@@ -69,15 +82,15 @@ services:
           source_suffix="$${requirement#/source/arbiter}" &&
           local_requirement="/tmp/arbiter-source$$source_suffix" &&
           if [ -d /wheels ] && find /wheels -maxdepth 1 -name "*.whl" -print -quit | grep -q .; then
-            "$$venv_python" -m pip --disable-pip-version-check install --no-cache-dir --find-links /wheels -e "$$local_requirement" || exit 1;
+            run_pip_install --no-cache-dir --find-links /wheels -e "$$local_requirement" || exit 1;
           else
-            "$$venv_python" -m pip --disable-pip-version-check install --no-cache-dir -e "$$local_requirement" || exit 1;
+            run_pip_install --no-cache-dir -e "$$local_requirement" || exit 1;
           fi;
         done < /tmp/requirements.editable;
       elif [ -d /wheels ] && find /wheels -maxdepth 1 -name "*.whl" -print -quit | grep -q .; then
-        "$$venv_python" -m pip --disable-pip-version-check install --no-cache-dir --no-index --find-links /wheels -r /requirements.txt;
+        run_pip_install --no-cache-dir --no-index --find-links /wheels -r /requirements.txt;
       else
-        "$$venv_python" -m pip --disable-pip-version-check install --no-cache-dir -r /requirements.txt;
+        run_pip_install --no-cache-dir -r /requirements.txt;
       fi &&
       public_host="$${ARBITER_HOST_BIND:-127.0.0.1}" &&
       case "$$public_host" in 0.0.0.0) public_host=127.0.0.1;; *:*) public_host="[$$public_host]";; esac &&
@@ -86,8 +99,13 @@ services:
       if [ -n "$${ARBITER_CONFIG_OVERRIDES_FILE:-}" ]; then
         while IFS= read -r override; do set -- "$$@" "$$override"; done < "$$ARBITER_CONFIG_OVERRIDES_FILE";
       fi &&
-      if ! "$$runtime_venv/bin/arbiter-server" --config-dir /config --config-name "$$ARBITER_CONFIG_NAME" config check "$$@"; then
-        if [ "$${ARBITER_CONTAINER_ACTION:-serve}" = config-check ]; then exit 1; fi;
+      config_check_log=/tmp/arbiter-config-check.log &&
+      if [ "$${ARBITER_CONTAINER_ACTION:-serve}" = config-check ]; then
+        "$$runtime_venv/bin/arbiter-server" --config-dir /config --config-name "$$ARBITER_CONFIG_NAME" config check "$$@";
+      elif "$$runtime_venv/bin/arbiter-server" --config-dir /config --config-name "$$ARBITER_CONFIG_NAME" config check "$$@" >"$$config_check_log" 2>&1; then
+        rm -f "$$config_check_log";
+      else
+        cat "$$config_check_log" >&2;
         echo "configuration check failed; Arbiter will not start until the config passes" >&2;
         echo "run arbiter-docker config check from the deployment directory" >&2;
         exit 0;

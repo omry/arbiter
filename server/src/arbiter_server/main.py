@@ -1320,9 +1320,7 @@ def _native_exception_response(
         )
     if isinstance(exc, ValueError):
         message = str(exc)
-        status_code = (
-            404 if message.startswith("unknown ") else validation_status_code
-        )
+        status_code = 404 if message.startswith("unknown ") else validation_status_code
         code = "not_found" if status_code == 404 else "validation_error"
         return _native_error_response(
             status_code=status_code,
@@ -1563,8 +1561,9 @@ def _resolve_redacted_config_value(value: object) -> object:
     if not isinstance(value, (Mapping, list)):
         return value
     try:
+        config_value = dict(value) if isinstance(value, Mapping) else value
         return OmegaConf.to_container(
-            OmegaConf.create(value),
+            OmegaConf.create(config_value),
             resolve=True,
             enum_to_str=True,
         )
@@ -1733,9 +1732,7 @@ def _native_artifact_content_url(artifact_id: str, nonce: str) -> str:
 def _attachment_content_disposition(filename: str | None) -> str:
     if filename is None:
         return "attachment"
-    fallback = "".join(
-        char if 0x20 <= ord(char) <= 0x7E else "_" for char in filename
-    )
+    fallback = "".join(char if 0x20 <= ord(char) <= 0x7E else "_" for char in filename)
     fallback = fallback.replace("\\", "\\\\").replace('"', '\\"')
     encoded = quote(filename, safe="")
     return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{encoded}"

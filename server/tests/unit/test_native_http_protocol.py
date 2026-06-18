@@ -195,7 +195,9 @@ async def _asgi_request(
         receive,
         send,
     )
-    start = next(message for message in messages if message["type"] == "http.response.start")
+    start = next(
+        message for message in messages if message["type"] == "http.response.start"
+    )
     response_body = b"".join(
         cast(bytes, message.get("body", b""))
         for message in messages
@@ -423,7 +425,5 @@ def test_native_http_protocol_escapes_artifact_content_disposition_filename(
     content_disposition = content.headers["content-disposition"]
     assert "\r" not in content_disposition
     assert "\n" not in content_disposition
-    assert 'filename="weird \\"name\\"\\\\ __snowman _.txt"' in (
-        content_disposition
-    )
+    assert 'filename="weird \\"name\\"\\\\ __snowman _.txt"' in (content_disposition)
     assert f"filename*=UTF-8''{quote(filename, safe='')}" in content_disposition
