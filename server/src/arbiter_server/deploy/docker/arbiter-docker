@@ -2282,6 +2282,10 @@ require_docker_access() {
   return 1
 }
 
+docker_available_quiet() {
+  command -v docker >/dev/null && docker info >/dev/null 2>&1
+}
+
 doctor_check_docker_access() {
   local output_file
 
@@ -3425,11 +3429,22 @@ install_report_success() {
     return 0
   fi
 
-  printf 'Installed Arbiter to %s. Running as %s:%s\n' \
-    "$install_target_dir" "$install_user" "$install_group"
+  if [[ "${install_unit_only:-0}" -eq 1 ]]; then
+    printf 'Updated Arbiter systemd unit for existing install: %s\n' "$install_target_dir"
+    printf 'Deployment files: unchanged (Docker unavailable and service active)\n'
+  else
+    printf 'Installed Arbiter to %s. Running as %s:%s\n' \
+      "$install_target_dir" "$install_user" "$install_group"
+  fi
   printf 'systemd unit: %s\n' "$unit_file"
   if [[ "${install_config_check_passed:-0}" -eq 1 ]]; then
     printf 'Config check: passed\n'
+  elif [[ "${install_config_check_skipped:-0}" -eq 1 ]]; then
+    printf 'Config check: skipped (Docker unavailable)\n'
+  fi
+  if [[ "${install_restart_skipped:-0}" -eq 1 ]]; then
+    printf 'Service restart: skipped (Docker unavailable)\n'
+    printf 'Start after Docker is ready: sudo systemctl restart %s.service\n' "$install_service"
   fi
   printf 'Server URL: '
   doctor_prefix 94 "$(install_server_url_value)"
@@ -3534,6 +3549,10 @@ install_chown_wheelhouse_to_invoking_user() {
 
 install_local_checkout_requirements_file=""
 install_local_checkout_has_source_override=0
+install_docker_available=1
+install_config_check_skipped=0
+install_restart_skipped=0
+install_unit_only=0
 
 install_build_source_wheel() {
   local python_bin="$1"
@@ -3681,28 +3700,32 @@ install_prepare_local_checkout_wheels() {
       rm -f "$tmp_requirements"
       return 1
     fi
-    image="$(compose_env_value ARBITER_IMAGE python:3.11-slim)"
-    docker_user="$(id -u):$(id -g)"
-    if ! install_run_step "preparing wheelhouse" \
-      prepare_dependency_wheelhouse \
-      "$tmp_requirements" \
-      "$active_wheels_dir" \
-      "$docker_user" \
-      "$image" \
-      1 \
-      0; then
-      rm -f "$tmp_requirements"
-      return 1
-    fi
-    if ! install_run_step "validating: dependency wheelhouse" \
-      validate_dependency_wheelhouse \
-      "$tmp_requirements" \
-      "$active_wheels_dir" \
-      "$docker_user" \
-      "$image" \
-      1; then
-      rm -f "$tmp_requirements"
-      return 1
+    if [[ "${install_docker_available:-1}" -eq 1 ]]; then
+      image="$(compose_env_value ARBITER_IMAGE python:3.11-slim)"
+      docker_user="$(id -u):$(id -g)"
+      if ! install_run_step "preparing wheelhouse" \
+        prepare_dependency_wheelhouse \
+        "$tmp_requirements" \
+        "$active_wheels_dir" \
+        "$docker_user" \
+        "$image" \
+        1 \
+        0; then
+        rm -f "$tmp_requirements"
+        return 1
+      fi
+      if ! install_run_step "validating: dependency wheelhouse" \
+        validate_dependency_wheelhouse \
+        "$tmp_requirements" \
+        "$active_wheels_dir" \
+        "$docker_user" \
+        "$image" \
+        1; then
+        rm -f "$tmp_requirements"
+        return 1
+      fi
+    else
+      doctor_warn "Docker daemon is unavailable; using existing dependency wheelhouse without validation"
     fi
     install_chown_wheelhouse_to_invoking_user "$active_wheels_dir"
     install_chown_to_invoking_user "$tmp_requirements"
@@ -4926,6 +4949,11 @@ install_validate_wheelhouse() {
   local uid
   local gid
 
+  if [[ "${install_docker_available:-1}" -eq 0 ]]; then
+    doctor_warn "Docker daemon is unavailable; skipping installed wheelhouse validation"
+    return 0
+  fi
+
   target_requirements_file="$(install_target_requirements_file_path)"
   target_wheels_dir="$(install_target_wheels_dir_path)"
   image="$(compose_env_value ARBITER_IMAGE python:3.11-slim)"
@@ -4976,7 +5004,7 @@ install_write_systemd_unit() {
     docker_unit_lines="Requires=docker.service
 After=docker.service"
   elif ! running_under_wsl; then
-    doctor_warn "docker.service not found; generated unit will rely on Docker socket availability"
+    doctor_warn "docker.service not found; generated unit will wait for Docker API readiness without service ordering"
   fi
 
   cat >"$unit_file" <<EOF
@@ -4987,9 +5015,12 @@ $docker_unit_lines
 [Service]
 Type=simple
 WorkingDirectory=$install_target_dir
+ExecStartPre=/bin/sh -c 'i=0; while [ "\$i" -lt 120 ]; do [ -x "\$1" ] && "\$1" info >/dev/null 2>&1 && exit 0; i=\$((i + 1)); sleep 1; done; echo "error: Docker API did not become ready for Arbiter" >&2; exit 1' arbiter-docker-ready $docker_bin
 ExecStart=$docker_bin compose --env-file $install_target_dir/docker.env $compose_files up
 ExecStop=$docker_bin compose --env-file $install_target_dir/docker.env $compose_files down
 Restart=on-failure
+RestartSec=10
+TimeoutStartSec=180
 
 [Install]
 WantedBy=multi-user.target
@@ -5044,6 +5075,14 @@ install_compose_down_for_recreate() {
 }
 
 install_server_into_target() {
+  if [[ "${install_unit_only:-0}" -eq 1 ]]; then
+    install_write_systemd_unit
+    install_record_location
+    run_install_command systemctl daemon-reload
+    run_install_command systemctl enable "${install_service}.service"
+    return
+  fi
+
   install_ensure_identity
   install_copy_deployment
   install_apply_local_checkout_install_artifacts
@@ -5170,20 +5209,44 @@ install_deployment() {
     exit 2
   fi
 
-  install_prepare_local_checkout_wheels
-  install_run_step "Performing preinstall checks" doctor --preinstall --quiet
+  if [[ "$install_dry_run" -eq 0 ]] && ! docker_available_quiet; then
+    install_docker_available=0
+    doctor_warn "Docker daemon is unavailable; Docker-backed checks and restart will be skipped"
+    if command -v systemctl >/dev/null &&
+      systemctl is-active --quiet "${install_service}.service"; then
+      install_unit_only=1
+      doctor_warn "existing service is active; updating only the systemd unit so running deployment files are not replaced"
+    else
+      doctor_warn "install will update files and systemd unit without Docker-backed checks or restart"
+    fi
+  fi
+
+  if [[ "$install_unit_only" -eq 0 ]]; then
+    install_prepare_local_checkout_wheels
+    install_run_step "Performing preinstall checks" doctor --preinstall --quiet
+  fi
 
   if [[ "$install_dry_run" -ne 1 ]]; then
     install_require_root
   fi
 
-  install_run_step "Performing static config check" install_static_config_check
-  install_config_check_passed=1
+  if [[ "$install_unit_only" -eq 1 ]]; then
+    install_config_check_skipped=1
+  elif [[ "$install_docker_available" -eq 1 ]]; then
+    install_run_step "Performing static config check" install_static_config_check
+    install_config_check_passed=1
+  else
+    install_config_check_skipped=1
+    doctor_warn "Docker daemon is unavailable; skipping static config check"
+  fi
   install_run_step "Installing server into $install_target_dir" install_server_into_target
-  if [[ "$install_start" -eq 1 ]]; then
+  if [[ "$install_start" -eq 1 && "$install_docker_available" -eq 1 ]]; then
     install_run_step "Restarting Arbiter service" install_restart_server_service
     install_run_step "Testing server URL" install_test_server
     install_run_step "Performing live config check" install_live_config_check
+  elif [[ "$install_start" -eq 1 ]]; then
+    install_restart_skipped=1
+    doctor_warn "Docker daemon is unavailable; skipping service restart, server test, and live config check"
   fi
   install_report_success
 }

@@ -32,6 +32,21 @@ sudo ./arbiter-docker install
 
 By default, install starts or restarts the systemd service.
 
+If Docker is not available during install, the helper still updates the
+installed files, writes the systemd unit, reloads systemd, and enables the
+service. Docker-backed config checks, wheelhouse validation, restart, server
+test, and live checks are reported as skipped. After Docker is ready, restart
+the installed service manually:
+
+```bash
+sudo systemctl restart arbiter.service
+```
+
+When Docker is unavailable and the existing service is still active, install
+updates only the systemd unit and leaves installed deployment files unchanged.
+This avoids replacing Compose inputs underneath a running service that was
+started from the previous unit.
+
 On the first install, the staging `conf/` directory and env file are copied into
 the installed directory. After that, the installed config and env are
 authoritative: later installs update the bundle and service wrapper, but keep
@@ -67,6 +82,10 @@ sudo systemctl status arbiter.service
 sudo journalctl -u arbiter.service -f
 ```
 
+The generated systemd unit waits for the Docker CLI and API to become usable
+before running Compose. This protects boot and WSL startup from racing Docker
+Desktop integration or a native Docker daemon that is still starting.
+
 Restart the installed service with:
 
 ```bash
@@ -87,10 +106,13 @@ sudo systemctl restart arbiter.service
   `arbiter.deployment_scope=installed`
 - sets ownership to the configured user/group
 - tightens file modes
-- writes `/etc/systemd/system/arbiter.service`
+- writes `/etc/systemd/system/arbiter.service`, including Docker service
+  ordering when available and a Docker API readiness check before Compose
+  starts
 - reloads and enables systemd
-- restarts the service by default
-- checks the running service config and configured accounts after restart
+- restarts the service by default when Docker is available
+- checks the running service config and configured accounts after restart when
+  Docker is available
 
 ## Privilege Model
 

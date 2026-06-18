@@ -5773,6 +5773,7 @@ def test_cli_deploy_docker_generated_helper_install_keeps_source_checkout_stagin
     (fake_bin / "systemctl").write_text(
         "#!/usr/bin/env sh\n"
         'if [ "$1" = cat ] && [ "$2" = docker.service ]; then exit 1; fi\n'
+        'if [ "$1" = is-active ]; then exit 3; fi\n'
         f'printf "%s\\n" "$*" >> "{systemctl_calls}"\n'
         "exit 0\n",
         encoding="utf-8",
@@ -6076,6 +6077,249 @@ def test_cli_deploy_docker_generated_helper_install_dry_run_plans_promotion(
     assert static_index < copy_index < restart_index < live_index
 
 
+def test_cli_deploy_docker_generated_helper_install_updates_unit_when_docker_down(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    install_dir = tmp_path / "opt" / "arbiter"
+    systemd_dir = tmp_path / "systemd"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    config_dir = deploy_dir / "conf"
+    (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
+    (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "id").write_text(
+        "#!/usr/bin/env sh\n"
+        'if [ "$1" = -u ] && [ "$#" = 1 ]; then printf "0\\n"; exit 0; fi\n'
+        'if [ "$1" = -u ] && [ "$2" = arbiter ]; then printf "123\\n"; exit 0; fi\n'
+        'if [ "$1" = -g ] && [ "$2" = arbiter ]; then printf "123\\n"; exit 0; fi\n'
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "getent").write_text(
+        "#!/usr/bin/env sh\n"
+        'if [ "$1" = group ] && [ "$2" = arbiter ]; then exit 0; fi\n'
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "stat").write_text(
+        "#!/usr/bin/env sh\n"
+        'case "$*" in\n'
+        f'  *"{deploy_dir / "data/plugins"}"*)\n'
+        '    if [ "$1" = -c ] && [ "$2" = "%u %g %a" ]; then '
+        'printf "1000 1000 700\\n"; exit 0; fi\n'
+        '    if [ "$1" = -c ] && [ "$2" = "%a" ]; then '
+        'printf "700\\n"; exit 0; fi\n'
+        "    ;;\n"
+        "esac\n"
+        'exec /usr/bin/stat "$@"\n',
+        encoding="utf-8",
+    )
+    docker_calls = tmp_path / "docker-calls"
+    (fake_bin / "docker").write_text(
+        "#!/usr/bin/env sh\n"
+        f'printf "%s\\n" "$*" >> "{docker_calls}"\n'
+        'if [ "$1" = info ]; then printf "docker is down\\n" >&2; exit 1; fi\n'
+        "exit 99\n",
+        encoding="utf-8",
+    )
+    systemctl_calls = tmp_path / "systemctl-calls"
+    (fake_bin / "systemctl").write_text(
+        "#!/usr/bin/env sh\n"
+        'if [ "$1" = cat ] && [ "$2" = docker.service ]; then exit 1; fi\n'
+        'if [ "$1" = is-active ]; then exit 3; fi\n'
+        f'printf "%s\\n" "$*" >> "{systemctl_calls}"\n'
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "chown").write_text("#!/usr/bin/env sh\nexit 0\n", encoding="utf-8")
+    for fake_command in ("id", "getent", "stat", "docker", "systemctl", "chown"):
+        (fake_bin / fake_command).chmod(0o755)
+
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+    env["ARBITER_SYSTEMD_DIR"] = str(systemd_dir)
+    env["WSL_DISTRO_NAME"] = "Ubuntu"
+
+    result = subprocess.run(
+        [
+            deploy_dir / "arbiter-docker",
+            "install",
+            "--to",
+            str(install_dir),
+            "--user",
+            "arbiter",
+        ],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert (
+        "warn: Docker daemon is unavailable; Docker-backed checks and restart "
+        "will be skipped\n"
+    ) in result.stdout
+    assert (
+        "warn: install will update files and "
+        "systemd unit without Docker-backed checks or restart\n"
+    ) in result.stdout
+    assert "Deployment files: unchanged" not in result.stdout
+    assert "warn: Docker daemon is unavailable; skipping static config check\n" in (
+        result.stdout
+    )
+    assert (
+        "warn: Docker daemon is unavailable; skipping installed wheelhouse "
+        "validation\n"
+    ) in result.stdout
+    assert (
+        "warn: Docker daemon is unavailable; skipping service restart, server "
+        "test, and live config check\n"
+    ) in result.stdout
+    assert f"systemd unit: {systemd_dir / 'arbiter.service'}\n" in result.stdout
+    assert "Config check: skipped (Docker unavailable)\n" in result.stdout
+    assert "Service restart: skipped (Docker unavailable)\n" in result.stdout
+    assert (
+        "Start after Docker is ready: sudo systemctl restart arbiter.service\n"
+        in result.stdout
+    )
+    assert "Config check: passed\n" not in result.stdout
+    assert (install_dir / "compose.yaml").is_file()
+    unit_text = (systemd_dir / "arbiter.service").read_text(encoding="utf-8")
+    assert 'ExecStartPre=/bin/sh -c \'i=0; while [ "$i" -lt 120 ];' in unit_text
+    assert docker_calls.read_text(encoding="utf-8") == "info\n"
+    assert systemctl_calls.read_text(encoding="utf-8") == (
+        "daemon-reload\n" "enable arbiter.service\n"
+    )
+
+
+def test_cli_deploy_docker_generated_helper_install_unit_only_when_docker_down_and_service_active(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    install_dir = tmp_path / "opt" / "arbiter"
+    systemd_dir = tmp_path / "systemd"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    config_dir = deploy_dir / "conf"
+    (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
+    (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
+    install_dir.mkdir(parents=True)
+    old_compose = "services:\n  old-arbiter:\n    image: old\n"
+    old_env = "ARBITER_HOST_BIND=127.0.0.1\nARBITER_HOST_PORT=18075\n"
+    (install_dir / "compose.yaml").write_text(old_compose, encoding="utf-8")
+    (install_dir / "docker.env").write_text(old_env, encoding="utf-8")
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "id").write_text(
+        "#!/usr/bin/env sh\n"
+        'if [ "$1" = -u ] && [ "$#" = 1 ]; then printf "0\\n"; exit 0; fi\n'
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    docker_calls = tmp_path / "docker-calls"
+    (fake_bin / "docker").write_text(
+        "#!/usr/bin/env sh\n"
+        f'printf "%s\\n" "$*" >> "{docker_calls}"\n'
+        'if [ "$1" = info ]; then printf "docker is down\\n" >&2; exit 1; fi\n'
+        "exit 99\n",
+        encoding="utf-8",
+    )
+    systemctl_calls = tmp_path / "systemctl-calls"
+    (fake_bin / "systemctl").write_text(
+        "#!/usr/bin/env sh\n"
+        'if [ "$1" = cat ] && [ "$2" = docker.service ]; then exit 1; fi\n'
+        'if [ "$1" = is-active ]; then exit 0; fi\n'
+        f'printf "%s\\n" "$*" >> "{systemctl_calls}"\n'
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    for fake_command in ("id", "docker", "systemctl"):
+        (fake_bin / fake_command).chmod(0o755)
+
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+    env["ARBITER_SYSTEMD_DIR"] = str(systemd_dir)
+    env["WSL_DISTRO_NAME"] = "Ubuntu"
+
+    result = subprocess.run(
+        [
+            deploy_dir / "arbiter-docker",
+            "install",
+            "--to",
+            str(install_dir),
+            "--user",
+            "arbiter",
+        ],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert (
+        "warn: existing service is active; updating only the systemd unit so "
+        "running deployment files are not replaced\n"
+    ) in result.stdout
+    assert (
+        f"Updated Arbiter systemd unit for existing install: {install_dir}\n"
+        in result.stdout
+    )
+    assert (
+        "Deployment files: unchanged (Docker unavailable and service active)\n"
+        in result.stdout
+    )
+    assert (
+        "warn: Docker daemon is unavailable; skipping installed wheelhouse validation"
+        not in result.stdout
+    )
+    assert (install_dir / "compose.yaml").read_text(encoding="utf-8") == old_compose
+    assert (install_dir / "docker.env").read_text(encoding="utf-8") == old_env
+    unit_text = (systemd_dir / "arbiter.service").read_text(encoding="utf-8")
+    assert f"WorkingDirectory={install_dir}\n" in unit_text
+    assert 'ExecStartPre=/bin/sh -c \'i=0; while [ "$i" -lt 120 ];' in unit_text
+    assert docker_calls.read_text(encoding="utf-8") == "info\n"
+    assert systemctl_calls.read_text(encoding="utf-8") == (
+        "daemon-reload\n" "enable arbiter.service\n"
+    )
+
+
 def test_cli_deploy_docker_generated_helper_install_replace_env_requires_replace_config(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -6236,13 +6480,14 @@ def test_cli_deploy_docker_generated_helper_install_preflights_replacement_confi
 
 
 @pytest.mark.parametrize(
-    ("wsl_env", "expect_docker_unit_warning"),
-    [(True, False), (False, True)],
+    ("wsl_env", "docker_unit_exists", "expect_docker_unit_warning"),
+    [(True, False, False), (False, False, True), (False, True, False)],
 )
-def test_cli_deploy_docker_generated_helper_install_handles_missing_docker_unit(
+def test_cli_deploy_docker_generated_helper_install_handles_docker_unit_availability(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     wsl_env: bool,
+    docker_unit_exists: bool,
     expect_docker_unit_warning: bool,
 ) -> None:
     deploy_dir = tmp_path / "docker"
@@ -6319,7 +6564,8 @@ def test_cli_deploy_docker_generated_helper_install_handles_missing_docker_unit(
     systemctl_calls = tmp_path / "systemctl-calls"
     (fake_bin / "systemctl").write_text(
         "#!/usr/bin/env sh\n"
-        'if [ "$1" = cat ] && [ "$2" = docker.service ]; then exit 1; fi\n'
+        'if [ "$1" = cat ] && [ "$2" = docker.service ]; then '
+        f"exit {0 if docker_unit_exists else 1}; fi\n"
         f'printf "%s\\n" "$*" >> "{systemctl_calls}"\n'
         "exit 0\n",
         encoding="utf-8",
@@ -6366,7 +6612,7 @@ def test_cli_deploy_docker_generated_helper_install_handles_missing_docker_unit(
     assert result.returncode == 0
     docker_unit_warning = (
         "\033[33mwarn\033[0m: docker.service not found; generated unit will "
-        "rely on Docker socket availability\n"
+        "wait for Docker API readiness without service ordering\n"
     )
     if expect_docker_unit_warning:
         assert docker_unit_warning in result.stdout
@@ -6421,8 +6667,23 @@ def test_cli_deploy_docker_generated_helper_install_handles_missing_docker_unit(
     assert "ARBITER_DOCKER_BRIDGE_NAME=arbiter0\n" in installed_docker_env
     assert "ARBITER_DOCKER_SUBNET=172.31.250.0/24\n" in installed_docker_env
     unit_text = (systemd_dir / "arbiter.service").read_text(encoding="utf-8")
-    assert "Requires=docker.service\n" not in unit_text
-    assert "After=docker.service\n" not in unit_text
+    if docker_unit_exists:
+        assert "Requires=docker.service\n" in unit_text
+        assert "After=docker.service\n" in unit_text
+    else:
+        assert "Requires=docker.service\n" not in unit_text
+        assert "After=docker.service\n" not in unit_text
+    assert (
+        'ExecStartPre=/bin/sh -c \'i=0; while [ "$i" -lt 120 ]; '
+        'do [ -x "$1" ] && "$1" info >/dev/null 2>&1 && exit 0; '
+        "i=$((i + 1)); sleep 1; done; "
+        'echo "error: Docker API did not become ready for Arbiter" >&2; '
+        "exit 1' "
+        f"arbiter-docker-ready {fake_bin / 'docker'}\n"
+    ) in unit_text
+    assert "Restart=on-failure\n" in unit_text
+    assert "RestartSec=10\n" in unit_text
+    assert "TimeoutStartSec=180\n" in unit_text
     assert f"WorkingDirectory={install_dir}\n" in unit_text
     docker_call_text = docker_calls.read_text(encoding="utf-8")
     static_check_index = docker_call_text.index("compose --env-file ")
@@ -9104,8 +9365,7 @@ def test_artifact_base_url_uses_public_base_url() -> None:
     cfg.arbiter.server.public.base_url = "https://arbiter.example.test/root/"
 
     assert (
-        _artifact_base_url(cfg)
-        == "https://arbiter.example.test/root/api/v1/artifacts"
+        _artifact_base_url(cfg) == "https://arbiter.example.test/root/api/v1/artifacts"
     )
 
 
