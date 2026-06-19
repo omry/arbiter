@@ -6643,12 +6643,13 @@ def test_cli_deploy_docker_generated_helper_install_updates_unit_when_docker_dow
         "exit 1\n",
         encoding="utf-8",
     )
+    container_uid, container_gid = _default_container_user().split(":", 1)
     (fake_bin / "stat").write_text(
         "#!/usr/bin/env sh\n"
         'case "$*" in\n'
         f'  *"{deploy_dir / "data/plugins"}"*)\n'
         '    if [ "$1" = -c ] && [ "$2" = "%u %g %a" ]; then '
-        'printf "1000 1000 700\\n"; exit 0; fi\n'
+        f'printf "{container_uid} {container_gid} 700\\n"; exit 0; fi\n'
         '    if [ "$1" = -c ] && [ "$2" = "%a" ]; then '
         'printf "700\\n"; exit 0; fi\n'
         "    ;;\n"
