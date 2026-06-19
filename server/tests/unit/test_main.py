@@ -9520,6 +9520,8 @@ def test_cli_bootstrap_plugin_imap_account_writes_service_example(
     assert "default_folder: INBOX\n" in account_yaml
     assert "folders:\n" in account_yaml
     assert "  INBOX:\n" in account_yaml
+    assert "  Drafts:\n" in account_yaml
+    assert "    kind: DRAFTS\n" in account_yaml
     policy_file = config_dir / "arbiter" / "policy" / "imap" / "bot_policy.yaml"
     policy_yaml = policy_file.read_text(encoding="utf-8")
     assert "# @package arbiter.policy.imap.bot_policy\n" in policy_yaml
@@ -9544,7 +9546,12 @@ def test_cli_bootstrap_plugin_imap_account_writes_service_example(
         "  Sent:\n"
         "    folder_append: allow\n"
         "    system_flags:\n"
-        "      SEEN: read_write\n" in policy_yaml
+        "      SEEN: read_write\n"
+        "  Drafts:\n"
+        "    folder_append: allow\n"
+        "    system_flags:\n"
+        "      SEEN: read_write\n"
+        "      DRAFT: read_write\n" in policy_yaml
     )
     main_config = (config_dir / "arbiter-server.yaml").read_text(encoding="utf-8")
     assert "/arbiter/account/imap@arbiter.account.imap.bot" not in main_config
@@ -9618,6 +9625,7 @@ def test_cli_bootstrap_plugin_imap_policy_writes_selected_variant(
     assert "operation_defaults:\n" in policy_yaml
     assert "folder_append: deny\n" in policy_yaml
     assert "      SEEN: read_write\n" in policy_yaml
+    assert "      DRAFT: read_write\n" in policy_yaml
 
 
 def _test_service_plugins() -> list[ServicePlugin]:

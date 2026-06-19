@@ -597,6 +597,16 @@ def test_imap_service_plugin_invocation_dispatches_runtime_arguments() -> None:
             },
         ),
         (
+            "save_draft",
+            {"account": "personal", "message": "Subject: Draft\r\n\r\nBody"},
+            {
+                "operation": "save_draft",
+                "account": "personal",
+                "message": "Subject: Draft\r\n\r\nBody",
+                "folder": None,
+            },
+        ),
+        (
             "delete_message",
             {"account": "personal", "message_id": "42"},
             {
@@ -1506,6 +1516,40 @@ def test_check_operation_reports_imap_append_denial() -> None:
     assert result["evidence"]["folder"]["operations"]["folder_append"] == "deny"
 
 
+def test_check_operation_reports_imap_save_draft_denial() -> None:
+    imap_config = _imap_config()
+    imap_config.folders["Drafts"] = IMAPFolderConfig(
+        description="Draft messages",
+        kind=IMAPFolderKind.DRAFTS,
+    )
+    imap_policy = _imap_policy()
+    imap_policy.folders["Drafts"] = IMAPFolderOperationPolicyConfig(
+        folder_append=IMAPOperationDecision.allow,
+    )
+    runtime = _imap_runtime(
+        accounts={"personal": imap_config},
+        policies={"personal": imap_policy},
+    )
+    plugin = IMAPServicePlugin()
+    context = ServicePluginContext(runtimes=RuntimeRegistry({"imap": runtime}))
+
+    result = cast(
+        dict[str, Any],
+        plugin.check_operation(
+            "save_draft",
+            {
+                "account": "personal",
+                "message": "Subject: Draft\r\n\r\nBody",
+            },
+            context,
+        ),
+    )
+
+    assert result["operation"] == "imap:save_draft"
+    assert result["allowed"] is False
+    assert "read_write access" in result["why_not"]
+
+
 def test_check_operation_requires_configured_trash_for_soft_delete() -> None:
     imap_config = _imap_config()
     del imap_config.folders["Trash"]
@@ -1662,6 +1706,68 @@ def test_append_message_requires_read_write_for_every_flag() -> None:
             folder="Sent",
             message="Subject: Hello\r\n\r\nBody",
             flags=["internal_only"],
+        )
+
+
+def test_save_draft_uses_configured_drafts_folder() -> None:
+    factory = RecordingIMAPClientFactory()
+    imap_config = _imap_config()
+    imap_config.folders["Drafts"] = IMAPFolderConfig(
+        description="Draft messages",
+        kind=IMAPFolderKind.DRAFTS,
+    )
+    imap_policy = _imap_policy()
+    imap_policy.folders["Drafts"] = IMAPFolderOperationPolicyConfig(
+        folder_append=IMAPOperationDecision.allow,
+        system_flags=replace(
+            default_imap_system_flags_policy(),
+            SEEN=IMAPFlagMode.read_write,
+            DRAFT=IMAPFlagMode.read_write,
+        ),
+    )
+    runtime = _imap_runtime(
+        accounts={"personal": imap_config},
+        policies={"personal": imap_policy},
+        imap_client_factory=factory,
+    )
+
+    assert runtime.save_draft(
+        account="personal",
+        message="Subject: Draft\r\n\r\nBody",
+    ) == {
+        "ok": True,
+        "account": "personal",
+        "folder": "Drafts",
+        "flags": [r"\Draft", r"\Seen"],
+    }
+    assert factory.clients[0].append_calls == [
+        {
+            "folder": "Drafts",
+            "message_bytes": b"Subject: Draft\r\n\r\nBody",
+            "flags": (r"\Draft", r"\Seen"),
+        }
+    ]
+
+
+def test_save_draft_requires_draft_flag_write_access() -> None:
+    imap_config = _imap_config()
+    imap_config.folders["Drafts"] = IMAPFolderConfig(
+        description="Draft messages",
+        kind=IMAPFolderKind.DRAFTS,
+    )
+    imap_policy = _imap_policy()
+    imap_policy.folders["Drafts"] = IMAPFolderOperationPolicyConfig(
+        folder_append=IMAPOperationDecision.allow,
+    )
+    runtime = _imap_runtime(
+        accounts={"personal": imap_config},
+        policies={"personal": imap_policy},
+    )
+
+    with pytest.raises(ValueError, match="read_write access"):
+        runtime.save_draft(
+            account="personal",
+            message="Subject: Draft\r\n\r\nBody",
         )
 
 

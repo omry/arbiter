@@ -26,6 +26,7 @@ but they do not provide IMAP credentials or transport settings.
 | `imap:get_message_flags` | Inspect message flags allowed by policy. |
 | `imap:update_message_flags` | Add or remove message flags allowed by policy. |
 | `imap:append_message` | Append a message to an allowed folder. |
+| `imap:save_draft` | Save a draft message to the account's Drafts folder. |
 
 ## Use
 

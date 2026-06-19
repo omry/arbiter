@@ -28,7 +28,9 @@ from arbiter_imap.config import (
     IMAPFolderConfig,
     IMAPFolderKind,
     IMAPFolderOperationPolicyConfig,
+    IMAPFlagMode,
     IMAPOperationDecision,
+    IMAPSystemFlagsPolicyConfig,
     MailTlsMode,
 )
 
@@ -71,6 +73,7 @@ def test_operation_schemas_describe_imap_inputs() -> None:
         "get_message_flags",
         "update_message_flags",
         "append_message",
+        "save_draft",
         "search_folders",
         "delete_message",
     ]
@@ -85,6 +88,7 @@ def test_operation_schemas_describe_imap_inputs() -> None:
         "get_message_flags": ["account", "message_id"],
         "update_message_flags": ["account", "message_id"],
         "append_message": ["account"],
+        "save_draft": ["account", "message"],
         "search_folders": ["account", "query"],
         "delete_message": ["account", "message_id"],
     }
@@ -129,6 +133,147 @@ def test_plugin_config_check_warns_when_configured_folders_are_denied() -> None:
     assert [
         (warning.account, warning.policy, warning.message) for warning in warnings
     ] == [("primary", "bot", "IMAP account has no accessible configured folders")]
+
+
+def test_plugin_config_check_warns_when_drafts_is_not_marked_drafts() -> None:
+    warnings = IMAPServicePlugin().check_config(
+        accounts={
+            "primary": IMAPConfig(
+                folders={"Drafts": IMAPFolderConfig(description="Draft messages")}
+            )
+        },
+        policies={"bot": _allow_all_policy()},
+    )
+
+    assert [
+        (warning.account, warning.policy, warning.message) for warning in warnings
+    ] == [
+        (
+            "primary",
+            "bot",
+            "save_draft will not select Drafts by default because the folder is "
+            "not marked kind: DRAFTS",
+        )
+    ]
+
+
+def test_plugin_config_check_warns_for_ambiguous_drafts_folders() -> None:
+    policy = _allow_all_policy()
+    policy.folders["Drafts"] = IMAPFolderOperationPolicyConfig(
+        folder_append=IMAPOperationDecision.allow,
+        system_flags=IMAPSystemFlagsPolicyConfig(
+            SEEN=IMAPFlagMode.read_write,
+            DRAFT=IMAPFlagMode.read_write,
+        ),
+    )
+    warnings = IMAPServicePlugin().check_config(
+        accounts={
+            "primary": IMAPConfig(
+                folders={
+                    "Drafts": IMAPFolderConfig(kind=IMAPFolderKind.DRAFTS),
+                    "Other Drafts": IMAPFolderConfig(kind=IMAPFolderKind.DRAFTS),
+                }
+            )
+        },
+        policies={"bot": policy},
+    )
+
+    assert [
+        (warning.account, warning.policy, warning.message) for warning in warnings
+    ] == [
+        (
+            "primary",
+            "bot",
+            "save_draft has multiple configured DRAFTS folders; using Drafts by "
+            "default (configured: Drafts, Other Drafts)",
+        )
+    ]
+
+
+def test_plugin_config_check_warns_for_save_draft_policy_gaps() -> None:
+    warnings = IMAPServicePlugin().check_config(
+        accounts={
+            "primary": IMAPConfig(
+                folders={"Drafts": IMAPFolderConfig(kind=IMAPFolderKind.DRAFTS)}
+            )
+        },
+        policies={"bot": _allow_all_policy()},
+    )
+
+    assert [
+        (warning.account, warning.policy, warning.message) for warning in warnings
+    ] == [
+        (
+            "primary",
+            "bot",
+            "save_draft cannot append to Drafts because folder_append is deny",
+        ),
+        (
+            "primary",
+            "bot",
+            "imap:save_draft cannot set required flags on Drafts folder; set "
+            "DRAFT, SEEN to read_write to allow them to be modified",
+        ),
+    ]
+
+
+def test_plugin_config_check_warns_for_inaccessible_save_draft_folder() -> None:
+    policy = _allow_all_policy()
+    policy.folder_access.rules.append(
+        IMAPFolderAccessRuleConfig(deny_kind=IMAPFolderKind.DRAFTS)
+    )
+    policy.folders["Drafts"] = IMAPFolderOperationPolicyConfig(
+        folder_append=IMAPOperationDecision.allow,
+        system_flags=IMAPSystemFlagsPolicyConfig(
+            SEEN=IMAPFlagMode.read_write,
+            DRAFT=IMAPFlagMode.read_write,
+        ),
+    )
+
+    warnings = IMAPServicePlugin().check_config(
+        accounts={
+            "primary": IMAPConfig(
+                folders={"Drafts": IMAPFolderConfig(kind=IMAPFolderKind.DRAFTS)}
+            )
+        },
+        policies={"bot": policy},
+    )
+
+    assert [
+        (warning.account, warning.policy, warning.message) for warning in warnings
+    ] == [
+        ("primary", "bot", "IMAP account has no accessible configured folders"),
+        (
+            "primary",
+            "bot",
+            "save_draft cannot use Drafts because folder_access denies it",
+        ),
+    ]
+
+
+def test_plugin_config_check_reports_invalid_drafts_metadata_as_issue() -> None:
+    with pytest.raises(ConfigCheckError) as exc_info:
+        IMAPServicePlugin().check_config(
+            accounts={
+                "primary": IMAPConfig(
+                    folders={
+                        "Drafts{bad": IMAPFolderConfig(kind=IMAPFolderKind.DRAFTS)
+                    }
+                )
+            },
+            policies={"bot": _allow_all_policy()},
+        )
+
+    assert [
+        (issue.account, issue.policy, issue.message) for issue in exc_info.value.issues
+    ] == [
+        (
+            "primary",
+            "bot",
+            "IMAP configured folder is invalid: Drafts{bad: "
+            "unclosed capture block",
+        )
+    ]
 
 
 def test_plugin_config_check_rejects_delete_without_accessible_trash() -> None:
@@ -664,6 +809,77 @@ def test_runtime_live_check_accepts_server_trash_when_delete_allowed() -> None:
         }
     }
     assert clients[0].tested_folders == ["INBOX", "Trash"]
+
+
+def test_runtime_live_check_requires_configured_drafts_folder() -> None:
+    clients: list[LiveCheckRecordingIMAPClient] = []
+
+    def client_factory(config: IMAPConfig) -> IMAPClientProtocol:
+        client = LiveCheckRecordingIMAPClient(["INBOX"])
+        clients.append(client)
+        return cast(IMAPClientProtocol, client)
+
+    runtime = IMAPRuntime(
+        accounts={
+            "primary": IMAPConfig(
+                policy="bot",
+                default_folder="INBOX",
+                folders={
+                    "INBOX": IMAPFolderConfig(),
+                    "Drafts": IMAPFolderConfig(kind=IMAPFolderKind.DRAFTS),
+                },
+            )
+        },
+        policies={"bot": _allow_all_policy()},
+        imap_client_factory=client_factory,
+    )
+
+    assert runtime.test_accounts() == {
+        "primary": {
+            "status": "failed",
+            "stage": "connect_auth_noop_examine",
+            "error_type": "ValueError",
+            "message": (
+                "save_draft requires configured DRAFTS folder to exist for IMAP "
+                "account: primary: Drafts"
+            ),
+        }
+    }
+    assert clients[0].tested_folders == ["INBOX"]
+
+
+def test_runtime_live_check_accepts_configured_drafts_folder() -> None:
+    clients: list[LiveCheckRecordingIMAPClient] = []
+
+    def client_factory(config: IMAPConfig) -> IMAPClientProtocol:
+        client = LiveCheckRecordingIMAPClient(["Drafts", "INBOX"])
+        clients.append(client)
+        return cast(IMAPClientProtocol, client)
+
+    runtime = IMAPRuntime(
+        accounts={
+            "primary": IMAPConfig(
+                policy="bot",
+                default_folder="INBOX",
+                folders={
+                    "INBOX": IMAPFolderConfig(),
+                    "Drafts": IMAPFolderConfig(kind=IMAPFolderKind.DRAFTS),
+                },
+            )
+        },
+        policies={"bot": _allow_all_policy()},
+        imap_client_factory=client_factory,
+    )
+
+    assert runtime.test_accounts() == {
+        "primary": {
+            "status": "ok",
+            "stage": "connect_auth_noop_examine",
+            "checks": ["connect", "noop", "examine", "save_draft_destination"],
+            "folders": ["Drafts", "INBOX"],
+        }
+    }
+    assert clients[0].tested_folders == ["Drafts", "INBOX"]
 
 
 def test_runtime_live_check_scopes_probe_to_metadata_patterns() -> None:

@@ -85,6 +85,15 @@ destination folder. Any flags supplied with the append, including the default
 `\Seen` flag, also require `read_write` access in that folder's effective flag
 policy.
 
+`imap:save_draft` appends to the account's configured `DRAFTS` folder unless a
+folder is supplied explicitly. It writes both `\Draft` and `\Seen`, so the
+destination folder policy must grant `folder_append`, `DRAFT: read_write`, and
+`SEEN: read_write`.
+
+Static config checks warn when configured draft support is ambiguous or cannot
+support `save_draft`. Live config checks also verify that the selected configured
+Drafts folder exists on the upstream IMAP server.
+
 ## Delete To Trash
 
 Non-permanent `imap:delete_message` uses an accessible configured TRASH folder

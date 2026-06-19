@@ -38,6 +38,7 @@ CHECK_OPERATION_POLICY_FIELDS = {
     "mark_message_read": "mark_read",
     "delete_message": "delete",
     "append_message": "folder_append",
+    "save_draft": "folder_append",
 }
 
 

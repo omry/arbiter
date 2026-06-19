@@ -245,6 +245,25 @@ class AppendMessageInput:
 
 
 @dataclass(frozen=True)
+class SaveDraftInput:
+    account: str = field(
+        metadata={"description": "Configured IMAP account name."},
+    )
+    message: str = field(
+        metadata={"description": "Raw RFC 5322 draft message text to append."},
+    )
+    folder: str | None = field(
+        default=None,
+        metadata={
+            "description": (
+                "Configured Drafts folder name. Defaults to the account's configured "
+                "DRAFTS folder."
+            ),
+        },
+    )
+
+
+@dataclass(frozen=True)
 class SearchFoldersInput:
     account: str = field(
         metadata={"description": "Configured IMAP account name."},
@@ -375,6 +394,13 @@ IMAP_OPERATION_DESCRIPTORS = (
         name="append_message",
         description="Append a raw message to an allowed IMAP folder.",
         input_schema=AppendMessageInput,
+    ),
+    OperationDescriptor(
+        name="save_draft",
+        description=(
+            "Append a raw draft message to the account's configured Drafts folder."
+        ),
+        input_schema=SaveDraftInput,
     ),
     OperationDescriptor(
         name="search_folders",

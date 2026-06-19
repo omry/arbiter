@@ -38,12 +38,14 @@ from .policy import (
     folder_metadata_matches,
     validate_imap_policy,
 )
-from .runtime_policy import _IMAPRuntimePolicyMixin
+from .runtime_policy import _IMAPRuntimePolicyMixin, _PreparedAppend
 
 from .client import FetchedIMAPMessage, IMAPAttachmentContent
 from .operations import IMAP_OPERATION_DESCRIPTORS
 
 SERVER_API_VERSION = "0.9"
+IMAP_DRAFT_SYSTEM_FLAGS = (IMAPSystemFlag.DRAFT, IMAPSystemFlag.SEEN)
+IMAP_DRAFT_FLAGS = (IMAPSystemFlag.DRAFT.name, IMAPSystemFlag.SEEN.name)
 
 
 class IMAPClientProtocol(Protocol):
@@ -161,6 +163,28 @@ def _trash_required_message(account: str) -> str:
     )
 
 
+def _draft_folder_names(imap_config: IMAPConfig) -> list[str]:
+    return [
+        folder_name
+        for folder_name, folder_config in imap_config.folders.items()
+        if folder_config.kind is IMAPFolderKind.DRAFTS
+    ]
+
+
+def _preferred_draft_folder_name(folder_names: Sequence[str]) -> str:
+    return sorted(
+        folder_names,
+        key=lambda name: (name.lower() != "drafts", name.lower()),
+    )[0]
+
+
+def _save_draft_folder_required_message(account: str, folder: str) -> str:
+    return (
+        "save_draft requires configured DRAFTS folder to exist for IMAP account: "
+        f"{account}: {folder}"
+    )
+
+
 _OperationArgumentSpec = str | tuple[str, object]
 
 
@@ -187,6 +211,7 @@ IMAP_OPERATION_ARGUMENTS: Mapping[str, tuple[_OperationArgumentSpec, ...]] = {
         "message",
         ("flags", (IMAPSystemFlag.SEEN.name,)),
     ),
+    "save_draft": ("account", "message", "folder"),
     "delete_message": ("account", "message_id", "folder", ("permanent", False)),
 }
 
@@ -263,6 +288,11 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
                     imap_config,
                     server_folders,
                 )
+                save_draft_checked = self._test_save_draft_destination(
+                    account_name,
+                    imap_config,
+                    server_folders,
+                )
             except Exception as exc:
                 results[account_name] = {
                     "status": "failed",
@@ -287,6 +317,7 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
                     "noop",
                     "examine",
                     *(["trash_destination"] if trash_checked else []),
+                    *(["save_draft_destination"] if save_draft_checked else []),
                 ],
                 "folders": folders,
             }
@@ -691,6 +722,8 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
                 )
             if operation == "append_message":
                 return self._check_append_message(operation_id, account, arguments)
+            if operation == "save_draft":
+                return self._check_save_draft(operation_id, account, arguments)
             folder = cast(str | None, arguments.get("folder"))
             imap_config, folder_resolution = self._resolve_context(
                 operation, account, folder
@@ -804,6 +837,73 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
             "flags": list(prepared.flags),
         }
 
+    def save_draft(
+        self,
+        *,
+        account: str,
+        message: str,
+        folder: str | None = None,
+    ) -> dict[str, object]:
+        prepared = self._prepare_save_draft(
+            account=account,
+            message=message,
+            folder=folder,
+        )
+        prepared.decision.require_allowed()
+        self._make_client(prepared.imap_config).append_message(
+            folder=prepared.folder.name,
+            message_bytes=cast(bytes, prepared.message_bytes),
+            flags=prepared.flags,
+        )
+        return {
+            "ok": True,
+            "account": account,
+            "folder": prepared.folder.name,
+            "flags": list(prepared.flags),
+        }
+
+    def _check_save_draft(
+        self,
+        operation_id: str,
+        account: str,
+        arguments: Mapping[str, object],
+    ) -> dict[str, object]:
+        try:
+            prepared = self._prepare_save_draft(
+                account=account,
+                message=cast(str | None, arguments.get("message")),
+                folder=cast(str | None, arguments.get("folder")),
+            )
+            return self._decision_check_result(operation_id, prepared.decision)
+        except Exception as exc:
+            return {
+                "operation": operation_id,
+                "allowed": False,
+                "why_not": str(exc),
+            }
+
+    def _prepare_save_draft(
+        self,
+        *,
+        account: str,
+        message: str | None,
+        folder: str | None,
+    ) -> _PreparedAppend:
+        imap_config = self._resolve_account_config("save_draft", account)
+        draft_folder = self._resolve_draft_folder(
+            "save_draft",
+            account,
+            imap_config,
+            folder,
+        )
+        return self._prepare_append_message(
+            account,
+            folder=draft_folder.name,
+            message=message,
+            flags=IMAP_DRAFT_FLAGS,
+            tool_name="save_draft",
+        )
+
     def _resolve_context(
         self,
         tool_name: str,
@@ -860,6 +960,41 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
         if not folder_name:
             raise ValueError(f"{tool_name} requires a non-empty folder")
         return self._resolver(imap_config).resolve_folder(folder_name)
+
+    def _resolve_draft_folder(
+        self,
+        tool_name: str,
+        account_name: str,
+        imap_config: IMAPConfig,
+        folder: str | None,
+    ) -> IMAPFolderResolution:
+        if folder:
+            return self._resolve_named_folder(
+                tool_name,
+                account_name,
+                imap_config,
+                folder,
+            )
+        draft_folder_names = [
+            folder_name
+            for folder_name, folder_config in imap_config.folders.items()
+            if folder_config.kind == IMAPFolderKind.DRAFTS
+        ]
+        if not draft_folder_names:
+            raise ValueError(
+                f"{tool_name} requires folder or a configured DRAFTS folder "
+                f"for account: {account_name}"
+            )
+        draft_folder_name = sorted(
+            draft_folder_names,
+            key=lambda name: (name.lower() != "drafts", name.lower()),
+        )[0]
+        return self._resolve_named_folder(
+            tool_name,
+            account_name,
+            imap_config,
+            draft_folder_name,
+        )
 
     def _resolver(self, imap_config: IMAPConfig) -> IMAPPolicyResolver:
         imap_policy = self._policies.get(imap_config.policy)
@@ -919,6 +1054,20 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
             return False
         if not _accessible_trash_folders(resolver, server_folders):
             raise ValueError(_trash_required_message(account))
+        return True
+
+    def _test_save_draft_destination(
+        self,
+        account: str,
+        imap_config: IMAPConfig,
+        server_folders: Sequence[str],
+    ) -> bool:
+        draft_folder_names = _draft_folder_names(imap_config)
+        if not draft_folder_names:
+            return False
+        draft_folder = _preferred_draft_folder_name(draft_folder_names)
+        if draft_folder not in set(server_folders):
+            raise ValueError(_save_draft_folder_required_message(account, draft_folder))
         return True
 
     def _resolve_trash_destination(
@@ -1182,6 +1331,9 @@ folders:
   Sent:
     description: Sent mail.
     kind: SENT
+  Drafts:
+    description: Draft messages.
+    kind: DRAFTS
     # Optional folder kind: INBOX, ALL, ARCHIVE, DRAFTS, FLAGGED, JUNK, SENT, or TRASH.
     # These map to IMAP special-use mailbox attributes.
 """
@@ -1228,6 +1380,11 @@ folders:
     folder_append: allow
     system_flags:
       SEEN: read_write
+  Drafts:
+    folder_append: allow
+    system_flags:
+      SEEN: read_write
+      DRAFT: read_write
 """
 
 
@@ -1364,6 +1521,14 @@ class IMAPServicePlugin:
                         policy=imap_config.policy,
                     )
                 )
+            warnings.extend(
+                self._save_draft_config_warnings(
+                    account_name=account_name,
+                    imap_config=imap_config,
+                    resolver=resolver,
+                    resolved_configured_folders=configured_folder_names,
+                )
+            )
             if _delete_may_require_trash(
                 resolver,
                 source_folder_names,
@@ -1380,6 +1545,92 @@ class IMAPServicePlugin:
         if errors:
             raise ConfigCheckError(errors)
         return tuple(warnings)
+
+    def _save_draft_config_warnings(
+        self,
+        *,
+        account_name: str,
+        imap_config: IMAPConfig,
+        resolver: IMAPPolicyResolver,
+        resolved_configured_folders: Sequence[str] | None = None,
+    ) -> list[ConfigCheckWarning]:
+        warnings: list[ConfigCheckWarning] = []
+        draft_folder_names = _draft_folder_names(imap_config)
+        if not draft_folder_names:
+            if "Drafts" in imap_config.folders:
+                warnings.append(
+                    ConfigCheckWarning(
+                        message=(
+                            "save_draft will not select Drafts by default because "
+                            "the folder is not marked kind: DRAFTS"
+                        ),
+                        account=account_name,
+                        policy=imap_config.policy,
+                    )
+                )
+            return warnings
+
+        draft_folder_name = _preferred_draft_folder_name(draft_folder_names)
+        if (
+            resolved_configured_folders is not None
+            and draft_folder_name not in resolved_configured_folders
+        ):
+            return warnings
+        if len(draft_folder_names) > 1:
+            warnings.append(
+                ConfigCheckWarning(
+                    message=(
+                        "save_draft has multiple configured DRAFTS folders; "
+                        f"using {draft_folder_name} by default "
+                        f"(configured: {', '.join(sorted(draft_folder_names))})"
+                    ),
+                    account=account_name,
+                    policy=imap_config.policy,
+                )
+            )
+
+        draft_folder = resolver.resolve_folder(draft_folder_name)
+        if not draft_folder.access.allowed:
+            warnings.append(
+                ConfigCheckWarning(
+                    message=(
+                        f"save_draft cannot use {draft_folder_name} because "
+                        "folder_access denies it"
+                    ),
+                    account=account_name,
+                    policy=imap_config.policy,
+                )
+            )
+        if draft_folder.policy.folder_append == IMAPOperationDecision.deny:
+            warnings.append(
+                ConfigCheckWarning(
+                    message=(
+                        f"save_draft cannot append to {draft_folder_name} because "
+                        "folder_append is deny"
+                    ),
+                    account=account_name,
+                    policy=imap_config.policy,
+                )
+            )
+        missing_flags = [
+            flag.name
+            for flag in IMAP_DRAFT_SYSTEM_FLAGS
+            if draft_folder.policy.system_flags[flag] != IMAPFlagMode.read_write
+        ]
+        if missing_flags:
+            warnings.append(
+                ConfigCheckWarning(
+                    message=(
+                        f"imap:save_draft cannot set required flags on "
+                        f"{draft_folder_name} folder; set "
+                        f"{', '.join(missing_flags)} to read_write to allow "
+                        "them to be modified"
+                    ),
+                    account=account_name,
+                    policy=imap_config.policy,
+                )
+            )
+        return warnings
 
     def describe_capability(
         self,

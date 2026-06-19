@@ -82,6 +82,18 @@ operation_defaults:
 Per-folder policy overrides can narrow or extend the defaults for matching
 folders.
 
+To let agents save drafts with `imap:save_draft`, configure a `DRAFTS` folder on
+the account and allow appends plus the draft flags on that folder:
+
+```yaml title="arbiter/policy/imap/bot_policy.yaml"
+folders:
+  Drafts:
+    folder_append: allow
+    system_flags:
+      SEEN: read_write
+      DRAFT: read_write
+```
+
 After editing account and policy files, activate the account:
 
 ```bash
