@@ -23,7 +23,7 @@ Commands:
   edit-env      Edit the configured env file with $ARBITER_EDITOR, $EDITOR, or vi
   edit-docker   Edit docker.env with $ARBITER_EDITOR, $EDITOR, or vi
   config check [--live] [--verbose] [override...]
-                Validate config inside a container; --live uses the running service
+                Validate config inside a fresh check container; --live tests accounts
   up [--verbose]
                 Start or update the Docker Compose service
   restart [--verbose]
@@ -1882,9 +1882,21 @@ print_config_check_ok() {
   printf ' Config check\n'
 }
 
-config_check_static() {
+config_check_color_value() {
+  if [[ "${ARBITER_COLOR:-}" == always || "${ARBITER_COLOR:-}" == never ]]; then
+    printf '%s\n' "$ARBITER_COLOR"
+  elif [[ -n "${NO_COLOR:-}" ]]; then
+    printf 'never\n'
+  elif [[ -t 1 || "${TERM:-dumb}" == *color* || "${TERM:-dumb}" == xterm* ]]; then
+    printf 'always\n'
+  fi
+}
+
+config_check_container() {
+  local live="$1"
   local override_file=""
   local status=0
+  local color_value
   local compose_args=(
     run
     --rm
@@ -1892,6 +1904,15 @@ config_check_static() {
     -e
     ARBITER_CONTAINER_ACTION=config-check
   )
+  shift
+
+  color_value="$(config_check_color_value)"
+  if [[ -n "$color_value" ]]; then
+    compose_args+=(-e "ARBITER_COLOR=$color_value")
+  fi
+  if [[ "$live" -eq 1 ]]; then
+    compose_args+=(-e ARBITER_CONFIG_CHECK_LIVE=1)
+  fi
 
   if (($#)); then
     override_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-config-overrides.XXXXXX")"
@@ -1904,11 +1925,15 @@ config_check_static() {
     )
   fi
 
-  compose "${compose_args[@]}" arbiter || status=$?
+  ARBITER_DOCKER_COMPOSE_PROGRESS=quiet compose "${compose_args[@]}" arbiter || status=$?
   if [[ -n "$override_file" ]]; then
     rm -f "$override_file"
   fi
   return "$status"
+}
+
+config_check_static() {
+  config_check_container 0 "$@"
 }
 
 config_check_static_quiet() {
@@ -1927,9 +1952,7 @@ config_check_static_quiet() {
 }
 
 config_check_live() {
-  compose exec -T arbiter sh -lc \
-    'exec "$ARBITER_RUNTIME_VENV/bin/arbiter-server" --config-dir /config --config-name "$ARBITER_CONFIG_NAME" config check "$@"' \
-    arbiter-config-check "$@"
+  config_check_container 1 "$@"
 }
 
 config_check() {
@@ -1979,8 +2002,8 @@ Usage: arbiter-docker config COMMAND
 
 Commands:
   check [--live] [--verbose] [override...]
-      Validate the deployment config inside a container.
-      With --live, also test configured accounts in the running service container.
+      Validate the deployment config inside a fresh check container.
+      With --live, also test configured accounts.
       With --verbose, print pip install output from the startup container.
 EOF
       ;;
@@ -2322,11 +2345,37 @@ print_docker_pool_overlap_error() {
   fi
 }
 
+print_docker_pool_overlap_read_only_error() {
+  local output_file="$1"
+  local rejected_subnet="$2"
+  local configured_network
+
+  configured_network="$(compose_env_value ARBITER_DOCKER_NETWORK_NAME arbiter-staging)"
+  printf 'error: Docker could not create a temporary container for this read-only command\n' >&2
+  printf '       configured staging network: %s\n' "$configured_network" >&2
+  printf '       configured staging subnet: %s\n' "$rejected_subnet" >&2
+  printf '       another Docker network overlaps this subnet.\n' >&2
+  printf '       This command will not rewrite %s.\n' "$compose_env_file" >&2
+  printf '       Run a mutating start command to auto-select a staging subnet:\n' >&2
+  printf '         ./arbiter-docker up\n' >&2
+  printf '       Or edit %s and set ARBITER_DOCKER_SUBNET to an unused private CIDR.\n' "$compose_env_file" >&2
+  if [[ -s "$output_file" ]]; then
+    printf '       Docker said:\n' >&2
+    sed 's/^/         /' "$output_file" >&2
+  fi
+}
+
 docker_compose_raw() {
+  local progress_args=()
+
+  if [[ -n "${ARBITER_DOCKER_COMPOSE_PROGRESS:-}" ]]; then
+    progress_args=(--progress "$ARBITER_DOCKER_COMPOSE_PROGRESS")
+  fi
+
   if [[ -f "$compose_override_file" ]]; then
-    docker compose --env-file "$compose_env_file" -f "$compose_file" -f "$compose_override_file" "$@"
+    docker compose --env-file "$compose_env_file" -f "$compose_file" -f "$compose_override_file" "${progress_args[@]}" "$@"
   else
-    docker compose --env-file "$compose_env_file" -f "$compose_file" "$@"
+    docker compose --env-file "$compose_env_file" -f "$compose_file" "${progress_args[@]}" "$@"
   fi
 }
 
@@ -2374,6 +2423,30 @@ compose_with_subnet_retry() {
   done
 }
 
+compose_run_read_only() {
+  local output_file
+  local rejected_subnet
+  local status
+
+  rejected_subnet="$(compose_env_value ARBITER_DOCKER_SUBNET 172.31.251.0/24)"
+  output_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-docker-compose-run.XXXXXX")"
+  if docker_compose_raw "$@" >"$output_file" 2>&1; then
+    cat "$output_file"
+    rm -f "$output_file"
+    return 0
+  else
+    status=$?
+  fi
+
+  if docker_pool_overlap_error_matches "$output_file"; then
+    print_docker_pool_overlap_read_only_error "$output_file" "$rejected_subnet"
+  else
+    cat "$output_file" >&2
+  fi
+  rm -f "$output_file"
+  return "$status"
+}
+
 compose() {
   local active_config_dir
 
@@ -2391,7 +2464,8 @@ compose() {
     ensure_plugin_data_dir_exists || return
   fi
   require_docker_access
-  if [[ "${1:-}" == up || "${1:-}" == run ]]; then
+  if [[ "${1:-}" == up ||
+    ( "${1:-}" == run && "${ARBITER_DOCKER_ALLOW_SUBNET_REPAIR:-0}" == 1 ) ]]; then
     ensure_staging_subnet_available
   fi
   if [[ "${1:-}" == up ]]; then
@@ -2399,8 +2473,11 @@ compose() {
   fi
 
   cd "$deploy_dir"
-  if [[ "${1:-}" == up || "${1:-}" == run ]]; then
+  if [[ "${1:-}" == up ||
+    ( "${1:-}" == run && "${ARBITER_DOCKER_ALLOW_SUBNET_REPAIR:-0}" == 1 ) ]]; then
     compose_with_subnet_retry "$@"
+  elif [[ "${1:-}" == run ]]; then
+    compose_run_read_only "$@"
   else
     docker_compose_raw "$@"
   fi
@@ -5489,7 +5566,7 @@ case "$command" in
     require_docker_access
     ensure_staging_subnet_available
     check_container_name_owner error
-    config_check_static_quiet
+    ARBITER_DOCKER_ALLOW_SUBNET_REPAIR=1 config_check_static_quiet
     compose up -d
     print_staging_port_note
     print_url
@@ -5500,7 +5577,7 @@ case "$command" in
     require_docker_access
     ensure_staging_subnet_available
     check_container_name_owner error
-    config_check_static_quiet
+    ARBITER_DOCKER_ALLOW_SUBNET_REPAIR=1 config_check_static_quiet
     compose up -d --force-recreate
     print_staging_port_note
     print_url

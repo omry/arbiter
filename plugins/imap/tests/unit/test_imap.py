@@ -256,9 +256,7 @@ def test_plugin_config_check_reports_invalid_drafts_metadata_as_issue() -> None:
         IMAPServicePlugin().check_config(
             accounts={
                 "primary": IMAPConfig(
-                    folders={
-                        "Drafts{bad": IMAPFolderConfig(kind=IMAPFolderKind.DRAFTS)
-                    }
+                    folders={"Drafts{bad": IMAPFolderConfig(kind=IMAPFolderKind.DRAFTS)}
                 )
             },
             policies={"bot": _allow_all_policy()},
@@ -270,8 +268,7 @@ def test_plugin_config_check_reports_invalid_drafts_metadata_as_issue() -> None:
         (
             "primary",
             "bot",
-            "IMAP configured folder is invalid: Drafts{bad: "
-            "unclosed capture block",
+            "IMAP configured folder is invalid: Drafts{bad: " "unclosed capture block",
         )
     ]
 

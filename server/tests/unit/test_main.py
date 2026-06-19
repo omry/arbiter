@@ -39,7 +39,9 @@ from arbiter_server.main import (
     build_app,
     build_server,
     compose_config,
+    ConfigCheckAccountResult,
     ConfigCheckComponentReport,
+    ConfigCheckReport,
     config_check_components,
     config_check_report,
     config_check_summary,
@@ -623,13 +625,12 @@ def test_config_check_summary_validates_runtime_construction() -> None:
         _app_config_with_smtp_imap(),
         service_plugins=_test_service_plugins(),
     ) == (
-        "server: pass\n"
-        "smtp: pass\n"
-        "imap: pass\n"
-        "result | plugin | account | policy | message\n"
-        "-------+--------+---------+--------+--------------------------\n"
-        "pass   | smtp   | primary | bot    | account/policy pair valid\n"
-        "pass   | imap   | primary | bot    | account/policy pair valid"
+        "server              | pass\n"
+        "Plugins             | pass\n"
+        "├── smtp            | pass\n"
+        "│   └── primary/bot | pass | account/policy pair valid\n"
+        "└── imap            | pass\n"
+        "    └── primary/bot | pass | account/policy pair valid"
     )
 
 
@@ -692,14 +693,46 @@ def test_config_check_summary_calls_active_plugin_config_checker() -> None:
     )
 
     assert config_check_summary(cfg, service_plugins=[FakePlugin()]) == (
-        "server: pass\n"
-        "fake: pass\n"
-        "result | plugin | account | policy | message\n"
-        "-------+--------+---------+--------+--------------------------\n"
-        "pass   | fake   | primary | bot    | account/policy pair valid"
+        "server              | pass\n"
+        "Plugins             | pass\n"
+        "└── fake            | pass\n"
+        "    └── primary/bot | pass | account/policy pair valid"
     )
     assert checked["accounts"] == {"primary": {"policy": "bot"}}
     assert checked["policies"] == {"bot": {}}
+
+
+def test_config_check_summary_pads_leaf_columns() -> None:
+    report = ConfigCheckReport(
+        components=(
+            ConfigCheckComponentReport(name="server"),
+            ConfigCheckComponentReport(
+                name="smtp",
+                account_results=(
+                    ConfigCheckAccountResult(
+                        account="a",
+                        policy="p",
+                        status="pass",
+                        message="short name",
+                    ),
+                    ConfigCheckAccountResult(
+                        account="long",
+                        policy="p",
+                        status="warn",
+                        message="long name",
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    assert report.summary == (
+        "server         | pass\n"
+        "Plugins        | warn\n"
+        "└── smtp       | warn\n"
+        "    ├── a/p    | pass | short name\n"
+        "    └── long/p | warn | long name"
+    )
 
 
 def test_config_check_report_marks_plugin_failures() -> None:
@@ -769,12 +802,11 @@ def test_config_check_report_marks_plugin_failures() -> None:
 
     assert report.failed is True
     assert report.summary == (
-        "server: pass\n"
-        "fake: fail\n"
-        "result | plugin | account | policy | message\n"
-        "-------+--------+---------+--------+--------------------------\n"
-        "pass   | fake   | primary | bot    | account/policy pair valid\n"
-        "fail   | fake   | primary | bot    | bad fake policy"
+        "server              | pass\n"
+        "Plugins             | fail\n"
+        "└── fake            | fail\n"
+        "    ├── primary/bot | pass | account/policy pair valid\n"
+        "    └── primary/bot | fail | bad fake policy"
     )
 
 
@@ -837,11 +869,10 @@ def test_config_check_report_marks_unknown_account_policy_pair() -> None:
 
     assert report.failed is True
     assert report.summary == (
-        "server: pass\n"
-        "fake: fail\n"
-        "result | plugin | account | policy  | message\n"
-        "-------+--------+---------+---------+-------------------------------------\n"
-        "fail   | fake   | primary | missing | account references an unknown policy"
+        "server                  | pass\n"
+        "Plugins                 | fail\n"
+        "└── fake                | fail\n"
+        "    └── primary/missing | fail | account references an unknown policy"
     )
 
 
@@ -914,11 +945,10 @@ def test_config_check_report_live_marks_failed_account_tests() -> None:
 
     assert report.failed is True
     assert report.summary == (
-        "server: pass\n"
-        "fake: fail\n"
-        "result | plugin | account | policy | message\n"
-        "-------+--------+---------+--------+----------------------\n"
-        "fail   | fake   | primary | bot    | authentication failed"
+        "server              | pass\n"
+        "Plugins             | fail\n"
+        "└── fake            | fail\n"
+        "    └── primary/bot | fail | authentication failed"
     )
 
 
@@ -990,11 +1020,10 @@ def test_config_check_report_live_decodes_byte_account_test_messages() -> None:
     report = config_check_report(cfg, service_plugins=[FakePlugin()], live=True)
 
     assert report.summary == (
-        "server: pass\n"
-        "fake: fail\n"
-        "result | plugin | account | policy | message\n"
-        "-------+--------+---------+--------+----------------------------------------------\n"
-        "fail   | fake   | primary | bot    | "
+        "server              | pass\n"
+        "Plugins             | fail\n"
+        "└── fake            | fail\n"
+        "    └── primary/bot | fail | "
         "[AUTHENTICATIONFAILED] Authentication failed."
     )
 
@@ -1071,7 +1100,84 @@ def test_config_check_report_live_decodes_byte_exception_args() -> None:
 
     assert "b'" not in report.summary
     assert (
-        "fail   | fake   | primary | bot    | "
+        "    └── primary/bot | fail | "
+        "535: 5.7.8 Error: authentication failed: (reason unavailable)"
+    ) in report.summary
+
+
+def test_config_check_report_live_decodes_legacy_byte_string_messages() -> None:
+    class FakeRuntime:
+        def test_accounts(self) -> dict[str, object]:
+            return {
+                "primary": {
+                    "status": "failed",
+                    "stage": "connect_auth_noop_idempotency",
+                    "message": (
+                        "(535, b'5.7.8 Error: authentication failed: "
+                        "(reason unavailable)')"
+                    ),
+                }
+            }
+
+    class FakePlugin:
+        name = "fake"
+        version = SERVER_VERSION
+        server_api_version = SERVER_API_VERSION
+
+        def register_configs(self, config_store: object) -> None:
+            return None
+
+        def bootstrap_config(self, *, kind: str, name: str) -> object | None:
+            return None
+
+        def check_config(
+            self,
+            *,
+            accounts: Mapping[str, object],
+            policies: Mapping[str, object],
+        ) -> None:
+            return None
+
+        def build_runtime(
+            self,
+            accounts: Mapping[str, object],
+            policies: Mapping[str, object],
+            context: ServiceRuntimeContext,
+        ) -> object:
+            return FakeRuntime()
+
+        def describe_capability(
+            self,
+            context: ServicePluginContext,
+        ) -> CapabilityDescriptor:
+            return CapabilityDescriptor(name="fake", description="Fake")
+
+        def describe_operations(
+            self,
+            context: ServicePluginContext,
+        ) -> list[OperationDescriptor]:
+            return []
+
+        def invoke_operation(
+            self,
+            operation: str,
+            arguments: Mapping[str, Any],
+            context: ServicePluginContext,
+        ) -> object:
+            return {}
+
+    cfg = AppConfig(
+        arbiter=ArbiterConfig(
+            account={"fake": {"primary": {"policy": "bot"}}},
+            policy={"fake": {"bot": {}}},
+        )
+    )
+
+    report = config_check_report(cfg, service_plugins=[FakePlugin()], live=True)
+
+    assert "b'" not in report.summary
+    assert (
+        "    └── primary/bot | fail | "
         "535: 5.7.8 Error: authentication failed: (reason unavailable)"
     ) in report.summary
 
@@ -1160,10 +1266,9 @@ def test_config_check_components_live_forwards_account_progress() -> None:
 
     assert [component.name for component in components] == ["server", "fake"]
     assert components[1].lines == (
-        "fake: pass",
-        "result | plugin | account | policy | message",
-        "-------+--------+---------+--------+--------------------------",
-        "pass   | fake   | primary | bot    | live account check passed",
+        "Plugins             | pass",
+        "└── fake            | pass",
+        "    └── primary/bot | pass | live account check passed",
     )
     assert progress_calls == [("server", None), ("fake", None), ("fake", "primary")]
 
@@ -1966,6 +2071,8 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
     )
     assert "ARBITER_COLOR: ${ARBITER_COLOR:-}" in compose_text
     assert "ARBITER_PIP_VERBOSE: ${ARBITER_PIP_VERBOSE:-}" in compose_text
+    assert 'echo "Updating Python packages..."' in compose_text
+    assert "run_pip_install()" in compose_text
     assert 'case "$$runtime_venv" in /tmp/arbiter-*)' in compose_text
     assert 'case "$$runtime_venv" in *..*)' in compose_text
     assert 'case "$$HOME" in /tmp/arbiter-*)' in compose_text
@@ -1979,6 +2086,8 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
     assert 'if [ -n "$${ARBITER_PUBLIC_BASE_URL:-}" ]; then' in compose_text
     assert 'python -m venv "$$runtime_venv"' in compose_text
     assert 'config check "$$@"' in compose_text
+    assert 'ARBITER_CONFIG_CHECK_LIVE:-0}" = 1' in compose_text
+    assert "set -- --live" in compose_text
     assert "config_check_log=/tmp/arbiter-config-check.log" in compose_text
     assert 'config check "$$@" >"$$config_check_log" 2>&1' in compose_text
     assert 'cat "$$config_check_log" >&2' in compose_text
@@ -3020,6 +3129,7 @@ def test_cli_deploy_docker_generated_helper_bundle_upgrade_updates_roots_and_pre
     (fake_bin / "docker").chmod(0o755)
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+    env["TERM"] = "dumb"
 
     result = subprocess.run(
         [deploy_dir / "arbiter-docker", "bundle", "upgrade"],
@@ -4078,6 +4188,7 @@ def test_cli_deploy_docker_generated_helper_up_reports_docker_permission_error(
     fake_docker.chmod(0o755)
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+    env["TERM"] = "dumb"
 
     result = subprocess.run(
         [deploy_dir / "arbiter-docker", "up"],
@@ -4513,16 +4624,60 @@ def test_cli_deploy_docker_generated_helper_config_check_uses_one_shot_container
     assert "info\n" in docker_call_text
     assert (
         f"compose --env-file {deploy_dir / 'docker.env'} "
-        f"-f {deploy_dir / 'compose.yaml'} run --rm --no-deps "
-        "-e ARBITER_CONTAINER_ACTION=config-check "
-        "-e ARBITER_CONFIG_OVERRIDES_FILE=/tmp/arbiter-config-overrides "
-        "-v "
+        f"-f {deploy_dir / 'compose.yaml'} --progress quiet run --rm --no-deps "
     ) in docker_call_text
+    assert "-e ARBITER_CONTAINER_ACTION=config-check " in docker_call_text
+    assert (
+        "-e ARBITER_CONFIG_OVERRIDES_FILE=/tmp/arbiter-config-overrides "
+        in docker_call_text
+    )
+    assert " -v " in docker_call_text
     assert "--network" not in docker_call_text
     assert ":/tmp/arbiter-config-overrides:ro arbiter\n" in docker_call_text
     assert "ARBITER_PIP_VERBOSE=\n" in docker_call_text
     assert result.stdout == ""
     assert result.stderr == ""
+
+    color_env = {**env, "ARBITER_COLOR": "always"}
+    docker_calls.write_text("", encoding="utf-8")
+    result = subprocess.run(
+        [
+            deploy_dir / "arbiter-docker",
+            "config",
+            "check",
+            "arbiter.server.bind.port=9000",
+        ],
+        check=False,
+        cwd=tmp_path,
+        env=color_env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    docker_call_text = docker_calls.read_text(encoding="utf-8")
+    assert "-e ARBITER_COLOR=always " in docker_call_text
+
+    term_color_env = {**env, "TERM": "xterm-256color"}
+    term_color_env.pop("NO_COLOR", None)
+    docker_calls.write_text("", encoding="utf-8")
+    result = subprocess.run(
+        [
+            deploy_dir / "arbiter-docker",
+            "config",
+            "check",
+            "arbiter.server.bind.port=9000",
+        ],
+        check=False,
+        cwd=tmp_path,
+        env=term_color_env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    docker_call_text = docker_calls.read_text(encoding="utf-8")
+    assert "-e ARBITER_COLOR=always " in docker_call_text
 
     docker_calls.write_text("", encoding="utf-8")
     result = subprocess.run(
@@ -4548,7 +4703,7 @@ def test_cli_deploy_docker_generated_helper_config_check_uses_one_shot_container
     assert result.stderr == ""
 
 
-def test_cli_deploy_docker_generated_helper_live_config_check_execs_container(
+def test_cli_deploy_docker_generated_helper_live_config_check_uses_one_shot_container(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -4586,6 +4741,7 @@ def test_cli_deploy_docker_generated_helper_live_config_check_execs_container(
     fake_docker.chmod(0o755)
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+    env["TERM"] = "dumb"
 
     result = subprocess.run(
         [
@@ -4607,15 +4763,99 @@ def test_cli_deploy_docker_generated_helper_live_config_check_execs_container(
     assert "info\n" in docker_call_text
     assert (
         f"compose --env-file {deploy_dir / 'docker.env'} "
-        f"-f {deploy_dir / 'compose.yaml'} exec -T arbiter sh -lc "
+        f"-f {deploy_dir / 'compose.yaml'} --progress quiet run --rm --no-deps "
     ) in docker_call_text
-    assert (
-        'arbiter-server" --config-dir /config --config-name '
-        '"$ARBITER_CONFIG_NAME" config check "$@"'
-    ) in docker_call_text
-    assert "arbiter-config-check arbiter.server.bind.port=9000\n" in (docker_call_text)
+    assert "-e ARBITER_CONTAINER_ACTION=config-check " in docker_call_text
+    assert "-e ARBITER_CONFIG_CHECK_LIVE=1 " in docker_call_text
+    assert " -T arbiter sh -lc " not in docker_call_text
+    assert "exec " not in docker_call_text
+    assert ":/tmp/arbiter-config-overrides:ro arbiter\n" in docker_call_text
     assert result.stdout == ""
     assert result.stderr == ""
+
+    color_env = {**env, "ARBITER_COLOR": "always"}
+    docker_calls.write_text("", encoding="utf-8")
+    result = subprocess.run(
+        [
+            deploy_dir / "arbiter-docker",
+            "config",
+            "check",
+            "--live",
+            "arbiter.server.bind.port=9000",
+        ],
+        check=False,
+        cwd=tmp_path,
+        env=color_env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    docker_call_text = docker_calls.read_text(encoding="utf-8")
+    assert "-e ARBITER_COLOR=always " in docker_call_text
+    assert "-e ARBITER_CONFIG_CHECK_LIVE=1 " in docker_call_text
+
+
+def test_cli_deploy_docker_generated_helper_config_check_does_not_rewrite_subnet(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    config_dir = deploy_dir / "conf"
+    (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
+    (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker_calls = tmp_path / "docker-calls"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env sh\n"
+        f'printf "%s\\n" "$*" >> "{docker_calls}"\n'
+        'if [ "$1" = info ]; then exit 0; fi\n'
+        'if [ "$1" = compose ]; then\n'
+        "  printf 'Network arbiter-staging Creating\\n'\n"
+        "  printf 'failed to create network arbiter-staging: Error response from daemon: invalid pool request: Pool overlaps with other one on this address space\\n' >&2\n"
+        "  exit 1\n"
+        "fi\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "config", "check"],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert "read-only command" in result.stderr
+    assert f"This command will not rewrite {deploy_dir / 'docker.env'}" in result.stderr
+    assert "updated staging Docker subnet" not in result.stdout
+    assert "ARBITER_DOCKER_SUBNET=172.31.251.0/24\n" in (
+        deploy_dir / "docker.env"
+    ).read_text(encoding="utf-8")
+    assert " network " not in docker_calls.read_text(encoding="utf-8")
 
 
 def test_cli_deploy_docker_generated_helper_test_finds_checkout_skill_launcher(
@@ -6988,12 +7228,12 @@ def test_cli_deploy_docker_generated_helper_install_handles_docker_unit_availabi
     )
     live_check_index = docker_call_text.index(
         f"compose --env-file {install_dir / 'docker.env'} "
-        f"-f {install_dir / 'compose.yaml'} exec -T arbiter sh -lc "
-        'exec "$ARBITER_RUNTIME_VENV/bin/arbiter-server" --config-dir /config '
-        '--config-name "$ARBITER_CONFIG_NAME" config check "$@" '
-        "arbiter-config-check\n"
+        f"-f {install_dir / 'compose.yaml'} --progress quiet run --rm --no-deps "
+        "-e ARBITER_CONTAINER_ACTION=config-check -e ARBITER_COLOR=always "
+        "-e ARBITER_CONFIG_CHECK_LIVE=1 arbiter\n"
     )
-    assert "-e ARBITER_CONTAINER_ACTION=config-check arbiter\n" in docker_call_text
+    assert "-e ARBITER_CONTAINER_ACTION=config-check " in docker_call_text
+    assert "-e ARBITER_COLOR=always " in docker_call_text
     assert (
         static_check_index
         < wheelhouse_check_index
@@ -8768,17 +9008,16 @@ def test_cli_config_check_prints_warnings_without_failing(
 
     captured = capsys.readouterr()
     assert captured.out == (
-        "server: pass\n"
-        "imap: warn\n"
-        "result | plugin | account | policy | message\n"
-        "-------+--------+---------+--------+--------------------------------------------------\n"
-        "warn   | imap   | primary | bot    | "
+        "server              | pass\n"
+        "Plugins             | warn\n"
+        "└── imap            | warn\n"
+        "    └── primary/bot | warn | "
         "IMAP account has no accessible configured folders\n"
     )
     assert captured.err == ""
 
 
-def test_cli_config_check_prints_each_component_as_it_completes(
+def test_cli_config_check_prints_aligned_report_after_components_complete(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class RecordingStdout:
@@ -8803,8 +9042,7 @@ def test_cli_config_check_prints_each_component_as_it_completes(
 
     def fake_components(cfg: object, **kwargs: object):
         yield ConfigCheckComponentReport(name="server")
-        assert stdout.text == "server: pass\n"
-        assert stdout.flush_count >= 1
+        assert stdout.text == ""
         yield ConfigCheckComponentReport(
             name="imap",
             warnings=(ConfigCheckIssue(message="still checking later component"),),
@@ -8824,7 +9062,10 @@ def test_cli_config_check_prints_each_component_as_it_completes(
         == 0
     )
     assert stdout.text == (
-        "server: pass\n" "imap: warn\n" "- warn: still checking later component\n"
+        "server   | pass\n"
+        "Plugins  | warn\n"
+        "└── imap | warn\n"
+        "- warn: still checking later component\n"
     )
 
 
@@ -8871,7 +9112,7 @@ def test_cli_config_check_animates_active_component_on_tty(
         == 0
     )
     assert "\r\033[2Ksmtp/primary: testing |" in stdout.text
-    assert "\r\033[2Ksmtp: pass\n" in stdout.text
+    assert "\r\033[2KPlugins  | pass\n└── smtp | pass\n" in stdout.text
 
 
 def test_cli_config_check_can_color_statuses(
@@ -8920,12 +9161,16 @@ def test_cli_config_check_can_color_statuses(
     assert "\033[33mwarn\033[0m" in captured.out
     assert "\033[31mfail\033[0m" in captured.out
     assert (
-        "\033[33mwarn\033[0m   | imap   | primary | bot    | "
-        "IMAP account has no accessible configured folders\n"
+        "\033[94mserver\033[0m              | \033[32mpass\033[0m\n"
+        "\033[94mPlugins\033[0m             | \033[31mfail\033[0m\n"
+        "├── \033[94mimap\033[0m            | \033[33mwarn\033[0m\n"
+        "│   └── primary/bot | \033[33mwarn\033[0m | "
+        "\033[33mIMAP account has no accessible configured folders\033[0m\n"
     ) in captured.out
     assert (
-        "\033[31mfail\033[0m   | smtp   | primary | bot    | "
-        "SMTP sent-copy destination missing\n"
+        "└── \033[94msmtp\033[0m            | \033[31mfail\033[0m\n"
+        "    └── primary/bot | \033[31mfail\033[0m | "
+        "\033[31mSMTP sent-copy destination missing\033[0m\n"
     ) in captured.out
     assert captured.err == ""
 
@@ -9037,7 +9282,7 @@ def test_cli_bootstrap_arbiter_writes_main_config(
     assert main(["--config-dir", str(config_dir), "config", "check"]) == 1
     captured = capsys.readouterr()
     assert captured.out == (
-        "server: fail\n"
+        "server | fail\n"
         "- fail: config must define at least one service account before Arbiter can run\n"
         "  currently installed arbiter plugins: imap, smtp\n"
         "  use `arbiter-server --config-dir DIR bootstrap plugin PLUGIN account "

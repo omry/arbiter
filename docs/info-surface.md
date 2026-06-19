@@ -200,16 +200,19 @@ the server starts:
 ./arbiter-docker/arbiter-docker config check
 ```
 
-Example table:
+Example output:
 
 ```text
-result | plugin | account  | policy          | message
-pass   | smtp   | bot      | bot_policy      |
-pass   | imap   | personal | personal_policy |
+server                           | pass
+Plugins                          | pass
+├── smtp                         | pass
+│   └── bot/bot_policy           | pass | account/policy pair valid
+└── imap                         | pass
+    └── personal/personal_policy | pass | account/policy pair valid
 ```
 
-The message column should be empty for passing rows. It is only useful for
-warnings and errors that require operator action.
+Tree rows use fixed-width `name | status | message` columns so warnings and
+errors stay easy to scan.
 
 Full composed account and policy details are also available locally with:
 

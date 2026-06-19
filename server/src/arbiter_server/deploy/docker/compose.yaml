@@ -44,6 +44,7 @@ services:
       python -m venv "$$runtime_venv" &&
       venv_python="$$runtime_venv/bin/python" &&
       pip_log=/tmp/arbiter-pip-install.log &&
+      echo "Updating Python packages..." &&
       run_pip_install() {
         if [ -n "$${ARBITER_PIP_VERBOSE:-}" ]; then
           "$$venv_python" -m pip --disable-pip-version-check install "$$@";
@@ -99,6 +100,7 @@ services:
       if [ -n "$${ARBITER_CONFIG_OVERRIDES_FILE:-}" ]; then
         while IFS= read -r override; do set -- "$$@" "$$override"; done < "$$ARBITER_CONFIG_OVERRIDES_FILE";
       fi &&
+      if [ "$${ARBITER_CONFIG_CHECK_LIVE:-0}" = 1 ]; then set -- --live "$$@"; fi &&
       config_check_log=/tmp/arbiter-config-check.log &&
       if [ "$${ARBITER_CONTAINER_ACTION:-serve}" = config-check ]; then
         "$$runtime_venv/bin/arbiter-server" --config-dir /config --config-name "$$ARBITER_CONFIG_NAME" config check "$$@";

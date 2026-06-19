@@ -105,6 +105,30 @@ SEND_EMAIL_DESCRIPTION = (
 )
 
 
+def _smtp_response_text(response: object) -> str:
+    if isinstance(response, bytes):
+        return response.decode("utf-8", errors="replace")
+    return str(response)
+
+
+def _format_smtp_exception(exc: Exception) -> str:
+    if isinstance(exc, smtplib.SMTPAuthenticationError):
+        return (
+            f"SMTP authentication failed ({exc.smtp_code}): "
+            f"{_smtp_response_text(exc.smtp_error)}"
+        )
+    if isinstance(exc, smtplib.SMTPResponseException):
+        return f"SMTP error {exc.smtp_code}: {_smtp_response_text(exc.smtp_error)}"
+    if isinstance(exc, smtplib.SMTPServerDisconnected):
+        detail = str(exc)
+        return (
+            "SMTP server disconnected"
+            if not detail
+            else f"SMTP server disconnected: {detail}"
+        )
+    return str(exc)
+
+
 @dataclass(frozen=True)
 class SendEmailInput:
     account: str = field(
@@ -208,7 +232,7 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
                     "status": "failed",
                     "stage": stage,
                     "error_type": type(exc).__name__,
-                    "message": str(exc),
+                    "message": _format_smtp_exception(exc),
                 }
                 continue
             checks = ["connect", "ehlo", "noop"]

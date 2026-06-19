@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import base64
 import hashlib
 import inspect
@@ -13,7 +14,14 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import AsyncGenerator, Callable, Iterator, Mapping, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    Callable,
+    Iterable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from dataclasses import asdict, dataclass, is_dataclass
 from importlib.metadata import PackageNotFoundError, distribution, entry_points
 from importlib.resources import files
@@ -209,14 +217,7 @@ class ConfigCheckReport:
 
     @property
     def lines(self) -> tuple[str, ...]:
-        lines: list[str] = []
-        account_rows = []
-        for component in self.components:
-            account_rows.extend(component.table_rows)
-        for component in self.components:
-            lines.extend(component.summary_lines)
-        if account_rows:
-            lines.extend(_config_check_table_lines(account_rows))
+        lines = [*_config_check_tree_lines(self.components)]
         for component in self.components:
             lines.extend(component.issue_lines)
         return tuple(lines)
@@ -247,12 +248,7 @@ class ConfigCheckComponentReport:
 
     @property
     def lines(self) -> tuple[str, ...]:
-        lines = [*self.summary_lines]
-        table_rows = self.table_rows
-        if table_rows:
-            lines.extend(_config_check_table_lines(table_rows))
-        lines.extend(self.issue_lines)
-        return tuple(lines)
+        return (*_config_check_tree_lines((self,)), *self.issue_lines)
 
     @property
     def summary_lines(self) -> tuple[str, ...]:
@@ -361,6 +357,13 @@ def _color_config_check_status(status: str) -> str:
     return f"\033[{color}m{status}\033[0m"
 
 
+def _color_config_check_message(status: str, message: str) -> str:
+    color = _CONFIG_CHECK_STATUS_COLORS.get(status)
+    if color is None or not message:
+        return message
+    return f"\033[{color}m{message}\033[0m"
+
+
 def _color_config_check_component(component: str) -> str:
     return f"\033[{_CONFIG_CHECK_COMPONENT_COLOR}m{component}\033[0m"
 
@@ -441,6 +444,55 @@ def _color_config_check_line(line: str) -> str:
             f"{_color_config_check_component(match.group(1))}: "
             f"{_color_config_check_status(match.group(2))}"
         )
+    match = re.fullmatch(r"([A-Za-z0-9_.-]+)", line)
+    if match is not None:
+        return _color_config_check_component(match.group(1))
+    match = re.fullmatch(r"([├└]── )([A-Za-z0-9_.-]+)", line)
+    if match is not None:
+        return f"{match.group(1)}{_color_config_check_component(match.group(2))}"
+    match = re.fullmatch(
+        r"((?:│   |    )?[├└]── )([^|]*?)( \| )(pass|warn|fail)( *\| )(.*)",
+        line,
+    )
+    if match is not None:
+        return (
+            f"{match.group(1)}{match.group(2)}{match.group(3)}"
+            f"{_color_config_check_status(match.group(4))}{match.group(5)}"
+            f"{_color_config_check_message(match.group(4), match.group(6))}"
+        )
+    match = re.fullmatch(
+        r"((?:│   |    )?[├└]── )([^|]*?)( \| )(pass|warn|fail)",
+        line,
+    )
+    if match is not None:
+        label = match.group(2)
+        trimmed_label = label.rstrip()
+        return (
+            f"{match.group(1)}{_color_config_check_component(trimmed_label)}"
+            f"{label[len(trimmed_label):]}{match.group(3)}"
+            f"{_color_config_check_status(match.group(4))}"
+        )
+    match = re.fullmatch(r"([^|]*?)( \| )(pass|warn|fail)( *\| )(.*)", line)
+    if match is not None:
+        return (
+            f"{_color_config_check_component(match.group(1).rstrip())}"
+            f"{match.group(1)[len(match.group(1).rstrip()):]}{match.group(2)}"
+            f"{_color_config_check_status(match.group(3))}{match.group(4)}"
+            f"{_color_config_check_message(match.group(3), match.group(5))}"
+        )
+    match = re.fullmatch(r"([^|]*?)( \| )(pass|warn|fail)", line)
+    if match is not None:
+        return (
+            f"{_color_config_check_component(match.group(1).rstrip())}"
+            f"{match.group(1)[len(match.group(1).rstrip()):]}{match.group(2)}"
+            f"{_color_config_check_status(match.group(3))}"
+        )
+    match = re.fullmatch(r"(pass|warn|fail)( +\| .*\| )(.*)", line)
+    if match is not None:
+        return (
+            f"{_color_config_check_status(match.group(1))}{match.group(2)}"
+            f"{_color_config_check_message(match.group(1), match.group(3))}"
+        )
     match = re.fullmatch(r"(pass|warn|fail)( +\| .*)", line)
     if match is not None:
         return f"{_color_config_check_status(match.group(1))}{match.group(2)}"
@@ -448,34 +500,77 @@ def _color_config_check_line(line: str) -> str:
     if match is not None:
         return (
             f"{match.group(1)}{_color_config_check_status(match.group(2))}:"
-            f"{match.group(3)}"
+            f"{_color_config_check_message(match.group(2), match.group(3))}"
         )
     return line
 
 
-def _config_check_table_lines(
-    rows: Sequence[_ConfigCheckTableRow],
+def _config_check_worst_status(
+    statuses: Iterable[str],
+) -> Literal["pass", "warn", "fail"]:
+    worst: Literal["pass", "warn", "fail"] = "pass"
+    for status in statuses:
+        if status == "fail":
+            return "fail"
+        if status == "warn":
+            worst = "warn"
+    return worst
+
+
+def _config_check_tree_lines(
+    components: Sequence[ConfigCheckComponentReport],
 ) -> tuple[str, ...]:
-    headers = ("result", "plugin", "account", "policy", "message")
-    raw_rows = [
-        (row.result, row.plugin, row.account, row.policy, row.message) for row in rows
-    ]
-    widths = [
-        max(len(headers[index]), *(len(row[index]) for row in raw_rows))
-        for index in range(len(headers))
-    ]
+    if not components:
+        return ()
 
-    def format_row(values: Sequence[str]) -> str:
-        return " | ".join(
-            value.ljust(widths[index]) for index, value in enumerate(values)
-        ).rstrip()
-
-    separator = "-+-".join("-" * width for width in widths)
-    return (
-        format_row(headers),
-        separator,
-        *(format_row(row) for row in raw_rows),
+    server_components = tuple(
+        component for component in components if component.name == "server"
     )
+    plugin_components = tuple(
+        component for component in components if component.name != "server"
+    )
+    tree_rows: list[tuple[str, str, str]] = [
+        ("server", component.status, "") for component in server_components
+    ]
+    if plugin_components:
+        tree_rows.append(
+            (
+                "Plugins",
+                _config_check_worst_status(
+                    component.status for component in plugin_components
+                ),
+                "",
+            )
+        )
+    for plugin_index, component in enumerate(plugin_components):
+        plugin_is_last = plugin_index == len(plugin_components) - 1
+        plugin_branch = "└──" if plugin_is_last else "├──"
+        row_prefix = "    " if plugin_is_last else "│   "
+        tree_rows.append((f"{plugin_branch} {component.name}", component.status, ""))
+        plugin_rows = component.table_rows
+        for index, row in enumerate(plugin_rows):
+            branch = "└──" if index == len(plugin_rows) - 1 else "├──"
+            tree_rows.append(
+                (
+                    f"{row_prefix}{branch} {_config_check_row_account_policy(row)}",
+                    row.result,
+                    row.message,
+                )
+            )
+    label_width = max(len(label) for label, _, _ in tree_rows)
+    status_width = max(len(status) for _, status, _ in tree_rows)
+    return tuple(
+        (
+            f"{label:<{label_width}} | {status:<{status_width}} | {message}"
+            if message
+            else f"{label:<{label_width}} | {status:<{status_width}}"
+        ).rstrip()
+        for label, status, message in tree_rows
+    )
+
+
+def _config_check_row_account_policy(row: _ConfigCheckTableRow) -> str:
+    return row.account if not row.policy else f"{row.account}/{row.policy}"
 
 
 def _config_check_issue_has_account(issue: ConfigCheckIssue) -> bool:
@@ -838,7 +933,27 @@ def _format_live_check_message(message: object) -> str:
         return ": ".join(_format_live_check_message(item) for item in message)
     if isinstance(message, list):
         return ", ".join(_format_live_check_message(item) for item in message)
+    if isinstance(message, str):
+        decoded = _format_legacy_byte_string_message(message)
+        if decoded is not None:
+            return decoded
     return str(message)
+
+
+def _format_legacy_byte_string_message(message: str) -> str | None:
+    if "b'" not in message and 'b"' not in message:
+        return None
+    try:
+        value = ast.literal_eval(message)
+    except (SyntaxError, ValueError):
+        return None
+    if isinstance(value, bytes):
+        return _format_live_check_message(value)
+    if isinstance(value, tuple | list) and any(
+        isinstance(item, bytes) for item in value
+    ):
+        return _format_live_check_message(value)
+    return None
 
 
 def _call_live_account_tests(
@@ -3455,16 +3570,14 @@ def _run_config_check(
         ):
             progress.finish()
             components.append(component)
-            lines = (*component.summary_lines, *component.issue_lines)
-            for line in _color_config_check_lines(lines, color=color):
-                print(line, flush=True)
             failed = failed or component.status == "fail"
-        account_rows = [row for component in components for row in component.table_rows]
-        if account_rows:
-            for line in _color_config_check_lines(
-                _config_check_table_lines(account_rows),
-                color=color,
-            ):
+        for line in _color_config_check_lines(
+            _config_check_tree_lines(components),
+            color=color,
+        ):
+            print(line, flush=True)
+        for component in components:
+            for line in _color_config_check_lines(component.issue_lines, color=color):
                 print(line, flush=True)
         if failed:
             return 1

@@ -287,6 +287,30 @@ def test_runtime_reports_account_test_failure(tmp_path: Path) -> None:
     }
 
 
+def test_runtime_reports_smtp_authentication_failure_readably(tmp_path: Path) -> None:
+    factory = RecordingSMTPClientFactory(
+        lambda: FailingSMTPTestClient(
+            smtplib.SMTPAuthenticationError(
+                535,
+                b"5.7.8 Error: authentication failed: (reason unavailable)",
+            )
+        )
+    )
+    runtime = _runtime(cache_dir=tmp_path, factory=factory)
+
+    assert runtime.test_accounts() == {
+        "primary": {
+            "status": "failed",
+            "stage": "connect_auth_noop_idempotency",
+            "error_type": "SMTPAuthenticationError",
+            "message": (
+                "SMTP authentication failed (535): "
+                "5.7.8 Error: authentication failed: (reason unavailable)"
+            ),
+        }
+    }
+
+
 def test_runtime_reports_idempotency_storage_test_failure(tmp_path: Path) -> None:
     factory = RecordingSMTPClientFactory()
 

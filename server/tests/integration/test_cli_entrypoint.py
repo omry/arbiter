@@ -634,11 +634,10 @@ def test_arbiter_console_script_config_show_and_check(
     assert show.stderr == ""
     assert check.returncode == 0
     assert check.stdout == (
-        "server: pass\n"
-        "smtp: pass\n"
-        "result | plugin | account | policy         | message\n"
-        "-------+--------+---------+----------------+--------------------------\n"
-        "pass   | smtp   | primary | primary_policy | account/policy pair valid\n"
+        "server                         | pass\n"
+        "Plugins                        | pass\n"
+        "└── smtp                       | pass\n"
+        "    └── primary/primary_policy | pass | account/policy pair valid\n"
     )
     assert check.stderr == ""
 
