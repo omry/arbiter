@@ -53,20 +53,24 @@ def _deployment_message_bytes() -> bytes:
     return message.as_bytes()
 
 
-@pytest.fixture
-def imap_server(free_tcp_port: int) -> Iterator[Any]:
+def _start_deploy_imap_server(port: int) -> Any:
     runner = _load_imap_integration_module()._LocalIMAPServerRunner(
-        free_tcp_port,
+        port,
         host="0.0.0.0",
         close_host="127.0.0.1",
         search_uids=(DEPLOYMENT_TEST_UID,),
         messages={DEPLOYMENT_TEST_UID: _deployment_message_bytes()},
     )
-    server = runner.start()
+    return runner.start()
+
+
+@pytest.fixture
+def imap_server(free_tcp_port: int) -> Iterator[Any]:
+    server = _start_deploy_imap_server(free_tcp_port)
     try:
         yield server
     finally:
-        runner.close()
+        server.stop.close()
 
 
 def _command(name: str) -> Path:
@@ -358,6 +362,9 @@ def _operation_payload(stdout: str) -> dict[str, Any]:
     if isinstance(payload, dict) and "account" in payload:
         return payload
     if isinstance(payload, dict):
+        result = payload.get("result")
+        if isinstance(result, dict):
+            return result
         content = payload.get("content")
         if isinstance(content, list) and content:
             first = content[0]
@@ -525,7 +532,6 @@ def test_docker_deployment_serves_real_imap_operation(
 def test_docker_deployment_serves_real_imap_operation_from_wheelhouse(
     tmp_path: Path,
     free_tcp_port_factory: Callable[[], int],
-    imap_server: Any,
 ) -> None:
     repo_root = _repo_root()
     if not _docker_available(repo_root):
@@ -533,44 +539,45 @@ def test_docker_deployment_serves_real_imap_operation_from_wheelhouse(
 
     wheelhouse = tmp_path / "wheels"
     wheels = _build_deploy_wheelhouse(repo_root, wheelhouse)
+    imap_server = _start_deploy_imap_server(free_tcp_port_factory())
     deploy_dir = tmp_path / "deploy"
-    init = _run(
-        [
-            _command("arbiter-server"),
-            "deploy",
-            "docker",
-            f"docker.dir={deploy_dir}",
-            f"docker.requirement=/wheels/{wheels['server'].name}",
-            f"docker.requirement=/wheels/{wheels['smtp'].name}",
-            f"docker.requirement=/wheels/{wheels['imap'].name}",
-            "init",
-        ],
-        cwd=repo_root,
-        timeout=30,
-    )
-    _assert_ok(init)
-
-    deploy_wheelhouse = deploy_dir / "wheels"
-    for wheel in wheelhouse.glob("*.whl"):
-        shutil.copy2(wheel, deploy_wheelhouse / wheel.name)
-
-    config_dir = deploy_dir / "conf"
-    config_dir.mkdir(exist_ok=True)
-    _write_imap_only_config(config_dir / "arbiter-server.yaml", imap_server)
-    (config_dir / ".env").write_text("", encoding="utf-8")
-    (config_dir / ".env").chmod(0o600)
-    host_port = free_tcp_port_factory()
-    _configure_deploy_network(deploy_dir, host_port)
-
-    helper = deploy_dir / "arbiter-docker"
-    _assert_deployment_preflight(
-        repo_root=repo_root,
-        helper=helper,
-        deploy_dir=deploy_dir,
-        install_target=tmp_path / "install-target",
-        check_bundle=True,
-    )
     try:
+        init = _run(
+            [
+                _command("arbiter-server"),
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                f"docker.requirement=/wheels/{wheels['server'].name}",
+                f"docker.requirement=/wheels/{wheels['smtp'].name}",
+                f"docker.requirement=/wheels/{wheels['imap'].name}",
+                "init",
+            ],
+            cwd=repo_root,
+            timeout=30,
+        )
+        _assert_ok(init)
+
+        deploy_wheelhouse = deploy_dir / "wheels"
+        for wheel in wheelhouse.glob("*.whl"):
+            shutil.copy2(wheel, deploy_wheelhouse / wheel.name)
+
+        config_dir = deploy_dir / "conf"
+        config_dir.mkdir(exist_ok=True)
+        _write_imap_only_config(config_dir / "arbiter-server.yaml", imap_server)
+        (config_dir / ".env").write_text("", encoding="utf-8")
+        (config_dir / ".env").chmod(0o600)
+        host_port = free_tcp_port_factory()
+        _configure_deploy_network(deploy_dir, host_port)
+
+        helper = deploy_dir / "arbiter-docker"
+        _assert_deployment_preflight(
+            repo_root=repo_root,
+            helper=helper,
+            deploy_dir=deploy_dir,
+            install_target=tmp_path / "install-target",
+            check_bundle=True,
+        )
         up = _run([helper, "up"], cwd=repo_root, timeout=240)
         _assert_ok(up)
         url = f"http://127.0.0.1:{host_port}"
@@ -585,4 +592,8 @@ def test_docker_deployment_serves_real_imap_operation_from_wheelhouse(
         assert "Downloading " not in logs.stdout
         assert "Downloading " not in logs.stderr
     finally:
-        _run([helper, "down"], cwd=repo_root, timeout=60)
+        try:
+            if (helper := deploy_dir / "arbiter-docker").exists():
+                _run([helper, "down"], cwd=repo_root, timeout=60)
+        finally:
+            imap_server.stop.close()
