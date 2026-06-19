@@ -176,6 +176,21 @@ This file is the day-to-day queue for design and implementation gaps.
       attachment MIME construction, policy failures, retry behavior, and
       Sent-copy preservation.
 
+- [ ] `P2` Add SMTP reply-message support.
+      SMTP can send a new message, but agents also need a controlled way to
+      send a response that is explicitly linked to the message being replied
+      to. Acceptance checks: define the reply input contract, including a
+      stable replied-to identifier such as source plugin, account, folder, UID,
+      and/or RFC 5322 `Message-ID`; generate correct `In-Reply-To` and
+      `References` headers when the original message id is available; preserve
+      the replied-to identifier in operation results, Sent-copy metadata, and
+      idempotency records; decide whether reply support is part of
+      `smtp:send_email` or a separate `smtp:reply_email` operation; enforce
+      recipient and sender policy before SMTP submission; document the
+      IMAP-to-SMTP reply workflow; and add tests for header construction,
+      missing or ambiguous original-message ids, retries, and Sent-copy
+      preservation.
+
 - [ ] `P2` Add per-account service smoke tests. Each service plugin should be
       able to register a quick stateless account test that uses the configured
       credentials and returns a structured status. Arbiter should expose one
