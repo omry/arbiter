@@ -1980,9 +1980,17 @@ config_check() {
   done
 
   if [[ "$live" -eq 1 ]]; then
-    config_check_live "${overrides[@]}"
+    if [[ "${#overrides[@]}" -gt 0 ]]; then
+      config_check_live "${overrides[@]}"
+    else
+      config_check_live
+    fi
   else
-    config_check_static "${overrides[@]}"
+    if [[ "${#overrides[@]}" -gt 0 ]]; then
+      config_check_static "${overrides[@]}"
+    else
+      config_check_static
+    fi
   fi
 }
 
@@ -2373,9 +2381,17 @@ docker_compose_raw() {
   fi
 
   if [[ -f "$compose_override_file" ]]; then
-    docker compose --env-file "$compose_env_file" -f "$compose_file" -f "$compose_override_file" "${progress_args[@]}" "$@"
+    if [[ "${#progress_args[@]}" -gt 0 ]]; then
+      docker compose --env-file "$compose_env_file" -f "$compose_file" -f "$compose_override_file" "${progress_args[@]}" "$@"
+    else
+      docker compose --env-file "$compose_env_file" -f "$compose_file" -f "$compose_override_file" "$@"
+    fi
   else
-    docker compose --env-file "$compose_env_file" -f "$compose_file" "${progress_args[@]}" "$@"
+    if [[ "${#progress_args[@]}" -gt 0 ]]; then
+      docker compose --env-file "$compose_env_file" -f "$compose_file" "${progress_args[@]}" "$@"
+    else
+      docker compose --env-file "$compose_env_file" -f "$compose_file" "$@"
+    fi
   fi
 }
 
