@@ -60,7 +60,7 @@ Local development and same-host agent deployments may use HTTP when the host
 bind is loopback-only:
 
 ```text
-agent -> http://127.0.0.1:8025/mcp -> Arbiter
+agent -> http://127.0.0.1:8025 -> Arbiter
 ```
 
 This mode is acceptable only because the traffic stays on the host loopback
@@ -73,7 +73,7 @@ For deployments with a public DNS name, use a host reverse proxy for HTTPS:
 ```text
 agent -> https://arbiter.example.com
       -> host reverse proxy
-      -> http://127.0.0.1:8025/mcp
+      -> http://127.0.0.1:8025
       -> Arbiter container
 ```
 
@@ -151,7 +151,7 @@ Request signatures are still useful when Arbiter needs durable proof that a
 specific agent key authorized a specific payload. They are especially relevant
 for audit, queues, brokers, or other paths where the request may outlive the
 TLS connection. Detached signatures over canonical request bytes are likely
-cleaner than PGP clearsigned text for structured MCP payloads.
+cleaner than PGP clearsigned text for structured operation payloads.
 
 ## Policy and Audit Model
 

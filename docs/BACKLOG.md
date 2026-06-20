@@ -29,21 +29,21 @@ This file is the day-to-day queue for design and implementation gaps.
 - [ ] `P0` Support HTTP for the initial release, possibly as the only transport.
       The release line should have one clear server transport story. Prefer the
       simplest supported public surface: native HTTP with `arbiter.url`, no
-      user-facing MCP endpoint, and no duplicate transport path unless there is
-      a concrete compatibility reason to keep one. Acceptance checks: decide
-      whether HTTP is the only initial-release transport; remove or explicitly
-      quarantine unsupported transport config, tests, docs, and generated
-      deployment paths; confirm the client, skill, Docker helper, and docs use
-      the HTTP base URL contract; and prove the chosen transport in local
-      release rehearsal from built artifacts.
+      duplicate transport path unless there is a concrete compatibility reason
+      to keep one. Acceptance checks: decide whether HTTP is the only
+      initial-release transport; remove or explicitly quarantine unsupported
+      transport config, tests, docs, and generated deployment paths; confirm
+      the client, skill, Docker helper, and docs use the HTTP base URL
+      contract; and prove the chosen transport in local release rehearsal from
+      built artifacts.
 
 - [ ] `P1` Run an Arbiter security analysis before initial release.
       Do one focused threat-model and implementation review pass over the
       current architecture before publishing packages. Cover the native HTTP
-      boundary, any remaining MCP compatibility boundary, local and Docker
-      deployment modes, config and env-file handling, plugin discovery/loading,
-      package supply chain assumptions, secret handling, SMTP/IMAP operation
-      policies, logging, and known audit gaps.
+      boundary, any remaining legacy protocol compatibility boundary, local
+      and Docker deployment modes, config and env-file handling, plugin
+      discovery/loading, package supply chain assumptions, secret handling,
+      SMTP/IMAP operation policies, logging, and known audit gaps.
       Acceptance checks: produce a short written security analysis with trust
       boundaries, assets, attacker assumptions, and prioritized findings; turn
       concrete fixes into backlog items or immediate patches; document any
@@ -73,7 +73,7 @@ This file is the day-to-day queue for design and implementation gaps.
       from scratch; evaluate whether client commands should take an artifact ID
       resolved through Arbiter instead of a raw artifact URL, and remove raw URL
       handling if the ID-based contract is better for agents and sandboxing; and
-      coordinate Codex sandbox loopback allowlisting so local Arbiter MCP and
+      coordinate Codex sandbox loopback allowlisting so local Arbiter and
       artifact URLs such as `http://127.0.0.1:8025/...` do not require
       per-command escalation.
 
@@ -96,13 +96,12 @@ This file is the day-to-day queue for design and implementation gaps.
       threat model for trusted versus isolated plugins.
 
 - [ ] `P2` Decide the long-term config and policy shape.
-      The MCP discovery surface is moving toward capability-first drill-down,
-      and the server config may want the same shape: `smtp.accounts`,
-      `smtp.policies`, `imap.accounts`, and `imap.policies` instead of
-      top-level account and policy containers. Also decide whether the
-      placeholder `etc` config surface should be removed, and whether caller
-      confirmation belongs in the same service-scoped policy container as
-      runtime access gates.
+      Arbiter discovery is moving toward capability-first drill-down, and the
+      server config may want the same shape: `smtp.accounts`, `smtp.policies`,
+      `imap.accounts`, and `imap.policies` instead of top-level account and
+      policy containers. Also decide whether the placeholder `etc` config
+      surface should be removed, and whether caller confirmation belongs in the
+      same service-scoped policy container as runtime access gates.
       Acceptance checks: compare the current Hydra composition shape against a
       service-first shape; decide whether activation remains readable and easy
       to generate; remove or justify `etc`; compare policy-shape alternatives;
@@ -121,7 +120,7 @@ This file is the day-to-day queue for design and implementation gaps.
 
 - [ ] `P2` Create a web interface for Arbiter management.
       Operators should have a first-class browser surface for inspecting and
-      managing Arbiter without editing config files or reading raw MCP
+      managing Arbiter without editing config files or reading raw capability
       discovery output for common tasks. Acceptance checks: define the initial
       management scope, such as server status, configured services/accounts,
       plugin discovery, policy visibility, and safe configuration checks;
@@ -198,9 +197,9 @@ This file is the day-to-day queue for design and implementation gaps.
       reports per-service/per-account results without mutating remote state.
       Acceptance checks: define the plugin hook contract; implement SMTP and
       IMAP smoke tests that avoid writes or destructive side effects; expose one
-      MCP tool for all account tests; return clear success, skipped, and failure
-      statuses with operator-useful messages; and document how deployment smoke
-      checks can call the aggregate endpoint.
+      Arbiter operation for all account tests; return clear success, skipped,
+      and failure statuses with operator-useful messages; and document how
+      deployment smoke checks can call the aggregate endpoint.
 
 - [ ] `P2` Add IMAP message flags APIs.
       Agents need a controlled way to inspect and update message flags such as
@@ -326,11 +325,10 @@ This file is the day-to-day queue for design and implementation gaps.
       crossing trust boundaries, including prompt-injection detection on
       inbound content and data-exfiltration detection on outbound content.
       Acceptance checks: define the filter hook contract and ordering; identify
-      which MCP requests, tool arguments, tool results, logs, and service
-      payloads are in scope; support allow, block, redact, and warn outcomes;
-      specify how findings are reported to callers and operators; and document
-      the trust, privacy, latency, and failure-mode expectations for filter
-      plugins.
+      which operation requests, arguments, results, logs, and service payloads
+      are in scope; support allow, block, redact, and warn outcomes; specify how
+      findings are reported to callers and operators; and document the trust,
+      privacy, latency, and failure-mode expectations for filter plugins.
 
 - [ ] `P2` Centralize movable scratch directories.
       Several tools create local-only build, publish, cache, and staging
@@ -417,17 +415,17 @@ This file is the day-to-day queue for design and implementation gaps.
       package changes after prepare/upgrade; and detect when the wheelhouse or
       lock is stale relative to root requirements.
 
-- [ ] `P2` Generate baseline CLI parameters from MCP tool schemas.
-      The MCP surface already defines rich input shape metadata, and that
+- [ ] `P2` Generate baseline CLI parameters from operation schemas.
+      Arbiter operations already define rich input shape metadata, and that
       contract should become the default source for a generic CLI layer rather
-      than being re-declared by hand for each tool. Service-specific wrappers
-      can still add better UX on top.
+      than being re-declared by hand for each operation. Service-specific
+      wrappers can still add better UX on top.
       Acceptance checks: a design or implementation path exists for deriving
-      CLI flags from MCP `inputSchema`; required, optional, list, enum, and
-      bounded scalar fields map predictably; generated invocations round-trip
-      into valid tool arguments; and the design clearly separates generic
-      schema-driven CLI generation from optional task-specific wrapper
-      behavior.
+      CLI flags from operation input schemas; required, optional, list, enum,
+      and bounded scalar fields map predictably; generated invocations
+      round-trip into valid operation arguments; and the design clearly
+      separates generic schema-driven CLI generation from optional task-specific
+      wrapper behavior.
 
 - [ ] `P2` Add plugin-authored workflow discovery.
       Service plugins should be able to describe domain-specific manual
@@ -437,7 +435,7 @@ This file is the day-to-day queue for design and implementation gaps.
       Acceptance checks: define a small workflow metadata contract with stable
       ids, purpose, prerequisites, referenced operation ids, suggested steps,
       policy notes, and preferred output views; expose workflows through
-      discovery for MCP and CLI surfaces from the same metadata; add at least
+      Arbiter discovery and CLI surfaces from the same metadata; add at least
       one IMAP example such as message lookup using `imap:search_messages` then
       `imap:get_message`; and keep operation schemas/descriptions owned by the
       plugin's atomic operations.
