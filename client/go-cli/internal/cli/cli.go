@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,7 +24,7 @@ import (
 )
 
 const (
-	DefaultURL                                = "http://127.0.0.1:8075"
+	DefaultURL                                = "https://127.0.0.1:8075"
 	URLEnvVar                                 = "ARBITER_URL"
 	DefaultConfigDir                          = ".arbiter"
 	DefaultClientConfigName                   = "arbiter-client.yaml"
@@ -38,6 +40,12 @@ type ResolvedURL struct {
 	Source string
 }
 
+type ResolvedClientConfig struct {
+	URL       string
+	Source    string
+	TLSCAFile string
+}
+
 type arbiterClient interface {
 	Info(context.Context) (map[string]any, error)
 	Plugins(context.Context) (map[string]any, error)
@@ -51,11 +59,57 @@ type arbiterClient interface {
 }
 
 var newArbiterClient = func(url string) arbiterClient {
+	if allowLocalSelfSignedTLS(url) {
+		return arbiterhttp.NewClientInsecureTLS(url)
+	}
 	return arbiterhttp.NewClient(url)
+}
+
+var newArbiterClientWithConfig = func(config ResolvedClientConfig) (arbiterClient, error) {
+	if config.TLSCAFile != "" {
+		client, err := arbiterhttp.NewClientWithTLSCAFile(config.URL, config.TLSCAFile)
+		if err != nil {
+			return nil, err
+		}
+		return client, nil
+	}
+	return newArbiterClient(config.URL), nil
 }
 
 var newArtifactHTTPClient = func() *http.Client {
 	return &http.Client{Timeout: 30 * time.Second}
+}
+
+func artifactHTTPClient(
+	options globalOptions,
+	lookupEnv EnvLookup,
+	homeDir HomeDirFunc,
+	artifactURL string,
+) (*http.Client, error) {
+	config, err := ResolveClientConfig(options.Overrides, lookupEnv, homeDir, options)
+	if err != nil {
+		return nil, err
+	}
+	if config.TLSCAFile != "" {
+		return arbiterhttp.NewHTTPClientWithTLSCAFile(config.TLSCAFile)
+	}
+	if allowLocalSelfSignedTLS(artifactURL) {
+		return arbiterhttp.NewHTTPClientInsecureTLS(), nil
+	}
+	return newArtifactHTTPClient(), nil
+}
+
+func allowLocalSelfSignedTLS(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme != "https" {
+		return false
+	}
+	host := strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 type globalOptions struct {
@@ -116,7 +170,7 @@ func Main(
 	case "op":
 		return runOperation(remaining[1:], options, stdout, stderr, lookupEnv, homeDir)
 	case "artifact":
-		return runArtifact(remaining[1:], stdout, stderr)
+		return runArtifact(remaining[1:], options, stdout, stderr, lookupEnv, homeDir)
 	default:
 		fmt.Fprintf(stderr, "Arbiter usage error: unknown command: %s\n", remaining[0])
 		printShortUsage(stderr)
@@ -126,8 +180,11 @@ func Main(
 
 func runArtifact(
 	args []string,
+	globalOptions globalOptions,
 	stdout io.Writer,
 	stderr io.Writer,
+	lookupEnv EnvLookup,
+	homeDir HomeDirFunc,
 ) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "Arbiter usage error: expected: arbiter artifact {get,save,with-temp,with-stdin} ...")
@@ -148,7 +205,17 @@ func runArtifact(
 			fmt.Fprintf(stderr, "Arbiter usage error: %v\n", err)
 			return 2
 		}
-		if err := fetchArtifact(context.Background(), options, stdout); err != nil {
+		httpClient, err := artifactHTTPClient(
+			globalOptions,
+			lookupEnv,
+			homeDir,
+			options.URL,
+		)
+		if err != nil {
+			fmt.Fprintf(stderr, "Arbiter client config error: %v\n", err)
+			return 1
+		}
+		if err := fetchArtifact(context.Background(), options, httpClient, stdout); err != nil {
 			fmt.Fprintf(stderr, "Arbiter artifact error: %s\n", err)
 			return 1
 		}
@@ -163,7 +230,17 @@ func runArtifact(
 			fmt.Fprintf(stderr, "Arbiter usage error: %v\n", err)
 			return 2
 		}
-		if err := saveArtifactToFile(context.Background(), options.URL, options.OutputPath); err != nil {
+		httpClient, err := artifactHTTPClient(
+			globalOptions,
+			lookupEnv,
+			homeDir,
+			options.URL,
+		)
+		if err != nil {
+			fmt.Fprintf(stderr, "Arbiter client config error: %v\n", err)
+			return 1
+		}
+		if err := saveArtifactToFile(context.Background(), options.URL, options.OutputPath, httpClient); err != nil {
 			fmt.Fprintf(stderr, "Arbiter artifact error: %s\n", err)
 			return 1
 		}
@@ -178,7 +255,17 @@ func runArtifact(
 			fmt.Fprintf(stderr, "Arbiter usage error: %v\n", err)
 			return 2
 		}
-		if err := runArtifactWithTemp(context.Background(), options, stdout, stderr); err != nil {
+		httpClient, err := artifactHTTPClient(
+			globalOptions,
+			lookupEnv,
+			homeDir,
+			options.URL,
+		)
+		if err != nil {
+			fmt.Fprintf(stderr, "Arbiter client config error: %v\n", err)
+			return 1
+		}
+		if err := runArtifactWithTemp(context.Background(), options, httpClient, stdout, stderr); err != nil {
 			fmt.Fprintf(stderr, "Arbiter artifact error: %s\n", err)
 			return 1
 		}
@@ -193,7 +280,17 @@ func runArtifact(
 			fmt.Fprintf(stderr, "Arbiter usage error: %v\n", err)
 			return 2
 		}
-		if err := runArtifactWithStdin(context.Background(), options, stdout, stderr); err != nil {
+		httpClient, err := artifactHTTPClient(
+			globalOptions,
+			lookupEnv,
+			homeDir,
+			options.URL,
+		)
+		if err != nil {
+			fmt.Fprintf(stderr, "Arbiter client config error: %v\n", err)
+			return 1
+		}
+		if err := runArtifactWithStdin(context.Background(), options, httpClient, stdout, stderr); err != nil {
 			fmt.Fprintf(stderr, "Arbiter artifact error: %s\n", err)
 			return 1
 		}
@@ -529,32 +626,60 @@ func ResolveURL(
 	homeDir HomeDirFunc,
 	options ...globalOptions,
 ) (ResolvedURL, error) {
+	resolved, err := ResolveClientConfig(args, lookupEnv, homeDir, options...)
+	if err != nil {
+		return ResolvedURL{}, err
+	}
+	return ResolvedURL{URL: resolved.URL, Source: resolved.Source}, nil
+}
+
+func ResolveClientConfig(
+	args []string,
+	lookupEnv EnvLookup,
+	homeDir HomeDirFunc,
+	options ...globalOptions,
+) (ResolvedClientConfig, error) {
 	configOptions := defaultGlobalOptions()
 	if len(options) > 0 {
 		configOptions = options[0]
 	}
+
 	if override, ok := urlOverride(args); ok {
-		return ResolvedURL{
+		return ResolvedClientConfig{
 			URL:    override,
 			Source: "override",
 		}, nil
 	}
 
 	if value, ok := lookupEnv(URLEnvVar); ok && value != "" {
-		return ResolvedURL{URL: value, Source: URLEnvVar}, nil
+		return ResolvedClientConfig{
+			URL:    value,
+			Source: URLEnvVar,
+		}, nil
 	}
 
 	configPath, err := clientConfigPath(configOptions, homeDir)
 	if err != nil {
-		return ResolvedURL{}, err
+		return ResolvedClientConfig{}, err
 	}
-	if value, ok, err := readURLFromConfig(configPath); err != nil {
-		return ResolvedURL{}, err
-	} else if ok {
-		return ResolvedURL{URL: value, Source: configPath}, nil
+	config, configFound, err := readClientConfig(configPath)
+	if err != nil {
+		return ResolvedClientConfig{}, err
 	}
 
-	return ResolvedURL{URL: DefaultURL, Source: "default"}, nil
+	if configFound && config.URL != "" {
+		return ResolvedClientConfig{
+			URL:       config.URL,
+			Source:    configPath,
+			TLSCAFile: config.TLSCAFile,
+		}, nil
+	}
+
+	return ResolvedClientConfig{
+		URL:       DefaultURL,
+		Source:    "default",
+		TLSCAFile: config.TLSCAFile,
+	}, nil
 }
 
 func urlOverride(args []string) (string, bool) {
@@ -850,10 +975,11 @@ func parseArtifactSaveArgs(args []string) (artifactSaveOptions, error) {
 func fetchArtifact(
 	ctx context.Context,
 	options artifactGetOptions,
+	httpClient *http.Client,
 	stdout io.Writer,
 ) error {
 	if options.Stdout {
-		return writeArtifactToStdout(ctx, options.URL, options.MaxBytes, stdout)
+		return writeArtifactToStdout(ctx, options.URL, options.MaxBytes, httpClient, stdout)
 	}
 	return fmt.Errorf("artifact get requires --stdout")
 }
@@ -929,10 +1055,10 @@ func replacePathPlaceholder(command []string, path string) []string {
 func runArtifactWithTemp(
 	ctx context.Context,
 	options artifactCommandOptions,
+	httpClient *http.Client,
 	stdout io.Writer,
 	stderr io.Writer,
 ) error {
-	httpClient := newArtifactHTTPClient()
 	getReq, err := http.NewRequestWithContext(ctx, http.MethodGet, options.URL, nil)
 	if err != nil {
 		return err
@@ -1081,10 +1207,10 @@ func artifactExtensionForContentType(contentType string) string {
 func runArtifactWithStdin(
 	ctx context.Context,
 	options artifactCommandOptions,
+	httpClient *http.Client,
 	stdout io.Writer,
 	stderr io.Writer,
 ) error {
-	httpClient := newArtifactHTTPClient()
 	getReq, err := http.NewRequestWithContext(ctx, http.MethodGet, options.URL, nil)
 	if err != nil {
 		return err
@@ -1222,9 +1348,9 @@ func writeArtifactToStdout(
 	ctx context.Context,
 	artifactURL string,
 	maxBytes int64,
+	httpClient *http.Client,
 	stdout io.Writer,
 ) error {
-	httpClient := newArtifactHTTPClient()
 	headReq, err := http.NewRequestWithContext(ctx, http.MethodHead, artifactURL, nil)
 	if err != nil {
 		return err
@@ -1279,8 +1405,8 @@ func saveArtifactToFile(
 	ctx context.Context,
 	artifactURL string,
 	outputPath string,
+	httpClient *http.Client,
 ) error {
-	httpClient := newArtifactHTTPClient()
 	getReq, err := http.NewRequestWithContext(ctx, http.MethodGet, artifactURL, nil)
 	if err != nil {
 		return err
@@ -1379,11 +1505,11 @@ func newInitializedArbiterClient(
 	lookupEnv EnvLookup,
 	homeDir HomeDirFunc,
 ) (arbiterClient, error) {
-	resolved, err := ResolveURL(options.Overrides, lookupEnv, homeDir, options)
+	resolved, err := ResolveClientConfig(options.Overrides, lookupEnv, homeDir, options)
 	if err != nil {
 		return nil, err
 	}
-	return newArbiterClient(resolved.URL), nil
+	return newArbiterClientWithConfig(resolved)
 }
 
 func nativeInfoPayload(
@@ -1772,22 +1898,39 @@ func normalizeInfoOutputFlags(args []string) []string {
 }
 
 func readURLFromConfig(path string) (string, bool, error) {
+	config, ok, err := readClientConfig(path)
+	return config.URL, ok && config.URL != "", err
+}
+
+type clientConfig struct {
+	URL       string
+	TLSCAFile string
+}
+
+func readClientConfig(path string) (clientConfig, bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", false, nil
+			return clientConfig{}, false, nil
 		}
-		return "", false, err
+		return clientConfig{}, false, err
 	}
 
-	return parseURLConfig(path, string(data))
+	config, ok, err := parseClientConfig(path, string(data))
+	return config, ok, err
 }
 
 func parseURLConfig(path string, data string) (string, bool, error) {
+	config, ok, err := parseClientConfig(path, data)
+	return config.URL, ok && config.URL != "", err
+}
+
+func parseClientConfig(path string, data string) (clientConfig, bool, error) {
 	inArbiter := false
 	foundArbiter := false
 	foundURL := false
-	serverURL := ""
+	foundTLSCAFile := false
+	config := clientConfig{}
 	for _, line := range strings.Split(data, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
@@ -1797,56 +1940,64 @@ func parseURLConfig(path string, data string) (string, bool, error) {
 		if !indented {
 			key, value, ok := strings.Cut(trimmed, ":")
 			if !ok {
-				return "", false, fmt.Errorf("unsupported client config entry in %s: %s", path, trimmed)
+				return clientConfig{}, false, fmt.Errorf("unsupported client config entry in %s: %s", path, trimmed)
 			}
 			key = strings.TrimSpace(key)
 			value = strings.TrimSpace(value)
 			if key != "arbiter" {
-				return "", false, fmt.Errorf("unsupported client config key(s) in %s: %s", path, key)
+				return clientConfig{}, false, fmt.Errorf("unsupported client config key(s) in %s: %s", path, key)
 			}
 			if foundArbiter {
-				return "", false, fmt.Errorf("duplicate client config key in %s: arbiter", path)
+				return clientConfig{}, false, fmt.Errorf("duplicate client config key in %s: arbiter", path)
 			}
 			foundArbiter = true
 			if value != "" {
-				return "", false, fmt.Errorf("client config arbiter must be a mapping: %s", path)
+				return clientConfig{}, false, fmt.Errorf("client config arbiter must be a mapping: %s", path)
 			}
 			inArbiter = true
 			continue
 		}
 
 		if !inArbiter {
-			return "", false, fmt.Errorf("unsupported indented client config entry in %s: %s", path, trimmed)
+			return clientConfig{}, false, fmt.Errorf("unsupported indented client config entry in %s: %s", path, trimmed)
 		}
 		key, value, ok := strings.Cut(trimmed, ":")
 		if !ok {
-			return "", false, fmt.Errorf("unsupported client config arbiter entry in %s: %s", path, trimmed)
+			return clientConfig{}, false, fmt.Errorf("unsupported client config arbiter entry in %s: %s", path, trimmed)
 		}
 		key = strings.TrimSpace(key)
-		if key != "url" {
-			return "", false, fmt.Errorf("unsupported client config arbiter key(s) in %s: %s", path, key)
+		if key != "url" && key != "tls_ca_file" {
+			return clientConfig{}, false, fmt.Errorf("unsupported client config arbiter key(s) in %s: %s", path, key)
+		}
+		parsedValue, err := parseConfigStringScalar(strings.TrimSpace(value), path, "arbiter."+key)
+		if err != nil {
+			return clientConfig{}, false, err
+		}
+		if key == "tls_ca_file" {
+			if foundTLSCAFile {
+				return clientConfig{}, false, fmt.Errorf("duplicate client config arbiter key in %s: tls_ca_file", path)
+			}
+			foundTLSCAFile = true
+			config.TLSCAFile = parsedValue
+			continue
 		}
 		if foundURL {
-			return "", false, fmt.Errorf("duplicate client config arbiter key in %s: url", path)
-		}
-		parsedURL, err := parseConfigStringScalar(strings.TrimSpace(value), path)
-		if err != nil {
-			return "", false, err
+			return clientConfig{}, false, fmt.Errorf("duplicate client config arbiter key in %s: url", path)
 		}
 		foundURL = true
-		serverURL = parsedURL
+		config.URL = parsedValue
 	}
-	return serverURL, foundURL, nil
+	return config, foundURL || foundTLSCAFile, nil
 }
 
-func parseConfigStringScalar(value string, path string) (string, error) {
+func parseConfigStringScalar(value string, path string, key string) (string, error) {
 	if value == "" {
-		return "", fmt.Errorf("client config arbiter.url must be a string: %s", path)
+		return "", fmt.Errorf("client config %s must be a string: %s", key, path)
 	}
 	if strings.HasPrefix(value, `"`) || strings.HasPrefix(value, `'`) {
 		quote := value[:1]
 		if !strings.HasSuffix(value, quote) || len(value) == 1 {
-			return "", fmt.Errorf("client config arbiter.url must be a string: %s", path)
+			return "", fmt.Errorf("client config %s must be a string: %s", key, path)
 		}
 		return strings.TrimSuffix(strings.TrimPrefix(value, quote), quote), nil
 	}
@@ -1858,10 +2009,10 @@ func parseConfigStringScalar(value string, path string) (string, error) {
 		normalized == "false" ||
 		normalized == "null" ||
 		normalized == "~" {
-		return "", fmt.Errorf("client config arbiter.url must be a string: %s", path)
+		return "", fmt.Errorf("client config %s must be a string: %s", key, path)
 	}
 	if _, err := strconv.ParseFloat(value, 64); err == nil {
-		return "", fmt.Errorf("client config arbiter.url must be a string: %s", path)
+		return "", fmt.Errorf("client config %s must be a string: %s", key, path)
 	}
 	return value, nil
 }

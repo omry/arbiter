@@ -20,7 +20,7 @@ LOGGER = logging.getLogger(__name__)
 
 @dataclass
 class HTTPServerConfig:
-    scheme: str = "http"
+    scheme: str = "https"
     host: str = "127.0.0.1"
     port: int = 8075
     path: str = ""
@@ -39,12 +39,25 @@ def _public_http_server_config() -> HTTPServerConfig:
     )
 
 
+class ServerTlsSource(str, Enum):
+    SELF_SIGNED = "self-signed"
+    CERT_FILES = "cert-files"
+
+
+@dataclass
+class ServerTlsConfig:
+    source: ServerTlsSource = ServerTlsSource.SELF_SIGNED
+    cert_file: str | None = None
+    key_file: str | None = None
+
+
 @dataclass
 class ServerConfig:
     name: str = "arbiter"
-    transport: str = "http"
+    transport: str = "https"
     bind: HTTPServerConfig = field(default_factory=_bind_http_server_config)
     public: HTTPServerConfig = field(default_factory=_public_http_server_config)
+    tls: ServerTlsConfig = field(default_factory=ServerTlsConfig)
 
 
 @dataclass
@@ -61,6 +74,7 @@ class DiscoveryConfig:
 
 @dataclass
 class StorageConfig:
+    server_data_dir: str | None = None
     plugin_data_dir: str | None = None
 
 

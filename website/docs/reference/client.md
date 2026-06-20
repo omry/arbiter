@@ -33,8 +33,12 @@ The client reads the server URL from its config. The current config key is
 `arbiter.url`; you can override it per command with a Hydra-style argument:
 
 ```bash
-arbiter info server arbiter.url=http://127.0.0.1:8075
+arbiter info server arbiter.url=https://127.0.0.1:8075
 ```
+
+The client accepts Arbiter's local self-signed TLS certificates by default.
+Configure `arbiter.tls_ca_file` in the client config when you want certificate
+verification against a specific certificate authority file.
 
 When the server reports `deployment_scope=staged`, the client prints a small
 heads-up on stderr so you know you are talking to a staged deployment.
@@ -49,7 +53,7 @@ Example:
 
 ```yaml
 arbiter:
-  url: http://127.0.0.1:8075
+  url: https://127.0.0.1:8075
 ```
 
 ## bootstrap
@@ -65,7 +69,7 @@ arbiter bootstrap client [--force] [override...]
 Example:
 
 ```bash
-arbiter bootstrap client arbiter.url=http://127.0.0.1:8075
+arbiter bootstrap client arbiter.url=https://127.0.0.1:8075
 ```
 
 ## Common flow

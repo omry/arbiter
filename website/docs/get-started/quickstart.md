@@ -135,11 +135,16 @@ arbiter-server config show
 arbiter:
   server:
     name: arbiter
-    transport: http
+    transport: https
     bind:
+      scheme: https
       host: 127.0.0.1
       port: 8075
       path: ""
+    public:
+      scheme: https
+    tls:
+      source: SELF_SIGNED
   account:
     smtp:
       bot:
@@ -195,6 +200,6 @@ arbiter-server serve
 In another terminal, point the Arbiter client at the local server:
 
 ```bash
-arbiter info server arbiter.url=http://127.0.0.1:8075
-arbiter plugins smtp arbiter.url=http://127.0.0.1:8075
+arbiter info server arbiter.url=https://127.0.0.1:8075
+arbiter plugins smtp arbiter.url=https://127.0.0.1:8075
 ```

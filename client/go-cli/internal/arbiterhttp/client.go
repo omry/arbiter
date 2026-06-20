@@ -3,11 +3,14 @@ package arbiterhttp
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -34,6 +37,47 @@ func (err APIError) Error() string {
 
 func NewClient(baseURL string) *Client {
 	return NewClientWithHTTP(baseURL, nil)
+}
+
+func NewClientInsecureTLS(baseURL string) *Client {
+	return NewClientWithHTTP(baseURL, NewHTTPClientInsecureTLS())
+}
+
+func NewHTTPClientInsecureTLS() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec
+	return &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: transport,
+	}
+}
+
+func NewClientWithTLSCAFile(baseURL string, caFile string) (*Client, error) {
+	httpClient, err := NewHTTPClientWithTLSCAFile(caFile)
+	if err != nil {
+		return nil, err
+	}
+	return NewClientWithHTTP(baseURL, httpClient), nil
+}
+
+func NewHTTPClientWithTLSCAFile(caFile string) (*http.Client, error) {
+	caBytes, err := os.ReadFile(caFile)
+	if err != nil {
+		return nil, fmt.Errorf("read Arbiter TLS CA file: %w", err)
+	}
+	roots, err := x509.SystemCertPool()
+	if err != nil {
+		roots = x509.NewCertPool()
+	}
+	if !roots.AppendCertsFromPEM(caBytes) {
+		return nil, fmt.Errorf("Arbiter TLS CA file contains no PEM certificates: %s", caFile)
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = &tls.Config{RootCAs: roots}
+	return &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: transport,
+	}, nil
 }
 
 func NewClientWithHTTP(baseURL string, httpClient *http.Client) *Client {

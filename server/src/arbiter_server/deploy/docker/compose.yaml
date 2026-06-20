@@ -14,7 +14,7 @@ services:
       ARBITER_HOST_BIND: ${ARBITER_HOST_BIND:-127.0.0.1}
       ARBITER_HOST_PORT: ${ARBITER_HOST_PORT:-18075}
       ARBITER_CONTAINER_PORT: ${ARBITER_CONTAINER_PORT:-8075}
-      ARBITER_PUBLIC_SCHEME: ${ARBITER_PUBLIC_SCHEME:-http}
+      ARBITER_PUBLIC_SCHEME: ${ARBITER_PUBLIC_SCHEME:-https}
       ARBITER_PUBLIC_BASE_URL: ${ARBITER_PUBLIC_BASE_URL:-}
       ARBITER_CONFIG_NAME: ${ARBITER_CONFIG_NAME:-arbiter-server}
       ARBITER_RUNTIME_VENV: ${ARBITER_RUNTIME_VENV:-/tmp/arbiter-venv}
@@ -25,6 +25,7 @@ services:
       - ${ARBITER_CONFIG_DIR:-./conf}:/config:ro
       - ${ARBITER_REQUIREMENTS_FILE:-./requirements.txt}:/requirements.txt:ro
       - ${ARBITER_WHEELS_DIR:-./wheels}:/wheels:ro
+      - ${ARBITER_SERVER_DATA_DIR:-./data/server}:/data/server
       - ${ARBITER_PLUGIN_DATA_DIR:-./data/plugins}:/data/plugins
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -95,7 +96,7 @@ services:
       fi &&
       public_host="$${ARBITER_HOST_BIND:-127.0.0.1}" &&
       case "$$public_host" in 0.0.0.0) public_host=127.0.0.1;; *:*) public_host="[$$public_host]";; esac &&
-      set -- "arbiter.server.bind.host=$$ARBITER_SERVER_HOST" "arbiter.server.bind.port=$$ARBITER_CONTAINER_PORT" "arbiter.server.public.scheme=$${ARBITER_PUBLIC_SCHEME:-http}" "arbiter.server.public.host=$$public_host" "arbiter.server.public.port=$${ARBITER_HOST_PORT:-18075}" "arbiter.storage.plugin_data_dir=/data/plugins" "arbiter.deployment_scope=staged" &&
+      set -- "arbiter.server.bind.host=$$ARBITER_SERVER_HOST" "arbiter.server.bind.port=$$ARBITER_CONTAINER_PORT" "arbiter.server.public.scheme=$${ARBITER_PUBLIC_SCHEME:-https}" "arbiter.server.public.host=$$public_host" "arbiter.server.public.port=$${ARBITER_HOST_PORT:-18075}" "arbiter.storage.server_data_dir=/data/server" "arbiter.storage.plugin_data_dir=/data/plugins" "arbiter.deployment_scope=staged" &&
       if [ -n "$${ARBITER_PUBLIC_BASE_URL:-}" ]; then set -- "$$@" "arbiter.server.public.base_url=$$ARBITER_PUBLIC_BASE_URL"; fi &&
       if [ -n "$${ARBITER_CONFIG_OVERRIDES_FILE:-}" ]; then
         while IFS= read -r override; do set -- "$$@" "$$override"; done < "$$ARBITER_CONFIG_OVERRIDES_FILE";

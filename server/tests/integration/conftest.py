@@ -4,6 +4,7 @@ import os
 import platform
 import shutil
 import socket
+import ssl
 import subprocess
 import sys
 import time
@@ -162,7 +163,7 @@ class LocalArbiterServerFactory:
             )
         return RunningArbiterServer(
             config_dir=config_dir,
-            url=f"http://127.0.0.1:{port}",
+            url=f"https://127.0.0.1:{port}",
             process=process,
             stdout_path=stdout_path,
             stderr_path=stderr_path,
@@ -184,6 +185,7 @@ class LocalArbiterServerFactory:
                 with urllib.request.urlopen(
                     f"{server.url}/_health_",
                     timeout=5,
+                    context=ssl._create_unverified_context(),
                 ) as response:
                     if response.status == 200:
                         return

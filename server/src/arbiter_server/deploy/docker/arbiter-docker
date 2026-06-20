@@ -55,8 +55,8 @@ Install options:
 Environment:
   ARBITER_DOCKER_DIR   Deployment directory, default script directory
   ARBITER_CLIENT_COMMAND
-                      Arbiter client command for test, default arbiter,
-                      then ../skill/bin/arbiter for checkout deployments
+                      Arbiter client fallback for server tests when curl and
+                      python3 are unavailable
   ARBITER_EDITOR       Editor for edit-config/edit-env
   ARBITER_PIP_VERBOSE  Print pip install output inside startup containers
 EOF
@@ -1752,6 +1752,10 @@ wheels_dir_path() {
   deploy_path_from_compose_value "$(compose_env_value ARBITER_WHEELS_DIR ./wheels)"
 }
 
+server_data_dir_path() {
+  deploy_path_from_compose_value "$(compose_env_value ARBITER_SERVER_DATA_DIR ./data/server)"
+}
+
 plugin_data_dir_path() {
   deploy_path_from_compose_value "$(compose_env_value ARBITER_PLUGIN_DATA_DIR ./data/plugins)"
 }
@@ -1782,7 +1786,7 @@ server_host_url_value() {
 }
 
 server_url_value() {
-  printf 'http://%s:%s\n' \
+  printf 'https://%s:%s\n' \
     "$(server_host_url_value)" \
     "$(compose_env_value ARBITER_HOST_PORT 18075)"
 }
@@ -1819,37 +1823,50 @@ resolve_arbiter_client_command() {
     command -v "$ARBITER_CLIENT_COMMAND"
     return
   fi
-  if command -v arbiter >/dev/null; then
-    command -v arbiter
-    return
-  fi
   checkout_client="$deploy_dir/../skill/bin/arbiter"
   if [[ -x "$checkout_client" ]]; then
     printf '%s\n' "$checkout_client"
     return
   fi
+  if command -v arbiter >/dev/null; then
+    command -v arbiter
+    return
+  fi
   return 1
+}
+
+probe_server_url() {
+  local url="$1"
+  local output_file="$2"
+  local client_command
+
+  if command -v curl >/dev/null; then
+    curl --fail --silent --show-error --insecure --max-time 5 "$url/_health_" >"$output_file" 2>&1
+    return
+  fi
+  if command -v python3 >/dev/null; then
+    python3 -c 'import ssl, sys, urllib.request; urllib.request.urlopen(sys.argv[1] + "/_health_", timeout=5, context=ssl._create_unverified_context()).read()' "$url" >"$output_file" 2>&1
+    return
+  fi
+  if client_command="$(resolve_arbiter_client_command)"; then
+    ARBITER_URL="$url" "$client_command" info server >"$output_file" 2>&1
+    return
+  fi
+  printf 'error: server test requires curl, python3, or an Arbiter client command\n' >"$output_file"
+  return 127
 }
 
 test_server_url() {
   local url="$1"
-  local client_command
   local output_file
   local timeout
   local start_time
-
-  if ! client_command="$(resolve_arbiter_client_command)"; then
-    printf 'error: Arbiter client command not found\n' >&2
-    printf '       activate the environment that provides arbiter, set ARBITER_CLIENT_COMMAND,\n' >&2
-    printf '       or run from a checkout with ../skill/bin/arbiter available\n' >&2
-    return 1
-  fi
 
   output_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-docker-test.XXXXXX")"
   timeout="${ARBITER_TEST_TIMEOUT:-60}"
   start_time="$SECONDS"
   while true; do
-    if ARBITER_URL="$url" "$client_command" info server >"$output_file" 2>&1; then
+    if probe_server_url "$url" "$output_file"; then
       rm -f "$output_file"
       printf ' '
       doctor_prefix 32 "✔"
@@ -2475,8 +2492,10 @@ compose() {
   require_file "$requirements_file"
   validate_requirements_file "$requirements_file"
   if [[ "${1:-}" == up ]]; then
+    ensure_server_data_dir_ready || return
     ensure_plugin_data_dir_ready || return
   elif [[ "${1:-}" == run ]]; then
+    ensure_server_data_dir_exists || return
     ensure_plugin_data_dir_exists || return
   fi
   require_docker_access
@@ -2721,6 +2740,7 @@ info() {
   printf 'docker env file: %s\n' "$compose_env_file"
   printf 'requirements file: %s\n' "$requirements_file"
   printf 'wheels dir: %s\n' "$(wheels_dir_path)"
+  printf 'server data dir: %s\n' "$(server_data_dir_path)"
   printf 'plugin data dir: %s\n' "$(plugin_data_dir_path)"
   print_url
   if command -v docker >/dev/null && docker info >/dev/null 2>&1; then
@@ -2944,6 +2964,21 @@ ensure_plugin_data_dir_exists() {
   fi
 }
 
+ensure_server_data_dir_exists() {
+  local path
+
+  path="$(server_data_dir_path)"
+  if ! mkdir -p "$path"; then
+    printf 'error: could not create server data directory: %s\n' "$path" >&2
+    return 1
+  fi
+  if ! chmod 700 "$path"; then
+    printf 'error: could not secure server data directory: %s\n' "$path" >&2
+    printf '       chown it to the deployment helper user or run this command as root\n' >&2
+    return 1
+  fi
+}
+
 ensure_plugin_data_dir_ready() {
   local path
   local container_user
@@ -2979,6 +3014,41 @@ ensure_plugin_data_dir_ready() {
   fi
 }
 
+ensure_server_data_dir_ready() {
+  local path
+  local container_user
+  local write_check
+
+  ensure_server_data_dir_exists || return
+
+  path="$(server_data_dir_path)"
+  container_user="$(env_file_value "$compose_env_file" ARBITER_CONTAINER_USER || true)"
+
+  write_check="$path/.arbiter-write-check.$$"
+  if ! : >"$write_check" 2>/dev/null; then
+    printf 'error: server data directory is not writable: %s\n' "$path" >&2
+    printf '       chown or chmod it so the deployment helper can prepare server state\n' >&2
+    return 1
+  fi
+  rm -f "$write_check"
+
+  if container_user_can_write_dir "$path"; then
+    return 0
+  fi
+
+  if [[ "$(id -u)" == "0" && "$container_user" =~ ^[0-9]+:[0-9]+$ ]]; then
+    chown "$container_user" "$path"
+    chmod 700 "$path"
+  fi
+
+  if ! container_user_can_write_dir "$path"; then
+    printf 'error: server data directory is not writable by container user: %s\n' "$container_user" >&2
+    printf '       server data dir: %s\n' "$path" >&2
+    printf '       chown or chmod it so the container user can create server state\n' >&2
+    return 1
+  fi
+}
+
 doctor_check_plugin_data_permissions() {
   local path="$1"
   local mode
@@ -2995,6 +3065,22 @@ doctor_check_plugin_data_permissions() {
   fi
 }
 
+doctor_check_server_data_permissions() {
+  local path="$1"
+  local mode
+  local perms
+
+  [[ -d "$path" ]] || return
+  mode="$(stat_mode "$path")"
+  perms="${mode: -3}"
+  if (( (10#${perms:1:1} & 7) != 0 || (10#${perms:2:1} & 7) != 0 )); then
+    doctor_fail "server data directory is accessible outside its owner: $path"
+    doctor_detail "run $deploy_dir/arbiter-docker up or chmod 700 $path"
+  else
+    doctor_ok "server data directory is only accessible by its owner"
+  fi
+}
+
 doctor_check_plugin_data_compose_wiring() {
   if grep -Eq '^[[:space:]]*-[[:space:]]*\$\{ARBITER_PLUGIN_DATA_DIR:-\./data/plugins\}:/data/plugins[[:space:]]*$' "$compose_file"; then
     doctor_ok "compose mounts plugin data directory at /data/plugins"
@@ -3007,6 +3093,22 @@ doctor_check_plugin_data_compose_wiring() {
     doctor_ok "server config points plugin data storage at /data/plugins"
   else
     doctor_fail "compose file does not configure arbiter.storage.plugin_data_dir=/data/plugins"
+    doctor_detail "run $deploy_dir/arbiter-docker update to refresh generated Docker files"
+  fi
+}
+
+doctor_check_server_data_compose_wiring() {
+  if grep -Eq '^[[:space:]]*-[[:space:]]*\$\{ARBITER_SERVER_DATA_DIR:-\./data/server\}:/data/server[[:space:]]*$' "$compose_file"; then
+    doctor_ok "compose mounts server data directory at /data/server"
+  else
+    doctor_fail "compose file does not mount server data directory at /data/server"
+    doctor_detail "run $deploy_dir/arbiter-docker update to refresh generated Docker files"
+  fi
+
+  if grep -Fq '"arbiter.storage.server_data_dir=/data/server"' "$compose_file"; then
+    doctor_ok "server config points server data storage at /data/server"
+  else
+    doctor_fail "compose file does not configure arbiter.storage.server_data_dir=/data/server"
     doctor_detail "run $deploy_dir/arbiter-docker update to refresh generated Docker files"
   fi
 }
@@ -3307,16 +3409,22 @@ doctor_check_preinstall_ready() {
   active_app_env="$(app_env_path)"
   active_requirements_file="$(deploy_path_from_compose_value "$(compose_env_value ARBITER_REQUIREMENTS_FILE ./requirements.txt)")"
   active_wheels_dir="$(wheels_dir_path)"
+  active_server_data_dir="$(server_data_dir_path)"
   active_plugin_data_dir="$(plugin_data_dir_path)"
 
   doctor_check_install_deploy_path "$(compose_env_value ARBITER_CONFIG_DIR ./conf)" "config directory" "ARBITER_CONFIG_DIR"
   doctor_check_install_deploy_path "$(compose_env_value ARBITER_APP_ENV_FILE ./conf/.env)" "app env file" "ARBITER_APP_ENV_FILE"
   doctor_check_install_deploy_path "$(compose_env_value ARBITER_REQUIREMENTS_FILE ./requirements.txt)" "runtime requirements file" "ARBITER_REQUIREMENTS_FILE"
   doctor_check_install_deploy_path "$(compose_env_value ARBITER_WHEELS_DIR ./wheels)" "wheels directory" "ARBITER_WHEELS_DIR"
+  doctor_check_install_deploy_path "$(compose_env_value ARBITER_SERVER_DATA_DIR ./data/server)" "server data directory" "ARBITER_SERVER_DATA_DIR"
   doctor_check_install_deploy_path "$(compose_env_value ARBITER_PLUGIN_DATA_DIR ./data/plugins)" "plugin data directory" "ARBITER_PLUGIN_DATA_DIR"
+  doctor_check_dir "$active_server_data_dir" "server data directory"
   doctor_check_dir "$active_plugin_data_dir" "plugin data directory"
+  doctor_check_server_data_permissions "$active_server_data_dir"
   doctor_check_plugin_data_permissions "$active_plugin_data_dir"
+  doctor_check_server_data_compose_wiring
   doctor_check_plugin_data_compose_wiring
+  doctor_check_container_user_can_write_dir "$active_server_data_dir" "server data directory"
   doctor_check_container_user_can_write_dir "$active_plugin_data_dir" "plugin data directory"
   doctor_check_file "$active_requirements_file" "runtime requirements file"
 
@@ -3517,10 +3625,12 @@ doctor() {
   active_config_dir="$(config_dir_path)"
   active_config_file="$(config_main_file)"
   active_app_env="$(app_env_path)"
+  active_server_data_dir="$(server_data_dir_path)"
   active_plugin_data_dir="$(plugin_data_dir_path)"
   doctor_check_dir "$deploy_dir" "deployment directory"
   doctor_check_file "$compose_file" "compose file"
   doctor_check_dir "$active_config_dir" "config directory"
+  doctor_check_dir "$active_server_data_dir" "server data directory"
   doctor_check_dir "$active_plugin_data_dir" "plugin data directory"
   doctor_check_file "$active_config_file" "main config file"
   doctor_check_file "$active_app_env" "app env file"
@@ -3529,11 +3639,14 @@ doctor() {
   doctor_check_file "$deploy_dir/arbiter-docker" "helper script"
   doctor_check_env_file "$active_app_env" "app env file"
   doctor_check_env_file "$compose_env_file" "docker env file"
+  doctor_check_server_data_permissions "$active_server_data_dir"
   doctor_check_plugin_data_permissions "$active_plugin_data_dir"
   doctor_check_config_file_permissions "$active_config_dir" "$active_app_env"
   doctor_check_app_env_permissions "$active_app_env"
   doctor_check_container_user_config
+  doctor_check_server_data_compose_wiring
   doctor_check_plugin_data_compose_wiring
+  doctor_check_container_user_can_write_dir "$active_server_data_dir" "server data directory"
   doctor_check_container_user_can_write_dir "$active_plugin_data_dir" "plugin data directory"
   doctor_check_requirements_file "$requirements_file"
 
@@ -4076,13 +4189,13 @@ install_server_host_url_value() {
 }
 
 install_url_value() {
-  printf 'http://%s:%s\n' \
+  printf 'https://%s:%s\n' \
     "$(install_server_host_url_value)" \
     "$(install_env_value ARBITER_HOST_PORT 8075)"
 }
 
 install_server_url_value() {
-  printf 'http://%s:%s\n' \
+  printf 'https://%s:%s\n' \
     "$(install_server_host_url_value)" \
     "$(install_env_value ARBITER_HOST_PORT 8075)"
 }
@@ -4251,10 +4364,13 @@ install_copy_deployment() {
   local preserve_config_dir_value="./conf"
   local preserve_app_env_value="./conf/.env"
   local preserve_config_name_value="arbiter-server"
+  local preserve_server_data_dir_value="./data/server"
+  local preserve_server_data_dir_env=0
   local preserve_plugin_data_dir_value="./data/plugins"
   local preserve_plugin_data_dir_env=0
   local preserve_config_dir
   local preserve_app_env
+  local preserve_server_data_dir
   local preserve_plugin_data_dir
   local staging_config_dir
   local staging_app_env
@@ -4294,6 +4410,12 @@ install_copy_deployment() {
   fi
 
   if [[ -e "$target_dir" && -f "$target_docker_env_file" ]]; then
+    preserve_server_data_dir_value="$(env_file_value "$target_docker_env_file" ARBITER_SERVER_DATA_DIR || printf './data/server\n')"
+    preserve_server_data_dir="$(install_target_path_from_compose_value "$preserve_server_data_dir_value")"
+    if [[ -e "$preserve_server_data_dir" || -L "$preserve_server_data_dir" ]]; then
+      install_reject_symlinks "$preserve_server_data_dir"
+    fi
+    preserve_server_data_dir_env=1
     preserve_plugin_data_dir_value="$(env_file_value "$target_docker_env_file" ARBITER_PLUGIN_DATA_DIR || printf './data/plugins\n')"
     preserve_plugin_data_dir="$(install_target_path_from_compose_value "$preserve_plugin_data_dir_value")"
     if [[ -e "$preserve_plugin_data_dir" || -L "$preserve_plugin_data_dir" ]]; then
@@ -4396,6 +4518,9 @@ install_copy_deployment() {
   fi
   if [[ "$preserve_plugin_data_dir_env" -eq 1 ]]; then
     set_env_file_value "$target_docker_env_file" ARBITER_PLUGIN_DATA_DIR "$preserve_plugin_data_dir_value"
+  fi
+  if [[ "$preserve_server_data_dir_env" -eq 1 ]]; then
+    set_env_file_value "$target_docker_env_file" ARBITER_SERVER_DATA_DIR "$preserve_server_data_dir_value"
   fi
 }
 
@@ -4509,6 +4634,7 @@ EOF
 
 install_apply_permissions() {
   local app_env_target
+  local server_data_target
   local plugin_data_target
 
   if [[ "${install_dry_run:-0}" -eq 1 ]]; then
@@ -4524,6 +4650,12 @@ install_apply_permissions() {
   if [[ -d "$install_target_dir/backup" ]]; then
     find "$install_target_dir/backup" -type f -exec chmod 0600 {} +
   fi
+  server_data_target="$(install_target_path_from_compose_value "$(compose_env_value ARBITER_SERVER_DATA_DIR ./data/server)")"
+  if [[ -d "$server_data_target" ]]; then
+    find "$server_data_target" -type d -exec chmod 0700 {} +
+    find "$server_data_target" -type f -exec chmod 0600 {} +
+  fi
+
   plugin_data_target="$(install_target_path_from_compose_value "$(compose_env_value ARBITER_PLUGIN_DATA_DIR ./data/plugins)")"
   if [[ -d "$plugin_data_target" ]]; then
     find "$plugin_data_target" -type d -exec chmod 0700 {} +
@@ -4557,7 +4689,6 @@ install_record_location() {
 
 install_test_server() {
   local url
-  local client_command
   local output_file
   local timeout
   local start_time
@@ -4568,16 +4699,11 @@ install_test_server() {
     return 0
   fi
 
-  if ! client_command="$(resolve_arbiter_client_command)"; then
-    doctor_warn "skipping server test; Arbiter client command not found"
-    return 0
-  fi
-
   output_file="$(mktemp "${TMPDIR:-/tmp}/arbiter-docker-test.XXXXXX")"
   timeout="${ARBITER_TEST_TIMEOUT:-60}"
   start_time="$SECONDS"
   while true; do
-    if ARBITER_URL="$url" "$client_command" info server >"$output_file" 2>&1; then
+    if probe_server_url "$url" "$output_file"; then
       rm -f "$output_file"
       return 0
     fi
@@ -4662,6 +4788,7 @@ install_copy_static_config_check_candidate() {
   set_env_file_value "$candidate_env_file" ARBITER_CONFIG_NAME "$install_static_config_check_config_name"
   set_env_file_value "$candidate_env_file" ARBITER_REQUIREMENTS_FILE ./requirements.txt
   set_env_file_value "$candidate_env_file" ARBITER_WHEELS_DIR "$active_wheels_dir"
+  set_env_file_value "$candidate_env_file" ARBITER_SERVER_DATA_DIR ./data/server
   set_env_file_value "$candidate_env_file" ARBITER_PLUGIN_DATA_DIR ./data/plugins
   set_env_file_value "$candidate_env_file" ARBITER_CONTAINER_USER 0:0
   set_env_file_value "$candidate_env_file" ARBITER_CONTAINER_NAME "arbiter-install-check-$$"
@@ -5578,6 +5705,7 @@ case "$command" in
     ;;
   up)
     parse_start_options up "$@"
+    ensure_server_data_dir_ready
     ensure_plugin_data_dir_ready
     require_docker_access
     ensure_staging_subnet_available
@@ -5589,6 +5717,7 @@ case "$command" in
     ;;
   restart)
     parse_start_options restart "$@"
+    ensure_server_data_dir_ready
     ensure_plugin_data_dir_ready
     require_docker_access
     ensure_staging_subnet_available

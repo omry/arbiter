@@ -9,7 +9,7 @@ decision explicitly adds a compatibility bridge.
 
 ## Goals
 
-- Expose a simple native HTTP protocol.
+- Expose a simple native HTTP protocol over mandatory TLS.
 - Keep transport internals out of user-facing URLs, commands, docs, errors, and
   generated configuration.
 - Make `arbiter.url` a stable server base URL, not a protocol endpoint.
@@ -28,8 +28,8 @@ Tentative defaults for the native HTTP protocol:
 Examples:
 
 ```text
-http://127.0.0.1:8075
-http://127.0.0.1:18075
+https://127.0.0.1:8075
+https://127.0.0.1:18075
 ```
 
 Do not append transport-specific path suffixes to user-facing URLs.

@@ -274,6 +274,31 @@ This file is the day-to-day queue for design and implementation gaps.
       operator behavior; and keep transport encryption separate from
       bidirectional identity.
 
+- [ ] `P2` Design Arbiter instance trust bootstrap independent of TLS
+      termination. This is parked until after the current HTTPS-only transport
+      work because it starts to overlap with client identity and
+      authentication. The goal is a safe, explicit pairing flow for clients or
+      skills running on another host that proves the client is talking to the
+      intended Arbiter instance, regardless of whether TLS terminates in
+      Arbiter, a LAN proxy, or a public reverse proxy. Treat HTTPS certificates
+      as transport protection and endpoint authentication only; do not make
+      Arbiter trust depend on manual PEM copying, `arbiter.tls_ca_file`, or the
+      certificate visible to the client. Acceptance checks: define a stable
+      Arbiter instance identity key or fingerprint that survives normal TLS
+      certificate rotation and proxy termination; define an operator command
+      that emits a short-lived one-time trust invite binding that identity to a
+      specific Arbiter URL, purpose, and expiry; sign the invite fields so URL
+      manipulation cannot make the client pair with a different Arbiter
+      identity or endpoint; have the client fetch Arbiter discovery through the
+      configured transport, verify an application-level identity proof from the
+      Arbiter instance, and store the trusted Arbiter identity under the client
+      config directory; document the user flow for skill users as "run this
+      trust command before using Arbiter"; define invite expiry, one-time
+      consumption, audit/logging, revocation, and identity rotation behavior;
+      and explicitly separate this server-trust bootstrap from transport CA
+      configuration, client identity, client authentication, policy selection,
+      and mTLS work.
+
 - [ ] `P3` Investigate user-owned secret execution for hosted Arbiter.
       A future hosted Arbiter model may need to serve users who do not have
       administrative access to the Arbiter host and do not want the host

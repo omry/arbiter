@@ -38,6 +38,8 @@ commands instead of editing generated deployment files directly.
 - `requirements.txt`: exact package pins or explicit wheel paths installed
   inside the container.
 - `wheels/`: prepared dependency wheelhouse.
+- `data/server/`: writable server-owned runtime state, such as the generated
+  self-signed TLS certificate and private key.
 - `data/plugins/`: writable server runtime state for plugins, such as
   idempotency records and temporary artifacts.
 - `compose.yaml`: generated Docker Compose service definition.
@@ -180,9 +182,9 @@ You can also verify plugin discovery and plugin versions through the normal
 Arbiter client. Use the server URL printed by `up`:
 
 ```bash
-arbiter arbiter.url=http://127.0.0.1:18075 info --yaml plugins
-# Heads up: connected to staged Arbiter at http://127.0.0.1:18075.
-# server_url: http://127.0.0.1:18075
+arbiter arbiter.url=https://127.0.0.1:18075 info --yaml plugins
+# Heads up: connected to staged Arbiter at https://127.0.0.1:18075.
+# server_url: https://127.0.0.1:18075
 # kind: plugins
 # plugins:
 # - id: imap

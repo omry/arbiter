@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -271,6 +272,56 @@ func TestArtifactGetWritesSmallTextToStdout(t *testing.T) {
 	}
 	if headCalls != 1 || getCalls != 1 {
 		t.Fatalf("expected one HEAD and one GET, got HEAD=%d GET=%d", headCalls, getCalls)
+	}
+}
+
+func TestArtifactGetAcceptsSelfSignedHTTPSArtifactURL(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodHead:
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			w.Header().Set("Content-Length", "12")
+			w.WriteHeader(http.StatusOK)
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			fmt.Fprint(w, "hello tls\n")
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	result := testutil.RunCLI(t, nil, "artifact", "get", server.URL+"/artifact", "--stdout")
+
+	if result.Code != 0 {
+		t.Fatalf("expected exit code 0, got %d stderr=%q", result.Code, result.Stderr)
+	}
+	if result.Stdout != "hello tls\n" {
+		t.Fatalf("unexpected stdout: %q", result.Stdout)
+	}
+}
+
+func TestArtifactGetUsesConfiguredTLSCAFile(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Content-Length", "12")
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+	caPath := filepath.Join(t.TempDir(), "not-a-ca.pem")
+	if err := os.WriteFile(caPath, []byte("not a certificate"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := testutil.NewCLIEnvironment(t)
+	env.WriteClientConfig(fmt.Sprintf("arbiter:\n  tls_ca_file: %q\n", caPath))
+
+	result := testutil.RunCLI(t, env, "artifact", "get", server.URL+"/artifact", "--stdout")
+
+	if result.Code != 1 {
+		t.Fatalf("expected exit code 1, got %d", result.Code)
+	}
+	if !strings.Contains(result.Stderr, "contains no PEM certificates") {
+		t.Fatalf("unexpected stderr: %q", result.Stderr)
 	}
 }
 

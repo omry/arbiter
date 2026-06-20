@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import ast
 import base64
+import datetime as dt
 import hashlib
 import inspect
 import json
@@ -23,6 +24,7 @@ from collections.abc import (
     Sequence,
 )
 from dataclasses import asdict, dataclass, is_dataclass
+from ipaddress import ip_address
 from importlib.metadata import PackageNotFoundError, distribution, entry_points
 from importlib.resources import files
 from pathlib import Path
@@ -46,6 +48,7 @@ from .cli_errors import print_cli_error
 from .config import (
     AppConfig,
     DeploymentScope,
+    ServerTlsSource,
     StorageConfig,
     configured_service_names,
     register_configs,
@@ -71,11 +74,11 @@ from .services import (
     validate_service_plugin_compatibility,
     validate_service_plugins,
 )
-from .storage import PluginStorage, default_plugin_data_root
+from .storage import PluginStorage, default_plugin_data_root, default_server_data_root
 from .version import arbiter_server_version, source_info
 
 LOGGER = logging.getLogger(__name__)
-TransportMode = Literal["http"]
+TransportMode = Literal["https"]
 HydraConfig = AppConfig | DictConfig
 BootstrapObjectKind = Literal["account", "policy"]
 CLI_COMMANDS = {"serve", "config", "plugins", "bootstrap", "env", "deploy", "version"}
@@ -132,11 +135,12 @@ DOCKER_COMPOSE_ENV_DEFAULTS = [
     ("ARBITER_CONFIG_NAME", "arbiter-server"),
     ("ARBITER_REQUIREMENTS_FILE", "./requirements.txt"),
     ("ARBITER_WHEELS_DIR", "./wheels"),
+    ("ARBITER_SERVER_DATA_DIR", "./data/server"),
     ("ARBITER_PLUGIN_DATA_DIR", "./data/plugins"),
     ("ARBITER_HOST_BIND", "127.0.0.1"),
     ("ARBITER_HOST_PORT", "18075"),
     ("ARBITER_CONTAINER_PORT", "8075"),
-    ("ARBITER_PUBLIC_SCHEME", "http"),
+    ("ARBITER_PUBLIC_SCHEME", "https"),
     ("ARBITER_PUBLIC_BASE_URL", ""),
     ("ARBITER_DOCKER_NETWORK_NAME", "arbiter-staging"),
     ("ARBITER_DOCKER_BRIDGE_NAME", "arbiter-stg0"),
@@ -162,11 +166,16 @@ MAIN_CONFIG_TEMPLATE = """defaults:
 SERVER_CONFIG_TEMPLATE = """# @package arbiter
 server:
   name: arbiter
-  transport: http
+  transport: https
   bind:
+    scheme: https
     host: 127.0.0.1
     port: 8075
     path: ""
+  public:
+    scheme: https
+  tls:
+    source: SELF_SIGNED
 deployment_scope: unknown
 discovery:
   max_account_preview_limit: 25
@@ -205,6 +214,8 @@ class NativeHTTPServer:
     app: object
     host: str
     port: int
+    ssl_certfile: str
+    ssl_keyfile: str
 
 
 @dataclass(frozen=True)
@@ -817,6 +828,211 @@ def _plugin_data_root(storage_config: StorageConfig | Any | None) -> Path:
     return default_plugin_data_root()
 
 
+def _server_data_root(storage_config: StorageConfig | Any | None) -> Path:
+    if storage_config is None:
+        return default_server_data_root()
+    if OmegaConf.is_config(storage_config):
+        server_data_dir = OmegaConf.select(cast(Any, storage_config), "server_data_dir")
+    else:
+        server_data_dir = getattr(storage_config, "server_data_dir", None)
+    if server_data_dir is not None:
+        return Path(str(server_data_dir)).expanduser().resolve()
+    return default_server_data_root()
+
+
+def _server_tls_source(cfg: HydraConfig) -> ServerTlsSource:
+    source = cfg.arbiter.server.tls.source
+    if isinstance(source, ServerTlsSource):
+        return source
+    source_value = str(source)
+    try:
+        return ServerTlsSource[source_value]
+    except KeyError:
+        return ServerTlsSource(source_value)
+
+
+def _server_tls_config_string(cfg: HydraConfig, key: str) -> str | None:
+    value = (
+        OmegaConf.select(cast(Any, cfg), f"arbiter.server.tls.{key}")
+        if OmegaConf.is_config(cfg)
+        else getattr(cfg.arbiter.server.tls, key, None)
+    )
+    if value in (None, ""):
+        return None
+    return str(value)
+
+
+def _server_tls_default_dir(cfg: HydraConfig) -> Path:
+    return _server_data_root(_storage_config(cfg)) / "tls"
+
+
+def _server_tls_default_cert_file(cfg: HydraConfig) -> Path:
+    return _server_tls_default_dir(cfg) / "arbiter-self-signed.crt"
+
+
+def _server_tls_default_key_file(cfg: HydraConfig) -> Path:
+    return _server_tls_default_dir(cfg) / "arbiter-self-signed.key"
+
+
+def _server_tls_configured_files(cfg: HydraConfig) -> tuple[Path, Path]:
+    cert_file = _server_tls_config_string(cfg, "cert_file")
+    key_file = _server_tls_config_string(cfg, "key_file")
+    if cert_file is None or key_file is None:
+        raise ValueError(
+            "arbiter.server.tls.cert_file and key_file are required "
+            "when arbiter.server.tls.source=CERT_FILES"
+        )
+    cert_path = Path(cert_file).expanduser().resolve()
+    key_path = Path(key_file).expanduser().resolve()
+    if not cert_path.is_file():
+        raise ValueError(f"TLS certificate file not found: {cert_path}")
+    if not key_path.is_file():
+        raise ValueError(f"TLS private key file not found: {key_path}")
+    _ensure_tls_private_key_permissions(key_path)
+    return cert_path, key_path
+
+
+def _server_tls_self_signed_files(cfg: HydraConfig) -> tuple[Path, Path]:
+    cert_file = _server_tls_config_string(cfg, "cert_file")
+    key_file = _server_tls_config_string(cfg, "key_file")
+    cert_path = (
+        Path(cert_file).expanduser().resolve()
+        if cert_file is not None
+        else _server_tls_default_cert_file(cfg)
+    )
+    key_path = (
+        Path(key_file).expanduser().resolve()
+        if key_file is not None
+        else _server_tls_default_key_file(cfg)
+    )
+    return cert_path, key_path
+
+
+def _ensure_tls_private_key_permissions(path: Path) -> None:
+    if os.name == "nt":
+        return
+    mode = path.stat().st_mode
+    if mode & 0o077:
+        raise ValueError(f"TLS private key must not be group/world accessible: {path}")
+
+
+def _server_tls_subject_names(cfg: HydraConfig) -> tuple[str, ...]:
+    names = {
+        "localhost",
+        str(cfg.arbiter.server.bind.host),
+        str(cfg.arbiter.server.public.host),
+    }
+    public_base_url = str(cfg.arbiter.server.public.base_url)
+    if "${" not in public_base_url:
+        parsed = urlparse(public_base_url)
+        if parsed.hostname:
+            names.add(parsed.hostname)
+    return tuple(sorted(name for name in names if name and name != "0.0.0.0"))
+
+
+def _generate_self_signed_tls_certificate(
+    *,
+    cert_path: Path,
+    key_path: Path,
+    names: Sequence[str],
+) -> None:
+    try:
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.x509.oid import NameOID
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "self-signed TLS certificates require the cryptography package"
+        ) from exc
+
+    cert_path.parent.mkdir(parents=True, exist_ok=True)
+    key_path.parent.mkdir(parents=True, exist_ok=True)
+    if os.name != "nt":
+        cert_path.parent.chmod(0o700)
+        key_path.parent.chmod(0o700)
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    now = dt.datetime.now(dt.timezone.utc)
+    subject_name = names[0] if names else "localhost"
+    subject = issuer = x509.Name(
+        [x509.NameAttribute(NameOID.COMMON_NAME, subject_name)]
+    )
+    san_entries: list[x509.GeneralName] = []
+    for name in names:
+        try:
+            san_entries.append(x509.IPAddress(ip_address(name)))
+        except ValueError:
+            san_entries.append(x509.DNSName(name))
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - dt.timedelta(minutes=5))
+        .not_valid_after(now + dt.timedelta(days=3650))
+        .add_extension(x509.SubjectAlternativeName(san_entries), critical=False)
+        .sign(key, hashes.SHA256())
+    )
+    key_bytes = key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    cert_bytes = certificate.public_bytes(serialization.Encoding.PEM)
+    _write_bytes_with_mode(key_path, key_bytes, 0o600)
+    _write_bytes_with_mode(cert_path, cert_bytes, 0o644)
+
+
+def _write_bytes_with_mode(path: Path, content: bytes, mode: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    file_descriptor, temporary_name = mkstemp(
+        prefix=f".{path.name}.",
+        dir=path.parent,
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        os.fchmod(file_descriptor, mode)
+        with os.fdopen(file_descriptor, "wb") as handle:
+            file_descriptor = -1
+            handle.write(content)
+        os.replace(temporary_path, path)
+        path.chmod(mode)
+    except BaseException:
+        if file_descriptor != -1:
+            os.close(file_descriptor)
+        try:
+            temporary_path.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def _server_tls_files(
+    cfg: HydraConfig,
+    *,
+    generate_self_signed: bool,
+) -> tuple[Path, Path]:
+    source = _server_tls_source(cfg)
+    if source == ServerTlsSource.CERT_FILES:
+        return _server_tls_configured_files(cfg)
+    if source != ServerTlsSource.SELF_SIGNED:
+        raise ValueError(f"unsupported Arbiter TLS source: {source}")
+    cert_path, key_path = _server_tls_self_signed_files(cfg)
+    if cert_path.exists() and key_path.exists():
+        _ensure_tls_private_key_permissions(key_path)
+        return cert_path, key_path
+    if not generate_self_signed:
+        return cert_path, key_path
+    _generate_self_signed_tls_certificate(
+        cert_path=cert_path,
+        key_path=key_path,
+        names=_server_tls_subject_names(cfg),
+    )
+    return cert_path, key_path
+
+
 def _csv_or_none(values: list[str]) -> str:
     return ",".join(values) if values else "none"
 
@@ -847,6 +1063,8 @@ def _server_base_url(cfg: HydraConfig) -> str:
         )
     if not public_base_url:
         raise ValueError("arbiter.server.public.base_url must be non-empty")
+    if urlparse(public_base_url).scheme != "https":
+        raise ValueError("arbiter.server.public.base_url must use https")
     return public_base_url.rstrip("/")
 
 
@@ -1210,7 +1428,11 @@ def config_check_components(
     server_component = ConfigCheckComponentReport(name="server")
     if not service_errors:
         try:
-            build_server(cfg, service_plugins=active_service_plugins)
+            build_server(
+                cfg,
+                service_plugins=active_service_plugins,
+                prepare_tls=False,
+            )
         except Exception as exc:
             server_error = True
             server_component = ConfigCheckComponentReport(
@@ -2111,6 +2333,8 @@ def _create_native_http_app(
 def build_server(
     cfg: HydraConfig,
     service_plugins: Sequence[ServicePlugin] | None = None,
+    *,
+    prepare_tls: bool = True,
 ) -> NativeHTTPServer:
     available_service_plugins = (
         discover_service_plugins() if service_plugins is None else service_plugins
@@ -2143,23 +2367,31 @@ def build_server(
         deployment_scope=cfg.arbiter.deployment_scope,
         artifact_store=artifact_store,
     )
+    ssl_certfile, ssl_keyfile = _server_tls_files(
+        cfg,
+        generate_self_signed=prepare_tls,
+    )
 
     return NativeHTTPServer(
         app=native_app,
         host=str(cfg.arbiter.server.bind.host),
         port=int(cfg.arbiter.server.bind.port),
+        ssl_certfile=str(ssl_certfile),
+        ssl_keyfile=str(ssl_keyfile),
     )
 
 
 def _run_server(server: NativeHTTPServer, transport: TransportMode) -> None:
-    if transport != "http":
-        raise ValueError(f"unsupported Arbiter HTTP transport: {transport}")
+    if transport != "https":
+        raise ValueError(f"unsupported Arbiter HTTPS transport: {transport}")
     import uvicorn
 
     uvicorn.run(
         cast(Any, server.app),
         host=server.host,
         port=server.port,
+        ssl_certfile=server.ssl_certfile,
+        ssl_keyfile=server.ssl_keyfile,
         log_config=None,
     )
 
@@ -2851,21 +3083,42 @@ def _ensure_writable_wheel_dir(wheel_dir: Path) -> bool:
 
 
 def _ensure_writable_plugin_data_dir(plugin_data_dir: Path) -> bool:
+    return _ensure_writable_private_data_dir(
+        plugin_data_dir,
+        label="plugin data directory",
+        detail_name="plugin data dir",
+    )
+
+
+def _ensure_writable_server_data_dir(server_data_dir: Path) -> bool:
+    return _ensure_writable_private_data_dir(
+        server_data_dir,
+        label="server data directory",
+        detail_name="server data dir",
+    )
+
+
+def _ensure_writable_private_data_dir(
+    data_dir: Path,
+    *,
+    label: str,
+    detail_name: str,
+) -> bool:
     try:
-        plugin_data_dir.mkdir(parents=True, exist_ok=True)
+        data_dir.mkdir(parents=True, exist_ok=True)
         if os.name != "nt":
-            plugin_data_dir.chmod(0o700)
-        write_check = plugin_data_dir / ".arbiter-write-check"
+            data_dir.chmod(0o700)
+        write_check = data_dir / ".arbiter-write-check"
         write_check.write_text("", encoding="utf-8")
         write_check.unlink()
     except OSError as exc:
         print_cli_error(
-            "deployment plugin data directory is not writable",
+            f"deployment {label} is not writable",
             area="deploy",
             details=[
-                f"plugin data dir: {plugin_data_dir}",
+                f"{detail_name}: {data_dir}",
                 f"error: {exc}",
-                "remove or chown the plugin data directory, then retry",
+                f"remove or chown the {label}, then retry",
             ],
         )
         return False
@@ -3145,7 +3398,10 @@ def _format_docker_compose_env_file(existing_values: Mapping[str, str]) -> str:
     ]
     default_names = {name for name, _default in DOCKER_COMPOSE_ENV_DEFAULTS}
     for name, default in DOCKER_COMPOSE_ENV_DEFAULTS:
-        lines.append(f"{name}={existing_values.get(name, default)}")
+        existing_value = existing_values.get(name, default)
+        if name == "ARBITER_PUBLIC_SCHEME" and existing_value == "http":
+            existing_value = default
+        lines.append(f"{name}={existing_value}")
     extra_names = sorted(name for name in existing_values if name not in default_names)
     if extra_names:
         lines.extend(["", "# Extra local Compose values."])
@@ -3375,6 +3631,8 @@ def _run_deploy_docker(argv: Sequence[str]) -> int:
             return 2
         if not _ensure_writable_wheel_dir(deploy_dir / "wheels"):
             return 1
+        if not _ensure_writable_server_data_dir(deploy_dir / "data" / "server"):
+            return 1
         if not _ensure_writable_plugin_data_dir(deploy_dir / "data" / "plugins"):
             return 1
         manifest_hashes: dict[str, str] = {}
@@ -3420,6 +3678,8 @@ def _run_deploy_docker(argv: Sequence[str]) -> int:
     if parsed.action == "update":
         deploy_dir.mkdir(parents=True, exist_ok=True)
         if not _ensure_writable_wheel_dir(deploy_dir / "wheels"):
+            return 1
+        if not _ensure_writable_server_data_dir(deploy_dir / "data" / "server"):
             return 1
         if not _ensure_writable_plugin_data_dir(deploy_dir / "data" / "plugins"):
             return 1

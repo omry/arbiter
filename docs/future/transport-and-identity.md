@@ -44,8 +44,15 @@ identity.
 Transport encryption answers:
 
 - Are request and response bytes protected from network observers?
-- Can the client trust it reached the intended endpoint?
+- Can the client authenticate the HTTPS endpoint or proxy it reached?
 - Which deployment component owns certificate issuance and renewal?
+
+Transport encryption does not, by itself, prove Arbiter instance identity. In
+public and many LAN deployments, TLS may terminate at a reverse proxy or load
+balancer, so the client sees that endpoint's certificate rather than any
+certificate managed by Arbiter. Arbiter trust therefore needs an
+application-level instance identity that can be verified through the chosen
+transport.
 
 ### Local Loopback Mode
 
@@ -80,15 +87,18 @@ storage policy inside Arbiter itself.
 ### Private HTTPS Mode
 
 For private deployments without public DNS or public reachability, use an
-Arbiter-managed private CA or pinned trust model:
+Arbiter-managed private CA or private endpoint certificate model:
 
 - Generate or import a private CA.
 - Issue an Arbiter server certificate for the configured endpoint.
-- Configure Arbiter clients with the CA certificate or a pinned fingerprint.
+- Configure Arbiter clients with the CA certificate when the deployment wants
+  transport-level private endpoint authentication.
 - Keep private keys in protected deployment state.
 
 This is the likely path for controlled multi-agent deployments where Arbiter
-controls both client and server configuration.
+controls both client and server configuration. It still remains a transport
+choice; application-level Arbiter instance trust should not depend on the
+client seeing this certificate.
 
 ## Concern 2: Bidirectional Identity
 
@@ -101,11 +111,16 @@ Identity answers:
 
 ### Arbiter Identity
 
-Arbiter identifies itself through the server side of TLS:
+Arbiter instance identity should be independent of TLS termination:
 
-- Public CA certificate in public HTTPS mode.
-- Private CA certificate or pinned server identity in private HTTPS mode.
-- Optional explicit Arbiter instance id in configuration and audit records.
+- Public CA and private CA certificates authenticate the transport endpoint the
+  client reached, which may be a proxy.
+- Arbiter should expose an application-level instance identity key or
+  fingerprint that clients can pair with and verify through discovery.
+- The trusted Arbiter identity should survive normal TLS certificate rotation
+  and proxy changes.
+- An explicit Arbiter instance id should appear in configuration and audit
+  records.
 
 Agents should fail closed when the Arbiter identity is missing, unknown, or
 unexpected in remote modes.
@@ -119,13 +134,18 @@ Candidate mechanisms:
 - Detached request signatures over canonical request bytes.
 - PGP or another signing system as a request-signature backend.
 
-mTLS is the cleanest symmetric transport identity model:
+mTLS is the cleanest symmetric transport identity model when TLS terminates at
+Arbiter or at a proxy that participates in Arbiter's identity model:
 
 ```text
 agent verifies Arbiter certificate
 Arbiter verifies agent certificate
 agent certificate identity -> Arbiter agent id -> policy and audit
 ```
+
+When a proxy terminates client TLS, Arbiter needs a separate authenticated way
+to receive or verify agent identity; otherwise mTLS only authenticates the
+agent to the proxy.
 
 Request signatures are still useful when Arbiter needs durable proof that a
 specific agent key authorized a specific payload. They are especially relevant

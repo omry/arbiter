@@ -53,7 +53,7 @@ func TestInfoServerYAMLFlagCanFollowSubcommand(t *testing.T) {
 		t.Fatalf("expected exit code 0, got %d stderr=%q", result.code, result.stderr)
 	}
 	if !strings.Contains(result.stdout, "name: arbiter\n") ||
-		!strings.Contains(result.stdout, "server_url: http://127.0.0.1:8075\n") {
+		!strings.Contains(result.stdout, "server_url: https://127.0.0.1:8075\n") {
 		t.Fatalf("expected YAML-ish output, got:\n%s", result.stdout)
 	}
 }

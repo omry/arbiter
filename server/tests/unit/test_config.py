@@ -11,6 +11,7 @@ from arbiter_server.config import (
     AppConfig,
     ArbiterConfig,
     DeploymentScope,
+    ServerTlsSource,
     configured_service_names,
     register_configs,
     service_accounts_for,
@@ -101,18 +102,22 @@ def test_compose_config_returns_hydra_config() -> None:
 
     assert isinstance(cfg, DictConfig)
     assert cfg.arbiter.server.name == "arbiter"
-    assert cfg.arbiter.server.transport == "http"
-    assert cfg.arbiter.server.bind.scheme == "http"
+    assert cfg.arbiter.server.transport == "https"
+    assert cfg.arbiter.server.bind.scheme == "https"
     assert cfg.arbiter.server.bind.host == "127.0.0.1"
     assert cfg.arbiter.server.bind.port == 8075
     assert cfg.arbiter.server.bind.path == ""
-    assert cfg.arbiter.server.bind.base_url == "http://127.0.0.1:8075"
-    assert cfg.arbiter.server.public.scheme == "http"
+    assert cfg.arbiter.server.bind.base_url == "https://127.0.0.1:8075"
+    assert cfg.arbiter.server.public.scheme == "https"
     assert cfg.arbiter.server.public.host == "127.0.0.1"
     assert cfg.arbiter.server.public.port == 8075
     assert cfg.arbiter.server.public.path == ""
-    assert cfg.arbiter.server.public.base_url == "http://127.0.0.1:8075"
+    assert cfg.arbiter.server.public.base_url == "https://127.0.0.1:8075"
+    assert cfg.arbiter.server.tls.source == ServerTlsSource.SELF_SIGNED
+    assert cfg.arbiter.server.tls.cert_file is None
+    assert cfg.arbiter.server.tls.key_file is None
     assert cfg.arbiter.deployment_scope == DeploymentScope.unknown
+    assert cfg.arbiter.storage.server_data_dir is None
     assert cfg.arbiter.storage.plugin_data_dir is None
     assert cfg.arbiter.account == {}
     assert cfg.arbiter.policy == {}
@@ -126,8 +131,11 @@ def test_compose_config_applies_overrides() -> None:
             "+arbiter/account/imap@arbiter.account.imap.primary=schema",
             "+arbiter/policy/smtp@arbiter.policy.smtp.bot=schema",
             "+arbiter/policy/imap@arbiter.policy.imap.bot=schema",
-            "arbiter.server.transport=http",
+            "arbiter.server.transport=https",
             "arbiter.server.bind.port=9000",
+            "arbiter.server.tls.source=CERT_FILES",
+            "arbiter.server.tls.cert_file=/tls/cert.pem",
+            "arbiter.server.tls.key_file=/tls/key.pem",
             "arbiter.server.public.scheme=https",
             "arbiter.server.public.host=arbiter.example.test",
             "arbiter.server.public.port=443",
@@ -143,8 +151,11 @@ def test_compose_config_applies_overrides() -> None:
         ]
     )
 
-    assert cfg.arbiter.server.transport == "http"
+    assert cfg.arbiter.server.transport == "https"
     assert cfg.arbiter.server.bind.port == 9000
+    assert cfg.arbiter.server.tls.source == ServerTlsSource.CERT_FILES
+    assert cfg.arbiter.server.tls.cert_file == "/tls/cert.pem"
+    assert cfg.arbiter.server.tls.key_file == "/tls/key.pem"
     assert cfg.arbiter.server.public.base_url == "https://arbiter.example.test:443"
     assert cfg.arbiter.account.smtp.primary.host == "smtp.example.com"
     assert cfg.arbiter.account.smtp.primary.port == 2525

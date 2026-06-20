@@ -67,8 +67,8 @@ Add `--replace-env` when the installed env file should also come from staging.
 Test the installed Arbiter server with the Arbiter client:
 
 ```bash
-arbiter arbiter.url=http://127.0.0.1:8075 info --yaml plugins
-# server_url: http://127.0.0.1:8075
+arbiter arbiter.url=https://127.0.0.1:8075 info --yaml plugins
+# server_url: https://127.0.0.1:8075
 # kind: plugins
 # plugins:
 # - id: imap

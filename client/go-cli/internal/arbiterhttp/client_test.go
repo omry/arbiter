@@ -3,8 +3,12 @@ package arbiterhttp
 import (
 	"bytes"
 	"context"
+	"encoding/pem"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -168,6 +172,54 @@ func TestClientMapsErrorEnvelope(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "account is required") {
 		t.Fatalf("unexpected error message: %v", err)
+	}
+}
+
+func TestInsecureTLSClientDisablesCertificateVerification(t *testing.T) {
+	client := NewClientInsecureTLS("https://arbiter.test")
+
+	transport, ok := client.http.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("expected HTTP transport, got %T", client.http.Transport)
+	}
+	if transport.TLSClientConfig == nil {
+		t.Fatal("expected TLS client config")
+	}
+	if !transport.TLSClientConfig.InsecureSkipVerify {
+		t.Fatal("expected InsecureSkipVerify")
+	}
+}
+
+func TestTLSCAFileTrustsSelfSignedServer(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/info" {
+			t.Fatalf("unexpected request path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"name":"arbiter"}`))
+	}))
+	defer server.Close()
+
+	certPath := filepath.Join(t.TempDir(), "arbiter.crt")
+	certPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: server.Certificate().Raw,
+	})
+	if err := os.WriteFile(certPath, certPEM, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	client, err := NewClientWithTLSCAFile(server.URL, certPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := client.Info(context.Background())
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info["name"] != "arbiter" {
+		t.Fatalf("unexpected info payload: %#v", info)
 	}
 }
 

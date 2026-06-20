@@ -36,15 +36,15 @@ not returned by `imap:get_message`.
 
 Fetch attachment content with `imap:get_attachment` when HTTP artifact delivery
 is available. The operation materializes the attachment in the server's IMAP
-plugin storage and returns a one-time artifact URL. Use an explicit
-artifact-aware client command to read the artifact; request the attachment again
-if a new one-time URL is needed.
+plugin storage and returns a one-time HTTPS `content_url`. Use an explicit
+artifact-aware client command with that returned URL to read the artifact;
+request the attachment again if a new one-time URL is needed.
 
 For a small textual artifact only, an agent can explicitly stream the artifact
 to stdout:
 
 ```bash
-arbiter artifact get 'http://127.0.0.1:8000/_arbiter/artifacts/...' --stdout
+arbiter artifact get 'https://127.0.0.1:8075/api/v1/artifacts/.../content?nonce=...' --stdout
 ```
 
 For binary attachments, run an explicit reader command through the client so
@@ -52,20 +52,20 @@ the raw artifact bytes never enter stdout. Path-based tools can use a private
 temp file that the client removes when the command exits:
 
 ```bash
-arbiter artifact with-temp 'http://127.0.0.1:8000/_arbiter/artifacts/...' -- pandoc '{}' -t plain
+arbiter artifact with-temp 'https://127.0.0.1:8075/api/v1/artifacts/.../content?nonce=...' -- pandoc '{}' -t plain
 ```
 
 Stdin-based tools can receive the artifact bytes directly:
 
 ```bash
-arbiter artifact with-stdin 'http://127.0.0.1:8000/_arbiter/artifacts/...' -- pandoc -f docx -t plain -
+arbiter artifact with-stdin 'https://127.0.0.1:8075/api/v1/artifacts/.../content?nonce=...' -- pandoc -f docx -t plain -
 ```
 
 When the user explicitly asks to save an attachment to a local file, use the
 explicit save command:
 
 ```bash
-arbiter artifact save 'http://127.0.0.1:8000/_arbiter/artifacts/...' ./attachment.pdf
+arbiter artifact save 'https://127.0.0.1:8075/api/v1/artifacts/.../content?nonce=...' ./attachment.pdf
 ```
 
 Do not use persistent saves as the default inspection path; prefer `with-temp`

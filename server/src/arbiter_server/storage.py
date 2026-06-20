@@ -29,23 +29,20 @@ class PluginStorage:
 
 
 def default_plugin_data_root() -> Path:
+    return default_server_data_root() / "plugins"
+
+
+def default_server_data_root() -> Path:
     if sys.platform == "win32":
         base = os.environ.get("LOCALAPPDATA")
         if base:
-            return Path(base) / "Arbiter" / "server" / "plugins"
+            return Path(base) / "Arbiter" / "server"
     if sys.platform == "darwin":
-        return (
-            Path.home()
-            / "Library"
-            / "Application Support"
-            / "Arbiter"
-            / "server"
-            / "plugins"
-        )
+        return Path.home() / "Library" / "Application Support" / "Arbiter" / "server"
     base = os.environ.get("XDG_STATE_HOME")
     if base:
-        return Path(base) / "arbiter" / "server" / "plugins"
-    return Path.home() / ".local" / "state" / "arbiter" / "server" / "plugins"
+        return Path(base) / "arbiter" / "server"
+    return Path.home() / ".local" / "state" / "arbiter" / "server"
 
 
 def plugin_data_dir(root: Path, plugin_name: str) -> Path:

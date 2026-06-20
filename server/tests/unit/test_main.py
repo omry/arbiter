@@ -18,6 +18,7 @@ from arbiter_server.config import (
     AppConfig,
     ArbiterConfig,
     DiscoveryConfig,
+    ServerTlsSource,
     StorageConfig,
 )
 from arbiter_server.file_protection.windows import (
@@ -35,6 +36,7 @@ from arbiter_server.main import (
     _docker_bundle_plugin,
     _run_config_check,
     _run_server,
+    _server_tls_files,
     _write_text_with_mode,
     build_app,
     build_server,
@@ -1517,7 +1519,7 @@ def test_cli_serve_rejects_world_readable_config_file(
         pytest.skip("POSIX permission checks are not available")
     config_file = tmp_path / "arbiter-server.yaml"
     config_file.write_text(
-        "arbiter:\n  server:\n    transport: http\n", encoding="utf-8"
+        "arbiter:\n  server:\n    transport: https\n", encoding="utf-8"
     )
     config_file.chmod(0o644)
     monkeypatch.setattr(
@@ -1539,7 +1541,7 @@ def test_cli_serve_rejects_group_writable_config_file(
         pytest.skip("POSIX permission checks are not available")
     config_file = tmp_path / "arbiter-server.yaml"
     config_file.write_text(
-        "arbiter:\n  server:\n    transport: http\n", encoding="utf-8"
+        "arbiter:\n  server:\n    transport: https\n", encoding="utf-8"
     )
     config_file.chmod(0o660)
     monkeypatch.setattr(
@@ -1561,7 +1563,7 @@ def test_cli_serve_rejects_group_readable_env_file(
         pytest.skip("POSIX permission checks are not available")
     config_file = tmp_path / "arbiter-server.yaml"
     config_file.write_text(
-        "arbiter:\n" "  env_file: local.env\n" "  server:\n" "    transport: http\n",
+        "arbiter:\n" "  env_file: local.env\n" "  server:\n" "    transport: https\n",
         encoding="utf-8",
     )
     config_file.chmod(0o640)
@@ -1587,7 +1589,7 @@ def test_cli_serve_rejects_world_writable_config_directory(
         pytest.skip("POSIX permission checks are not available")
     config_file = tmp_path / "arbiter-server.yaml"
     config_file.write_text(
-        "arbiter:\n  server:\n    transport: http\n", encoding="utf-8"
+        "arbiter:\n  server:\n    transport: https\n", encoding="utf-8"
     )
     config_file.chmod(0o640)
     tmp_path.chmod(0o777)
@@ -1613,7 +1615,7 @@ def test_cli_serve_rejects_group_writable_config_directory(
         pytest.skip("POSIX permission checks are not available")
     config_file = tmp_path / "arbiter-server.yaml"
     config_file.write_text(
-        "arbiter:\n  server:\n    transport: http\n", encoding="utf-8"
+        "arbiter:\n  server:\n    transport: https\n", encoding="utf-8"
     )
     config_file.chmod(0o640)
     tmp_path.chmod(0o770)
@@ -1692,7 +1694,7 @@ def test_windows_permissions_reject_broad_config_acl(
 ) -> None:
     config_file = tmp_path / "arbiter-server.yaml"
     config_file.write_text(
-        "arbiter:\n  server:\n    transport: http\n", encoding="utf-8"
+        "arbiter:\n  server:\n    transport: https\n", encoding="utf-8"
     )
     monkeypatch.setattr(
         "arbiter_server.file_protection.windows._windows_unallowed_permission_reason",
@@ -1719,7 +1721,7 @@ def test_windows_permissions_reject_unverified_env_file_acl(
 ) -> None:
     config_file = tmp_path / "arbiter-server.yaml"
     config_file.write_text(
-        "arbiter:\n" "  env_file: local.env\n" "  server:\n" "    transport: http\n",
+        "arbiter:\n" "  env_file: local.env\n" "  server:\n" "    transport: https\n",
         encoding="utf-8",
     )
     env_file = tmp_path / "local.env"
@@ -1785,7 +1787,7 @@ def test_windows_real_acl_rejects_broad_config_before_serve(
         pytest.skip("real ACL checks require Windows")
     config_file = tmp_path / "arbiter-server.yaml"
     config_file.write_text(
-        "arbiter:\n  server:\n    transport: http\n", encoding="utf-8"
+        "arbiter:\n  server:\n    transport: https\n", encoding="utf-8"
     )
     current_user = subprocess.check_output(["whoami"], text=True).strip()
     for path in (tmp_path, config_file):
@@ -2058,13 +2060,14 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
         "/tmp/requirements.txt > /tmp/requirements.editable"
     ) in compose_text
     assert "${ARBITER_WHEELS_DIR:-./wheels}:/wheels:ro" in compose_text
+    assert "${ARBITER_SERVER_DATA_DIR:-./data/server}:/data/server" in compose_text
     assert "${ARBITER_PLUGIN_DATA_DIR:-./data/plugins}:/data/plugins" in compose_text
     assert "container_name: ${ARBITER_CONTAINER_NAME:-arbiter-staging}" in compose_text
     assert "user: ${ARBITER_CONTAINER_USER:-10001:10001}" in compose_text
     assert "ARBITER_SERVER_HOST: 0.0.0.0" in compose_text
     assert "ARBITER_HOST_BIND: ${ARBITER_HOST_BIND:-127.0.0.1}" in compose_text
     assert "ARBITER_HOST_PORT: ${ARBITER_HOST_PORT:-18075}" in compose_text
-    assert "ARBITER_PUBLIC_SCHEME: ${ARBITER_PUBLIC_SCHEME:-http}" in compose_text
+    assert "ARBITER_PUBLIC_SCHEME: ${ARBITER_PUBLIC_SCHEME:-https}" in compose_text
     assert "ARBITER_PUBLIC_BASE_URL: ${ARBITER_PUBLIC_BASE_URL:-}" in compose_text
     assert "ARBITER_RUNTIME_VENV: ${ARBITER_RUNTIME_VENV:-/tmp/arbiter-venv}" in (
         compose_text
@@ -2078,7 +2081,7 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
     assert 'case "$$HOME" in /tmp/arbiter-*)' in compose_text
     assert 'case "$$HOME" in *..*)' in compose_text
     assert 'public_host="$${ARBITER_HOST_BIND:-127.0.0.1}"' in compose_text
-    assert '"arbiter.server.public.scheme=$${ARBITER_PUBLIC_SCHEME:-http}"' in (
+    assert '"arbiter.server.public.scheme=$${ARBITER_PUBLIC_SCHEME:-https}"' in (
         compose_text
     )
     assert '"arbiter.server.public.host=$$public_host"' in compose_text
@@ -2122,14 +2125,17 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
     assert (
         '"arbiter.server.bind.host=$$ARBITER_SERVER_HOST" '
         '"arbiter.server.bind.port=$$ARBITER_CONTAINER_PORT" '
-        '"arbiter.server.public.scheme=$${ARBITER_PUBLIC_SCHEME:-http}" '
+        '"arbiter.server.public.scheme=$${ARBITER_PUBLIC_SCHEME:-https}" '
         '"arbiter.server.public.host=$$public_host" '
         '"arbiter.server.public.port=$${ARBITER_HOST_PORT:-18075}" '
+        '"arbiter.storage.server_data_dir=/data/server" '
         '"arbiter.storage.plugin_data_dir=/data/plugins" '
         '"arbiter.deployment_scope=staged"'
     ) in compose_text
     assert not (deploy_dir / "config.yaml").exists()
     assert (deploy_dir / "conf").is_dir()
+    assert (deploy_dir / "data" / "server").is_dir()
+    _assert_posix_mode(deploy_dir / "data" / "server", 0o700)
     assert (deploy_dir / "data" / "plugins").is_dir()
     _assert_posix_mode(deploy_dir / "data" / "plugins", 0o700)
     assert not (deploy_dir / "conf" / ".env").exists()
@@ -2140,8 +2146,9 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
     assert "ARBITER_HOST_BIND=127.0.0.1\n" in docker_env
     assert "ARBITER_HOST_PORT=18075\n" in docker_env
     assert "ARBITER_WHEELS_DIR=./wheels\n" in docker_env
+    assert "ARBITER_SERVER_DATA_DIR=./data/server\n" in docker_env
     assert "ARBITER_PLUGIN_DATA_DIR=./data/plugins\n" in docker_env
-    assert "ARBITER_PUBLIC_SCHEME=http\n" in docker_env
+    assert "ARBITER_PUBLIC_SCHEME=https\n" in docker_env
     assert "ARBITER_PUBLIC_BASE_URL=\n" in docker_env
     assert "ARBITER_DOCKER_NETWORK_NAME=arbiter-staging\n" in docker_env
     assert "ARBITER_DOCKER_BRIDGE_NAME=arbiter-stg0\n" in docker_env
@@ -4307,6 +4314,19 @@ def test_cli_deploy_docker_generated_helper_up_rejects_unwritable_plugin_data_di
         encoding="utf-8",
     )
     fake_docker.chmod(0o755)
+    fake_stat = fake_bin / "stat"
+    fake_stat.write_text(
+        "#!/usr/bin/env sh\n"
+        'case "$*" in\n'
+        f'  *"{deploy_dir / "data/server"}"*)\n'
+        '    if [ "$1" = -c ] && [ "$2" = "%u %g %a" ]; then '
+        'printf "12345 12345 700\\n"; exit 0; fi\n'
+        "    ;;\n"
+        "esac\n"
+        'exec /usr/bin/stat "$@"\n',
+        encoding="utf-8",
+    )
+    fake_stat.chmod(0o755)
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
 
@@ -4389,7 +4409,7 @@ def test_cli_deploy_docker_generated_helper_up_prints_url(
     assert result.returncode == 0
     assert result.stdout == (
         " ✔ Staging port: 8075 -> 18075 to prevent collision\n"
-        " ✔ URL: http://127.0.0.1:18075\n"
+        " ✔ URL: https://127.0.0.1:18075\n"
     )
     assert result.stderr == ""
 
@@ -4407,7 +4427,7 @@ def test_cli_deploy_docker_generated_helper_up_prints_url(
     assert result.stdout == (
         " \033[32m✔\033[0m Staging port: 8075 -> 18075 to prevent collision\n"
         " \033[32m✔\033[0m URL: "
-        "\033[94mhttp://127.0.0.1:18075\033[0m\n"
+        "\033[94mhttps://127.0.0.1:18075\033[0m\n"
     )
     assert result.stderr == ""
 
@@ -4428,7 +4448,7 @@ def test_cli_deploy_docker_generated_helper_up_prints_url(
     )
 
     assert result.returncode == 0
-    assert result.stdout == " ✔ URL: http://127.0.0.1:8075\n"
+    assert result.stdout == " ✔ URL: https://127.0.0.1:8075\n"
     assert result.stderr == ""
 
     docker_calls.write_text("", encoding="utf-8")
@@ -4442,7 +4462,7 @@ def test_cli_deploy_docker_generated_helper_up_prints_url(
     )
 
     assert result.returncode == 0
-    assert result.stdout == " ✔ URL: http://127.0.0.1:8075\n"
+    assert result.stdout == " ✔ URL: https://127.0.0.1:8075\n"
     assert result.stderr == ""
     assert "ARBITER_PIP_VERBOSE=1\n" in docker_calls.read_text(encoding="utf-8")
 
@@ -4453,7 +4473,7 @@ def test_cli_deploy_docker_generated_helper_up_prints_url(
     assert "up -d\n" in docker_call_text
 
 
-def test_cli_deploy_docker_generated_helper_test_calls_version_info(
+def test_cli_deploy_docker_generated_helper_test_probes_https_health(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -4473,17 +4493,19 @@ def test_cli_deploy_docker_generated_helper_test_calls_version_info(
     capsys.readouterr()
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
-    arbiter_calls = tmp_path / "arbiter-calls"
-    fake_arbiter = fake_bin / "arbiter"
-    fake_arbiter_count = tmp_path / "arbiter-count"
-    fake_arbiter.write_text(
+    curl_calls = tmp_path / "curl-calls"
+    fake_curl = fake_bin / "curl"
+    fake_curl_count = tmp_path / "curl-count"
+    fake_curl.write_text(
         "#!/usr/bin/env sh\n"
-        f'printf "%s %s\\n" "$ARBITER_URL" "$*" >> "{arbiter_calls}"\n'
+        "last_arg=\n"
+        'for arg do last_arg="$arg"; done\n'
+        f'printf "%s\\n" "$last_arg" >> "{curl_calls}"\n'
         "count=0\n"
-        f'if [ -f "{fake_arbiter_count}" ]; then count="$(cat "{fake_arbiter_count}")"; fi\n'
-        f'printf "%s\\n" "$((count + 1))" > "{fake_arbiter_count}"\n'
+        f'if [ -f "{fake_curl_count}" ]; then count="$(cat "{fake_curl_count}")"; fi\n'
+        f'printf "%s\\n" "$((count + 1))" > "{fake_curl_count}"\n'
         'if [ "$count" -lt "${ARBITER_TEST_CONNECT_FAILURES:-0}" ]; then\n'
-        "  printf 'Arbiter connection error: could not connect\\n' >&2\n"
+        "  printf 'curl: could not connect\\n' >&2\n"
         "  exit 1\n"
         "fi\n"
         'if [ "$count" -lt "${ARBITER_TEST_TRANSIENT_FAILURES:-0}" ]; then\n'
@@ -4493,7 +4515,7 @@ def test_cli_deploy_docker_generated_helper_test_calls_version_info(
         'exit "${ARBITER_TEST_STATUS:-0}"\n',
         encoding="utf-8",
     )
-    fake_arbiter.chmod(0o755)
+    fake_curl.chmod(0o755)
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
 
@@ -4507,10 +4529,10 @@ def test_cli_deploy_docker_generated_helper_test_calls_version_info(
     )
 
     assert result.returncode == 0
-    assert result.stdout == " ✔ Server test: http://127.0.0.1:18075\n"
+    assert result.stdout == " ✔ Server test: https://127.0.0.1:18075\n"
     assert result.stderr == ""
-    assert arbiter_calls.read_text(encoding="utf-8") == (
-        "http://127.0.0.1:18075 info server\n"
+    assert curl_calls.read_text(encoding="utf-8") == (
+        "https://127.0.0.1:18075/_health_\n"
     )
 
     result = subprocess.run(
@@ -4523,11 +4545,11 @@ def test_cli_deploy_docker_generated_helper_test_calls_version_info(
     )
 
     assert result.returncode == 0
-    assert result.stdout == " ✔ Server test: http://127.0.0.1:18075\n"
+    assert result.stdout == " ✔ Server test: https://127.0.0.1:18075\n"
     assert result.stderr == ""
-    assert fake_arbiter_count.read_text(encoding="utf-8") == "3\n"
+    assert fake_curl_count.read_text(encoding="utf-8") == "3\n"
 
-    fake_arbiter_count.write_text("0\n", encoding="utf-8")
+    fake_curl_count.write_text("0\n", encoding="utf-8")
     result = subprocess.run(
         [deploy_dir / "arbiter-docker", "test"],
         check=False,
@@ -4538,9 +4560,9 @@ def test_cli_deploy_docker_generated_helper_test_calls_version_info(
     )
 
     assert result.returncode == 0
-    assert result.stdout == " ✔ Server test: http://127.0.0.1:18075\n"
+    assert result.stdout == " ✔ Server test: https://127.0.0.1:18075\n"
     assert result.stderr == ""
-    assert fake_arbiter_count.read_text(encoding="utf-8") == "3\n"
+    assert fake_curl_count.read_text(encoding="utf-8") == "3\n"
 
     result = subprocess.run(
         [deploy_dir / "arbiter-docker", "test"],
@@ -4558,7 +4580,7 @@ def test_cli_deploy_docker_generated_helper_test_calls_version_info(
 
     assert result.returncode == 1
     assert result.stdout == (
-        " \033[31m✘\033[0m Server test: " "\033[94mhttp://127.0.0.1:18075\033[0m\n"
+        " \033[31m✘\033[0m Server test: " "\033[94mhttps://127.0.0.1:18075\033[0m\n"
     )
     assert result.stderr == ""
 
@@ -4858,7 +4880,7 @@ def test_cli_deploy_docker_generated_helper_config_check_does_not_rewrite_subnet
     assert " network " not in docker_calls.read_text(encoding="utf-8")
 
 
-def test_cli_deploy_docker_generated_helper_test_finds_checkout_skill_launcher(
+def test_cli_deploy_docker_generated_helper_test_uses_curl_before_client(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -4876,18 +4898,28 @@ def test_cli_deploy_docker_generated_helper_test_finds_checkout_skill_launcher(
         == 0
     )
     capsys.readouterr()
-    skill_bin = tmp_path / "skill" / "bin"
-    skill_bin.mkdir(parents=True)
-    arbiter_calls = tmp_path / "arbiter-calls"
-    checkout_arbiter = skill_bin / "arbiter"
-    checkout_arbiter.write_text(
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    curl_calls = tmp_path / "curl-calls"
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text(
         "#!/usr/bin/env sh\n"
-        f'printf "%s %s\\n" "$ARBITER_URL" "$*" >> "{arbiter_calls}"\n',
+        "last_arg=\n"
+        'for arg do last_arg="$arg"; done\n'
+        f'printf "%s\\n" "$last_arg" >> "{curl_calls}"\n',
         encoding="utf-8",
     )
-    checkout_arbiter.chmod(0o755)
+    fake_curl.chmod(0o755)
+    fake_arbiter = fake_bin / "arbiter"
+    fake_arbiter.write_text(
+        "#!/usr/bin/env sh\n"
+        "printf 'unexpected Arbiter client call\\n' >&2\n"
+        "exit 9\n",
+        encoding="utf-8",
+    )
+    fake_arbiter.chmod(0o755)
     env = os.environ.copy()
-    env["PATH"] = "/usr/bin:/bin"
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
 
     result = subprocess.run(
         [deploy_dir / "arbiter-docker", "test"],
@@ -4899,10 +4931,10 @@ def test_cli_deploy_docker_generated_helper_test_finds_checkout_skill_launcher(
     )
 
     assert result.returncode == 0
-    assert result.stdout == " ✔ Server test: http://127.0.0.1:18075\n"
+    assert result.stdout == " ✔ Server test: https://127.0.0.1:18075\n"
     assert result.stderr == ""
-    assert arbiter_calls.read_text(encoding="utf-8") == (
-        "http://127.0.0.1:18075 info server\n"
+    assert curl_calls.read_text(encoding="utf-8") == (
+        "https://127.0.0.1:18075/_health_\n"
     )
 
 
@@ -4969,7 +5001,7 @@ def test_cli_deploy_docker_generated_helper_up_auto_selects_staging_subnet(
         in result.stdout
     )
     assert " ✔ Staging port: 8075 -> 18075 to prevent collision\n" in result.stdout
-    assert " ✔ URL: http://127.0.0.1:18075\n" in result.stdout
+    assert " ✔ URL: https://127.0.0.1:18075\n" in result.stdout
     assert result.stderr == ""
     assert "ARBITER_DOCKER_SUBNET=10.213.200.0/24\n" in (
         deploy_dir / "docker.env"
@@ -5038,7 +5070,7 @@ def test_cli_deploy_docker_generated_helper_up_retries_docker_pool_overlap(
     assert result.returncode == 0
     assert "Container arbiter-staging Started\n" in result.stdout
     assert " ✔ Staging port: 8075 -> 18075 to prevent collision\n" in result.stdout
-    assert " ✔ URL: http://127.0.0.1:18075\n" in result.stdout
+    assert " ✔ URL: https://127.0.0.1:18075\n" in result.stdout
     assert result.stderr == ""
     assert "Pool overlaps with other one on this address space" not in result.stdout
     assert "ARBITER_DOCKER_SUBNET=10.213.200.0/24\n" in (
@@ -7160,7 +7192,8 @@ def test_cli_deploy_docker_generated_helper_install_handles_docker_unit_availabi
     assert "service: arbiter.service" not in result.stdout
     assert "Config check: passed\n" in result.stdout
     assert "Server test:" not in result.stdout
-    assert "Server URL: \033[94mhttp://127.0.0.1:8075\033[0m\n" in result.stdout
+    assert "Server URL: \033[94mhttps://127.0.0.1:8075\033[0m\n" in result.stdout
+    assert "Client config:" not in result.stdout
     assert "Looking in links:" not in result.stdout
     assert "server: pass" not in result.stdout
     assert "result | plugin" not in result.stdout
@@ -7187,6 +7220,7 @@ def test_cli_deploy_docker_generated_helper_install_handles_docker_unit_availabi
     assert "ARBITER_CONTAINER_USER=123:123\n" in installed_docker_env
     assert "ARBITER_HOST_BIND=127.0.0.1\n" in installed_docker_env
     assert "ARBITER_HOST_PORT=8075\n" in installed_docker_env
+    assert "ARBITER_SERVER_DATA_DIR=./data/server\n" in installed_docker_env
     assert "ARBITER_PLUGIN_DATA_DIR=./data/plugins\n" in installed_docker_env
     assert "ARBITER_DOCKER_NETWORK_NAME=arbiter\n" in installed_docker_env
     assert "ARBITER_DOCKER_BRIDGE_NAME=arbiter0\n" in installed_docker_env
@@ -7384,9 +7418,11 @@ def test_cli_deploy_docker_generated_helper_install_preserves_existing_config(
         "ARBITER_CONFIG_DIR=./conf\n"
         "ARBITER_APP_ENV_FILE=./conf/.env\n"
         "ARBITER_CONFIG_NAME=installed-server\n"
+        "ARBITER_SERVER_DATA_DIR=./state/server\n"
         "ARBITER_PLUGIN_DATA_DIR=./state/plugins\n",
         encoding="utf-8",
     )
+    (install_dir / "state" / "server").mkdir(parents=True)
     (install_dir / "state" / "plugins").mkdir(parents=True)
 
     fake_bin = tmp_path / "bin"
@@ -7447,6 +7483,7 @@ def test_cli_deploy_docker_generated_helper_install_preserves_existing_config(
     assert "ARBITER_CONFIG_DIR=./conf\n" in installed_docker_env
     assert "ARBITER_APP_ENV_FILE=./conf/.env\n" in installed_docker_env
     assert "ARBITER_CONFIG_NAME=installed-server\n" in installed_docker_env
+    assert "ARBITER_SERVER_DATA_DIR=./state/server\n" in installed_docker_env
     assert "ARBITER_PLUGIN_DATA_DIR=./state/plugins\n" in installed_docker_env
 
 
@@ -8423,6 +8460,7 @@ def test_cli_deploy_docker_update_preserves_local_config_and_env_values(
     docker_env_file.write_text(
         "ARBITER_HOST_PORT=9000\n"
         "ARBITER_HOST_BIND=0.0.0.0\n"
+        "ARBITER_PUBLIC_SCHEME=http\n"
         "ARBITER_DOCKER_SUBNET=172.31.251.0/24\n"
         "LOCAL_ONLY=value\n",
         encoding="utf-8",
@@ -8449,11 +8487,12 @@ def test_cli_deploy_docker_update_preserves_local_config_and_env_values(
         "ARBITER_CONFIG_NAME=arbiter-server\n"
         "ARBITER_REQUIREMENTS_FILE=./requirements.txt\n"
         "ARBITER_WHEELS_DIR=./wheels\n"
+        "ARBITER_SERVER_DATA_DIR=./data/server\n"
         "ARBITER_PLUGIN_DATA_DIR=./data/plugins\n"
         "ARBITER_HOST_BIND=0.0.0.0\n"
         "ARBITER_HOST_PORT=9000\n"
         "ARBITER_CONTAINER_PORT=8075\n"
-        "ARBITER_PUBLIC_SCHEME=http\n"
+        "ARBITER_PUBLIC_SCHEME=https\n"
         "ARBITER_PUBLIC_BASE_URL=\n"
         "ARBITER_DOCKER_NETWORK_NAME=arbiter-staging\n"
         "ARBITER_DOCKER_BRIDGE_NAME=arbiter-stg0\n"
@@ -9259,11 +9298,16 @@ def test_cli_bootstrap_arbiter_writes_main_config(
         "# @package arbiter\n"
         "server:\n"
         "  name: arbiter\n"
-        "  transport: http\n"
+        "  transport: https\n"
         "  bind:\n"
+        "    scheme: https\n"
         "    host: 127.0.0.1\n"
         "    port: 8075\n"
         '    path: ""\n'
+        "  public:\n"
+        "    scheme: https\n"
+        "  tls:\n"
+        "    source: SELF_SIGNED\n"
         "deployment_scope: unknown\n"
         "discovery:\n"
         "  max_account_preview_limit: 25\n"
@@ -9947,9 +9991,9 @@ def test_log_startup_summary_includes_safe_runtime_context(
     message = caplog.messages[0]
     assert "Arbiter starting version=1.2.3" in message
     assert "deployment_scope=unknown" in message
-    assert "transport=http" in message
+    assert "transport=https" in message
     assert "bind=127.0.0.1:8075" in message
-    assert "url=http://127.0.0.1:8075" in message
+    assert "url=https://127.0.0.1:8075" in message
     assert "services=smtp" in message
     assert "service_accounts=smtp:primary" in message
     assert "super-secret" not in message
@@ -9977,7 +10021,7 @@ def test_server_urls_default_to_loopback_base_url() -> None:
     cfg.arbiter.server.bind.host = "0.0.0.0"
     cfg.arbiter.server.bind.port = 8075
 
-    assert _artifact_base_url(cfg) == "http://127.0.0.1:8075/api/v1/artifacts"
+    assert _artifact_base_url(cfg) == "https://127.0.0.1:8075/api/v1/artifacts"
 
 
 def test_empty_public_base_url_override_is_invalid() -> None:
@@ -9990,6 +10034,14 @@ def test_empty_public_base_url_override_is_invalid() -> None:
         _artifact_base_url(cfg)
 
 
+def test_cleartext_public_base_url_override_is_invalid() -> None:
+    cfg = _app_config_with_smtp()
+    cfg.arbiter.server.public.base_url = "http://127.0.0.1:8075"
+
+    with pytest.raises(ValueError, match="public.base_url must use https"):
+        _artifact_base_url(cfg)
+
+
 def test_artifact_base_url_uses_public_base_url() -> None:
     cfg = _app_config_with_smtp()
     cfg.arbiter.server.bind.host = "0.0.0.0"
@@ -9999,6 +10051,49 @@ def test_artifact_base_url_uses_public_base_url() -> None:
     assert (
         _artifact_base_url(cfg) == "https://arbiter.example.test/root/api/v1/artifacts"
     )
+
+
+def test_self_signed_tls_files_are_generated_under_storage_root(
+    tmp_path: Path,
+) -> None:
+    cfg = AppConfig(
+        arbiter=ArbiterConfig(
+            storage=StorageConfig(server_data_dir=str(tmp_path / "server")),
+        )
+    )
+
+    cert_file, key_file = _server_tls_files(cfg, generate_self_signed=True)
+
+    assert cert_file == tmp_path / "server" / "tls" / "arbiter-self-signed.crt"
+    assert key_file == tmp_path / "server" / "tls" / "arbiter-self-signed.key"
+    assert "BEGIN CERTIFICATE" in cert_file.read_text(encoding="utf-8")
+    assert "BEGIN PRIVATE KEY" in key_file.read_text(encoding="utf-8")
+    if os.name != "nt":
+        assert key_file.stat().st_mode & 0o077 == 0
+
+
+def test_self_signed_tls_source_accepts_enum_value_strings(tmp_path: Path) -> None:
+    cfg = AppConfig(
+        arbiter=ArbiterConfig(
+            storage=StorageConfig(server_data_dir=str(tmp_path / "server")),
+        )
+    )
+    cfg.arbiter.server.tls.source = "self-signed"  # type: ignore[assignment]
+
+    cert_file, key_file = _server_tls_files(cfg, generate_self_signed=False)
+
+    assert cert_file == (tmp_path / "server" / "tls" / "arbiter-self-signed.crt")
+    assert key_file == (tmp_path / "server" / "tls" / "arbiter-self-signed.key")
+
+
+def test_cert_files_tls_source_requires_existing_files(tmp_path: Path) -> None:
+    cfg = AppConfig()
+    cfg.arbiter.server.tls.source = ServerTlsSource.CERT_FILES
+    cfg.arbiter.server.tls.cert_file = str(tmp_path / "cert.pem")
+    cfg.arbiter.server.tls.key_file = str(tmp_path / "key.pem")
+
+    with pytest.raises(ValueError, match="TLS certificate file not found"):
+        _server_tls_files(cfg, generate_self_signed=False)
 
 
 def test_build_app_wires_smtp_sent_copy_to_matching_imap_account() -> None:
@@ -10165,18 +10260,22 @@ def test_run_server_preserves_hydra_logging_for_http_transport(
         app="native-http-app",
         host="127.0.0.1",
         port=8075,
+        ssl_certfile="/tls/cert.pem",
+        ssl_keyfile="/tls/key.pem",
     )
 
-    _run_server(cast(Any, fake_server), cast(Any, "http"))
+    _run_server(cast(Any, fake_server), cast(Any, "https"))
 
     assert captured["app"] == "native-http-app"
     assert captured["run_kwargs"] == {
         "host": "127.0.0.1",
         "port": 8075,
+        "ssl_certfile": "/tls/cert.pem",
+        "ssl_keyfile": "/tls/key.pem",
         "log_config": None,
     }
 
 
-def test_run_server_rejects_non_http_transport() -> None:
-    with pytest.raises(ValueError, match="unsupported Arbiter HTTP transport"):
+def test_run_server_rejects_non_https_transport() -> None:
+    with pytest.raises(ValueError, match="unsupported Arbiter HTTPS transport"):
         _run_server(cast(Any, SimpleNamespace()), cast(Any, "websocket"))

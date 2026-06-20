@@ -106,11 +106,11 @@ design notes:
 
 ## Local Native HTTP Run
 
-For local Codex or VS Code integration, run Arbiter over native HTTP and
+For local Codex or VS Code integration, run Arbiter over native HTTPS and
 point the client at:
 
 ```text
-http://127.0.0.1:8075
+https://127.0.0.1:8075
 ```
 
 Arbiter does not ship a runnable service config. Bootstrap a Hydra
@@ -175,11 +175,13 @@ arbiter-server serve
 
 Use `arbiter-server plugins list` to inspect installed service plugins before
 validating a config. Once the server is running, point the client CLI at the
-server URL:
+server URL. The client accepts Arbiter's local self-signed TLS certificates by
+default; configure `arbiter.tls_ca_file` when you want certificate verification
+against a specific certificate authority file:
 
 ```bash
-arbiter info server arbiter.url=http://127.0.0.1:8075
-arbiter plugins arbiter.url=http://127.0.0.1:8075
+arbiter info server arbiter.url=https://127.0.0.1:8075
+arbiter plugins arbiter.url=https://127.0.0.1:8075
 ```
 
 The client can also read the endpoint from a small config file:
@@ -187,14 +189,14 @@ The client can also read the endpoint from a small config file:
 
 ```yaml
 arbiter:
-  url: http://127.0.0.1:8075
+  url: https://127.0.0.1:8075
 ```
 
 Override config values with Hydra-style `key=value` arguments after the
 command, or bootstrap the client config:
 
 ```bash
-arbiter bootstrap client arbiter.url=http://127.0.0.1:8075
+arbiter bootstrap client arbiter.url=https://127.0.0.1:8075
 ```
 
 IMAP operations use folder-scoped UIDs returned by `imap:list_messages` and

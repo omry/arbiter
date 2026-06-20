@@ -778,14 +778,14 @@ def test_arbiter_client_console_script_bootstrap_client(
         str(tmp_path),
         "bootstrap",
         "client",
-        "arbiter.url=http://127.0.0.1:8075",
+        "arbiter.url=https://127.0.0.1:8075",
     )
 
     assert result.returncode == 0
     assert result.stdout == f"wrote {tmp_path / 'arbiter-client.yaml'}\n"
     assert result.stderr == ""
     assert (tmp_path / "arbiter-client.yaml").read_text(encoding="utf-8") == (
-        'arbiter:\n  url: "http://127.0.0.1:8075"\n'
+        'arbiter:\n  url: "https://127.0.0.1:8075"\n'
     )
 
 

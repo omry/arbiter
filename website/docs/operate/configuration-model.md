@@ -103,6 +103,42 @@ server settings, accounts, and policies, but normal account activation should go
 through `arbiter-server config activate` so the root composition remains
 consistent.
 
+## Server TLS
+
+Arbiter serves HTTPS by default. The server TLS source is configured under
+`arbiter.server.tls.source` as an OmegaConf enum, so use uppercase enum names
+in YAML and command-line overrides:
+
+```yaml
+arbiter:
+  server:
+    tls:
+      source: SELF_SIGNED
+```
+
+`SELF_SIGNED` is the default. Arbiter generates and reuses a local certificate
+and private key under the server storage directory. This prevents cleartext
+traffic on the Arbiter port, but it does not make the certificate publicly
+trusted.
+
+Docker deployments store this under `data/server/tls` by default. Override
+`arbiter.storage.server_data_dir` when server-owned runtime state should live
+somewhere else.
+
+Use `CERT_FILES` when you already have certificate files:
+
+```yaml
+arbiter:
+  server:
+    tls:
+      source: CERT_FILES
+      cert_file: /etc/arbiter/tls/arbiter.crt
+      key_file: /etc/arbiter/tls/arbiter.key
+```
+
+The private key file must not be group- or world-readable on Unix-like
+systems.
+
 ## Accounts
 
 An account describes how a plugin reaches an upstream service. Account config
