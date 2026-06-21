@@ -8,6 +8,8 @@ unset SMTP_BOT_ACCOUNT_PASSWORD
 unset ARBITER_REPO_ROOT
 unset ARBITER_PYTHON
 operator_venv=""
+arbiter_source="${recording_param_arbiter_source:-latest}"
+arbiter_package="${recording_param_arbiter_package:-arbiter-suite}"
 
 recording_operator_venv_cache_key() {
   local package_requirement="$1"
@@ -106,11 +108,19 @@ recording_operator_venv_is_healthy() {
   fi
 }
 
-if [[ "$recording_package_source_mode" == pypi ]]; then
-  package_requirement="$recording_package_source_requirement"
-  if [[ -z "$package_requirement" ]]; then
-    if [[ "$recording_package_source_version" == latest ]]; then
-      if ! package_version="$("$recording_python" - "$recording_package_source_package" <<'PY'
+if [[ "$arbiter_source" == local ]]; then
+  command -v arbiter-server >/dev/null
+  command -v arbiter >/dev/null
+  export ARBITER_REPO_ROOT="$recording_repo"
+  export ARBITER_PYTHON="$recording_python"
+  operator_bin="$(command -v arbiter-server)"
+  detected_venv="$(cd "$(dirname "$operator_bin")/.." && pwd)"
+  if [[ -f "$detected_venv/bin/activate" ]]; then
+    operator_venv="$detected_venv"
+  fi
+else
+  if [[ "$arbiter_source" == latest ]]; then
+    if ! package_version="$("$recording_python" - "$arbiter_package" <<'PY'
 import json
 import sys
 import urllib.request
@@ -128,14 +138,13 @@ if not versions:
 print(max(versions))
 PY
 )"; then
-        printf 'failed to resolve latest PyPI version for %s\n' "$recording_package_source_package" >&2
-        return 1
-      fi
-    else
-      package_version="$recording_package_source_version"
+      printf 'failed to resolve latest PyPI version for %s\n' "$arbiter_package" >&2
+      return 1
     fi
-    package_requirement="$recording_package_source_package==$package_version"
+  else
+    package_version="$arbiter_source"
   fi
+  package_requirement="$arbiter_package==$package_version"
   if ! cached_operator_venv="$(recording_cached_operator_venv "$package_requirement")"; then
     return 1
   fi
@@ -143,19 +152,6 @@ PY
   ln -sfn "$cached_operator_venv" "$operator_venv"
   export PATH="$operator_venv/bin:$PATH"
   export ARBITER_CINEMA_RESOLVED_PACKAGE_REQUIREMENT="$package_requirement"
-elif [[ "$recording_package_source_mode" == local ]]; then
-  command -v arbiter-server >/dev/null
-  command -v arbiter >/dev/null
-  export ARBITER_REPO_ROOT="$recording_repo"
-  export ARBITER_PYTHON="$recording_python"
-  operator_bin="$(command -v arbiter-server)"
-  detected_venv="$(cd "$(dirname "$operator_bin")/.." && pwd)"
-  if [[ -f "$detected_venv/bin/activate" ]]; then
-    operator_venv="$detected_venv"
-  fi
-else
-  printf 'unsupported package source mode: %s\n' "$recording_package_source_mode" >&2
-  return 1
 fi
 
 recording_prepare_cli_env() {
@@ -167,13 +163,14 @@ recording_prepare_cli_env() {
 }
 
 recording_prepare_bundle() {
-  if [[ "$recording_package_source_mode" == local ]]; then
-    local log_file="$recording_tmp/local-bundle-roots.log"
-    {
-      ./arbiter-docker bundle add-source "$recording_repo/server"
-      ./arbiter-docker bundle add-source "$recording_repo/plugins/imap"
-      ./arbiter-docker bundle add-source "$recording_repo/plugins/smtp"
-      "$recording_python" - ./requirements.txt <<'PY'
+  if [[ "$arbiter_source" == local ]]; then
+    local bundle_output
+    if ! bundle_output="$(
+      {
+        ./arbiter-docker bundle add-source "$recording_repo/server"
+        ./arbiter-docker bundle add-source "$recording_repo/plugins/imap"
+        ./arbiter-docker bundle add-source "$recording_repo/plugins/smtp"
+        "$recording_python" - ./requirements.txt <<'PY'
 import re
 import sys
 from pathlib import Path
@@ -190,10 +187,11 @@ for raw_line in path.read_text(encoding="utf-8").splitlines():
     kept.append(raw_line)
 path.write_text("\n".join(kept).rstrip() + "\n", encoding="utf-8")
 PY
-    } >"$log_file" 2>&1 || {
-      cat "$log_file" >&2
+      } 2>&1
+    )"; then
+      printf '%s\n' "$bundle_output" >&2
       return 1
-    }
+    fi
   fi
   ./arbiter-docker bundle prepare
 }
@@ -223,7 +221,6 @@ if not updated:
     lines.append(f"ARBITER_DOCKER_SUBNET={subnet}")
 path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 PY
-  printf '%s\n' "$subnet" >"$recording_tmp/staging-subnet"
 }
 
 recording_apply_mail_lab_config() {
@@ -251,6 +248,7 @@ for _attempt in $(seq 1 80); do
   sleep 0.1
 done
 [[ -s "$mail_lab_env" ]] || { cat "$mail_lab_log" >&2; return 1; }
+rm -f "$mail_lab_ready"
 export MAIL_LAB_ENV_FILE="$mail_lab_env"
 cd "$recording_workspace"
 recording_write_postmortem_entrypoint "$recording_workspace" "$operator_venv"

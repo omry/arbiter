@@ -1,11 +1,11 @@
 defaults:
   - studio_schema
-  - profile: release
-  - package_source: pypi_latest
-  - recording: install-and-bootstrap
-  - optional narration: ${recording}
+  - override hydra/job_logging: disabled
+  - override hydra/hydra_logging: disabled
   - _self_
 
+recording: null
+script_params: {}
 action: build
 step: null
 output_format: text
@@ -25,8 +25,12 @@ run_id: null
 runs_since: null
 runs_limit: 10
 
+studio:
+  keep_output_dir: true
+
 hydra:
+  output_subdir: null
   run:
-    dir: ${studio_run_dir:${action},${step},${dry_run},${recording.id},${now:%Y%m%d-%H%M%S}}
+    dir: ${studio_run_dir:${action},${step},${dry_run},${recording},${now:%Y%m%d-%H%M%S}}
   job:
     chdir: false

@@ -24,16 +24,17 @@ if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
 import hydra
-import yaml
 from omegaconf import DictConfig
 
 from studio_config import (
     CONFIG_DIR,
+    GENERATED_DIR,
     StudioConfigError,
     container_from_hydra_cfg,
     load_configured_env_file,
     load_recording_spec,
     load_recording_spec_from_hydra_cfg,
+    studio_directive_blocks as parse_studio_directive_blocks,
 )
 
 
@@ -124,39 +125,10 @@ def normalize_narration_text(text: str) -> str:
 
 
 def studio_directive_blocks(script_text: str) -> list[dict[str, Any]]:
-    blocks: list[dict[str, Any]] = []
-    lines = script_text.splitlines()
-    index = 0
-    while index < len(lines):
-        stripped = lines[index].strip()
-        if stripped not in {"```studio-directive", "```studio-directive yaml"}:
-            index += 1
-            continue
-        start_line = index + 1
-        index += 1
-        block_lines: list[str] = []
-        while index < len(lines) and lines[index].strip() != "```":
-            block_lines.append(lines[index])
-            index += 1
-        if index >= len(lines):
-            raise AudioError(
-                f"studio-directive block starting on line {start_line} is not closed"
-            )
-        text = "\n".join(block_lines).strip()
-        if text:
-            try:
-                value = yaml.safe_load(text)
-            except yaml.YAMLError as exc:
-                raise AudioError(
-                    f"invalid studio-directive YAML near line {start_line}: {exc}"
-                ) from exc
-            if not isinstance(value, dict):
-                raise AudioError(
-                    f"studio-directive block near line {start_line} must be a mapping"
-                )
-            blocks.append(value)
-        index += 1
-    return blocks
+    try:
+        return parse_studio_directive_blocks(script_text)
+    except StudioConfigError as exc:
+        raise AudioError(str(exc)) from exc
 
 
 def scene_title_from_directive(value: object) -> str:
@@ -268,9 +240,7 @@ def audio_settings(spec: dict[str, Any]) -> AudioSettings:
 
 def transcription_settings(spec: dict[str, Any]) -> TranscriptionSettings:
     audio = as_mapping(spec.get("audio"), field="audio")
-    transcription = as_mapping(
-        audio.get("transcription"), field="audio.transcription"
-    )
+    transcription = as_mapping(audio.get("transcription"), field="audio.transcription")
     model = transcription.get("model", DEFAULT_TRANSCRIPTION_MODEL)
     if not isinstance(model, str) or not model:
         raise AudioError("audio.transcription.model must be a non-empty string")
@@ -315,7 +285,7 @@ def sha256_file(path: Path) -> str:
 
 
 def narration_config_path(recording_id: str) -> Path:
-    return CONFIG_DIR / "narration" / f"{recording_id}.yaml"
+    return GENERATED_DIR / "narration" / f"{recording_id}.yaml"
 
 
 def yaml_block_scalar(text: str, *, indent: int) -> str:
@@ -382,7 +352,9 @@ def validate_script_narration_against_recording(
         )
 
 
-def sync_narration_config(spec: dict[str, Any], *, output_path: Path | None = None) -> Path:
+def sync_narration_config(
+    spec: dict[str, Any], *, output_path: Path | None = None
+) -> Path:
     recording_id = require_string(spec, "_recording_id", field="recording")
     script_path = script_path_from_manifest(spec)
     if not script_path.exists():
@@ -405,8 +377,7 @@ def narration_mapping_from_spec(spec: dict[str, Any]) -> dict[str, Any]:
     narration = spec.get("narration")
     if not isinstance(narration, dict) or not narration:
         raise AudioError(
-            "recording narration config is missing; run "
-            "media/tools/audio.py action=sync_narration"
+            "recording narration is missing from the Markdown recording script"
         )
     return narration
 
@@ -422,8 +393,8 @@ def load_narration_segments(spec: dict[str, Any]) -> list[NarrationSegment]:
         actual_digest = sha256_file(script_path)
         if actual_digest != source_digest:
             raise AudioError(
-                "generated narration config is stale; run "
-                "media/tools/audio.py action=sync_narration"
+                "recording narration source hash is stale; rebuild from the "
+                "Markdown recording script"
             )
 
     beats = narration.get("beats")
@@ -581,8 +552,13 @@ def output_audio_path(
     outputs = as_mapping(spec.get("outputs"), field="outputs")
     configured = outputs.get("audio")
     if configured is None:
-        return REPO_ROOT / "website" / "static" / "audio" / "casts" / (
-            f"{recording_id}.{settings.format}"
+        return (
+            REPO_ROOT
+            / "website"
+            / "static"
+            / "audio"
+            / "casts"
+            / (f"{recording_id}.{settings.format}")
         )
     if not isinstance(configured, str) or not configured:
         raise AudioError("outputs.audio must be a non-empty string")
@@ -832,8 +808,65 @@ def publish_audio_metadata(
     return metadata_path
 
 
+def published_audio_metadata_mismatch(
+    plan: list[AudioPlanItem],
+    metadata_path: Path,
+) -> str | None:
+    if not metadata_path.exists():
+        return None
+    try:
+        payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return f"invalid JSON: {exc}"
+    if not isinstance(payload, dict):
+        return "metadata root is not a JSON object"
+    segments = payload.get("segments")
+    if not isinstance(segments, list):
+        return "metadata segments field is missing or invalid"
+    if len(segments) != len(plan):
+        return f"segment count is {len(segments)}, expected {len(plan)}"
+
+    for index, (item, segment) in enumerate(zip(plan, segments, strict=True)):
+        if not isinstance(segment, dict):
+            return f"segment {index + 1} is not an object"
+        expected = {
+            "id": item.segment.segment_id,
+            "heading": item.segment.heading,
+            "text": item.segment.text,
+            "audio": display_path(item.output_path),
+        }
+        for field, expected_value in expected.items():
+            actual_value = segment.get(field)
+            if actual_value != expected_value:
+                segment_id = item.segment.segment_id
+                return (
+                    f"segment {segment_id!r} field {field!r} is stale "
+                    f"(metadata has {actual_value!r}, expected {expected_value!r})"
+                )
+    return None
+
+
+def validate_published_audio_metadata(
+    plan: list[AudioPlanItem],
+    metadata_path: Path,
+) -> None:
+    mismatch = published_audio_metadata_mismatch(plan, metadata_path)
+    if mismatch is None:
+        return
+    raise AudioError(
+        "published audio metadata is stale: "
+        f"{display_path(metadata_path)}: {mismatch}; "
+        "run audio_generate and audio_publish"
+    )
+
+
 def multipart_escape(value: str) -> str:
-    return value.replace("\\", "\\\\").replace('"', '\\"').replace("\r", "").replace("\n", "")
+    return (
+        value.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\r", "")
+        .replace("\n", "")
+    )
 
 
 def encode_multipart_form(
@@ -846,7 +879,7 @@ def encode_multipart_form(
     for name, value in fields:
         chunks.append(f"--{boundary}\r\n".encode("utf-8"))
         chunks.append(
-            'Content-Disposition: form-data; '
+            "Content-Disposition: form-data; "
             f'name="{multipart_escape(name)}"\r\n\r\n'.encode("utf-8")
         )
         chunks.append(value.encode("utf-8"))
@@ -854,7 +887,7 @@ def encode_multipart_form(
     for name, filename, content_type, data in files:
         chunks.append(f"--{boundary}\r\n".encode("utf-8"))
         chunks.append(
-            'Content-Disposition: form-data; '
+            "Content-Disposition: form-data; "
             f'name="{multipart_escape(name)}"; '
             f'filename="{multipart_escape(filename)}"\r\n'.encode("utf-8")
         )
@@ -929,9 +962,7 @@ def openai_transcription_json(
             f"OpenAI transcription request failed: HTTP {exc.code}: {detail}"
         ) from exc
     except urllib.error.URLError as exc:
-        raise AudioError(
-            f"OpenAI transcription request failed: {exc.reason}"
-        ) from exc
+        raise AudioError(f"OpenAI transcription request failed: {exc.reason}") from exc
     except json.JSONDecodeError as exc:
         raise AudioError("OpenAI transcription response was not JSON") from exc
     if not isinstance(data, dict):
@@ -1030,7 +1061,9 @@ def audio_plan_item_payload(
 
 
 def shortened_text(text: str, *, width: int = 110) -> str:
-    return textwrap.shorten(normalize_narration_text(text), width=width, placeholder="...")
+    return textwrap.shorten(
+        normalize_narration_text(text), width=width, placeholder="..."
+    )
 
 
 def print_plan_json(
@@ -1154,6 +1187,7 @@ def run_tool_from_hydra_cfg(cfg: DictConfig) -> int:
             )
             return 0
         if action == "check":
+            validate_published_audio_metadata(plan, published_metadata)
             state = "enabled" if settings.enabled else "disabled"
             print(
                 f"ok: {recording_id} audio {state}; "

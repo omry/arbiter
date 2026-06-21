@@ -24,21 +24,151 @@ def load_studio_config() -> Any:
 studio_config = load_studio_config()
 
 
+def recording_run_file_text(path: str) -> str:
+    return (REPO_ROOT / path).read_text(encoding="utf-8")
+
+
+def action_display(action: dict[str, Any]) -> str:
+    return action.get("display", action["run"])
+
+
 def test_default_config_composes_install_recording() -> None:
     spec = studio_config.load_recording_spec("install-and-bootstrap")
 
     assert spec["id"] == "install-and-bootstrap"
-    assert spec["package_source"] == {
-        "mode": "pypi",
-        "package": "arbiter-suite",
-        "version": "latest",
-        "requirement": "",
-    }
-    assert spec["_manifest_path"].endswith(
-        "media/conf/recording/install-and-bootstrap.yaml"
+    assert spec["parameters"]["arbiter_source"] == "latest"
+    assert spec["parameters"]["arbiter_package"] == "arbiter-suite"
+    assert spec["vars"]["loopback_host"] == "127.0.0.1"
+    assert spec["vars"]["staging_port"] == 18075
+    assert spec["vars"]["installed_port"] == 8075
+    assert spec["vars"]["staging_url"] == "https://127.0.0.1:18075"
+    assert spec["vars"]["installed_url"] == "https://127.0.0.1:8075"
+    assert spec["environment"]["variables"]["ARBITER_CINEMA_STAGING_URL"] == (
+        "https://127.0.0.1:18075"
     )
+    assert "package_source" not in spec
+    assert spec["_manifest_path"].endswith(
+        "media/recording-scripts/install-and-bootstrap.md"
+    )
+    assert spec["script"] == "media/recording-scripts/install-and-bootstrap.md"
     assert spec["narration"]["scene"]["title"] == "Install Arbiter Server"
     assert spec["narration"]["beats"][0]["id"] == "overview"
+    assert spec["narration"]["source_script"] == (
+        "media/recording-scripts/install-and-bootstrap.md"
+    )
+
+
+def test_studio_directive_blocks_resolve_omegaconf_interpolation() -> None:
+    blocks = studio_config.studio_directive_blocks(
+        """# Demo
+
+```yaml studio-directive
+recording:
+  id: demo
+  title: ${recording.id}
+  outputs:
+    cast: website/static/casts/${recording.id}.cast
+```
+"""
+    )
+
+    assert blocks == [
+        {
+            "recording": {
+                "id": "demo",
+                "title": "demo",
+                "outputs": {"cast": "website/static/casts/demo.cast"},
+            }
+        }
+    ]
+
+
+def test_recording_script_accepts_inline_run_at_line_limit(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    script = tmp_path / "demo.md"
+    inline_run = "\n".join(f"        echo {index}" for index in range(10))
+    script.write_text(
+        f"""# Demo
+
+```yaml studio-directive
+scene: Demo
+```
+
+```yaml studio-directive
+recording:
+  id: demo
+  title: Demo
+  setup:
+  - name: Prepare
+    run: |
+{inline_run}
+  beats:
+  - id: one
+    actions:
+    - run: echo action
+```
+
+```yaml studio-directive
+beat:
+  id: one
+  heading: One
+  narration: One.
+```
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(studio_config, "RECORDING_SCRIPT_DIR", tmp_path)
+
+    spec = studio_config.recording_from_script("demo")
+
+    assert studio_config.inline_run_line_count(spec["setup"][0]["run"]) == 10
+    assert spec["beats"][0]["actions"][0]["run"] == "echo action"
+
+
+def test_recording_script_rejects_long_inline_run(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    script = tmp_path / "demo.md"
+    inline_run = "\n".join(f"        echo {index}" for index in range(11))
+    script.write_text(
+        f"""# Demo
+
+```yaml studio-directive
+scene: Demo
+```
+
+```yaml studio-directive
+recording:
+  id: demo
+  title: Demo
+  setup:
+  - name: Prepare
+    run: |
+{inline_run}
+```
+
+```yaml studio-directive
+beat:
+  id: one
+  heading: One
+  narration: One.
+```
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(studio_config, "RECORDING_SCRIPT_DIR", tmp_path)
+
+    try:
+        studio_config.recording_from_script("demo")
+    except studio_config.StudioConfigError as exc:
+        message = str(exc)
+        assert "recording.setup.1.run has 11 non-empty lines" in message
+        assert "Move longer shell into an organized run_file" in message
+    else:
+        raise AssertionError("long inline run should fail")
 
 
 def test_install_recording_uses_current_client_discovery_command() -> None:
@@ -48,29 +178,28 @@ def test_install_recording_uses_current_client_discovery_command() -> None:
     )
     action = client_discovery["actions"][0]
 
-    plugin_command = "arbiter arbiter.url=http://127.0.0.1:18075 plugins | jq ."
+    plugin_command = "arbiter arbiter.url=https://127.0.0.1:18075 info plugins | jq ."
 
-    assert plugin_command in action["display"]
+    assert plugin_command in action_display(action)
     assert plugin_command in action["run"]
-    assert "info plugins" not in action["display"]
-    assert "info plugins" not in action["run"]
+    assert action_display(action).count("arbiter.url=") == 4
+    assert action["run"].count("arbiter.url=") == 4
     assert "smtp:send_email" in action["expect"]["output_contains"]
 
 
 def test_install_recording_checks_config_before_starting_staging() -> None:
     spec = studio_config.load_recording_spec("install-and-bootstrap")
-    stage_server = next(
-        beat for beat in spec["beats"] if beat["id"] == "stage-server"
-    )
+    stage_server = next(beat for beat in spec["beats"] if beat["id"] == "stage-server")
     action = stage_server["actions"][0]
 
-    assert "./arbiter-docker config check" in action["display"]
+    assert "./arbiter-docker config check" in action_display(action)
     assert "./arbiter-docker config check" in action["run"]
     assert action["expect"]["output_regex"][:3] == [
-        r"server\s+\|\s+pass",
-        r"imap\s+\|\s+pass",
-        r"smtp\s+\|\s+pass",
+        r"server:\s+pass",
+        r"imap:\s+pass",
+        r"smtp:\s+pass",
     ]
+    assert "https://127.0.0.1:18075" in action["expect"]["output_contains"]
 
 
 def test_install_recording_inspects_selected_bundle_before_prepare() -> None:
@@ -94,8 +223,7 @@ def test_install_recording_prepares_visible_cli_environment() -> None:
     spec = studio_config.load_recording_spec("install-and-bootstrap")
     prepare_cli = next(beat for beat in spec["beats"] if beat["id"] == "prepare-cli")
     action = prepare_cli["actions"][0]
-    setup_file = REPO_ROOT / spec["setup"][0]["run_file"]
-    setup_run = setup_file.read_text(encoding="utf-8")
+    setup_run = recording_run_file_text(spec["setup"][0]["run_file"])
 
     assert "python3 -m venv arbiter_venv" in action["display"]
     assert "arbiter_venv/bin/python -m pip install arbiter-suite" in action["display"]
@@ -103,6 +231,9 @@ def test_install_recording_prepares_visible_cli_environment() -> None:
     assert "arbiter-server version" in action["display"]
     assert "recording_prepare_cli_env" in action["run"]
     assert "./arbiter_venv/bin/activate" in action["expect"]["file_exists"]
+    assert spec["setup"][0]["run_file"] == (
+        "media/recording-scripts/install-and-bootstrap/setup-main.sh"
+    )
     assert "recording_prepare_cli_env()" in setup_run
     assert 'ln -sfn "$operator_venv" arbiter_venv' in setup_run
 
@@ -123,9 +254,10 @@ def test_install_recording_edits_bot_access_and_shows_demo_credentials() -> None
     assert "delete: allow" in edit_action["expect"]["output_contains"]
     assert "folder_append: allow" in edit_action["expect"]["output_contains"]
     assert "recording_apply_mail_lab_config --update-env" in env_action["run"]
-    assert "IMAP_BOT_ACCOUNT_PASSWORD=bot-password" in env_action["expect"][
-        "output_contains"
-    ]
+    assert (
+        "IMAP_BOT_ACCOUNT_PASSWORD=bot-password"
+        in env_action["expect"]["output_contains"]
+    )
 
 
 def test_install_recording_sends_and_fetches_a_self_addressed_message() -> None:
@@ -134,16 +266,19 @@ def test_install_recording_sends_and_fetches_a_self_addressed_message() -> None:
     fetch = next(beat for beat in spec["beats"] if beat["id"] == "fetch-test-message")
 
     send_action = send["actions"][0]
+    send_check = send["checks"][0]
     fetch_action = fetch["actions"][0]
 
-    assert "smtp:send_email" in send_action["display"]
-    assert "bot@example.test" in send_action["display"]
-    assert "install-smoke-1" in send_action["display"]
-    assert "imap:search_messages" in fetch_action["display"]
-    assert "imap:get_message" in fetch_action["display"]
-    assert "Hello from Arbiter staging." in fetch_action["expect"][
-        "output_contains"
-    ]
+    assert "smtp:send_email" in action_display(send_action)
+    assert "bot@example.test" in action_display(send_action)
+    assert "install-smoke-1" in action_display(send_action)
+    assert send_check["run_file"] == (
+        "media/recording-scripts/install-and-bootstrap/"
+        "wait-for-delivered-message.sh"
+    )
+    assert "imap:search_messages" in action_display(fetch_action)
+    assert "imap:get_message" in action_display(fetch_action)
+    assert "Hello from Arbiter staging." in fetch_action["expect"]["output_contains"]
 
 
 def test_install_recording_preinstall_doctor_checks_codex_agent_user() -> None:
@@ -153,29 +288,40 @@ def test_install_recording_preinstall_doctor_checks_codex_agent_user() -> None:
     )
     action = preinstall["actions"][0]
 
-    assert "./arbiter-docker doctor --preinstall --agent-user codex" in action[
-        "display"
-    ]
+    assert (
+        "./arbiter-docker doctor --preinstall --agent-user codex"
+        in action_display(action)
+    )
     assert "./arbiter-docker doctor --preinstall --agent-user codex" in action["run"]
 
 
-def test_local_package_source_exposes_repo_root_for_docker_bundle_prepare() -> None:
+def test_install_recording_install_helper_is_aux_file() -> None:
+    spec = studio_config.load_recording_spec("install-and-bootstrap")
+    install = next(beat for beat in spec["beats"] if beat["id"] == "install-server")
+    action = install["actions"][0]
+    install_run = recording_run_file_text(action["run_file"])
+
+    assert action["run_file"] == (
+        "media/recording-scripts/install-and-bootstrap/install-server.sh"
+    )
+    assert "sudo ./arbiter-docker install" in action["display"]
+    assert 'exec fakeroot "$@"' in install_run
+    assert "rewrite_install_output()" in install_run
+
+
+def test_local_arbiter_source_exposes_repo_root_for_docker_bundle_prepare() -> None:
     spec = studio_config.load_recording_spec(
         "install-and-bootstrap",
-        ["package_source=local"],
+        ["+script_params.arbiter_source=local"],
     )
-    setup_file = REPO_ROOT / spec["setup"][0]["run_file"]
-    setup_run = setup_file.read_text(encoding="utf-8")
+    setup_run = recording_run_file_text(spec["setup"][0]["run_file"])
 
-    assert spec["setup"][0]["run_file"] == (
-        "media/scripts/install-and-bootstrap.setup.sh"
-    )
-    assert 'unset ARBITER_REPO_ROOT' in setup_run
-    assert 'unset ARBITER_PYTHON' in setup_run
+    assert "unset ARBITER_REPO_ROOT" in setup_run
+    assert "unset ARBITER_PYTHON" in setup_run
     assert 'export ARBITER_REPO_ROOT="$recording_repo"' in setup_run
     assert 'export ARBITER_PYTHON="$recording_python"' in setup_run
-    assert 'recording_prepare_bundle()' in setup_run
-    assert 'recording_apply_mail_lab_config()' in setup_run
+    assert "recording_prepare_bundle()" in setup_run
+    assert "recording_apply_mail_lab_config()" in setup_run
     assert './arbiter-docker bundle add-source "$recording_repo/server"' in setup_run
     assert 'local_packages = {"arbiter-server", "arbiter-imap", "arbiter-smtp"}' in (
         setup_run
@@ -184,10 +330,9 @@ def test_local_package_source_exposes_repo_root_for_docker_bundle_prepare() -> N
     assert "arbiter --version || return 1" in setup_run
 
 
-def test_pypi_package_source_uses_cached_operator_venv() -> None:
+def test_pypi_arbiter_source_uses_cached_operator_venv() -> None:
     spec = studio_config.load_recording_spec("install-and-bootstrap")
-    setup_file = REPO_ROOT / spec["setup"][0]["run_file"]
-    setup_run = setup_file.read_text(encoding="utf-8")
+    setup_run = recording_run_file_text(spec["setup"][0]["run_file"])
     cached_call = (
         'cached_operator_venv="$(recording_cached_operator_venv '
         '"$package_requirement")"'
@@ -263,35 +408,46 @@ def test_studio_run_dir_separates_recording_runs_from_helper_jobs() -> None:
     )
 
 
-def test_package_source_requirement_override_is_composed() -> None:
+def test_script_parameter_version_override_is_composed() -> None:
     spec = studio_config.load_recording_spec(
         "install-and-bootstrap",
-        ["package_source.requirement=arbiter-suite==0.9.2.dev1"],
+        ["+script_params.arbiter_source=0.9.2.dev1"],
     )
 
-    assert spec["package_source"]["requirement"] == "arbiter-suite==0.9.2.dev1"
-    assert spec["_overrides"] == [
-        "package_source.requirement=arbiter-suite==0.9.2.dev1"
-    ]
+    assert spec["parameters"]["arbiter_source"] == "0.9.2.dev1"
+    assert spec["parameters"]["arbiter_package"] == "arbiter-suite"
+    assert spec["_overrides"] == ["+script_params.arbiter_source=0.9.2.dev1"]
 
 
-def test_local_dev_profile_keeps_hydra_output_dir() -> None:
+def test_local_script_parameter_keeps_hydra_output_dir() -> None:
     spec = studio_config.load_recording_spec(
         "install-and-bootstrap",
-        ["profile=local-dev", "package_source=local"],
+        ["+script_params.arbiter_source=local"],
     )
 
-    assert spec["profile"]["name"] == "local-dev"
-    assert spec["package_source"]["mode"] == "local"
+    assert "profile" not in spec
+    assert spec["parameters"]["arbiter_source"] == "local"
     assert spec["studio"]["keep_output_dir"] is True
+
+
+def test_unknown_script_parameter_override_fails() -> None:
+    try:
+        studio_config.load_recording_spec(
+            "install-and-bootstrap",
+            ["+script_params.not_a_parameter=value"],
+        )
+    except studio_config.StudioConfigError as exc:
+        assert "unknown script parameter(s): not_a_parameter" in str(exc)
+    else:
+        raise AssertionError("unknown script parameter should fail")
 
 
 def test_hydra_override_values_with_equals_are_quoted_for_composition() -> None:
     assert (
         studio_config.normalize_hydra_override(
-            "package_source.requirement=arbiter-suite==0.9.2.dev1"
+            "output=path=with=equals"
         )
-        == "package_source.requirement='arbiter-suite==0.9.2.dev1'"
+        == "output='path=with=equals'"
     )
 
 

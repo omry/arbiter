@@ -34,54 +34,89 @@ def step_cfg(step: str) -> Any:
     return OmegaConf.create({"step": step, "recording": {"id": "demo"}})
 
 
-def write_synced_narration_config(root: Path, recording_id: str = "demo") -> None:
-    narration_dir = root / "narration"
-    narration_dir.mkdir(parents=True)
-    (narration_dir / f"{recording_id}.yaml").write_text(
-        """# @package narration
-source_script: "media/scripts/demo.md"
-source_sha256: "fresh"
-generated: true
-scene:
-  id: "demo"
-  title: "Demo"
-beats:
-  - id: "overview"
-    heading: "Overview"
-    text: "Fresh narration."
-""",
-        encoding="utf-8",
+def test_default_without_recording_lists_available_scripts(
+    monkeypatch: Any,
+    capsys: Any,
+) -> None:
+    monkeypatch.setattr(
+        studio, "list_recording_ids", lambda: ["install-and-bootstrap", "demo"]
     )
 
+    config = OmegaConf.create({"action": "build", "recording": None})
 
-def test_build_runs_full_media_pipeline(tmp_path: Path, monkeypatch: Any) -> None:
+    assert studio.run_tool_from_hydra_cfg(config) == 1
+    output = capsys.readouterr().out
+    assert "No recording script selected." in output
+    assert "Available recording scripts:" in output
+    assert "  install-and-bootstrap\n" in output
+    assert "  demo\n" in output
+    assert "Run with: media/tools/studio recording=install-and-bootstrap" in output
+
+
+def test_list_action_prints_available_scripts(
+    monkeypatch: Any,
+    capsys: Any,
+) -> None:
+    monkeypatch.setattr(studio, "list_recording_ids", lambda: ["install-and-bootstrap"])
+
+    config = OmegaConf.create({"action": "list", "recording": None})
+
+    assert studio.run_tool_from_hydra_cfg(config) == 0
+    output = capsys.readouterr().out
+    assert "No recording script selected." not in output
+    assert "  install-and-bootstrap\n" in output
+
+
+def test_build_runs_full_media_pipeline(
+    tmp_path: Path, monkeypatch: Any, capsys: Any
+) -> None:
     calls: list[tuple[str, str]] = []
-    write_synced_narration_config(tmp_path)
-    monkeypatch.setattr(studio, "CONFIG_DIR", tmp_path)
 
     def runner(name: str) -> Any:
         def run(cfg: Any) -> int:
             calls.append((name, cfg.step))
-            if cfg.step == "generate":
-                assert cfg.narration.source_sha256 == "fresh"
             return 0
 
         return run
 
     monkeypatch.setattr(studio.audio, "run_tool_from_hydra_cfg", runner("audio"))
     monkeypatch.setattr(studio.record, "run_tool_from_hydra_cfg", runner("record"))
-    monkeypatch.setattr(
-        studio.retime_cast, "run_tool_from_hydra_cfg", runner("retime")
-    )
+    monkeypatch.setattr(studio.retime_cast, "run_tool_from_hydra_cfg", runner("retime"))
 
     assert studio.run_tool_from_hydra_cfg(cfg("build")) == 0
     assert calls == [
-        ("audio", "sync_narration"),
         ("record", "record"),
         ("audio", "generate"),
         ("audio", "publish"),
         ("retime", "retime"),
     ]
+    output = capsys.readouterr().out
+    assert "Follow-up commands:\n" in output
+    assert "media/tools/studio recording=demo action=play\n" in output
+    assert "media/tools/studio recording=demo action=inspect\n" in output
+    assert "media/tools/studio recording=demo step=align\n" in output
+
+
+def test_build_success_followups_are_suppressed_for_json(
+    tmp_path: Path, monkeypatch: Any, capsys: Any
+) -> None:
+    def run(_cfg: Any) -> int:
+        return 0
+
+    monkeypatch.setattr(studio.audio, "run_tool_from_hydra_cfg", run)
+    monkeypatch.setattr(studio.record, "run_tool_from_hydra_cfg", run)
+    monkeypatch.setattr(studio.retime_cast, "run_tool_from_hydra_cfg", run)
+
+    config = OmegaConf.create(
+        {
+            "action": "build",
+            "output_format": "json",
+            "recording": {"id": "demo"},
+        }
+    )
+
+    assert studio.run_tool_from_hydra_cfg(config) == 0
+    assert capsys.readouterr().out == ""
 
 
 def test_build_dry_run_explains_pipeline_without_delegating(
@@ -102,7 +137,7 @@ def test_build_dry_run_explains_pipeline_without_delegating(
             "recording": {
                 "id": "demo",
                 "title": "Demo Build",
-                "script": "media/scripts/demo.md",
+                "script": "media/recording-scripts/demo.md",
                 "outputs": {
                     "cast": "website/static/casts/demo.cast",
                     "audio": "website/static/audio/casts/demo.mp3",
@@ -132,7 +167,6 @@ def test_build_dry_run_explains_pipeline_without_delegating(
 
     output = capsys.readouterr().out
     assert "Build dry run: Demo Build" in output
-    assert "sync_narration (compile)" in output
     assert "audio_publish (link)" in output
     assert "retime (optimize)" in output
     assert "publish_surface (link)" in output
@@ -178,7 +212,7 @@ def test_publish_docusaurus_mdx_replaces_holder(tmp_path: Path) -> None:
         "recording": {
             "id": "demo",
             "title": "Demo Build",
-            "script": "media/scripts/demo.md",
+            "script": "media/recording-scripts/demo.md",
             "outputs": {
                 "cast": "website/static/casts/demo.cast",
                 "audio": "website/static/audio/casts/demo.mp3",
@@ -250,7 +284,7 @@ def test_publish_plain_html_replaces_holder(tmp_path: Path) -> None:
         "recording": {
             "id": "demo",
             "title": "Demo Build",
-            "script": "media/scripts/demo.md",
+            "script": "media/recording-scripts/demo.md",
             "outputs": {
                 "cast": "website/static/casts/demo.cast",
                 "audio": "website/static/audio/casts/demo.mp3",
@@ -344,9 +378,7 @@ def test_individual_actions_delegate_to_owning_tool(monkeypatch: Any) -> None:
 
     monkeypatch.setattr(studio.audio, "run_tool_from_hydra_cfg", runner("audio"))
     monkeypatch.setattr(studio.record, "run_tool_from_hydra_cfg", runner("record"))
-    monkeypatch.setattr(
-        studio.retime_cast, "run_tool_from_hydra_cfg", runner("retime")
-    )
+    monkeypatch.setattr(studio.retime_cast, "run_tool_from_hydra_cfg", runner("retime"))
     monkeypatch.setattr(studio.align_cast, "run_tool_from_hydra_cfg", runner("align"))
 
     configs = [
@@ -374,8 +406,6 @@ def test_individual_actions_delegate_to_owning_tool(monkeypatch: Any) -> None:
 
 def test_failed_step_stops_pipeline(tmp_path: Path, monkeypatch: Any) -> None:
     calls: list[tuple[str, str]] = []
-    write_synced_narration_config(tmp_path)
-    monkeypatch.setattr(studio, "CONFIG_DIR", tmp_path)
 
     def audio_run(cfg: Any) -> int:
         calls.append(("audio", cfg.step))
@@ -399,7 +429,7 @@ def test_failed_step_stops_pipeline(tmp_path: Path, monkeypatch: Any) -> None:
         assert "record baseline cast failed with exit code 7" in str(exc)
     else:
         raise AssertionError("failed step should stop build")
-    assert calls == [("audio", "sync_narration"), ("record", "record")]
+    assert calls == [("record", "record")]
 
 
 def test_json_output_format_suppresses_studio_progress_label(

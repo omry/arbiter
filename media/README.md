@@ -110,24 +110,23 @@ media/tools/studio recording=install-and-bootstrap
 media/tools/studio recording=install-and-bootstrap action=check
 media/tools/studio recording=install-and-bootstrap action=build
 media/tools/studio recording=install-and-bootstrap action=build dry_run=true
-media/tools/studio recording=install-and-bootstrap step=record package_source.version=0.9.2.dev1
-media/tools/studio recording=install-and-bootstrap step=record package_source=local profile=local-dev
+media/tools/studio recording=install-and-bootstrap step=record +script_params.arbiter_source=0.9.2.dev1
+media/tools/studio recording=install-and-bootstrap step=record +script_params.arbiter_source=local
 ```
 
-`action=build` runs the normal end-to-end production chain:
-`sync_narration`, `record`, `audio_generate`, `audio_publish`, `retime`, and
-publish the selected surface.
+`action=build` runs the normal end-to-end production chain: `record`,
+`audio_generate`, `audio_publish`, `retime`, and publish the selected surface.
 Use `dry_run=true` to print the Makefile-style build graph and concrete
 inputs/outputs without running recording, TTS, publishing, or retiming.
 Individual steps are available through the same frontend for iteration and
 postmortem work.
 
-Recording manifests can declare hidden setup and cleanup directives. Setup
-prepares per-scene resources such as operator environments or local services.
-Cleanup tears down resources owned by that scene, such as Docker staging
-deployments, even when the visible recording fails. Cleanup output is captured
-in the run directory for postmortem inspection instead of being shown in the
-cast.
+Recording scripts can declare hidden setup and cleanup directives in
+`studio-directive` blocks. Setup prepares per-scene resources such as operator
+environments or local services. Cleanup tears down resources owned by that
+scene, such as Docker staging deployments, even when the visible recording
+fails. Cleanup output is captured in the run directory for postmortem
+inspection instead of being shown in the cast.
 
 The recording config declares publish surfaces. The default surface is what
 plain `action=build` produces; override it with `surface=<name>` when you want
@@ -183,7 +182,7 @@ flowchart LR
         subgraph Source["Source extraction"]
             direction LR
             Markdown["Scene.md<br/>prose + studio-directive blocks"]
-            YAML["Scene.yaml<br/>generated narration, beats, source hash"]
+            Generated["generated narration<br/>optional cache materialization"]
         end
 
         subgraph Terminal["Terminal track"]
@@ -202,16 +201,16 @@ flowchart LR
             Surface["Publish surface<br/>Docusaurus MDX or HTML"]
         end
 
-        Markdown -->|extract directives| YAML
-        YAML -->|record| Baseline
+        Markdown -->|record| Baseline
         Baseline -->|retime base| Retimed
 
-        YAML -->|audio_generate| AudioFragments
+        Markdown -->|audio_generate| AudioFragments
         AudioFragments -->|timing input| Retimed
         AudioFragments -->|audio_publish| Surface
         Retimed -->|publish_surface| Surface
 
-        YAML -. changed narration .-> Missing
+        Markdown -. sync_narration .-> Generated
+        Markdown -. changed narration .-> Missing
         Missing -. audio_generate .-> AudioFragments
     end
 
@@ -222,9 +221,10 @@ flowchart LR
     style Output fill:#282a36,stroke:#6272a4,color:#f8f8f2
 ```
 
-Editing `studio-directive` blocks in `Scene.md` makes `Scene.yaml` stale; run
-`step=sync_narration` to regenerate it before producing cast or audio
-artifacts.
+Editing `studio-directive` blocks in `Scene.md` updates the source consumed by
+recording and audio generation. `step=sync_narration` is available when you
+want a generated data snapshot for inspection, but the normal build path reads
+the Markdown script directly.
 
 Hydra creates a per-job output directory from `hydra.run.dir`. Jobs that
 produce or preserve a terminal recording use `media/runs/<scene>/<run-id>/`.
@@ -381,35 +381,32 @@ beat:
 ```
 ````
 
-Before generating audio, sync narration from the script into a generated Hydra
-config group:
+The audio tools read narration directly from the Markdown script. To materialize
+the extracted narration as generated data for review, run:
 
 ```bash
 media/tools/studio recording=install-and-bootstrap step=sync_narration
 ```
 
-The generated file lives under `media/conf/narration/` and is intentionally
-checked in so the resolved recording config contains the exact voiceover text
-used by the runtime tools. Do not edit generated narration YAML by hand; edit
-the Markdown script and rerun the sync action.
+The generated file lives under `media/generated/narration/`. It is a cache of
+data derived from the Markdown script, not a Hydra config source. Do not edit
+generated narration YAML by hand; edit the Markdown script and rerun the sync
+action when you want the generated view refreshed.
 
-The audio generator reads generated narration from the composed recording
-config, combines it with the recording config's `audio` settings, and writes
-cached TTS segments:
+The audio generator combines script narration with the recording's `audio`
+settings and writes cached TTS segments:
 
 ```bash
-media/tools/studio recording=install-and-bootstrap step=sync_narration
 media/tools/studio recording=install-and-bootstrap step=audio_check
 media/tools/studio recording=install-and-bootstrap step=audio_dry_run
 media/tools/studio recording=install-and-bootstrap step=audio_generate
 media/tools/studio recording=install-and-bootstrap step=audio_publish
 ```
 
-Use `step=audio_check` to validate the generated narration, source-script
-hash, and config without contacting the TTS provider. Use
-`step=audio_dry_run` to see a human-readable summary of cached, reusable, and
-missing voiceover segments. Add `output_format=json` only when a script needs
-the machine-readable plan.
+Use `step=audio_check` to validate script narration, source-script hash, and
+config without contacting the TTS provider. Use `step=audio_dry_run` to see a
+human-readable summary of cached, reusable, and missing voiceover segments. Add
+`output_format=json` only when a script needs the machine-readable plan.
 
 By default, Studio loads repo-root `.env` before running actions and does not
 override variables already present in the shell. Disable this with
@@ -560,8 +557,8 @@ terminal session itself predictable and easy to debug.
 ```text
 media/
   README.md                 # studio vision and workflow
-  conf/                     # Hydra config groups for recordings and profiles
-  scripts/                  # human movie scripts and shot lists
+  conf/                     # Hydra config defaults
+  recording-scripts/        # human movie scripts and shot lists
   tools/                    # local studio runners and generators
 ```
 
@@ -582,7 +579,7 @@ The initial release should include one focused video:
 Purpose: show a new operator the shortest safe path from installed commands to
 a disposable working config.
 
-The first script lives at `media/scripts/install-and-bootstrap.md`.
+The first script lives at `media/recording-scripts/install-and-bootstrap.md`.
 
 ## Production Principles
 

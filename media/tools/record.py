@@ -27,7 +27,7 @@ from omegaconf import DictConfig
 
 from studio_config import (
     CONFIG_DIR,
-    RECORDING_CONFIG_DIR,
+    RECORDING_SCRIPT_DIR,
     StudioConfigError,
     container_from_hydra_cfg,
     list_recording_ids,
@@ -134,7 +134,9 @@ def step_command_text(step: dict[str, Any], index: int, *, field: str) -> str:
     has_run = "run" in step and step.get("run") is not None
     has_run_file = "run_file" in step and step.get("run_file") is not None
     if has_run and has_run_file:
-        raise RecordingError(f"{field}.{index} must use either run or run_file, not both")
+        raise RecordingError(
+            f"{field}.{index} must use either run or run_file, not both"
+        )
     if not has_run and not has_run_file:
         raise RecordingError(f"{field}.{index} must define run or run_file")
     if has_run:
@@ -149,7 +151,9 @@ def step_command_text(step: dict[str, Any], index: int, *, field: str) -> str:
     try:
         command = path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise RecordingError(f"failed to read {field}.{index}.run_file: {path}") from exc
+        raise RecordingError(
+            f"failed to read {field}.{index}.run_file: {path}"
+        ) from exc
     if not command.strip():
         raise RecordingError(f"{field}.{index}.run_file is empty: {path}")
     return command
@@ -239,21 +243,16 @@ def validate_manifest(spec: dict[str, Any]) -> None:
     baseline_compressed = capture.get("baseline_compressed", False)
     if not isinstance(baseline_compressed, bool):
         raise RecordingError("capture.baseline_compressed must be a boolean")
-    package_source = spec.get("package_source")
-    if package_source is not None:
-        package_source = as_mapping(package_source, field="package_source")
-        mode = package_source.get("mode", "local")
-        if mode not in {"local", "pypi"}:
-            raise RecordingError("package_source.mode must be 'local' or 'pypi'")
-        package = package_source.get("package", "arbiter-suite")
-        if not isinstance(package, str) or not package:
-            raise RecordingError("package_source.package must be a non-empty string")
-        version = package_source.get("version", "latest")
-        if not isinstance(version, str) or not version:
-            raise RecordingError("package_source.version must be a non-empty string")
-        requirement = package_source.get("requirement", "")
-        if not isinstance(requirement, str):
-            raise RecordingError("package_source.requirement must be a string")
+    parameters = spec.get("parameters")
+    if parameters is not None:
+        parameters = as_mapping(parameters, field="parameters")
+        for key, value in parameters.items():
+            if not isinstance(key, str) or not re.fullmatch(
+                r"[A-Za-z_][A-Za-z0-9_]*", key
+            ):
+                raise RecordingError("parameters keys must be shell-safe names")
+            if not isinstance(value, (str, int, float, bool)):
+                raise RecordingError(f"parameters.{key} must be a scalar value")
     hydra_output_dir = spec.get("_hydra_output_dir")
     if not isinstance(hydra_output_dir, str) or not hydra_output_dir:
         raise RecordingError("Hydra output directory is required for recording")
@@ -284,15 +283,15 @@ def validate_manifest(spec: dict[str, Any]) -> None:
             raise RecordingError("each beat must be a mapping")
         require_string(beat, "id")
         actions = as_list(beat.get("actions"), field=f"beats.{beat['id']}.actions")
-        for action in actions:
+        for index, action in enumerate(actions, start=1):
             if not isinstance(action, dict):
                 raise RecordingError(f"beat {beat['id']} action must be a mapping")
-            require_string(action, "run")
+            step_command_text(action, index, field=f"beats.{beat['id']}.actions")
         checks = as_list(beat.get("checks"), field=f"beats.{beat['id']}.checks")
-        for check in checks:
+        for index, check in enumerate(checks, start=1):
             if not isinstance(check, dict):
                 raise RecordingError(f"beat {beat['id']} check must be a mapping")
-            require_string(check, "run")
+            step_command_text(check, index, field=f"beats.{beat['id']}.checks")
             name = check.get("name")
             if name is not None and (not isinstance(name, str) or not name):
                 raise RecordingError(
@@ -413,13 +412,13 @@ def postmortem_entrypoint_text(*, run_dir: str, workdir: str, venv: str) -> str:
         'if [[ -n "$venv" && -f "$venv/bin/activate" ]]; then',
         '  . "$venv/bin/activate"',
         'elif [[ -n "$venv" ]]; then',
-        '  printf \'warning: venv activate script not found: %s\\n\' "$venv/bin/activate" >&2',
+        "  printf 'warning: venv activate script not found: %s\\n' \"$venv/bin/activate\" >&2",
         "fi",
         "printf 'Arbiter cinema postmortem shell\\n'",
-        'printf \'  run dir: %s\\n\' "$run_dir"',
-        'printf \'  workdir: %s\\n\' "$workdir"',
+        "printf '  run dir: %s\\n' \"$run_dir\"",
+        "printf '  workdir: %s\\n' \"$workdir\"",
         'if [[ -n "$venv" ]]; then',
-        '  printf \'  venv: %s\\n\' "$venv"',
+        "  printf '  venv: %s\\n' \"$venv\"",
         "fi",
         'prompt_dir="$run_dir/shell"',
         'mkdir -p "$prompt_dir"',
@@ -429,7 +428,7 @@ def postmortem_entrypoint_text(*, run_dir: str, workdir: str, venv: str) -> str:
         "  zsh)",
         '    zsh_dir="$prompt_dir/zsh"',
         '    mkdir -p "$zsh_dir"',
-        '    cat > "$zsh_dir/.zshrc" <<\'EOF\'',
+        "    cat > \"$zsh_dir/.zshrc\" <<'EOF'",
         f"PROMPT='%F{{cyan}}[{prompt_name}]%f %~ %# '",
         "RPROMPT=''",
         "EOF",
@@ -437,7 +436,7 @@ def postmortem_entrypoint_text(*, run_dir: str, workdir: str, venv: str) -> str:
         "    ;;",
         "  bash)",
         '    bashrc="$prompt_dir/bashrc"',
-        '    cat > "$bashrc" <<\'EOF\'',
+        "    cat > \"$bashrc\" <<'EOF'",
         f"PS1='\\[\\033[36m\\][{prompt_name}]\\[\\033[0m\\] \\w \\$ '",
         "EOF",
         '    exec "$shell_path" --rcfile "$bashrc" -i',
@@ -721,9 +720,7 @@ def unfinished_check_from_timeline(
     for event in events:
         phase = event.get("phase")
         check_id = event.get("check_id")
-        if phase not in {"check_start", "check_end"} or not isinstance(
-            check_id, str
-        ):
+        if phase not in {"check_start", "check_end"} or not isinstance(check_id, str):
             continue
         if phase == "check_start":
             starts[check_id] = event
@@ -766,9 +763,7 @@ def format_recording_failure(
         )
         message = report.get("message")
         if isinstance(message, str) and message:
-            lines.append(
-                color_text(f"reason: {message}", ANSI_RED_BOLD, enabled=color)
-            )
+            lines.append(color_text(f"reason: {message}", ANSI_RED_BOLD, enabled=color))
         stderr = report.get("stderr")
         if isinstance(stderr, str) and stderr:
             label = "stderr"
@@ -986,8 +981,7 @@ def normalize_cast_header(cast_path: Path, spec: dict[str, Any]) -> None:
         raise RecordingError(f"asciinema header must be a mapping: {cast_path}")
 
     header["command"] = (
-        f"media/tools/record.py recording={require_string(spec, 'id')} "
-        "step=session"
+        f"media/tools/record.py recording={require_string(spec, 'id')} " "step=session"
     )
     header.pop("env", None)
 
@@ -1067,7 +1061,7 @@ def has_recording_config(spec: dict[str, Any]) -> bool:
     if isinstance(manifest, str) and manifest:
         return relative_path(manifest).exists()
     recording_id = require_string(spec, "id")
-    return (RECORDING_CONFIG_DIR / f"{recording_id}.yaml").exists()
+    return (RECORDING_SCRIPT_DIR / f"{recording_id}.md").exists()
 
 
 def render_session_script(spec: dict[str, Any]) -> str:
@@ -1106,11 +1100,7 @@ def render_session_script(spec: dict[str, Any]) -> str:
     capture = as_mapping(spec.get("capture"), field="capture")
     baseline_compressed = bool(capture.get("baseline_compressed", False))
     session_typing = typing and not baseline_compressed
-    package_source = as_mapping(spec.get("package_source"), field="package_source")
-    package_source_mode = package_source.get("mode", "local")
-    package_source_package = package_source.get("package", "arbiter-suite")
-    package_source_version = package_source.get("version", "latest")
-    package_source_requirement = package_source.get("requirement", "")
+    parameters = as_mapping(spec.get("parameters", {}), field="parameters")
     hydra_output_dir = require_string(spec, "_hydra_output_dir")
     keep_hydra_output_dir = bool(spec.get("_keep_hydra_output_dir", False))
 
@@ -1127,9 +1117,7 @@ def render_session_script(spec: dict[str, Any]) -> str:
                 "environment.variables keys must be shell-safe variable names"
             )
         if not isinstance(value, (str, int, float, bool)):
-            raise RecordingError(
-                f"environment.variables.{key} must be a scalar value"
-            )
+            raise RecordingError(f"environment.variables.{key} must be a scalar value")
         lines.append(f"export {key}={shell_quote(value)}")
     lines.extend(
         [
@@ -1138,10 +1126,6 @@ def render_session_script(spec: dict[str, Any]) -> str:
             f"recording_python={shell_quote(sys.executable)}",
             f"recording_baseline_compressed={shell_quote(1 if baseline_compressed else 0)}",
             f"recording_typing={shell_quote(1 if session_typing else 0)}",
-            f"recording_package_source_mode={shell_quote(package_source_mode)}",
-            f"recording_package_source_package={shell_quote(package_source_package)}",
-            f"recording_package_source_version={shell_quote(package_source_version)}",
-            f"recording_package_source_requirement={shell_quote(package_source_requirement)}",
             f"recording_typing_min_delay={shell_quote(typing_min_delay)}",
             f"recording_typing_max_delay={shell_quote(typing_max_delay)}",
             f"recording_typing_space_delay={shell_quote(typing_space_delay)}",
@@ -1159,10 +1143,6 @@ def render_session_script(spec: dict[str, Any]) -> str:
             "  export ARBITER_COLOR=never",
             "  export NO_COLOR=1",
             "fi",
-            "export recording_package_source_mode",
-            "export recording_package_source_package",
-            "export recording_package_source_version",
-            "export recording_package_source_requirement",
             "export recording_typing_min_delay",
             "export recording_typing_max_delay",
             "export recording_typing_space_delay",
@@ -1181,6 +1161,13 @@ def render_session_script(spec: dict[str, Any]) -> str:
             "fi",
         ]
     )
+    for key, value in sorted(parameters.items()):
+        if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            raise RecordingError("parameters keys must be shell-safe names")
+        if not isinstance(value, (str, int, float, bool)):
+            raise RecordingError(f"parameters.{key} must be a scalar value")
+        lines.append(f"recording_param_{key}={shell_quote(value)}")
+        lines.append(f"export recording_param_{key}")
     run_dir_path = relative_path(hydra_output_dir)
     postmortem_path = run_dir_path / "enter"
     operator_venv_cache_root = REPO_ROOT / "media" / "cache" / "operator-venvs"
@@ -1199,6 +1186,14 @@ def render_session_script(spec: dict[str, Any]) -> str:
             'mkdir -p "$recording_tmp"',
             ': > "$recording_stdout_path"',
             ': > "$recording_stderr_path"',
+            "log_stage_marker() {",
+            '  local phase="$1"',
+            '  local beat_id="$2"',
+            '  local index="$3"',
+            '  local total="$4"',
+            '  printf "::: stage %s/%s %s beat=%s\\n" "$index" "$total" "$phase" "$beat_id" >>"$recording_stdout_path"',
+            '  printf "::: stage %s/%s %s beat=%s\\n" "$index" "$total" "$phase" "$beat_id" >>"$recording_stderr_path"',
+            "}",
             "recording_write_postmortem_entrypoint() {",
             '  local workdir="${1:-$PWD}"',
             '  local venv="${2:-}"',
@@ -1227,21 +1222,21 @@ def render_session_script(spec: dict[str, Any]) -> str:
             "    'export ARBITER_CINEMA_WORKDIR=\"$workdir\"',",
             "    'export ARBITER_CINEMA_VENV=\"$venv\"',",
             "    'cd \"$workdir\"',",
-            "    'if [[ -n \"$venv\" && -f \"$venv/bin/activate\" ]]; then',",
+            '    \'if [[ -n "$venv" && -f "$venv/bin/activate" ]]; then\',',
             "    '  . \"$venv/bin/activate\"',",
             "    'elif [[ -n \"$venv\" ]]; then',",
-            "    \"  printf 'warning: venv activate script not found: %s\\\\n' \\\"$venv/bin/activate\\\" >&2\",",
+            '    "  printf \'warning: venv activate script not found: %s\\\\n\' \\"$venv/bin/activate\\" >&2",',
             "    'fi',",
             "    \"printf 'Arbiter cinema postmortem shell\\\\n'\",",
-            "    \"printf '  run dir: %s\\\\n' \\\"$run_dir\\\"\",",
-            "    \"printf '  workdir: %s\\\\n' \\\"$workdir\\\"\",",
+            '    "printf \'  run dir: %s\\\\n\' \\"$run_dir\\"",',
+            '    "printf \'  workdir: %s\\\\n\' \\"$workdir\\"",',
             "    'if [[ -n \"$venv\" ]]; then',",
-            "    \"  printf '  venv: %s\\\\n' \\\"$venv\\\"\",",
+            '    "  printf \'  venv: %s\\\\n\' \\"$venv\\"",',
             "    'fi',",
             "    'prompt_dir=\"$run_dir/shell\"',",
             "    'mkdir -p \"$prompt_dir\"',",
             "    'shell_path=\"${SHELL:-/bin/sh}\"',",
-            "    'shell_name=\"$(basename \"$shell_path\")\"',",
+            '    \'shell_name="$(basename "$shell_path")"\',',
             "    'case \"$shell_name\" in',",
             "    '  zsh)',",
             "    '    zsh_dir=\"$prompt_dir/zsh\"',",
@@ -1250,14 +1245,14 @@ def render_session_script(spec: dict[str, Any]) -> str:
             "    f\"PROMPT='%F{{cyan}}[{prompt_name}]%f %~ %# '\",",
             "    \"RPROMPT=''\",",
             "    'EOF',",
-            "    '    ZDOTDIR=\"$zsh_dir\" exec \"$shell_path\" -i',",
+            '    \'    ZDOTDIR="$zsh_dir" exec "$shell_path" -i\',',
             "    '    ;;',",
             "    '  bash)',",
             "    '    bashrc=\"$prompt_dir/bashrc\"',",
             "    '    cat > \"$bashrc\" <<\\'EOF\\'',",
             "    f\"PS1='\\\\[\\\\033[36m\\\\][{prompt_name}]\\\\[\\\\033[0m\\\\] \\\\w \\\\$ '\",",
             "    'EOF',",
-            "    '    exec \"$shell_path\" --rcfile \"$bashrc\" -i',",
+            '    \'    exec "$shell_path" --rcfile "$bashrc" -i\',',
             "    '    ;;',",
             "    '  *)',",
             "    f\"    PS1='[{prompt_name}] $ '\",",
@@ -1286,7 +1281,9 @@ def render_session_script(spec: dict[str, Any]) -> str:
             "}",
         ]
     )
-    for index, step in enumerate(as_list(spec.get("cleanup"), field="cleanup"), start=1):
+    for index, step in enumerate(
+        as_list(spec.get("cleanup"), field="cleanup"), start=1
+    ):
         command = cleanup_command_text(step, index)
         cleanup_name = step.get("name", f"cleanup step {index}")
         if not isinstance(cleanup_name, str) or not cleanup_name:
@@ -1303,14 +1300,11 @@ def render_session_script(spec: dict[str, Any]) -> str:
             "  local index",
             "  local cleanup_name",
             "  local cleanup_command",
-            "  local status_path",
             "  local status",
             "  local marker",
             '  for index in "${!cleanup_commands[@]}"; do',
             '    cleanup_name="${cleanup_names[$index]}"',
             '    cleanup_command="${cleanup_commands[$index]}"',
-            '    status_path="$recording_tmp/cleanup_$((index + 1)).status"',
-            '    printf "%s\\n" "$cleanup_name" >"$recording_tmp/cleanup_$((index + 1)).name"',
             '    marker="::: cleanup cleanup_$((index + 1))"',
             '    printf "%s start %s\\n" "$marker" "$cleanup_name" >>"$recording_stdout_path"',
             '    printf "%s start %s\\n" "$marker" "$cleanup_name" >>"$recording_stderr_path"',
@@ -1320,7 +1314,6 @@ def render_session_script(spec: dict[str, Any]) -> str:
             "    set -e",
             '    printf "%s end status=%s\\n" "$marker" "$status" >>"$recording_stdout_path"',
             '    printf "%s end status=%s\\n" "$marker" "$status" >>"$recording_stderr_path"',
-            '    printf "%s\\n" "$status" >"$status_path"',
             "  done",
             "}",
             "cleanup() {",
@@ -1401,9 +1394,9 @@ def render_session_script(spec: dict[str, Any]) -> str:
             '  local message="$2"',
             '  record_failure action "$action_id" "$action_id" "$message" "$recording_stdout_path" "$recording_stderr_path"',
             '  if [[ "$recording_color" == 1 ]]; then',
-            "    printf '\\n\\033[31;1mrecording gate failed:\\033[0m %s %s\\n' \"$action_id\" \"$message\" >&2",
+            '    printf \'\\n\\033[31;1mrecording gate failed:\\033[0m %s %s\\n\' "$action_id" "$message" >&2',
             "  else",
-            "    printf '\\nrecording gate failed: %s %s\\n' \"$action_id\" \"$message\" >&2",
+            '    printf \'\\nrecording gate failed: %s %s\\n\' "$action_id" "$message" >&2',
             "  fi",
             "  exit 1",
             "}",
@@ -1416,9 +1409,9 @@ def render_session_script(spec: dict[str, Any]) -> str:
             '  local stderr_path="${5:-}"',
             '  record_failure check "$check_id" "$check_name" "$message" "$output_path" "$stderr_path"',
             '  if [[ "$recording_color" == 1 ]]; then',
-            "    printf '\\n\\033[31;1mrecording check failed:\\033[0m %s %s\\n' \"$check_name\" \"$message\" >&2",
+            '    printf \'\\n\\033[31;1mrecording check failed:\\033[0m %s %s\\n\' "$check_name" "$message" >&2',
             "  else",
-            "    printf '\\nrecording check failed: %s %s\\n' \"$check_name\" \"$message\" >&2",
+            '    printf \'\\nrecording check failed: %s %s\\n\' "$check_name" "$message" >&2',
             "  fi",
             '  if [[ -s "$stderr_path" ]]; then',
             "    printf -- '--- stderr ---\\n' >&2",
@@ -1773,7 +1766,7 @@ def render_session_script(spec: dict[str, Any]) -> str:
             '  timeline_event action_start "$beat_id" "" "" action_id "$action_id"',
             "  set +e",
             "  local status=0",
-            '  if [[ ${#display_chunks[@]} -gt 0 && ${#display_chunks[@]} -eq ${#command_chunks[@]} ]]; then',
+            "  if [[ ${#display_chunks[@]} -gt 0 && ${#display_chunks[@]} -eq ${#command_chunks[@]} ]]; then",
             "    local index",
             '    for index in "${!command_chunks[@]}"; do',
             '      timeline_event command_prompt_start "$beat_id" "" "" action_id "$action_id" chunk_index "$index" command "${display_chunks[$index]}"',
@@ -1796,17 +1789,17 @@ def render_session_script(spec: dict[str, Any]) -> str:
             "  fi",
             "  set -e",
             "  local expected_exit=0",
-            "  local gate_args=(\"$@\")",
+            '  local gate_args=("$@")',
             "  local gate",
             "  local value",
             "  local gate_index",
-            '  for ((gate_index = 0; gate_index < ${#gate_args[@]}; gate_index += 2)); do',
+            "  for ((gate_index = 0; gate_index < ${#gate_args[@]}; gate_index += 2)); do",
             '    gate="${gate_args[$gate_index]}"',
             '    value="${gate_args[$((gate_index + 1))]}"',
             '    [[ "$gate" == exit ]] && expected_exit="$value"',
             "  done",
             '  [[ "$status" -eq "$expected_exit" ]] || fail_gate "$action_id" "exited $status, expected $expected_exit"',
-            '  for ((gate_index = 0; gate_index < ${#gate_args[@]}; gate_index += 2)); do',
+            "  for ((gate_index = 0; gate_index < ${#gate_args[@]}; gate_index += 2)); do",
             '    gate="${gate_args[$gate_index]}"',
             '    value="${gate_args[$((gate_index + 1))]}"',
             '    case "$gate" in',
@@ -1853,17 +1846,17 @@ def render_session_script(spec: dict[str, Any]) -> str:
             "  local status=$?",
             "  set -e",
             "  local expected_exit=0",
-            "  local gate_args=(\"$@\")",
+            '  local gate_args=("$@")',
             "  local gate",
             "  local value",
             "  local gate_index",
-            '  for ((gate_index = 0; gate_index < ${#gate_args[@]}; gate_index += 2)); do',
+            "  for ((gate_index = 0; gate_index < ${#gate_args[@]}; gate_index += 2)); do",
             '    gate="${gate_args[$gate_index]}"',
             '    value="${gate_args[$((gate_index + 1))]}"',
             '    [[ "$gate" == exit ]] && expected_exit="$value"',
             "  done",
             '  [[ "$status" -eq "$expected_exit" ]] || fail_check "$check_id" "$check_name" "exited $status, expected $expected_exit" "$recording_stdout_path" "$recording_stderr_path"',
-            '  for ((gate_index = 0; gate_index < ${#gate_args[@]}; gate_index += 2)); do',
+            "  for ((gate_index = 0; gate_index < ${#gate_args[@]}; gate_index += 2)); do",
             '    gate="${gate_args[$gate_index]}"',
             '    value="${gate_args[$((gate_index + 1))]}"',
             '    case "$gate" in',
@@ -1921,10 +1914,19 @@ def render_session_script(spec: dict[str, Any]) -> str:
     if setup:
         lines.append("")
 
-    for beat in as_list(spec.get("beats"), field="beats"):
+    beats = as_list(spec.get("beats"), field="beats")
+    total_beats = len(beats)
+    for beat_index, beat in enumerate(beats, start=1):
         beat_id = require_string(beat, "id")
         safe_beat_id = re.sub(r"[^A-Za-z0-9_]", "_", beat_id)
         caption = beat.get("caption")
+        lines.append(
+            "log_stage_marker "
+            f"{shell_quote('start')} "
+            f"{shell_quote(beat_id)} "
+            f"{shell_quote(beat_index)} "
+            f"{shell_quote(total_beats)}"
+        )
         lines.append(f"timeline_event beat_start {shell_quote(beat_id)} '' ''")
         if isinstance(caption, str) and caption:
             lines.append(
@@ -1938,7 +1940,11 @@ def render_session_script(spec: dict[str, Any]) -> str:
             )
         actions = as_list(beat.get("actions"), field=f"beats.{beat_id}.actions")
         for index, action in enumerate(actions, start=1):
-            command = require_string(action, "run")
+            command = step_command_text(
+                action,
+                index,
+                field=f"beats.{beat_id}.actions",
+            )
             display_command = action.get("display", command)
             if not isinstance(display_command, str) or not display_command:
                 raise RecordingError(
@@ -1958,7 +1964,11 @@ def render_session_script(spec: dict[str, Any]) -> str:
             )
         checks = as_list(beat.get("checks"), field=f"beats.{beat_id}.checks")
         for index, check in enumerate(checks, start=1):
-            command = require_string(check, "run")
+            command = step_command_text(
+                check,
+                index,
+                field=f"beats.{beat_id}.checks",
+            )
             check_name = check.get("name", f"{beat_id} check {index}")
             if not isinstance(check_name, str) or not check_name:
                 raise RecordingError(
@@ -1982,6 +1992,13 @@ def render_session_script(spec: dict[str, Any]) -> str:
                 raise RecordingError(f"beat {beat_id} viewer_hold must be numeric")
             lines.append(f"hold {shell_quote(beat_id)} {shell_quote(viewer_hold)}")
         lines.append(f"timeline_event beat_end {shell_quote(beat_id)} '' ''")
+        lines.append(
+            "log_stage_marker "
+            f"{shell_quote('end')} "
+            f"{shell_quote(beat_id)} "
+            f"{shell_quote(beat_index)} "
+            f"{shell_quote(total_beats)}"
+        )
         lines.append("")
     return "\n".join(lines)
 
@@ -2208,9 +2225,7 @@ def find_latest_run_dir(
     if not runs_root.is_dir():
         raise RecordingError(f"no preserved runs found under: {runs_root}")
     if recording_id is None:
-        recording_dirs = sorted(
-            path for path in runs_root.iterdir() if path.is_dir()
-        )
+        recording_dirs = sorted(path for path in runs_root.iterdir() if path.is_dir())
     else:
         recording_dir = runs_root / recording_id
         recording_dirs = [recording_dir] if recording_dir.is_dir() else []
@@ -2343,9 +2358,7 @@ def parse_runs_since(value: object) -> timedelta | None:
         return None
     match = re.fullmatch(r"(\d+(?:\.\d+)?)([smhd])", text)
     if match is None:
-        raise RecordingError(
-            "runs_since must look like 30m, 2h, 1d, or be null/all"
-        )
+        raise RecordingError("runs_since must look like 30m, 2h, 1d, or be null/all")
     amount = float(match.group(1))
     unit = match.group(2)
     return timedelta(seconds=amount * RUN_SINCE_UNITS[unit])
@@ -2433,9 +2446,7 @@ def collect_run_jobs(
             if not run_dir.is_dir():
                 continue
             run_timestamp = parse_run_id_timestamp(run_dir.name)
-            if cutoff is not None and (
-                run_timestamp is None or run_timestamp < cutoff
-            ):
+            if cutoff is not None and (run_timestamp is None or run_timestamp < cutoff):
                 continue
             candidates.append(
                 (
@@ -2684,8 +2695,7 @@ def main(cfg: DictConfig) -> None:
         raise SystemExit(130) from exc
     except RecordingError as exc:
         print(
-            color_text("error:", ANSI_RED_BOLD, enabled=use_color)
-            + f" {exc}",
+            color_text("error:", ANSI_RED_BOLD, enabled=use_color) + f" {exc}",
             file=sys.stderr,
         )
         raise SystemExit(1) from exc

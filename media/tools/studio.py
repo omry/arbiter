@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import html
 import json
+import shlex
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -28,6 +29,7 @@ from studio_config import (
     StudioConfigError,
     StudioStep,
     container_from_hydra_cfg,
+    list_recording_ids,
     load_configured_env_file,
     recording_spec_from_config,
 )
@@ -41,11 +43,6 @@ ToolRunner = Callable[[Any], int]
 
 
 BUILD_STEPS = [
-    {
-        "action": "sync_narration",
-        "kind": "compile",
-        "description": "extract studio-directive narration from Markdown",
-    },
     {
         "action": "record",
         "kind": "compile",
@@ -114,28 +111,6 @@ def cfg_with_step(cfg: DictConfig, step: str) -> DictConfig:
     return OmegaConf.create(data)
 
 
-def cfg_with_synced_narration(cfg: DictConfig) -> DictConfig:
-    data = OmegaConf.to_container(cfg, resolve=False, enum_to_str=True)
-    if not isinstance(data, dict):
-        raise StudioError("composed Hydra config must be a mapping")
-    recording = data.get("recording")
-    recording_id = recording.get("id") if isinstance(recording, dict) else None
-    if not isinstance(recording_id, str) or not recording_id:
-        raise StudioError("recording.id must be a non-empty string")
-    narration_path = CONFIG_DIR / "narration" / f"{recording_id}.yaml"
-    if not narration_path.exists():
-        raise StudioError(f"synced narration config not found: {narration_path}")
-    narration = OmegaConf.to_container(
-        OmegaConf.load(narration_path),
-        resolve=False,
-        enum_to_str=True,
-    )
-    if not isinstance(narration, dict):
-        raise StudioError(f"synced narration config must be a mapping: {narration_path}")
-    data["narration"] = narration
-    return OmegaConf.create(data)
-
-
 def run_step(label: str, runner: ToolRunner, cfg: DictConfig, step: str) -> None:
     if OmegaConf.select(cfg, "output_format", default="text") != "json":
         print(f"::: studio: {label}")
@@ -145,7 +120,9 @@ def run_step(label: str, runner: ToolRunner, cfg: DictConfig, step: str) -> None
 
 
 def run_record_action(cfg: DictConfig, action: str, label: str | None = None) -> None:
-    run_step(label or action.replace("_", " "), record.run_tool_from_hydra_cfg, cfg, action)
+    run_step(
+        label or action.replace("_", " "), record.run_tool_from_hydra_cfg, cfg, action
+    )
 
 
 def run_audio_action(cfg: DictConfig, action: str, label: str | None = None) -> None:
@@ -153,11 +130,15 @@ def run_audio_action(cfg: DictConfig, action: str, label: str | None = None) -> 
 
 
 def run_retime_action(cfg: DictConfig, action: str, label: str | None = None) -> None:
-    run_step(label or f"retime {action}", retime_cast.run_tool_from_hydra_cfg, cfg, action)
+    run_step(
+        label or f"retime {action}", retime_cast.run_tool_from_hydra_cfg, cfg, action
+    )
 
 
 def run_align_action(cfg: DictConfig, action: str, label: str | None = None) -> None:
-    run_step(label or f"align {action}", align_cast.run_tool_from_hydra_cfg, cfg, action)
+    run_step(
+        label or f"align {action}", align_cast.run_tool_from_hydra_cfg, cfg, action
+    )
 
 
 def bool_config(config: dict[str, Any], key: str, default: bool = False) -> bool:
@@ -227,6 +208,30 @@ def display_path(path: Path | str | None) -> str | None:
 
 def optional_string(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def recording_id_from_value(value: object) -> str | None:
+    if isinstance(value, str) and value:
+        return value
+    if isinstance(value, dict):
+        return optional_string(value.get("id"))
+    return None
+
+
+def print_available_recording_scripts(*, selected_required: bool) -> int:
+    recording_ids = list_recording_ids()
+    if selected_required:
+        print("No recording script selected.")
+    if recording_ids:
+        print("Available recording scripts:")
+        for recording_id in recording_ids:
+            print(f"  {recording_id}")
+        if selected_required:
+            print()
+            print(f"Run with: media/tools/studio recording={recording_ids[0]}")
+    else:
+        print("No recording scripts found in media/recording-scripts.")
+    return 1 if selected_required else 0
 
 
 def as_mapping(value: object, *, field: str) -> dict[str, Any]:
@@ -313,9 +318,8 @@ def build_plan(config: dict[str, Any]) -> dict[str, Any]:
         "recording": str(spec["_recording_id"]),
         "title": optional_string(spec.get("title")),
         "inputs": {
-            "script": display_path(script_path),
-            "recording_config": display_path(manifest_path),
-            "narration_config": display_path(paths["narration_config"]),
+            "recording_script": display_path(script_path),
+            "recording_source": display_path(manifest_path),
         },
         "outputs": {
             "baseline_cast": display_path(paths["cast"]),
@@ -354,8 +358,7 @@ def print_build_plan(plan: dict[str, Any]) -> None:
     print("Pipeline:")
     for index, step in enumerate(plan["steps"], 1):
         print(
-            f"  {index}. {step['action']} "
-            f"({step['kind']}): {step['description']}"
+            f"  {index}. {step['action']} " f"({step['kind']}): {step['description']}"
         )
     print()
     print("No commands were run.")
@@ -538,14 +541,33 @@ def run_publish_surface(cfg: DictConfig) -> None:
         print(f"wrote {display_path(path)}")
 
 
+def studio_tool_command(recording_id: str, *overrides: str) -> str:
+    parts = ["media/tools/studio", f"recording={recording_id}", *overrides]
+    return " ".join(shlex.quote(part) for part in parts)
+
+
+def print_success_followups(cfg: DictConfig) -> None:
+    if OmegaConf.select(cfg, "output_format", default="text") == "json":
+        return
+    recording_value = OmegaConf.select(cfg, "recording")
+    if isinstance(recording_value, DictConfig):
+        recording_value = OmegaConf.to_container(recording_value, resolve=False)
+    recording_id = recording_id_from_value(recording_value)
+    if not isinstance(recording_id, str) or not recording_id:
+        return
+    print("Follow-up commands:")
+    print("  " + studio_tool_command(recording_id, "action=play"))
+    print("  " + studio_tool_command(recording_id, "action=inspect"))
+    print("  " + studio_tool_command(recording_id, "step=align"))
+
+
 def run_build(cfg: DictConfig) -> int:
-    run_audio_action(cfg, "sync_narration", "sync narration")
-    cfg = cfg_with_synced_narration(cfg)
     run_record_action(cfg, "record", "record baseline cast")
     run_audio_action(cfg, "generate", "generate audio")
     run_audio_action(cfg, "publish", "publish audio")
     run_retime_action(cfg, "retime", "retime cast")
     run_publish_surface(cfg)
+    print_success_followups(cfg)
     return 0
 
 
@@ -583,6 +605,13 @@ def run_tool_from_hydra_cfg(cfg: DictConfig) -> int:
         raise StudioError(str(exc)) from exc
     action = validate_action(config.get("action", "build"))
     step = validate_step(config.get("step"))
+
+    if step is None and action == "list":
+        return print_available_recording_scripts(selected_required=False)
+
+    recording_required = step is not None or action in {"build", "check"}
+    if recording_required and recording_id_from_value(config.get("recording")) is None:
+        return print_available_recording_scripts(selected_required=True)
 
     if step is None and action == "build" and bool_config(config, "dry_run"):
         return run_build_dry_run(config)

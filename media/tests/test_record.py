@@ -251,9 +251,10 @@ def test_record_stages_cast_and_timeline_before_replacing_outputs(
     assert not record.timeline_path_for_cast(staged_casts[0]).exists()
     assert (run_dir / "recording.cast").exists()
     assert (run_dir / "recording.timeline.jsonl").exists()
-    assert json.loads(cast.read_text(encoding="utf-8").splitlines()[0])[
-        "command"
-    ] == "media/tools/record.py recording=test-recording step=session"
+    assert (
+        json.loads(cast.read_text(encoding="utf-8").splitlines()[0])["command"]
+        == "media/tools/record.py recording=test-recording step=session"
+    )
     assert timeline.read_text(encoding="utf-8") == '{"phase": "done"}\n'
 
 
@@ -445,36 +446,36 @@ def test_baseline_compressed_disables_session_typing() -> None:
     assert 'if [[ "$recording_baseline_compressed" != 1 ]]; then' in script
 
 
-def test_package_source_metadata_exports_session_variables() -> None:
+def test_script_parameters_export_session_variables() -> None:
     spec = minimal_spec(beats=[{"id": "one", "actions": [{"run": "true"}]}])
-    spec["package_source"] = {
-        "mode": "pypi",
-        "package": "arbiter-suite",
-        "version": "latest",
+    spec["parameters"] = {
+        "arbiter_source": "latest",
+        "arbiter_package": "arbiter-suite",
     }
 
     script = record.render_session_script(spec)
 
-    assert "recording_package_source_mode=pypi" in script
-    assert "recording_package_source_package=arbiter-suite" in script
-    assert "recording_package_source_version=latest" in script
+    assert "recording_param_arbiter_source=latest" in script
+    assert "recording_param_arbiter_package=arbiter-suite" in script
     assert "recording_operator_venv_cache_root=" in script
     assert "media/cache/operator-venvs" in script
 
 
-def test_package_source_mode_must_be_known() -> None:
+def test_script_parameter_names_must_be_shell_safe() -> None:
     spec = minimal_spec(beats=[{"id": "one", "actions": [{"run": "true"}]}])
-    spec["package_source"] = {"mode": "hybrid"}
+    spec["parameters"] = {"not-safe": "value"}
 
     try:
         record.validate_manifest(spec)
     except record.RecordingError as exc:
-        assert "package_source.mode must be 'local' or 'pypi'" in str(exc)
+        assert "parameters keys must be shell-safe names" in str(exc)
     else:
-        raise AssertionError("invalid package source mode should fail validation")
+        raise AssertionError("invalid parameter name should fail validation")
 
 
-def test_visible_commands_cannot_consume_remaining_session_stdin(tmp_path: Path) -> None:
+def test_visible_commands_cannot_consume_remaining_session_stdin(
+    tmp_path: Path,
+) -> None:
     consumed = tmp_path / "consumed-stdin.txt"
     run_dir = tmp_path / "run"
     spec = minimal_spec(
@@ -931,11 +932,14 @@ def test_list_run_jobs_outputs_table_and_json(
     write_cast(run_dir / "recording.cast", [(1.5, "output")])
     monkeypatch.setattr(record, "REPO_ROOT", tmp_path)
 
-    assert record.list_run_jobs(
-        recording_id=None,
-        output_format="text",
-        now=record.datetime(2026, 6, 19, 3, 15, 0),
-    ) == 0
+    assert (
+        record.list_run_jobs(
+            recording_id=None,
+            output_format="text",
+            now=record.datetime(2026, 6, 19, 3, 15, 0),
+        )
+        == 0
+    )
     table = capsys.readouterr().out
     assert "job_id" in table
     assert "age" in table
@@ -948,11 +952,14 @@ def test_list_run_jobs_outputs_table_and_json(
     assert "success" in table
     assert "1.5s" in table
 
-    assert record.list_run_jobs(
-        recording_id=None,
-        output_format="json",
-        now=record.datetime(2026, 6, 19, 3, 15, 0),
-    ) == 0
+    assert (
+        record.list_run_jobs(
+            recording_id=None,
+            output_format="json",
+            now=record.datetime(2026, 6, 19, 3, 15, 0),
+        )
+        == 0
+    )
     data = json.loads(capsys.readouterr().out)
     assert data[0]["job_id"] == "20260619-030000"
     assert data[0]["age"] == "15m ago"
@@ -1117,15 +1124,9 @@ def test_action_output_without_explicit_recording_uses_latest_run(
     assert calls == [(None, None)]
 
 
-def test_play_run_reports_ambiguous_run_id(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
-    (tmp_path / "media" / "runs" / "one" / "20260616-160412").mkdir(
-        parents=True
-    )
-    (tmp_path / "media" / "runs" / "two" / "20260616-160412").mkdir(
-        parents=True
-    )
+def test_play_run_reports_ambiguous_run_id(tmp_path: Path, monkeypatch: Any) -> None:
+    (tmp_path / "media" / "runs" / "one" / "20260616-160412").mkdir(parents=True)
+    (tmp_path / "media" / "runs" / "two" / "20260616-160412").mkdir(parents=True)
 
     monkeypatch.setattr(record, "REPO_ROOT", tmp_path)
 
@@ -1308,10 +1309,7 @@ def test_script_cleanup_runs_after_success(tmp_path: Path) -> None:
     spec["cleanup"] = [
         {
             "name": "Remove target",
-            "run": (
-                f"rm -f {shlex.quote(str(target))}\n"
-                "printf 'cleanup ran\\n'"
-            ),
+            "run": (f"rm -f {shlex.quote(str(target))}\n" "printf 'cleanup ran\\n'"),
         }
     ]
 
@@ -1319,11 +1317,13 @@ def test_script_cleanup_runs_after_success(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert not target.exists()
-    assert (run_dir / "cleanup_1.status").read_text(encoding="utf-8") == "0\n"
     stdout_log = (run_dir / "stdout").read_text(encoding="utf-8")
     assert "::: cleanup cleanup_1 start Remove target\n" in stdout_log
+    assert "::: cleanup cleanup_1 end status=0\n" in stdout_log
     assert "cleanup ran\n" in stdout_log
     assert not (run_dir / "cleanup_1.out").exists()
+    assert not (run_dir / "cleanup_1.name").exists()
+    assert not (run_dir / "cleanup_1.status").exists()
     assert "cleanup ran" not in result.stdout
 
 
@@ -1334,14 +1334,7 @@ def test_script_cleanup_runs_after_action_failure(tmp_path: Path) -> None:
         beats=[
             {
                 "id": "work",
-                "actions": [
-                    {
-                        "run": (
-                            f"touch {shlex.quote(str(target))}\n"
-                            "false"
-                        )
-                    }
-                ],
+                "actions": [{"run": (f"touch {shlex.quote(str(target))}\n" "false")}],
             }
         ]
     )
@@ -1350,10 +1343,7 @@ def test_script_cleanup_runs_after_action_failure(tmp_path: Path) -> None:
     spec["cleanup"] = [
         {
             "name": "Remove target",
-            "run": (
-                f"rm -f {shlex.quote(str(target))}\n"
-                "printf 'cleanup ran\\n'"
-            ),
+            "run": (f"rm -f {shlex.quote(str(target))}\n" "printf 'cleanup ran\\n'"),
         }
     ]
 
@@ -1361,11 +1351,13 @@ def test_script_cleanup_runs_after_action_failure(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert not target.exists()
-    assert (run_dir / "cleanup_1.status").read_text(encoding="utf-8") == "0\n"
     stdout_log = (run_dir / "stdout").read_text(encoding="utf-8")
     assert "::: cleanup cleanup_1 start Remove target\n" in stdout_log
+    assert "::: cleanup cleanup_1 end status=0\n" in stdout_log
     assert "cleanup ran\n" in stdout_log
     assert not (run_dir / "cleanup_1.out").exists()
+    assert not (run_dir / "cleanup_1.name").exists()
+    assert not (run_dir / "cleanup_1.status").exists()
     assert "cleanup ran" not in result.stdout
 
 
@@ -1385,7 +1377,7 @@ def test_visible_output_hides_pip_package_summary_but_keeps_action_log(
                             "printf 'Installing collected packages: a, b\\n'\n"
                             "printf 'Successfully installed a-1 b-2\\n'\n"
                             "printf 'after\\n'\n"
-                        )
+                        ),
                     }
                 ],
             }
@@ -1406,6 +1398,43 @@ def test_visible_output_hides_pip_package_summary_but_keeps_action_log(
     assert "Installing collected packages: a, b\n" in action_log
     assert "Successfully installed a-1 b-2\n" in action_log
     assert not (run_dir / "stage_server_1.out").exists()
+
+
+def test_stage_markers_use_single_run_logs(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    spec = minimal_spec(
+        beats=[
+            {
+                "id": "prepare-cli",
+                "actions": [{"run": "printf 'prepared\\n'"}],
+            },
+            {
+                "id": "stage-server",
+                "checks": [{"name": "hidden proof", "run": "printf 'checked\\n'"}],
+            },
+        ]
+    )
+    spec["_hydra_output_dir"] = str(run_dir)
+    spec["_keep_hydra_output_dir"] = True
+
+    result = run_rendered_session(spec)
+
+    assert result.returncode == 0, result.stderr
+    stdout_log = (run_dir / "stdout").read_text(encoding="utf-8")
+    stderr_log = (run_dir / "stderr").read_text(encoding="utf-8")
+    expected_markers = [
+        "::: stage 1/2 start beat=prepare-cli\n",
+        "::: stage 1/2 end beat=prepare-cli\n",
+        "::: stage 2/2 start beat=stage-server\n",
+        "::: stage 2/2 end beat=stage-server\n",
+    ]
+    for marker in expected_markers:
+        assert marker in stdout_log
+        assert marker in stderr_log
+    assert "prepared\n" in stdout_log
+    assert "checked\n" in stdout_log
+    assert not list(run_dir.glob("*.out"))
+    assert not list(run_dir.glob("*.stderr"))
 
 
 def test_continuation_display_renders_without_extra_prompt() -> None:
@@ -1535,7 +1564,6 @@ def test_visible_timeline_events_include_command_and_hold(tmp_path: Path) -> Non
     assert {event["seconds"] for event in hold_events} == {0.0}
 
 
-
 def test_top_level_setup_runs_before_visible_actions_and_is_hidden() -> None:
     spec = minimal_spec(
         beats=[
@@ -1591,6 +1619,38 @@ def test_top_level_setup_can_load_run_file(tmp_path: Path) -> None:
     assert "hidden setup" not in result.stderr
 
 
+def test_beat_actions_and_checks_can_load_run_file(tmp_path: Path) -> None:
+    action_file = tmp_path / "action.sh"
+    action_file.write_text('printf "action file ran\\n"\n', encoding="utf-8")
+    check_file = tmp_path / "check.sh"
+    check_file.write_text('printf "check file ran\\n"\n', encoding="utf-8")
+    spec = minimal_spec(
+        beats=[
+            {
+                "id": "show",
+                "actions": [
+                    {
+                        "display": "run action helper",
+                        "run_file": str(action_file),
+                    }
+                ],
+                "checks": [
+                    {
+                        "name": "check helper",
+                        "run_file": str(check_file),
+                        "expect": {"output_contains": ["check file ran"]},
+                    }
+                ],
+            }
+        ]
+    )
+
+    result = run_rendered_session(spec)
+
+    assert result.returncode == 0, result.stderr
+    assert "action file ran" in result.stdout
+
+
 def test_top_level_setup_rejects_run_and_run_file_together(tmp_path: Path) -> None:
     setup_file = tmp_path / "setup.sh"
     setup_file.write_text("true\n", encoding="utf-8")
@@ -1619,9 +1679,7 @@ def test_top_level_setup_emits_timeline_events(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     events = record.read_timeline_events(timeline)
     setup_events = [
-        event
-        for event in events
-        if event.get("check_id") == "setup_check_1"
+        event for event in events if event.get("check_id") == "setup_check_1"
     ]
     assert [event["phase"] for event in setup_events] == ["check_start", "check_end"]
     assert {event["beat"] for event in setup_events} == {"__setup__"}
@@ -1644,9 +1702,7 @@ def test_top_level_setup_failure_writes_failure_report(tmp_path: Path) -> None:
         }
     ]
 
-    result = run_rendered_session(
-        spec, env={"ARBITER_CINEMA_FAILURE": str(failure)}
-    )
+    result = run_rendered_session(spec, env={"ARBITER_CINEMA_FAILURE": str(failure)})
 
     assert result.returncode == 1
     report = json.loads(failure.read_text(encoding="utf-8"))
@@ -1654,7 +1710,10 @@ def test_top_level_setup_failure_writes_failure_report(tmp_path: Path) -> None:
     assert report["id"] == "setup_check_1"
     assert report["name"] == "prepare hidden state"
     assert report["message"] == "exited 1, expected 0"
-    assert "::: check setup_check_1 start beat=__setup__ name=prepare hidden state\n" in report["stderr"]
+    assert (
+        "::: check setup_check_1 start beat=__setup__ name=prepare hidden state\n"
+        in report["stderr"]
+    )
     assert "setup stderr\n" in report["stderr"]
     assert report["output_path"].endswith("/stdout")
     assert report["stderr_path"].endswith("/stderr")
@@ -1668,9 +1727,7 @@ def test_visible_action_failure_reports_exit_before_output_gate() -> None:
                 "actions": [
                     {
                         "run": "printf 'container name already owned\\n'; false",
-                        "expect": {
-                            "output_contains": ["URL: http://127.0.0.1:18075"]
-                        },
+                        "expect": {"output_contains": ["URL: http://127.0.0.1:18075"]},
                     }
                 ],
             }
@@ -1680,10 +1737,7 @@ def test_visible_action_failure_reports_exit_before_output_gate() -> None:
     result = run_rendered_session(spec)
 
     assert result.returncode == 1
-    assert (
-        "recording gate failed: stage_server_1 exited 1, expected 0"
-        in result.stderr
-    )
+    assert "recording gate failed: stage_server_1 exited 1, expected 0" in result.stderr
     assert "missing text: URL: http://127.0.0.1:18075" not in result.stderr
 
 
@@ -1706,10 +1760,7 @@ def test_hidden_check_failure_reports_exit_before_output_gate() -> None:
     result = run_rendered_session(spec)
 
     assert result.returncode == 1
-    assert (
-        "recording check failed: hidden proof exited 1, expected 0"
-        in result.stderr
-    )
+    assert "recording check failed: hidden proof exited 1, expected 0" in result.stderr
     assert "missing text: expected hidden output" not in result.stderr
 
 
@@ -1786,9 +1837,7 @@ def test_hidden_check_failure_writes_failure_report(tmp_path: Path) -> None:
         ]
     )
 
-    result = run_rendered_session(
-        spec, env={"ARBITER_CINEMA_FAILURE": str(failure)}
-    )
+    result = run_rendered_session(spec, env={"ARBITER_CINEMA_FAILURE": str(failure)})
 
     assert result.returncode == 1
     report = json.loads(failure.read_text(encoding="utf-8"))
@@ -1796,7 +1845,10 @@ def test_hidden_check_failure_writes_failure_report(tmp_path: Path) -> None:
     assert report["id"] == "verify_check_1"
     assert report["name"] == "hidden proof"
     assert report["message"] == "missing text: expected hidden output"
-    assert "::: check verify_check_1 start beat=verify name=hidden proof\n" in report["output"]
+    assert (
+        "::: check verify_check_1 start beat=verify name=hidden proof\n"
+        in report["output"]
+    )
     assert "actual hidden output\n" in report["output"]
     assert report["output_path"].endswith("/stdout")
     assert report["stderr_path"].endswith("/stderr")
@@ -1820,9 +1872,7 @@ def test_hidden_check_exit_writes_failure_report(tmp_path: Path) -> None:
         ]
     )
 
-    result = run_rendered_session(
-        spec, env={"ARBITER_CINEMA_FAILURE": str(failure)}
-    )
+    result = run_rendered_session(spec, env={"ARBITER_CINEMA_FAILURE": str(failure)})
 
     assert result.returncode == 1
     report = json.loads(failure.read_text(encoding="utf-8"))
@@ -1830,7 +1880,10 @@ def test_hidden_check_exit_writes_failure_report(tmp_path: Path) -> None:
     assert report["id"] == "verify_check_1"
     assert report["name"] == "hidden proof"
     assert report["message"] == "exited 7, expected 0"
-    assert "::: check verify_check_1 start beat=verify name=hidden proof\n" in report["output"]
+    assert (
+        "::: check verify_check_1 start beat=verify name=hidden proof\n"
+        in report["output"]
+    )
     assert "before exit\n" in report["output"]
     assert report["output_path"].endswith("/stdout")
     assert report["stderr_path"].endswith("/stderr")
@@ -1888,7 +1941,9 @@ def test_record_reports_session_failure_sidecar(
         raise AssertionError("recording failure should raise RecordingError")
 
     assert "asciinema recording failed with exit code 1" in message
-    assert "session failed during check 'prepare hidden state' (setup_check_1)" in message
+    assert (
+        "session failed during check 'prepare hidden state' (setup_check_1)" in message
+    )
     assert "reason: exited 1, expected 0" in message
     assert "stderr reason" in message
     assert "real reason" not in message
@@ -1899,14 +1954,12 @@ def test_record_reports_session_failure_sidecar(
     assert (run_dir / "failed.timeline.jsonl").exists()
     assert (
         "media/tools/record.py recording=install-and-bootstrap "
-        "action=inspect run_id=20260616-160412"
-        in message
+        "action=inspect run_id=20260616-160412" in message
     )
     assert "media/tools/record.py action=play run_id=20260616-160412" in message
     assert (
         "media/tools/record.py recording=install-and-bootstrap "
-        "action=output run_id=20260616-160412"
-        in message
+        "action=output run_id=20260616-160412" in message
     )
 
 

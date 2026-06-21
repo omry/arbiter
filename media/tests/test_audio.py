@@ -145,6 +145,34 @@ beats:
     ]
 
 
+def test_extract_narration_accepts_yaml_studio_directive_fence() -> None:
+    script = """# Demo
+
+```yaml studio-directive
+scene: Demo Scene
+```
+
+```yaml studio-directive
+beat:
+  id: overview
+  heading: Overview
+  narration: >-
+    This uses the syntax-highlighted directive fence.
+```
+"""
+
+    script_narration = audio.extract_script_narration(script)
+
+    assert script_narration.scene_title == "Demo Scene"
+    assert script_narration.segments == [
+        audio.NarrationSegment(
+            segment_id="overview",
+            heading="Overview",
+            text="This uses the syntax-highlighted directive fence.",
+        )
+    ]
+
+
 def test_extract_narration_rejects_loose_machine_fields() -> None:
     script = """# Demo
 
@@ -430,7 +458,7 @@ def test_audio_dry_run_prints_human_summary_by_default(
     assert "reuses:" in out
     assert "This narration segment is intentionally long enough" in out
     assert "whole paragraph." not in out
-    assert "{\"" not in out
+    assert '{"' not in out
 
 
 def test_audio_dry_run_json_output_remains_available(
@@ -504,16 +532,20 @@ def test_install_bootstrap_manifest_has_audio_plan() -> None:
     assert settings.enabled is True
     assert settings.env == "OPENAI_ARBITER_CINEMA_AUDIO_API_KEY"
     assert segments[0].segment_id == "overview"
-    assert any(segment.segment_id == "review-install-plan" for segment in segments)
+    assert any(segment.segment_id == "install-server" for segment in segments)
     assert len(plan) >= 1
     assert all(item.output_path.suffix == ".mp3" for item in plan)
-    assert audio.output_audio_path(
-        spec, "install-and-bootstrap", settings
-    ) == REPO_ROOT / "website/static/audio/casts/install-and-bootstrap.mp3"
-    assert audio.output_audio_metadata_path(
-        spec,
-        audio.output_audio_path(spec, "install-and-bootstrap", settings),
-    ) == REPO_ROOT / "website/static/audio/casts/install-and-bootstrap.json"
+    assert (
+        audio.output_audio_path(spec, "install-and-bootstrap", settings)
+        == REPO_ROOT / "website/static/audio/casts/install-and-bootstrap.mp3"
+    )
+    assert (
+        audio.output_audio_metadata_path(
+            spec,
+            audio.output_audio_path(spec, "install-and-bootstrap", settings),
+        )
+        == REPO_ROOT / "website/static/audio/casts/install-and-bootstrap.json"
+    )
 
 
 def test_publish_audio_combines_cached_segments(tmp_path: Path) -> None:
@@ -634,7 +666,99 @@ def test_publish_audio_metadata_writes_segment_durations(tmp_path: Path) -> None
         assert first_ordered.read_bytes() == b"audio"
 
 
-def test_audio_metadata_includes_guide_for_matching_beat_segment(tmp_path: Path) -> None:
+def test_validate_published_audio_metadata_accepts_current_plan(tmp_path: Path) -> None:
+    settings = audio.AudioSettings(
+        enabled=True,
+        provider="openai",
+        env="OPENAI_TEST_KEY",
+        model="gpt-4o-mini-tts",
+        voice="marin",
+        format="mp3",
+        instructions=None,
+        cache_dir=tmp_path,
+    )
+    plan = audio.plan_audio(
+        "demo",
+        [audio.NarrationSegment("overview", "Overview", "Hello.")],
+        settings,
+    )
+    metadata = tmp_path / "published.json"
+    metadata.write_text(
+        json.dumps(
+            {
+                "recording": "demo",
+                "audio": str(tmp_path / "published.mp3"),
+                "duration": 1.0,
+                "segments": [
+                    {
+                        "id": "overview",
+                        "heading": "Overview",
+                        "text": "Hello.",
+                        "audio": str(plan[0].output_path),
+                        "offset": 0.0,
+                        "duration": 1.0,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    audio.validate_published_audio_metadata(plan, metadata)
+
+
+def test_validate_published_audio_metadata_rejects_stale_text(tmp_path: Path) -> None:
+    settings = audio.AudioSettings(
+        enabled=True,
+        provider="openai",
+        env="OPENAI_TEST_KEY",
+        model="gpt-4o-mini-tts",
+        voice="marin",
+        format="mp3",
+        instructions=None,
+        cache_dir=tmp_path,
+    )
+    plan = audio.plan_audio(
+        "demo",
+        [audio.NarrationSegment("overview", "Overview", "New words.")],
+        settings,
+    )
+    metadata = tmp_path / "published.json"
+    metadata.write_text(
+        json.dumps(
+            {
+                "recording": "demo",
+                "audio": str(tmp_path / "published.mp3"),
+                "duration": 1.0,
+                "segments": [
+                    {
+                        "id": "overview",
+                        "heading": "Overview",
+                        "text": "Old words.",
+                        "audio": str(tmp_path / "old.mp3"),
+                        "offset": 0.0,
+                        "duration": 1.0,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        audio.validate_published_audio_metadata(plan, metadata)
+    except audio.AudioError as exc:
+        message = str(exc)
+        assert "published audio metadata is stale" in message
+        assert "segment 'overview' field 'text' is stale" in message
+        assert "run audio_generate and audio_publish" in message
+    else:
+        raise AssertionError("stale audio metadata should fail validation")
+
+
+def test_audio_metadata_includes_guide_for_matching_beat_segment(
+    tmp_path: Path,
+) -> None:
     settings = audio.AudioSettings(
         enabled=True,
         provider="openai",
