@@ -1,11 +1,11 @@
 {
   "audio": "website/static/audio/casts/install-and-bootstrap.mp3",
-  "duration": 237.816,
+  "duration": 240.768,
   "recording": "install-and-bootstrap",
   "segments": [
     {
       "audio": "media/cache/audio/install-and-bootstrap/overview-5fd23265812c7148.mp3",
-      "duration": 10.32,
+      "duration": 9.648,
       "heading": "Overview",
       "id": "overview",
       "offset": 0.0,
@@ -13,170 +13,170 @@
     },
     {
       "audio": "media/cache/audio/install-and-bootstrap/prepare-cli-dda75a2d33040126.mp3",
-      "duration": 10.416,
+      "duration": 10.32,
       "guide": {
         "success_hint": "You should see the Arbiter server version from the local virtual environment.",
         "try_command": "source arbiter_venv/bin/activate && arbiter-server version"
       },
       "heading": "Create and activate a virtual environment",
       "id": "prepare-cli",
-      "offset": 10.32,
+      "offset": 9.648,
       "text": "Create a small Python virtual environment and activate it. This keeps the Arbiter command line tools separate from the system Python while we prepare and test the deployment."
     },
     {
       "audio": "media/cache/audio/install-and-bootstrap/install-suite-fed3caf0b06a3d3f.mp3",
-      "duration": 15.912,
+      "duration": 15.264,
       "guide": {
         "success_hint": "You should see the Arbiter server version from the local virtual environment.",
         "try_command": "source arbiter_venv/bin/activate && arbiter-server version"
       },
       "heading": "Install Arbiter suite",
       "id": "install-suite",
-      "offset": 20.736,
+      "offset": 19.968,
       "text": "Install the `arbiter-suite` package set into the virtual environment. One of those packages is `arbiter-server`, which we use next to create the Docker staging directory. The suite also installs `arbiter`, the client we use later to test the staged server."
     },
     {
       "audio": "media/cache/audio/install-and-bootstrap/init-staging-bb788b6ce3b92aa2.mp3",
-      "duration": 11.4,
+      "duration": 12.504,
       "guide": {
         "success_hint": "You should enter the staging directory and see the selected runtime bundle.",
         "try_command": "cd arbiter-docker && ./arbiter-docker bundle list"
       },
       "heading": "Bootstrap Docker Staging Directory",
       "id": "init-staging",
-      "offset": 36.648,
+      "offset": 35.232,
       "text": "Start by creating a Docker staging directory. This workspace is where the operator prepares configuration, builds the runtime bundle, and tests the deployment before installing the server and config permanently."
     },
     {
       "audio": "media/cache/audio/install-and-bootstrap/prepare-bundle-0b9c830c286c0c63.mp3",
-      "duration": 13.56,
+      "duration": 14.256,
       "guide": {
         "success_hint": "You should still be inside arbiter-docker and see the prepared bundle selection.",
         "try_command": "./arbiter-docker bundle list"
       },
       "heading": "Prepare Mail Bundle",
       "id": "prepare-bundle",
-      "offset": 48.048,
+      "offset": 47.736,
       "text": "This demo uses the IMAP and SMTP plugins. The bundle records the server and plugin package set, then prepares the wheelhouse the container installs from. That makes later staging runs independent of live package resolution."
     },
     {
       "audio": "media/cache/audio/install-and-bootstrap/bootstrap-config-cc21f5da0779d2ff.mp3",
-      "duration": 16.32,
+      "duration": 15.912,
       "guide": {
         "success_hint": "You should see \"bot accounts generated\".",
         "try_command": "test -f conf/arbiter/account/imap/bot.yaml && test -f conf/arbiter/account/smtp/bot.yaml && echo \"bot accounts generated\""
       },
       "heading": "Bootstrap Bot Account Files",
       "id": "bootstrap-config",
-      "offset": 61.608,
+      "offset": 61.992,
       "text": "Next create the server config and the bot account scaffolds. Arbiter writes separate account and policy files for IMAP and SMTP. The accounts describe where the services are; the policies describe what an agent is allowed to do through those accounts."
     },
     {
       "audio": "media/cache/audio/install-and-bootstrap/review-generated-config-dc286ae6426e5957.mp3",
-      "duration": 15.048,
+      "duration": 15.648,
       "heading": "Review Generated Bot Config",
       "id": "review-generated-config",
-      "offset": 77.928,
+      "offset": 77.904,
       "text": "Before editing, inspect the generated files. The bot has one IMAP account, one SMTP account, and matching policies. In a real deployment these files point at your mail provider and enforce the access level you want agents to have."
     },
     {
       "audio": "media/cache/audio/install-and-bootstrap/edit-bot-access-e83e18ecef946e81.mp3",
-      "duration": 17.568,
+      "duration": 17.712,
       "guide": {
         "success_hint": "You should see both bot account files pointing at host.docker.internal.",
         "try_command": "grep -R \"host.docker.internal\" conf/arbiter/account/imap/bot.yaml conf/arbiter/account/smtp/bot.yaml"
       },
       "heading": "Edit Bot Access",
       "id": "edit-bot-access",
-      "offset": 92.976,
+      "offset": 93.552,
       "text": "For this tutorial the bot is intentionally broad: it can read, search, append, mark, move, and delete in the local IMAP mailbox, and it can send through the local SMTP account. This is safe here because the recording uses disposable mail servers created just for the demo."
     },
     {
       "audio": "media/cache/audio/install-and-bootstrap/bootstrap-env-ccb258d8c57083cc.mp3",
-      "duration": 15.168,
+      "duration": 16.104,
       "guide": {
         "success_hint": "You should see IMAP and SMTP bot username and password entries.",
         "try_command": "grep \"BOT_ACCOUNT\" conf/.env"
       },
       "heading": "Bootstrap Env File",
       "id": "bootstrap-env",
-      "offset": 110.544,
+      "offset": 111.264,
       "text": "The account files read credentials from the deployment environment. This demo uses dedicated local mail servers, so it is okay to show the generated username and password. In production, the env file contains real secrets and should stay protected."
     },
     {
       "audio": "media/cache/audio/install-and-bootstrap/stage-server-c142506cccf9bd82.mp3",
-      "duration": 14.904,
+      "duration": 15.168,
       "guide": {
         "success_hint": "You should see the staged server test pass on https://127.0.0.1:18075.",
         "try_command": "./arbiter-docker test"
       },
       "heading": "Check and Start Staging",
       "id": "stage-server",
-      "offset": 125.712,
+      "offset": 127.368,
       "text": "Before starting the server, run a config check. It verifies the server config, the plugin configuration, and the account-to-policy pairs. Then start staging on port 18075 and run the helper's server test."
     },
     {
       "audio": "media/cache/audio/install-and-bootstrap/client-discovery-e4463bda60304b44.mp3",
-      "duration": 15.0,
+      "duration": 14.952,
       "guide": {
         "success_hint": "You should see the imap and smtp plugins.",
         "try_command": "arbiter arbiter.url=https://127.0.0.1:18075 plugins | jq ."
       },
       "heading": "Discover with the Arbiter Client",
       "id": "client-discovery",
-      "offset": 140.616,
+      "offset": 142.536,
       "text": "Now use the Arbiter client against the staged server. Agents start by discovering plugins, then inspect accounts and operation schemas before running an operation. They see capabilities and policy-shaped controls, not service credentials."
     },
     {
       "audio": "media/cache/audio/install-and-bootstrap/send-test-message-7476736f8d8f66d3.mp3",
-      "duration": 16.656,
+      "duration": 18.0,
       "guide": {
         "success_hint": "You should see one matching message in the bot INBOX.",
         "try_command": "arbiter arbiter.url=https://127.0.0.1:18075 op run imap:search_messages --args '{\"account\":\"bot\",\"folder\":\"INBOX\",\"query\":\"Arbiter install smoke test\",\"limit\":1}' | jq ."
       },
       "heading": "Send a Test Message",
       "id": "send-test-message",
-      "offset": 155.616,
+      "offset": 157.488,
       "text": "With discovery complete, send a real message through the staged server. The SMTP plugin submits the message using the configured bot account. The caller provides only the operation input: account name, recipient, subject, body, and an idempotency key for safe retries."
     },
     {
       "audio": "media/cache/audio/install-and-bootstrap/fetch-test-message-fc22f770df9dba33.mp3",
-      "duration": 14.568,
+      "duration": 14.16,
       "guide": {
         "success_hint": "You should see \"Arbiter install smoke test\".",
         "try_command": "arbiter arbiter.url=https://127.0.0.1:18075 op run imap:search_messages --args '{\"account\":\"bot\",\"folder\":\"INBOX\",\"query\":\"Arbiter install smoke test\",\"limit\":1}' | jq -er '.result.messages[0].subject'"
       },
       "heading": "Fetch the Test Message",
       "id": "fetch-test-message",
-      "offset": 172.272,
+      "offset": 175.488,
       "text": "The local SMTP server delivers into the same mailbox that the IMAP server exposes. Search the bot inbox by subject, keep the returned IMAP UID, then fetch the message body through `imap:get_message`."
     },
     {
       "audio": "media/cache/audio/install-and-bootstrap/staging-vs-installed-9093f802b5cf8f91.mp3",
-      "duration": 20.856,
+      "duration": 20.808,
       "heading": "Staging Versus Installed",
       "id": "staging-vs-installed",
-      "offset": 186.84,
+      "offset": 189.648,
       "text": "Staging proves the bundle, configuration, mail access, and client operations before any privileged install step. It is still an operator workspace, not the long-running production service. The installed deployment uses protected ownership, systemd lifecycle management, and the production server port, 8075."
     },
     {
       "audio": "media/cache/audio/install-and-bootstrap/preinstall-check-b2f9a9b0b0278745.mp3",
-      "duration": 16.656,
+      "duration": 15.648,
       "guide": {
         "success_hint": "The doctor should pass before you promote the staged deployment.",
         "try_command": "./arbiter-docker doctor --preinstall --agent-user codex"
       },
       "heading": "Preinstall Doctor",
       "id": "preinstall-check",
-      "offset": 207.696,
+      "offset": 210.456,
       "text": "Before promotion, run the preinstall doctor. Passing `--agent-user codex` also checks that the agent identity does not have inappropriate access to deployment state. This catches production-install mistakes while the deployment is still staged and easy to fix."
     },
     {
       "audio": "media/cache/audio/install-and-bootstrap/install-server-3f1452bb86691ada.mp3",
-      "duration": 13.464,
+      "duration": 14.664,
       "heading": "Install Arbiter",
       "id": "install-server",
-      "offset": 224.352,
+      "offset": 226.104,
       "text": "Finally, run the install command a production operator uses. It promotes the checked staging deployment to the protected target, writes the systemd unit, applies service ownership, and prepares Arbiter to run from /opt/arbiter."
     }
   ]

@@ -68,6 +68,7 @@ def register_resolvers() -> None:
 class StudioAction(str, Enum):
     build = "build"
     check = "check"
+    clean = "clean"
     play = "play"
     inspect = "inspect"
     output = "output"

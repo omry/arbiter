@@ -453,9 +453,11 @@ def test_install_recording_install_helper_is_aux_file() -> None:
         "media/recording-scripts/install-and-bootstrap/install-server.sh"
     )
     assert "sudo ./arbiter-docker install" in action["display"]
+    assert "set -euo pipefail" in install_run
     assert "exec fakeroot sh -c" in install_run
     assert "ARBITER_CONTAINER_USER" in install_run
     assert 'chown -R "$container_user" data/server data/plugins' in install_run
+    assert "--skip-static-config-check" in install_run
     assert "rewrite_install_output()" in install_run
 
 
@@ -673,7 +675,7 @@ def test_action_override_is_public_enum_validated() -> None:
         assert "failed to compose media config" in message
         assert "action" in message
         assert (
-            "expected one of [build, check, play, inspect, output, runs, list]"
+            "expected one of [build, check, clean, play, inspect, output, runs, list]"
             in message
         )
         assert "audio_generate" not in message

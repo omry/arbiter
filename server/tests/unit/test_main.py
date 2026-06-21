@@ -2177,6 +2177,36 @@ def test_cli_deploy_docker_init_writes_local_deploy_dir(
     assert "Next steps:\n" in capsys.readouterr().out
 
 
+def test_cli_deploy_docker_init_documents_install_static_check_skip(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+
+    helper_text = (deploy_dir / "arbiter-docker").read_text(encoding="utf-8")
+    assert "--skip-static-config-check" in helper_text
+    assert "Performing static config check" in helper_text
+    assert (
+        "skipping install-time static config check because "
+        "--skip-static-config-check was provided"
+    ) in helper_text
+    assert "Config check: skipped (--skip-static-config-check)" in helper_text
+    capsys.readouterr()
+
+
 def test_cli_deploy_docker_init_preserves_existing_config(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -4607,7 +4637,7 @@ def test_cli_deploy_docker_generated_helper_test_probes_https_health(
     assert result.stderr == ""
     assert fake_curl_count.read_text(encoding="utf-8") == "3\n"
 
-    fake_arbiter_count.write_text("0\n", encoding="utf-8")
+    fake_curl_count.write_text("0\n", encoding="utf-8")
     result = subprocess.run(
         [deploy_dir / "arbiter-docker", "test"],
         check=False,
@@ -4625,10 +4655,10 @@ def test_cli_deploy_docker_generated_helper_test_probes_https_health(
     assert result.returncode == 1
     assert result.stdout == (
         " \033[31m✘\033[0m Server test: " "\033[94mhttps://127.0.0.1:18075\033[0m\n"
-    )
+        )
     assert result.stderr == (
-        f"       command: ARBITER_URL=http://127.0.0.1:18075 {fake_arbiter} "
-        "info server\n"
+        "       command: curl --fail --silent --show-error --insecure --max-time 5 "
+        "https://127.0.0.1:18075/_health_\n"
         "       last client output:\n"
         "       transient server startup error\n"
     )

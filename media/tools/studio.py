@@ -8,6 +8,7 @@ import html
 import json
 import shlex
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -308,6 +309,16 @@ def recording_fingerprint_path(cast_path: Path) -> Path:
     return cast_path.with_suffix(".recording.json")
 
 
+def clean_artifact_paths(spec: dict[str, Any]) -> dict[str, Path]:
+    cast_path = retime_cast.cast_path_from_manifest(spec)
+    return {
+        "baseline_cast": cast_path,
+        "timeline": retime_cast.timeline_path_for_cast(cast_path),
+        "recording_fingerprint": recording_fingerprint_path(cast_path),
+        "retimed_cast": retime_cast.output_path_from_manifest(spec, cast_path),
+    }
+
+
 def normalize_fingerprint_value(value: Any) -> Any:
     if isinstance(value, dict):
         return {
@@ -602,6 +613,50 @@ def run_build_dry_run(config: dict[str, Any]) -> int:
     return 0
 
 
+def clean_recording_outputs(config: dict[str, Any]) -> list[Path]:
+    spec = recording_spec_from_config(config, recording_id=None, overrides=())
+    removed: list[Path] = []
+    for path in clean_artifact_paths(spec).values():
+        if not path.exists():
+            continue
+        if path.is_dir():
+            raise StudioError(f"refusing to remove directory: {display_path(path)}")
+        path.unlink()
+        removed.append(path)
+    return removed
+
+
+def run_clean(config: dict[str, Any]) -> int:
+    removed = clean_recording_outputs(config)
+    removed_display = [display_path(path) for path in removed]
+    if config.get("output_format") == "json":
+        print(
+            json.dumps(
+                {
+                    "removed": removed_display,
+                    "retained": [
+                        "audio",
+                        "audio_metadata",
+                        "audio_cache",
+                        "recording_runs",
+                    ],
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+
+    print("::: studio: clean recording outputs")
+    if removed_display:
+        for path in removed_display:
+            print(f"removed {path}")
+    else:
+        print("nothing to clean")
+    print("retained audio outputs, audio metadata, audio cache, and recording runs")
+    return 0
+
+
 def site_url(path: Path) -> str:
     static_root = retime_cast.REPO_ROOT / "website" / "static"
     try:
@@ -800,12 +855,36 @@ def print_success_followups(cfg: DictConfig) -> None:
     print("  " + studio_tool_command(recording_id, "step=align"))
 
 
+def format_elapsed(seconds: float) -> str:
+    seconds = max(0.0, seconds)
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes, remainder = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{int(minutes)}m {remainder:.1f}s"
+    hours, minute_remainder = divmod(minutes, 60)
+    return f"{int(hours)}h {int(minute_remainder)}m {remainder:.1f}s"
+
+
+def print_build_elapsed(cfg: DictConfig, seconds: float, *, success: bool) -> None:
+    if OmegaConf.select(cfg, "output_format", default="text") == "json":
+        return
+    status = "completed" if success else "failed"
+    print(f"::: studio: build {status} after {format_elapsed(seconds)}")
+
+
 def run_build(cfg: DictConfig) -> int:
-    run_build_record_action(cfg)
-    run_audio_action(cfg, "generate", "generate audio")
-    run_audio_action(cfg, "publish", "publish audio")
-    run_retime_action(cfg, "retime", "retime cast")
-    run_publish_surface(cfg)
+    started = time.monotonic()
+    success = False
+    try:
+        run_build_record_action(cfg)
+        run_audio_action(cfg, "generate", "generate audio")
+        run_audio_action(cfg, "publish", "publish audio")
+        run_retime_action(cfg, "retime", "retime cast")
+        run_publish_surface(cfg)
+        success = True
+    finally:
+        print_build_elapsed(cfg, time.monotonic() - started, success=success)
     print_success_followups(cfg)
     return 0
 
@@ -849,12 +928,15 @@ def run_tool_from_hydra_cfg(cfg: DictConfig) -> int:
     if step is None and action == "list":
         return print_available_recording_scripts(selected_required=False)
 
-    recording_required = step is not None or action in {"build", "check"}
+    recording_required = step is not None or action in {"build", "check", "clean"}
     if recording_required and recording_id_from_value(config.get("recording")) is None:
         return print_available_recording_scripts(selected_required=True)
 
     if step is None and action == "build" and bool_config(config, "dry_run"):
         return run_build_dry_run(config)
+
+    if step is None and action == "clean":
+        return run_clean(config)
 
     try:
         load_configured_env_file(config)

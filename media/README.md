@@ -110,6 +110,7 @@ media/tools/studio recording=install-and-bootstrap
 media/tools/studio recording=install-and-bootstrap action=check
 media/tools/studio recording=install-and-bootstrap action=build
 media/tools/studio recording=install-and-bootstrap action=build dry_run=true
+media/tools/studio recording=install-and-bootstrap action=clean
 media/tools/studio recording=install-and-bootstrap step=record +script_params.arbiter_source=0.9.2.dev1
 media/tools/studio recording=install-and-bootstrap step=record +script_params.arbiter_source=local
 ```
@@ -122,6 +123,11 @@ want to re-record the terminal workflow. Use `dry_run=true` to print the
 Makefile-style build graph and concrete inputs/outputs without running
 recording, TTS, publishing, or retiming. Individual steps are available through
 the same frontend for iteration and postmortem work.
+
+`action=clean` removes the selected recording's terminal and presentation
+outputs: baseline cast, timeline sidecar, recording fingerprint, and retimed
+cast. It keeps voiceover audio, audio timing metadata, audio cache entries, and
+recording run history by default.
 
 Recording scripts can declare hidden setup and cleanup directives in
 `studio-directive` blocks. Setup prepares per-scene resources such as operator

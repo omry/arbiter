@@ -139,6 +139,7 @@ def test_build_runs_full_media_pipeline(
         ("retime", "retime"),
     ]
     output = capsys.readouterr().out
+    assert "::: studio: build completed after " in output
     assert "Follow-up commands:\n" in output
     assert "media/tools/studio recording=demo action=play\n" in output
     assert "media/tools/studio recording=demo action=inspect\n" in output
@@ -178,6 +179,60 @@ def test_build_skips_fresh_recording(
     ]
     output = capsys.readouterr().out
     assert "skip record baseline cast" in output
+
+
+def test_build_prints_elapsed_time(
+    tmp_path: Path, monkeypatch: Any, capsys: Any
+) -> None:
+    spec = minimal_build_spec(tmp_path)
+    times = iter([10.0, 72.25])
+
+    def run(cfg: Any) -> int:
+        if cfg.step == "record":
+            write_minimal_recording_outputs(spec)
+        return 0
+
+    monkeypatch.setattr(studio.time, "monotonic", lambda: next(times))
+    monkeypatch.setattr(
+        studio,
+        "recording_spec_from_config",
+        lambda *_args, **_kwargs: spec,
+    )
+    monkeypatch.setattr(studio.audio, "run_tool_from_hydra_cfg", run)
+    monkeypatch.setattr(studio.record, "run_tool_from_hydra_cfg", run)
+    monkeypatch.setattr(studio.retime_cast, "run_tool_from_hydra_cfg", run)
+
+    assert studio.run_tool_from_hydra_cfg(cfg("build")) == 0
+
+    assert "::: studio: build completed after 1m 2.2s\n" in capsys.readouterr().out
+
+
+def test_build_prints_elapsed_time_on_failure(
+    tmp_path: Path, monkeypatch: Any, capsys: Any
+) -> None:
+    spec = minimal_build_spec(tmp_path)
+    times = iter([10.0, 72.25])
+
+    def record_run(_cfg: Any) -> int:
+        return 7
+
+    monkeypatch.setattr(studio.time, "monotonic", lambda: next(times))
+    monkeypatch.setattr(
+        studio,
+        "recording_spec_from_config",
+        lambda *_args, **_kwargs: spec,
+    )
+    monkeypatch.setattr(studio.record, "run_tool_from_hydra_cfg", record_run)
+
+    try:
+        studio.run_tool_from_hydra_cfg(cfg("build"))
+    except studio.StudioError as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("failed record step should fail build")
+
+    assert "record baseline cast failed with exit code 7" in message
+    assert "::: studio: build failed after 1m 2.2s\n" in capsys.readouterr().out
 
 
 def test_build_force_records_even_when_recording_is_fresh(
@@ -325,7 +380,7 @@ def test_build_success_followups_are_suppressed_for_json(
     )
 
     assert studio.run_tool_from_hydra_cfg(config) == 0
-    assert capsys.readouterr().out == ""
+    assert "build completed" not in capsys.readouterr().out
 
 
 def test_build_dry_run_explains_pipeline_without_delegating(
@@ -399,6 +454,70 @@ def test_record_step_dry_run_delegates_to_record_dry_run(monkeypatch: Any) -> No
 
     assert studio.run_tool_from_hydra_cfg(config) == 0
     assert calls == ["dry_run"]
+
+
+def test_clean_removes_recording_outputs_but_keeps_audio(
+    tmp_path: Path, monkeypatch: Any, capsys: Any
+) -> None:
+    spec = minimal_build_spec(tmp_path)
+    paths = studio.artifact_paths(spec)
+    fingerprint_path = studio.recording_fingerprint_path(paths["cast"])
+    for path in [
+        paths["cast"],
+        paths["timeline"],
+        fingerprint_path,
+        paths["retimed_cast"],
+        paths["audio"],
+        paths["audio_metadata"],
+    ]:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(path.name, encoding="utf-8")
+    paths["audio_cache"].mkdir(parents=True)
+    (paths["audio_cache"] / "cached.mp3").write_bytes(b"cached")
+
+    monkeypatch.setattr(
+        studio,
+        "recording_spec_from_config",
+        lambda *_args, **_kwargs: spec,
+    )
+
+    assert studio.run_tool_from_hydra_cfg(cfg("clean")) == 0
+
+    assert not paths["cast"].exists()
+    assert not paths["timeline"].exists()
+    assert not fingerprint_path.exists()
+    assert not paths["retimed_cast"].exists()
+    assert paths["audio"].exists()
+    assert paths["audio_metadata"].exists()
+    assert (paths["audio_cache"] / "cached.mp3").exists()
+    output = capsys.readouterr().out
+    assert "::: studio: clean recording outputs" in output
+    assert "retained audio outputs, audio metadata, audio cache" in output
+
+
+def test_clean_json_reports_removed_and_retained_outputs(
+    tmp_path: Path, monkeypatch: Any, capsys: Any
+) -> None:
+    spec = minimal_build_spec(tmp_path)
+    paths = studio.clean_artifact_paths(spec)
+    paths["baseline_cast"].parent.mkdir(parents=True, exist_ok=True)
+    paths["baseline_cast"].write_text("cast", encoding="utf-8")
+
+    monkeypatch.setattr(
+        studio,
+        "recording_spec_from_config",
+        lambda *_args, **_kwargs: spec,
+    )
+
+    config = OmegaConf.create(
+        {"action": "clean", "output_format": "json", "recording": {"id": "demo"}}
+    )
+    assert studio.run_tool_from_hydra_cfg(config) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["removed"] == [studio.display_path(paths["baseline_cast"])]
+    assert "audio" in payload["retained"]
+    assert "audio_cache" in payload["retained"]
 
 
 def test_publish_docusaurus_mdx_replaces_holder(
@@ -584,7 +703,7 @@ def test_empty_action_has_short_public_error() -> None:
 
     assert "action cannot be empty" in message
     assert (
-        "user-facing actions: build, check, play, inspect, output, runs, list"
+        "user-facing actions: build, check, clean, play, inspect, output, runs, list"
         in message
     )
     assert "audio_generate" not in message

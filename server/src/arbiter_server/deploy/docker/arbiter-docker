@@ -49,6 +49,9 @@ Install options:
   --no-start          Install and enable the service without starting it
   --replace-config    Replace installed config from this staging dir
   --replace-env       With --replace-config, also replace the installed env
+  --skip-static-config-check
+                      Skip the install-time Docker config check for deployments
+                      that have already been validated
   --dry-run           Print the install plan without changing the host
   --verbose           Print pip install output inside startup containers
 
@@ -1891,6 +1894,27 @@ probe_server_url() {
   return 127
 }
 
+server_probe_command() {
+  local url="$1"
+  local client_command
+
+  if command -v curl >/dev/null; then
+    printf 'curl --fail --silent --show-error --insecure --max-time 5 %s/_health_' "$url"
+    return 0
+  fi
+  if command -v python3 >/dev/null; then
+    printf 'python3 -c %s %s' \
+      "'import ssl, sys, urllib.request; urllib.request.urlopen(sys.argv[1] + \"/_health_\", timeout=5, context=ssl._create_unverified_context()).read()'" \
+      "$url"
+    return 0
+  fi
+  if client_command="$(resolve_arbiter_client_command)"; then
+    printf 'ARBITER_URL=%s %s info server' "$url" "$client_command"
+    return 0
+  fi
+  printf '<unavailable>'
+}
+
 test_server_url() {
   local url="$1"
   local output_file
@@ -1920,7 +1944,7 @@ test_server_url() {
   printf ' Server test: '
   doctor_prefix 94 "$url"
   printf '\n'
-  printf '       command: ARBITER_URL=%s %s info server\n' "$url" "$client_command" >&2
+  printf '       command: %s\n' "$(server_probe_command "$url")" >&2
   printf '       last client output:\n' >&2
   if [[ -s "$output_file" ]]; then
     sed 's/^/       /' "$output_file" >&2
@@ -3870,6 +3894,8 @@ install_report_success() {
   printf 'systemd unit: %s\n' "$unit_file"
   if [[ "${install_config_check_passed:-0}" -eq 1 ]]; then
     printf 'Config check: passed\n'
+  elif [[ "${install_static_config_check_skipped:-0}" -eq 1 ]]; then
+    printf 'Config check: skipped (--skip-static-config-check)\n'
   elif [[ "${install_config_check_skipped:-0}" -eq 1 ]]; then
     printf 'Config check: skipped (Docker unavailable)\n'
   fi
@@ -3982,6 +4008,8 @@ install_local_checkout_requirements_file=""
 install_local_checkout_has_source_override=0
 install_docker_available=1
 install_config_check_skipped=0
+install_static_config_check_skipped=0
+install_skip_static_config_check=0
 install_restart_skipped=0
 install_unit_only=0
 
@@ -5610,6 +5638,10 @@ install_deployment() {
         install_replace_env=1
         shift
         ;;
+      --skip-static-config-check)
+        install_skip_static_config_check=1
+        shift
+        ;;
       --dry-run)
         install_dry_run=1
         shift
@@ -5681,6 +5713,10 @@ install_deployment() {
 
   if [[ "$install_unit_only" -eq 1 ]]; then
     install_config_check_skipped=1
+  elif [[ "$install_skip_static_config_check" -eq 1 ]]; then
+    install_static_config_check_skipped=1
+    install_config_check_skipped=1
+    doctor_warn "skipping install-time static config check because --skip-static-config-check was provided"
   elif [[ "$install_docker_available" -eq 1 ]]; then
     install_run_step "Performing static config check" install_static_config_check
     install_config_check_passed=1
