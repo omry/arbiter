@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/../.." && pwd)"
+
+python="${PYTHON:-}"
+if [[ -z "$python" ]]; then
+  if [[ -x "$repo_root/.venv/bin/python" ]]; then
+    python="$repo_root/.venv/bin/python"
+  else
+    python="python3"
+  fi
+fi
+
+exec "$python" "$script_dir/studio.py" "$@"

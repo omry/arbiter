@@ -59,7 +59,31 @@ This file is the day-to-day queue for design and implementation gaps.
       names, config paths, version examples, and security claims; stale examples
       are fixed or removed.
 
+- [ ] `P1` Make Arbiter client operation timeout configurable and IMAP-friendly.
+      Real IMAP calls can exceed the current native client HTTP deadline: in
+      one observed session, `imap:search_messages` timed out with `context
+      deadline exceeded`, while `imap:list_messages` on `Sent` completed via
+      direct HTTP in about 11.7 seconds. The CLI should not fail just because a
+      legitimate upstream mail operation slightly exceeds a fixed client
+      default. Acceptance checks: expose a clear CLI/config/env timeout control
+      for operation requests; choose an IMAP-appropriate default or operation
+      class guidance; keep discovery commands responsive; ensure timeout errors
+      distinguish client deadline, Arbiter server timeout, and upstream service
+      timeout where possible; and document when agents should narrow a mail
+      query versus increasing the timeout.
+
 ## Post-v1
+
+- [ ] `P2` Consider returning operation timing information to clients.
+      Agents and operators should be able to tell how long Arbiter waited on
+      upstream services, especially when mail providers are slow or timeouts are
+      hit. Acceptance checks: evaluate adding structured timing metadata to
+      operation responses and errors, such as total server duration, upstream
+      service duration, plugin processing duration, timeout budget, and whether
+      the timeout was client-side, server-side, or provider-side; avoid leaking
+      sensitive provider details; expose the data consistently in native HTTP
+      and CLI output; and document how timing information should guide retry,
+      query narrowing, or operator troubleshooting.
 
 - [ ] `P2` Finish artifact delivery discovery and client contract.
       IMAP attachments can already produce Arbiter artifacts, but artifact

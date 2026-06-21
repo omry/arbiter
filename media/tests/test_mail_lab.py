@@ -131,14 +131,28 @@ def test_apply_mail_lab_config_updates_staged_account_files(
     config_dir = tmp_path / "conf"
     imap_account = config_dir / "arbiter" / "account" / "imap" / "bot.yaml"
     smtp_account = config_dir / "arbiter" / "account" / "smtp" / "bot.yaml"
+    imap_policy = config_dir / "arbiter" / "policy" / "imap" / "bot_policy.yaml"
+    smtp_policy = config_dir / "arbiter" / "policy" / "smtp" / "bot_policy.yaml"
     imap_account.parent.mkdir(parents=True)
     smtp_account.parent.mkdir(parents=True)
+    imap_policy.parent.mkdir(parents=True)
+    smtp_policy.parent.mkdir(parents=True)
     imap_account.write_text(
         "policy: bot_policy\nhost: imap.example.com\nport: 993\n",
         encoding="utf-8",
     )
     smtp_account.write_text(
         "policy: bot_policy\nhost: smtp.example.com\nport: 587\n",
+        encoding="utf-8",
+    )
+    imap_policy.write_text(
+        "folder_access:\n  rules:\n  - deny_glob: '*'\n"
+        "operation_defaults:\n  read: deny\n",
+        encoding="utf-8",
+    )
+    smtp_policy.write_text(
+        "limits:\n  max_messages_per_minute: 30\n"
+        "recipient_policy:\n  allowed_recipients: []\n",
         encoding="utf-8",
     )
 
@@ -156,15 +170,29 @@ def test_apply_mail_lab_config_updates_staged_account_files(
 
     imap_text = imap_account.read_text(encoding="utf-8")
     smtp_text = smtp_account.read_text(encoding="utf-8")
+    imap_policy_text = imap_policy.read_text(encoding="utf-8")
+    smtp_policy_text = smtp_policy.read_text(encoding="utf-8")
     env_text = (config_dir / ".env").read_text(encoding="utf-8")
     assert "# @package arbiter.account.imap.bot\n" in imap_text
     assert "host: host.docker.internal\n" in imap_text
     assert "port: 2143\n" in imap_text
     assert "tls: none\n" in imap_text
-    assert "kind:" not in imap_text
+    assert "kind: INBOX\n" in imap_text
+    assert "kind: SENT\n" in imap_text
+    assert "kind: TRASH\n" in imap_text
     assert "# @package arbiter.account.smtp.bot\n" in smtp_text
     assert "host: host.docker.internal\n" in smtp_text
     assert "port: 2525\n" in smtp_text
     assert "from_email: bot@example.test\n" in smtp_text
+    assert "# @package arbiter.policy.imap.bot_policy\n" in imap_policy_text
+    assert "allow_glob: '*'\n" in imap_policy_text
+    assert "mark_read: allow\n" in imap_policy_text
+    assert "delete: allow\n" in imap_policy_text
+    assert "folder_append: allow\n" in imap_policy_text
+    assert "SEEN: read_write\n" in imap_policy_text
+    assert "# @package arbiter.policy.smtp.bot_policy\n" in smtp_policy_text
+    assert "max_messages_per_minute: null\n" in smtp_policy_text
+    assert "max_recipients_per_message: null\n" in smtp_policy_text
+    assert "on_failure: warn\n" in smtp_policy_text
     assert "IMAP_BOT_ACCOUNT_PASSWORD=secret\n" in env_text
     assert "SMTP_BOT_ACCOUNT_PASSWORD=secret\n" in env_text

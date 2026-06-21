@@ -320,16 +320,37 @@ details > div[class*='codeBlockContainer'] {
   margin-top: 0;
 }
 
+.docs-doc-id-media\/terminal-recordings .theme-doc-breadcrumbs {
+  display: none;
+}
+
+.docs-doc-id-media\/terminal-recordings .container.padding-top--md {
+  padding-top: 0.75rem !important;
+}
+
 .aa-terminal {
   border-radius: 8px;
   overflow: hidden;
   border: 1px solid var(--ifm-color-emphasis-300);
   background: #050b14;
+  margin: 0.75rem 0 2rem;
 }
 
 .aa-terminal iframe {
   border: 0;
   display: block;
   width: 100%;
-  min-height: 360px;
+  height: clamp(520px, calc(100vh - 10rem), 760px);
+}
+
+@media (max-height: 720px) {
+  .aa-terminal iframe {
+    height: calc(100vh - 8rem);
+  }
+}
+
+@media (max-width: 768px) {
+  .aa-terminal iframe {
+    height: min(78vh, 680px);
+  }
 }

@@ -14,6 +14,7 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,7 @@ from omegaconf import DictConfig
 
 from studio_config import (
     CONFIG_DIR,
+    RECORDING_CONFIG_DIR,
     StudioConfigError,
     container_from_hydra_cfg,
     list_recording_ids,
@@ -35,6 +37,13 @@ from studio_config import (
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+RUN_ID_DATETIME_FORMAT = "%Y%m%d-%H%M%S"
+RUN_SINCE_UNITS = {
+    "s": 1,
+    "m": 60,
+    "h": 60 * 60,
+    "d": 24 * 60 * 60,
+}
 
 
 class RecordingError(RuntimeError):
@@ -51,6 +60,29 @@ INTERRUPT_RETURNCODES = {
     -signal.SIGINT,
     -signal.SIGTERM,
 }
+
+ANSI_RESET = "\033[0m"
+ANSI_RED_BOLD = "\033[31;1m"
+ANSI_GREEN_BOLD = "\033[32;1m"
+ANSI_YELLOW_BOLD = "\033[33;1m"
+ANSI_CYAN_BOLD = "\033[36;1m"
+HIDDEN_INTERVAL_JITTER_TOLERANCE_SECONDS = 0.25
+
+
+def host_color_enabled(stream: Any = sys.stderr) -> bool:
+    if os.environ.get("NO_COLOR") is not None:
+        return False
+    color = os.environ.get("FORCE_COLOR") or os.environ.get("ARBITER_CINEMA_COLOR")
+    if color and color.lower() not in {"0", "false", "no", "never"}:
+        return True
+    isatty = getattr(stream, "isatty", None)
+    return bool(isatty and isatty())
+
+
+def color_text(text: str, color: str, *, enabled: bool) -> str:
+    if not enabled:
+        return text
+    return f"{color}{text}{ANSI_RESET}"
 
 
 def load_manifest(
@@ -96,6 +128,39 @@ def relative_path(path: str) -> Path:
     if candidate.is_absolute():
         return candidate
     return REPO_ROOT / candidate
+
+
+def step_command_text(step: dict[str, Any], index: int, *, field: str) -> str:
+    has_run = "run" in step and step.get("run") is not None
+    has_run_file = "run_file" in step and step.get("run_file") is not None
+    if has_run and has_run_file:
+        raise RecordingError(f"{field}.{index} must use either run or run_file, not both")
+    if not has_run and not has_run_file:
+        raise RecordingError(f"{field}.{index} must define run or run_file")
+    if has_run:
+        return require_string(step, "run")
+
+    run_file = step.get("run_file")
+    if not isinstance(run_file, str) or not run_file:
+        raise RecordingError(f"{field}.{index}.run_file must be a non-empty string")
+    path = relative_path(run_file)
+    if not path.is_file():
+        raise RecordingError(f"{field}.{index}.run_file does not exist: {path}")
+    try:
+        command = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise RecordingError(f"failed to read {field}.{index}.run_file: {path}") from exc
+    if not command.strip():
+        raise RecordingError(f"{field}.{index}.run_file is empty: {path}")
+    return command
+
+
+def setup_command_text(step: dict[str, Any], index: int) -> str:
+    return step_command_text(step, index, field="setup")
+
+
+def cleanup_command_text(step: dict[str, Any], index: int) -> str:
+    return step_command_text(step, index, field="cleanup")
 
 
 def check_asciinema() -> str:
@@ -199,10 +264,18 @@ def validate_manifest(spec: dict[str, Any]) -> None:
     for index, step in enumerate(setup, start=1):
         if not isinstance(step, dict):
             raise RecordingError("each setup step must be a mapping")
-        require_string(step, "run")
+        setup_command_text(step, index)
         name = step.get("name")
         if name is not None and (not isinstance(name, str) or not name):
             raise RecordingError(f"setup.{index}.name must be a non-empty string")
+    cleanup = as_list(spec.get("cleanup"), field="cleanup")
+    for index, step in enumerate(cleanup, start=1):
+        if not isinstance(step, dict):
+            raise RecordingError("each cleanup step must be a mapping")
+        cleanup_command_text(step, index)
+        name = step.get("name")
+        if name is not None and (not isinstance(name, str) or not name):
+            raise RecordingError(f"cleanup.{index}.name must be a non-empty string")
     beats = as_list(spec.get("beats"), field="beats")
     if not beats:
         raise RecordingError("recording config must contain at least one beat")
@@ -592,21 +665,23 @@ def recording_tool_command(
     return " ".join(shlex.quote(part) for part in parts)
 
 
-def append_run_action_hints(lines: list[str], report: dict[str, Any]) -> None:
+def append_run_action_hints(
+    lines: list[str], report: dict[str, Any], *, color: bool = False
+) -> None:
     recording_id, run_id = failure_run_identity(report)
     if not run_id:
         return
-    lines.append(f"run_id: {run_id}")
-    lines.append("Inspect run with:")
+    lines.append(color_text(f"run_id: {run_id}", ANSI_CYAN_BOLD, enabled=color))
+    lines.append(color_text("Inspect run with:", ANSI_CYAN_BOLD, enabled=color))
     lines.append(
         "  "
         + recording_tool_command(
             recording_id=recording_id, action="inspect", run_id=run_id
         )
     )
-    lines.append("Play run with:")
+    lines.append(color_text("Play run with:", ANSI_CYAN_BOLD, enabled=color))
     lines.append("  " + recording_tool_command(action="play", run_id=run_id))
-    lines.append("View output with:")
+    lines.append(color_text("View output with:", ANSI_CYAN_BOLD, enabled=color))
     lines.append(
         "  "
         + recording_tool_command(
@@ -666,9 +741,14 @@ def format_recording_failure(
     cast_path: Path,
     timeline_path: Path,
     failure_path: Path,
+    color: bool = False,
 ) -> str:
     lines = [
-        f"asciinema recording failed with exit code {returncode}",
+        color_text(
+            f"asciinema recording failed with exit code {returncode}",
+            ANSI_RED_BOLD,
+            enabled=color,
+        ),
         f"cast: {cast_path}",
     ]
     report = read_failure_report(failure_path)
@@ -681,19 +761,27 @@ def format_recording_failure(
             label = f"{label} {name!r}"
         if isinstance(step_id, str) and step_id:
             label = f"{label} ({step_id})"
-        lines.append(f"session failed during {label}")
+        lines.append(
+            color_text(f"session failed during {label}", ANSI_RED_BOLD, enabled=color)
+        )
         message = report.get("message")
         if isinstance(message, str) and message:
-            lines.append(f"reason: {message}")
+            lines.append(
+                color_text(f"reason: {message}", ANSI_RED_BOLD, enabled=color)
+            )
         stderr = report.get("stderr")
         if isinstance(stderr, str) and stderr:
             label = "stderr"
             if report.get("stderr_truncated"):
                 label = "stderr (last 12000 chars)"
-            lines.append(f"--- {label} ---")
+            lines.append(
+                color_text(f"--- {label} ---", ANSI_YELLOW_BOLD, enabled=color)
+            )
             lines.append(stderr.rstrip())
-            lines.append("--- end stderr ---")
-        append_run_action_hints(lines, report)
+            lines.append(
+                color_text("--- end stderr ---", ANSI_YELLOW_BOLD, enabled=color)
+            )
+        append_run_action_hints(lines, report, color=color)
         return "\n".join(lines)
 
     events = read_timeline_events(timeline_path)
@@ -703,15 +791,31 @@ def format_recording_failure(
         check_id = unfinished.get("check_id")
         beat = unfinished.get("beat")
         if isinstance(check, str) and check:
-            lines.append(f"last hidden step started: {check}")
+            lines.append(
+                color_text(
+                    f"last hidden step started: {check}",
+                    ANSI_YELLOW_BOLD,
+                    enabled=color,
+                )
+            )
         if isinstance(beat, str) and isinstance(check_id, str):
             lines.append(f"timeline marker: beat={beat} check_id={check_id}")
         lines.append(
-            "no failure sidecar was written; the session may have exited before "
-            "the recorder could capture hidden-step output"
+            color_text(
+                "no failure sidecar was written; the session may have exited before "
+                "the recorder could capture hidden-step output",
+                ANSI_YELLOW_BOLD,
+                enabled=color,
+            )
         )
     else:
-        lines.append("no session failure sidecar was written")
+        lines.append(
+            color_text(
+                "no session failure sidecar was written",
+                ANSI_YELLOW_BOLD,
+                enabled=color,
+            )
+        )
     lines.append("command: " + " ".join(shlex.quote(part) for part in command))
     return "\n".join(lines)
 
@@ -746,6 +850,79 @@ def timestamp_in_interval(
     return any(start < timestamp < end for start, end in intervals)
 
 
+def first_output_timestamp(raw_lines: list[str]) -> float | None:
+    absolute_time = 0.0
+    for line in raw_lines[1:]:
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            return None
+        if (
+            not isinstance(event, list)
+            or len(event) != 3
+            or not isinstance(event[0], (int, float))
+        ):
+            continue
+        absolute_time += float(event[0])
+        if event[1] == "o" and isinstance(event[2], str) and event[2]:
+            return absolute_time
+    return None
+
+
+def output_timestamps(raw_lines: list[str]) -> list[float]:
+    timestamps: list[float] = []
+    absolute_time = 0.0
+    for line in raw_lines[1:]:
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            return timestamps
+        if (
+            not isinstance(event, list)
+            or len(event) != 3
+            or not isinstance(event[0], (int, float))
+        ):
+            continue
+        absolute_time += float(event[0])
+        if event[1] == "o" and isinstance(event[2], str) and event[2]:
+            timestamps.append(absolute_time)
+    return timestamps
+
+
+def clip_leading_interval_at_first_output(
+    intervals: list[tuple[float, float]], first_output: float | None
+) -> list[tuple[float, float]]:
+    if first_output is None:
+        return intervals
+    clipped: list[tuple[float, float]] = []
+    clipped_leading = False
+    for start, end in intervals:
+        if not clipped_leading and start < first_output < end:
+            clipped.append((start, first_output))
+            clipped_leading = True
+        else:
+            clipped.append((start, end))
+    return merge_intervals(clipped)
+
+
+def drop_jitter_intervals_with_visible_output(
+    intervals: list[tuple[float, float]], timestamps: list[float]
+) -> list[tuple[float, float]]:
+    kept: list[tuple[float, float]] = []
+    for start, end in intervals:
+        duration = end - start
+        if duration <= HIDDEN_INTERVAL_JITTER_TOLERANCE_SECONDS and any(
+            start < timestamp < end for timestamp in timestamps
+        ):
+            continue
+        kept.append((start, end))
+    return kept
+
+
 def strip_cast_intervals(cast_path: Path, intervals: list[tuple[float, float]]) -> None:
     intervals = merge_intervals(intervals)
     if not intervals:
@@ -754,6 +931,12 @@ def strip_cast_intervals(cast_path: Path, intervals: list[tuple[float, float]]) 
     raw_lines = cast_path.read_text(encoding="utf-8").splitlines()
     if not raw_lines:
         raise RecordingError(f"cast file is empty: {cast_path}")
+    intervals = clip_leading_interval_at_first_output(
+        intervals, first_output_timestamp(raw_lines)
+    )
+    intervals = drop_jitter_intervals_with_visible_output(
+        intervals, output_timestamps(raw_lines)
+    )
 
     output_lines = [raw_lines[0]]
     absolute_time = 0.0
@@ -804,7 +987,7 @@ def normalize_cast_header(cast_path: Path, spec: dict[str, Any]) -> None:
 
     header["command"] = (
         f"media/tools/record.py recording={require_string(spec, 'id')} "
-        "action=session"
+        "step=session"
     )
     header.pop("env", None)
 
@@ -821,6 +1004,7 @@ def normalize_cast_header(cast_path: Path, spec: dict[str, Any]) -> None:
 
 CONTROL_OVERRIDE_PREFIXES = (
     "action=",
+    "step=",
     "output=",
     "cast=",
     "timeline=",
@@ -849,10 +1033,41 @@ def session_overrides_from_spec(spec: dict[str, Any]) -> list[str]:
         and not str(override).startswith("recording=")
     ]
     result.insert(0, f"recording={require_string(spec, 'id')}")
-    result.append("action=session")
+    result.append("step=session")
     hydra_output_dir = require_string(spec, "_hydra_output_dir")
     result.append(f"hydra.run.dir={hydra_output_dir}")
     return result
+
+
+def validate_session_overrides(overrides: list[str]) -> None:
+    command = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        *overrides,
+        "--cfg",
+        "job",
+    ]
+    result = subprocess.run(
+        command,
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode == 0:
+        return
+    detail = (result.stderr or result.stdout or "").strip()
+    if not detail:
+        detail = f"exit code {result.returncode}"
+    raise RecordingError(f"invalid recording session config: {detail}")
+
+
+def has_recording_config(spec: dict[str, Any]) -> bool:
+    manifest = spec.get("_manifest_path")
+    if isinstance(manifest, str) and manifest:
+        return relative_path(manifest).exists()
+    recording_id = require_string(spec, "id")
+    return (RECORDING_CONFIG_DIR / f"{recording_id}.yaml").exists()
 
 
 def render_session_script(spec: dict[str, Any]) -> str:
@@ -868,6 +1083,9 @@ def render_session_script(spec: dict[str, Any]) -> str:
     path_entries = [str(Path(sys.executable).parent)]
     path_entries.extend(str(relative_path(str(entry))) for entry in path_prepend)
     path_prefix = ":".join(path_entries)
+    environment_variables = as_mapping(
+        environment.get("variables"), field="environment.variables"
+    )
     style = as_mapping(spec.get("style"), field="style")
     color = bool(style.get("color", True))
     typing = bool(style.get("typing", True))
@@ -903,6 +1121,16 @@ def render_session_script(spec: dict[str, Any]) -> str:
     ]
     if path_prefix:
         lines.append(f'export PATH={shell_quote(path_prefix)}:"$PATH"')
+    for key, value in sorted(environment_variables.items()):
+        if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            raise RecordingError(
+                "environment.variables keys must be shell-safe variable names"
+            )
+        if not isinstance(value, (str, int, float, bool)):
+            raise RecordingError(
+                f"environment.variables.{key} must be a scalar value"
+            )
+        lines.append(f"export {key}={shell_quote(value)}")
     lines.extend(
         [
             f"recording_color={shell_quote(1 if color else 0)}",
@@ -955,15 +1183,22 @@ def render_session_script(spec: dict[str, Any]) -> str:
     )
     run_dir_path = relative_path(hydra_output_dir)
     postmortem_path = run_dir_path / "enter"
+    operator_venv_cache_root = REPO_ROOT / "media" / "cache" / "operator-venvs"
     lines.extend(
         [
             f"recording_run_dir={shell_quote(run_dir_path)}",
             f"recording_tmp={shell_quote(run_dir_path)}",
             f"recording_postmortem_path={shell_quote(postmortem_path)}",
+            "recording_operator_venv_cache_root="
+            f"{shell_quote(operator_venv_cache_root)}",
             'recording_run_id="$(basename "$recording_run_dir")"',
             'recording_run_failure_path="$recording_run_dir/failure.json"',
+            'recording_stdout_path="$recording_run_dir/stdout"',
+            'recording_stderr_path="$recording_run_dir/stderr"',
             f"recording_keep_hydra_output_dir={shell_quote(1 if keep_hydra_output_dir else 0)}",
             'mkdir -p "$recording_tmp"',
+            ': > "$recording_stdout_path"',
+            ': > "$recording_stderr_path"',
             "recording_write_postmortem_entrypoint() {",
             '  local workdir="${1:-$PWD}"',
             '  local venv="${2:-}"',
@@ -1043,12 +1278,53 @@ def render_session_script(spec: dict[str, Any]) -> str:
             "else",
             '  cleanup_paths=("$recording_tmp")',
             "fi",
+            "cleanup_names=()",
+            "cleanup_commands=()",
+            "register_script_cleanup() {",
+            '  cleanup_names+=("$1")',
+            '  cleanup_commands+=("$2")',
+            "}",
         ]
     )
+    for index, step in enumerate(as_list(spec.get("cleanup"), field="cleanup"), start=1):
+        command = cleanup_command_text(step, index)
+        cleanup_name = step.get("name", f"cleanup step {index}")
+        if not isinstance(cleanup_name, str) or not cleanup_name:
+            raise RecordingError(f"cleanup.{index}.name must be a non-empty string")
+        lines.append(
+            "register_script_cleanup "
+            f"{shell_quote(cleanup_name)} "
+            f"{shell_quote(command)}"
+        )
     lines.extend(
         [
             "cleanup_pids=()",
+            "run_script_cleanups() {",
+            "  local index",
+            "  local cleanup_name",
+            "  local cleanup_command",
+            "  local status_path",
+            "  local status",
+            "  local marker",
+            '  for index in "${!cleanup_commands[@]}"; do',
+            '    cleanup_name="${cleanup_names[$index]}"',
+            '    cleanup_command="${cleanup_commands[$index]}"',
+            '    status_path="$recording_tmp/cleanup_$((index + 1)).status"',
+            '    printf "%s\\n" "$cleanup_name" >"$recording_tmp/cleanup_$((index + 1)).name"',
+            '    marker="::: cleanup cleanup_$((index + 1))"',
+            '    printf "%s start %s\\n" "$marker" "$cleanup_name" >>"$recording_stdout_path"',
+            '    printf "%s start %s\\n" "$marker" "$cleanup_name" >>"$recording_stderr_path"',
+            "    set +e",
+            '    eval "$cleanup_command" >>"$recording_stdout_path" 2>>"$recording_stderr_path"',
+            "    status=$?",
+            "    set -e",
+            '    printf "%s end status=%s\\n" "$marker" "$status" >>"$recording_stdout_path"',
+            '    printf "%s end status=%s\\n" "$marker" "$status" >>"$recording_stderr_path"',
+            '    printf "%s\\n" "$status" >"$status_path"',
+            "  done",
+            "}",
             "cleanup() {",
+            "  run_script_cleanups",
             "  local pid",
             '  for pid in "${cleanup_pids[@]}"; do',
             '    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then',
@@ -1123,8 +1399,7 @@ def render_session_script(spec: dict[str, Any]) -> str:
             "fail_gate() {",
             '  local action_id="$1"',
             '  local message="$2"',
-            '  local output_path="${3:-}"',
-            '  record_failure action "$action_id" "$action_id" "$message" "$output_path"',
+            '  record_failure action "$action_id" "$action_id" "$message" "$recording_stdout_path" "$recording_stderr_path"',
             '  if [[ "$recording_color" == 1 ]]; then',
             "    printf '\\n\\033[31;1mrecording gate failed:\\033[0m %s %s\\n' \"$action_id\" \"$message\" >&2",
             "  else",
@@ -1332,17 +1607,19 @@ def render_session_script(spec: dict[str, Any]) -> str:
             "",
             "run_visible_command_chunk() {",
             '  local action_id="$1"',
-            '  local output_path="$2"',
+            '  local marker="$2"',
             '  local command_chunk="$3"',
             '  local chunk_id="$4"',
-            '  local pipe_path="$recording_tmp/${action_id}.${chunk_id}.pipe"',
-            '  rm -f "$pipe_path"',
-            '  mkfifo "$pipe_path"',
-            '  "$recording_python" - "$pipe_path" "$output_path" <<\'PY\' &',
+            '  local stdout_pipe="$recording_tmp/${action_id}.${chunk_id}.stdout.pipe"',
+            '  local stderr_pipe="$recording_tmp/${action_id}.${chunk_id}.stderr.pipe"',
+            '  rm -f "$stdout_pipe" "$stderr_pipe"',
+            '  mkfifo "$stdout_pipe" "$stderr_pipe"',
+            '  "$recording_python" - "$stdout_pipe" "$stderr_pipe" "$recording_stdout_path" "$recording_stderr_path" <<\'PY\' &',
             "import re",
             "import sys",
+            "import threading",
             "",
-            "pipe_path, output_path = sys.argv[1:]",
+            "stdout_pipe, stderr_pipe, stdout_path, stderr_path = sys.argv[1:]",
             "skip_patterns = (",
             "    re.compile(rb'^Installing collected packages:'),",
             "    re.compile(rb'^Successfully installed '),",
@@ -1352,19 +1629,29 @@ def render_session_script(spec: dict[str, Any]) -> str:
             "    clean = re.sub(rb'\\x1b\\[[0-9;]*m', b'', line)",
             "    return not any(pattern.match(clean) for pattern in skip_patterns)",
             "",
-            "with open(pipe_path, 'rb') as pipe, open(output_path, 'ab') as output:",
-            "    for line in iter(pipe.readline, b''):",
-            "        output.write(line)",
-            "        output.flush()",
-            "        if display_line(line):",
-            "            sys.stdout.buffer.write(line)",
-            "            sys.stdout.buffer.flush()",
+            "def pump(pipe_path, log_path, display):",
+            "    with open(pipe_path, 'rb') as pipe, open(log_path, 'ab') as output:",
+            "        for line in iter(pipe.readline, b''):",
+            "            output.write(line)",
+            "            output.flush()",
+            "            if display_line(line):",
+            "                display.buffer.write(line)",
+            "                display.buffer.flush()",
+            "",
+            "threads = [",
+            "    threading.Thread(target=pump, args=(stdout_pipe, stdout_path, sys.stdout)),",
+            "    threading.Thread(target=pump, args=(stderr_pipe, stderr_path, sys.stderr)),",
+            "]",
+            "for thread in threads:",
+            "    thread.start()",
+            "for thread in threads:",
+            "    thread.join()",
             "PY",
             "  local filter_pid=$!",
-            '  eval "$command_chunk" >"$pipe_path" 2>&1',
+            '  eval "$command_chunk" >"$stdout_pipe" 2>"$stderr_pipe" </dev/null',
             "  local status=$?",
             '  wait "$filter_pid" 2>/dev/null || true',
-            '  rm -f "$pipe_path"',
+            '  rm -f "$stdout_pipe" "$stderr_pipe"',
             '  return "$status"',
             "}",
             "",
@@ -1382,14 +1669,103 @@ def render_session_script(spec: dict[str, Any]) -> str:
             '  eval "printf \'%s\' \\"$raw\\""',
             "}",
             "",
+            "output_contains_text() {",
+            '  local output_path="$1"',
+            '  local expected="$2"',
+            '  grep -F -- "$expected" "$output_path" >/dev/null && return 0',
+            '  "$recording_python" - "$output_path" "$expected" <<\'PY\'',
+            "import re",
+            "import sys",
+            "from pathlib import Path",
+            "",
+            "path, expected = sys.argv[1:]",
+            "text = Path(path).read_text(encoding='utf-8', errors='replace')",
+            "plain = re.sub(r'\\x1b\\[[0-?]*[ -/]*[@-~]', '', text)",
+            "raise SystemExit(0 if expected in plain else 1)",
+            "PY",
+            "}",
+            "",
+            "output_contains_text_for_marker() {",
+            '  local stdout_path="$1"',
+            '  local stderr_path="$2"',
+            '  local marker="$3"',
+            '  local expected="$4"',
+            '  "$recording_python" - "$stdout_path" "$stderr_path" "$marker" "$expected" <<\'PY\'',
+            "import re",
+            "import sys",
+            "from pathlib import Path",
+            "",
+            "stdout_path, stderr_path, marker, expected = sys.argv[1:]",
+            "",
+            "def marker_segment(path):",
+            "    try:",
+            "        text = Path(path).read_text(encoding='utf-8', errors='replace')",
+            "    except OSError:",
+            "        return ''",
+            "    index = text.rfind(marker)",
+            "    if index < 0:",
+            "        return ''",
+            "    text = text[index + len(marker):]",
+            "    return re.sub(r'\\x1b\\[[0-?]*[ -/]*[@-~]', '', text)",
+            "",
+            "plain = marker_segment(stdout_path) + marker_segment(stderr_path)",
+            "raise SystemExit(0 if expected in plain else 1)",
+            "PY",
+            "}",
+            "",
+            "output_matches_regex() {",
+            '  local output_path="$1"',
+            '  local expected="$2"',
+            '  grep -E -- "$expected" "$output_path" >/dev/null && return 0',
+            '  "$recording_python" - "$output_path" "$expected" <<\'PY\'',
+            "import re",
+            "import sys",
+            "from pathlib import Path",
+            "",
+            "path, expected = sys.argv[1:]",
+            "text = Path(path).read_text(encoding='utf-8', errors='replace')",
+            "plain = re.sub(r'\\x1b\\[[0-?]*[ -/]*[@-~]', '', text)",
+            "raise SystemExit(0 if re.search(expected, plain, re.MULTILINE) else 1)",
+            "PY",
+            "}",
+            "",
+            "output_matches_regex_for_marker() {",
+            '  local stdout_path="$1"',
+            '  local stderr_path="$2"',
+            '  local marker="$3"',
+            '  local expected="$4"',
+            '  "$recording_python" - "$stdout_path" "$stderr_path" "$marker" "$expected" <<\'PY\'',
+            "import re",
+            "import sys",
+            "from pathlib import Path",
+            "",
+            "stdout_path, stderr_path, marker, expected = sys.argv[1:]",
+            "",
+            "def marker_segment(path):",
+            "    try:",
+            "        text = Path(path).read_text(encoding='utf-8', errors='replace')",
+            "    except OSError:",
+            "        return ''",
+            "    index = text.rfind(marker)",
+            "    if index < 0:",
+            "        return ''",
+            "    text = text[index + len(marker):]",
+            "    return re.sub(r'\\x1b\\[[0-?]*[ -/]*[@-~]', '', text)",
+            "",
+            "plain = marker_segment(stdout_path) + marker_segment(stderr_path)",
+            "raise SystemExit(0 if re.search(expected, plain, re.MULTILINE) else 1)",
+            "PY",
+            "}",
+            "",
             "run_action() {",
             '  local beat_id="$1"',
             '  local action_id="$2"',
             '  local display_command="$3"',
             '  local command="$4"',
             "  shift 4",
-            '  local output_path="$recording_tmp/${action_id}.out"',
-            '  : > "$output_path"',
+            '  local marker="::: action ${action_id}"',
+            '  printf "%s start beat=%s\\n" "$marker" "$beat_id" >>"$recording_stdout_path"',
+            '  printf "%s start beat=%s\\n" "$marker" "$beat_id" >>"$recording_stderr_path"',
             "  local display_chunks=()",
             "  local command_chunks=()",
             '  split_commands "$display_command" display_chunks',
@@ -1404,7 +1780,7 @@ def render_session_script(spec: dict[str, Any]) -> str:
             '      print_command "${display_chunks[$index]}"',
             '      timeline_event command_prompt_end "$beat_id" "" "" action_id "$action_id" chunk_index "$index" command "${display_chunks[$index]}"',
             '      timeline_event command_run_start "$beat_id" "" "" action_id "$action_id" chunk_index "$index" command "${command_chunks[$index]}"',
-            '      run_visible_command_chunk "$action_id" "$output_path" "${command_chunks[$index]}" "$index"',
+            '      run_visible_command_chunk "$action_id" "$marker" "${command_chunks[$index]}" "$index"',
             "      status=$?",
             '      timeline_event command_run_end "$beat_id" "" "" action_id "$action_id" chunk_index "$index" status "$status"',
             '      [[ "$status" -eq 0 ]] || break',
@@ -1414,7 +1790,7 @@ def render_session_script(spec: dict[str, Any]) -> str:
             '    print_command "$display_command"',
             '    timeline_event command_prompt_end "$beat_id" "" "" action_id "$action_id" chunk_index fallback command "$display_command"',
             '    timeline_event command_run_start "$beat_id" "" "" action_id "$action_id" chunk_index fallback command "$command"',
-            '    run_visible_command_chunk "$action_id" "$output_path" "$command" fallback',
+            '    run_visible_command_chunk "$action_id" "$marker" "$command" fallback',
             "    status=$?",
             '    timeline_event command_run_end "$beat_id" "" "" action_id "$action_id" chunk_index fallback status "$status"',
             "  fi",
@@ -1429,7 +1805,7 @@ def render_session_script(spec: dict[str, Any]) -> str:
             '    value="${gate_args[$((gate_index + 1))]}"',
             '    [[ "$gate" == exit ]] && expected_exit="$value"',
             "  done",
-            '  [[ "$status" -eq "$expected_exit" ]] || fail_gate "$action_id" "exited $status, expected $expected_exit" "$output_path"',
+            '  [[ "$status" -eq "$expected_exit" ]] || fail_gate "$action_id" "exited $status, expected $expected_exit"',
             '  for ((gate_index = 0; gate_index < ${#gate_args[@]}; gate_index += 2)); do',
             '    gate="${gate_args[$gate_index]}"',
             '    value="${gate_args[$((gate_index + 1))]}"',
@@ -1437,21 +1813,23 @@ def render_session_script(spec: dict[str, Any]) -> str:
             "      exit)",
             "        ;;",
             "      contains)",
-            '        grep -F -- "$value" "$output_path" >/dev/null || fail_gate "$action_id" "missing text: $value" "$output_path"',
+            '        output_contains_text_for_marker "$recording_stdout_path" "$recording_stderr_path" "$marker" "$value" || fail_gate "$action_id" "missing text: $value"',
             "        ;;",
             "      regex)",
-            '        grep -E -- "$value" "$output_path" >/dev/null || fail_gate "$action_id" "missing regex: $value" "$output_path"',
+            '        output_matches_regex_for_marker "$recording_stdout_path" "$recording_stderr_path" "$marker" "$value" || fail_gate "$action_id" "missing regex: $value"',
             "        ;;",
             "      file)",
             "        local expanded",
             '        expanded="$(expand_path "$value")"',
-            '        [[ -e "$expanded" ]] || fail_gate "$action_id" "missing file: $expanded" "$output_path"',
+            '        [[ -e "$expanded" ]] || fail_gate "$action_id" "missing file: $expanded"',
             "        ;;",
             "      *)",
-            '        fail_gate "$action_id" "unknown gate: $gate" "$output_path"',
+            '        fail_gate "$action_id" "unknown gate: $gate"',
             "        ;;",
             "    esac",
             "  done",
+            '  printf "%s end status=%s\\n" "$marker" "$status" >>"$recording_stdout_path"',
+            '  printf "%s end status=%s\\n" "$marker" "$status" >>"$recording_stderr_path"',
             '  timeline_event action_end "$beat_id" "" "" action_id "$action_id" status "$status"',
             "  printf '\\n'",
             "}",
@@ -1462,15 +1840,18 @@ def render_session_script(spec: dict[str, Any]) -> str:
             '  local check_name="$3"',
             '  local command="$4"',
             "  shift 4",
-            '  local stdout_path="$recording_tmp/${check_id}.stdout"',
-            '  local stderr_path="$recording_tmp/${check_id}.stderr"',
-            '  local output_path="$recording_tmp/${check_id}.out"',
+            '  local marker="::: check ${check_id}"',
             '  timeline_event check_start "$beat_id" "$check_id" "$check_name"',
+            '  printf "%s start beat=%s name=%s\\n" "$marker" "$beat_id" "$check_name" >>"$recording_stdout_path"',
+            '  printf "%s start beat=%s name=%s\\n" "$marker" "$beat_id" "$check_name" >>"$recording_stderr_path"',
             "  set +e",
-            '  eval "$command" >"$stdout_path" 2>"$stderr_path"',
+            '  if [[ "$beat_id" == "__setup__" ]]; then',
+            '    eval "$command" >>"$recording_stdout_path" 2>>"$recording_stderr_path"',
+            "  else",
+            '    ( eval "$command" ) >>"$recording_stdout_path" 2>>"$recording_stderr_path"',
+            "  fi",
             "  local status=$?",
             "  set -e",
-            '  cat "$stdout_path" "$stderr_path" >"$output_path"',
             "  local expected_exit=0",
             "  local gate_args=(\"$@\")",
             "  local gate",
@@ -1481,7 +1862,7 @@ def render_session_script(spec: dict[str, Any]) -> str:
             '    value="${gate_args[$((gate_index + 1))]}"',
             '    [[ "$gate" == exit ]] && expected_exit="$value"',
             "  done",
-            '  [[ "$status" -eq "$expected_exit" ]] || fail_check "$check_id" "$check_name" "exited $status, expected $expected_exit" "$output_path" "$stderr_path"',
+            '  [[ "$status" -eq "$expected_exit" ]] || fail_check "$check_id" "$check_name" "exited $status, expected $expected_exit" "$recording_stdout_path" "$recording_stderr_path"',
             '  for ((gate_index = 0; gate_index < ${#gate_args[@]}; gate_index += 2)); do',
             '    gate="${gate_args[$gate_index]}"',
             '    value="${gate_args[$((gate_index + 1))]}"',
@@ -1489,21 +1870,23 @@ def render_session_script(spec: dict[str, Any]) -> str:
             "      exit)",
             "        ;;",
             "      contains)",
-            '        grep -F -- "$value" "$output_path" >/dev/null || fail_check "$check_id" "$check_name" "missing text: $value" "$output_path" "$stderr_path"',
+            '        output_contains_text_for_marker "$recording_stdout_path" "$recording_stderr_path" "$marker" "$value" || fail_check "$check_id" "$check_name" "missing text: $value" "$recording_stdout_path" "$recording_stderr_path"',
             "        ;;",
             "      regex)",
-            '        grep -E -- "$value" "$output_path" >/dev/null || fail_check "$check_id" "$check_name" "missing regex: $value" "$output_path" "$stderr_path"',
+            '        output_matches_regex_for_marker "$recording_stdout_path" "$recording_stderr_path" "$marker" "$value" || fail_check "$check_id" "$check_name" "missing regex: $value" "$recording_stdout_path" "$recording_stderr_path"',
             "        ;;",
             "      file)",
             "        local expanded",
             '        expanded="$(expand_path "$value")"',
-            '        [[ -e "$expanded" ]] || fail_check "$check_id" "$check_name" "missing file: $expanded" "$output_path" "$stderr_path"',
+            '        [[ -e "$expanded" ]] || fail_check "$check_id" "$check_name" "missing file: $expanded" "$recording_stdout_path" "$recording_stderr_path"',
             "        ;;",
             "      *)",
-            '        fail_check "$check_id" "$check_name" "unknown gate: $gate" "$output_path" "$stderr_path"',
+            '        fail_check "$check_id" "$check_name" "unknown gate: $gate" "$recording_stdout_path" "$recording_stderr_path"',
             "        ;;",
             "    esac",
             "  done",
+            '  printf "%s end status=%s\\n" "$marker" "$status" >>"$recording_stdout_path"',
+            '  printf "%s end status=%s\\n" "$marker" "$status" >>"$recording_stderr_path"',
             '  timeline_event check_end "$beat_id" "$check_id" "$check_name"',
             "}",
             "",
@@ -1522,7 +1905,7 @@ def render_session_script(spec: dict[str, Any]) -> str:
 
     setup = as_list(spec.get("setup"), field="setup")
     for index, step in enumerate(setup, start=1):
-        command = require_string(step, "run")
+        command = setup_command_text(step, index)
         check_name = step.get("name", f"setup step {index}")
         if not isinstance(check_name, str) or not check_name:
             raise RecordingError(f"setup.{index}.name must be a non-empty string")
@@ -1611,15 +1994,25 @@ def record(
     output_override: str | None,
     headed: bool = False,
 ) -> int:
+    use_color = host_color_enabled(sys.stderr)
     validate_manifest(spec)
     check_required_commands(spec)
     asciinema_version = check_asciinema()
+    session_overrides = session_overrides_from_spec(spec)
+    if has_recording_config(spec):
+        validate_session_overrides(session_overrides)
     script_text = render_session_script(spec)
     if dry_run:
         print(script_text)
         return 0
     if check_only:
-        print(f"ok: {spec['id']} ({asciinema_version})")
+        print(
+            color_text(
+                f"ok: {spec['id']} ({asciinema_version})",
+                ANSI_GREEN_BOLD,
+                enabled=use_color,
+            )
+        )
         return 0
 
     outputs = as_mapping(spec.get("outputs"), field="outputs")
@@ -1645,7 +2038,7 @@ def record(
         shlex.quote(str(session_python)),
         shlex.quote(str(Path(__file__).resolve())),
     ]
-    session_args.extend(shlex.quote(override) for override in session_overrides_from_spec(spec))
+    session_args.extend(shlex.quote(override) for override in session_overrides)
     runner_command = " ".join(
         [
             "env",
@@ -1697,6 +2090,7 @@ def record(
                     cast_path=cast_path,
                     timeline_path=staged_timeline_path,
                     failure_path=staged_failure_path,
+                    color=use_color,
                 )
             )
         finally:
@@ -1720,14 +2114,19 @@ def record(
             format_interrupted_recording(cast_path, removed)
         ) from exc
     except Exception:
+        preserve_failed_run_artifacts(
+            spec,
+            cast_path=staged_cast_path,
+            timeline_path=staged_timeline_path,
+        )
         remove_recording_artifacts(staged_paths)
         raise
-    print(f"wrote {cast_path}")
+    print(color_text(f"wrote {cast_path}", ANSI_GREEN_BOLD, enabled=use_color))
     postmortem_path = run_artifact_dir(spec) / "enter"
     if postmortem_path.exists():
         run_id = postmortem_path.parent.name
-        print(f"run_id: {run_id}")
-        print("Inspect run with:")
+        print(color_text(f"run_id: {run_id}", ANSI_CYAN_BOLD, enabled=use_color))
+        print(color_text("Inspect run with:", ANSI_CYAN_BOLD, enabled=use_color))
         print(
             "  "
             + recording_tool_command(
@@ -1736,7 +2135,7 @@ def record(
                 run_id=run_id,
             )
         )
-        print("Play run with:")
+        print(color_text("Play run with:", ANSI_CYAN_BOLD, enabled=use_color))
         print("  " + recording_tool_command(action="play", run_id=run_id))
     return 0
 
@@ -1744,7 +2143,9 @@ def record(
 def recording_runs_dir(spec: dict[str, Any]) -> Path:
     recording_id = require_string(spec, "id")
     hydra_output_dir = relative_path(require_string(spec, "_hydra_output_dir"))
-    if hydra_output_dir.parent.name == recording_id:
+    if hydra_output_dir.parent.name == recording_id and (
+        hydra_output_dir.parent.parent.name == "runs"
+    ):
         return hydra_output_dir.parent
     return REPO_ROOT / "media" / "runs" / recording_id
 
@@ -1760,14 +2161,6 @@ def run_dir_for_id(spec: dict[str, Any], run_id: str) -> Path:
     if not run_dir.is_dir():
         raise RecordingError(f"recording run not found: {run_dir}")
     return run_dir
-
-
-def run_id_from_config(config: dict[str, Any], *, action: str) -> str:
-    run_id = config.get("run_id")
-    if not isinstance(run_id, str) or not run_id:
-        raise RecordingError(f"run_id is required for action={action}")
-    validate_run_id(run_id)
-    return run_id
 
 
 def find_run_dir_by_id(run_id: str) -> Path:
@@ -1789,6 +2182,86 @@ def find_run_dir_by_id(run_id: str) -> Path:
     return matches[0]
 
 
+def run_dir_has_artifact(run_dir: Path, artifact: str) -> bool:
+    if artifact == "inspect":
+        return (run_dir / "enter").exists()
+    if artifact == "output":
+        return (run_dir / "failure.json").exists()
+    if artifact == "play":
+        return (run_dir / "recording.cast").exists() or (
+            run_dir / "failed.cast"
+        ).exists()
+    if artifact == "preserved":
+        return (
+            (run_dir / "enter").exists()
+            or (run_dir / "failure.json").exists()
+            or (run_dir / "recording.cast").exists()
+            or (run_dir / "failed.cast").exists()
+        )
+    raise RecordingError(f"unknown run artifact filter: {artifact}")
+
+
+def find_latest_run_dir(
+    recording_id: str | None = None, *, artifact: str = "preserved"
+) -> Path:
+    runs_root = REPO_ROOT / "media" / "runs"
+    if not runs_root.is_dir():
+        raise RecordingError(f"no preserved runs found under: {runs_root}")
+    if recording_id is None:
+        recording_dirs = sorted(
+            path for path in runs_root.iterdir() if path.is_dir()
+        )
+    else:
+        recording_dir = runs_root / recording_id
+        recording_dirs = [recording_dir] if recording_dir.is_dir() else []
+
+    candidates: list[tuple[str, int, str, Path]] = []
+    for recording_dir in recording_dirs:
+        for run_dir in recording_dir.iterdir():
+            if not run_dir.is_dir():
+                continue
+            if not run_dir_has_artifact(run_dir, artifact):
+                continue
+            candidates.append(
+                (
+                    run_dir.name,
+                    run_dir.stat().st_mtime_ns,
+                    recording_dir.name,
+                    run_dir,
+                )
+            )
+    if not candidates:
+        scope = f" for recording: {recording_id}" if recording_id else ""
+        raise RecordingError(
+            f"no preserved runs with {artifact} artifacts found{scope} "
+            f"under: {runs_root}"
+        )
+    return max(candidates)[3]
+
+
+def run_dir_for_optional_id(
+    spec: dict[str, Any] | None,
+    run_id: str | None,
+    *,
+    artifact: str = "preserved",
+) -> Path:
+    if run_id:
+        return (
+            run_dir_for_id(spec, run_id)
+            if spec is not None
+            else find_run_dir_by_id(run_id)
+        )
+    recording_id = require_string(spec, "id") if spec is not None else None
+    return find_latest_run_dir(recording_id, artifact=artifact)
+
+
+def recording_was_explicit(spec: dict[str, Any]) -> bool:
+    overrides = spec.get("_overrides", [])
+    if not isinstance(overrides, list):
+        return False
+    return any(str(override).startswith("recording=") for override in overrides)
+
+
 def run_cast_path(run_dir: Path) -> Path | None:
     for name in ["recording.cast", "failed.cast"]:
         path = run_dir / name
@@ -1797,34 +2270,244 @@ def run_cast_path(run_dir: Path) -> Path | None:
     return None
 
 
-def find_latest_run_cast() -> Path:
+def cast_duration_seconds(path: Path) -> float | None:
+    if not path.exists():
+        return None
+    total = 0.0
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()[1:]
+    except OSError:
+        return None
+    for line in lines:
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            return None
+        if (
+            not isinstance(event, list)
+            or not event
+            or not isinstance(event[0], (int, float))
+        ):
+            return None
+        total += float(event[0])
+    return total
+
+
+def format_duration(seconds: float | None) -> str:
+    if seconds is None:
+        return "-"
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    rounded = int(round(seconds))
+    minutes, remainder = divmod(rounded, 60)
+    return f"{minutes}:{remainder:02d}"
+
+
+def parse_run_id_timestamp(run_id: str) -> datetime | None:
+    try:
+        return datetime.strptime(run_id, RUN_ID_DATETIME_FORMAT)
+    except ValueError:
+        return None
+
+
+def age_seconds(value: datetime | None, now: datetime) -> int | None:
+    if value is None:
+        return None
+    return max(0, int((now - value).total_seconds()))
+
+
+def format_age(seconds: int | None) -> str:
+    if seconds is None:
+        return "-"
+    if seconds < 60:
+        return f"{seconds}s ago"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h ago"
+    days = hours // 24
+    return f"{days}d ago"
+
+
+def parse_runs_since(value: object) -> timedelta | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise RecordingError("runs_since must be a duration string or null")
+    text = value.strip().lower()
+    if text in {"", "all", "none", "null"}:
+        return None
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)([smhd])", text)
+    if match is None:
+        raise RecordingError(
+            "runs_since must look like 30m, 2h, 1d, or be null/all"
+        )
+    amount = float(match.group(1))
+    unit = match.group(2)
+    return timedelta(seconds=amount * RUN_SINCE_UNITS[unit])
+
+
+def parse_runs_limit(value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise RecordingError("runs_limit must be a positive integer or null")
+    return value
+
+
+def failure_reason(report: dict[str, Any] | None) -> str:
+    if report is None:
+        return "failed cast preserved"
+    message = report.get("message")
+    if not isinstance(message, str) or not message:
+        message = "failed"
+    step = report.get("step_name") or report.get("step_id")
+    if isinstance(step, str) and step and step != message:
+        return f"{step}: {message}"
+    return message
+
+
+def run_job_from_dir(
+    recording_id: str, run_dir: Path, *, now: datetime | None = None
+) -> dict[str, Any] | None:
+    if now is None:
+        now = datetime.now()
+    timestamp = parse_run_id_timestamp(run_dir.name)
+    age_value = age_seconds(timestamp, now)
+    success_cast = run_dir / "recording.cast"
+    failed_cast = run_dir / "failed.cast"
+    failure = read_failure_report(run_dir / "failure.json")
+    if success_cast.exists() and failure is None:
+        length_seconds = cast_duration_seconds(success_cast)
+        return {
+            "job_id": run_dir.name,
+            "age": format_age(age_value),
+            "age_seconds": age_value,
+            "type": recording_id,
+            "result": "success",
+            "length": format_duration(length_seconds),
+            "length_seconds": length_seconds,
+            "reason": None,
+        }
+    if failure is not None or failed_cast.exists():
+        return {
+            "job_id": run_dir.name,
+            "age": format_age(age_value),
+            "age_seconds": age_value,
+            "type": recording_id,
+            "result": "failed",
+            "length": None,
+            "length_seconds": None,
+            "reason": failure_reason(failure),
+        }
+    return None
+
+
+def collect_run_jobs(
+    recording_id: str | None = None,
+    *,
+    since: timedelta | None = None,
+    limit: int | None = 10,
+    now: datetime | None = None,
+) -> list[dict[str, Any]]:
     runs_root = REPO_ROOT / "media" / "runs"
+    if not runs_root.is_dir():
+        return []
+    if now is None:
+        now = datetime.now()
+    cutoff = now - since if since is not None else None
+    recording_dirs: list[Path]
+    if recording_id is None:
+        recording_dirs = sorted(path for path in runs_root.iterdir() if path.is_dir())
+    else:
+        recording_dir = runs_root / recording_id
+        recording_dirs = [recording_dir] if recording_dir.is_dir() else []
+
     candidates: list[tuple[int, str, str, Path]] = []
-    if runs_root.is_dir():
-        for recording_dir in runs_root.iterdir():
-            if not recording_dir.is_dir():
+    for recording_dir in recording_dirs:
+        for run_dir in recording_dir.iterdir():
+            if not run_dir.is_dir():
                 continue
-            for run_dir in recording_dir.iterdir():
-                if not run_dir.is_dir():
-                    continue
-                cast_path = run_cast_path(run_dir)
-                if cast_path is None:
-                    continue
-                candidates.append(
-                    (
-                        cast_path.stat().st_mtime_ns,
-                        run_dir.name,
-                        recording_dir.name,
-                        cast_path,
-                    )
+            run_timestamp = parse_run_id_timestamp(run_dir.name)
+            if cutoff is not None and (
+                run_timestamp is None or run_timestamp < cutoff
+            ):
+                continue
+            candidates.append(
+                (
+                    run_dir.stat().st_mtime_ns,
+                    run_dir.name,
+                    recording_dir.name,
+                    run_dir,
                 )
-    if not candidates:
-        raise RecordingError(f"no preserved run casts found under: {runs_root}")
-    return max(candidates)[3]
+            )
+    jobs: list[dict[str, Any]] = []
+    for _mtime, _run_id, candidate_recording_id, run_dir in sorted(
+        candidates,
+        key=lambda item: (item[1], item[2]),
+        reverse=True,
+    ):
+        job = run_job_from_dir(candidate_recording_id, run_dir, now=now)
+        if job is not None:
+            jobs.append(job)
+            if limit is not None and len(jobs) >= limit:
+                break
+    return jobs
 
 
-def inspect_run(spec: dict[str, Any], *, run_id: str) -> int:
-    run_dir = run_dir_for_id(spec, run_id)
+def format_run_jobs_table(jobs: list[dict[str, Any]]) -> str:
+    columns = ["job_id", "age", "type", "result", "length", "reason"]
+    rows = [
+        {
+            "job_id": str(job.get("job_id") or ""),
+            "age": str(job.get("age") or "-"),
+            "type": str(job.get("type") or ""),
+            "result": str(job.get("result") or ""),
+            "length": str(job.get("length") or "-"),
+            "reason": str(job.get("reason") or "-"),
+        }
+        for job in jobs
+    ]
+    widths = {
+        column: max(
+            len(column),
+            *(len(row[column]) for row in rows),
+        )
+        for column in columns
+    }
+    lines = [
+        "  ".join(column.ljust(widths[column]) for column in columns),
+        "  ".join("-" * widths[column] for column in columns),
+    ]
+    lines.extend(
+        "  ".join(row[column].ljust(widths[column]) for column in columns)
+        for row in rows
+    )
+    return "\n".join(lines)
+
+
+def list_run_jobs(
+    *,
+    recording_id: str | None = None,
+    output_format: str = "text",
+    since: timedelta | None = None,
+    limit: int | None = 10,
+    now: datetime | None = None,
+) -> int:
+    jobs = collect_run_jobs(recording_id, since=since, limit=limit, now=now)
+    if output_format == "json":
+        print(json.dumps(jobs, indent=2, sort_keys=True))
+    else:
+        print(format_run_jobs_table(jobs))
+    return 0
+
+
+def inspect_run(spec: dict[str, Any] | None, *, run_id: str | None) -> int:
+    run_dir = run_dir_for_optional_id(spec, run_id, artifact="inspect")
     entrypoint = run_dir / "enter"
     if not entrypoint.exists():
         raise RecordingError(f"postmortem entrypoint not found: {entrypoint}")
@@ -1858,8 +2541,8 @@ def page_or_print(path: Path) -> int:
     return 0
 
 
-def output_run(spec: dict[str, Any], *, run_id: str) -> int:
-    run_dir = run_dir_for_id(spec, run_id)
+def output_run(spec: dict[str, Any] | None, *, run_id: str | None) -> int:
+    run_dir = run_dir_for_optional_id(spec, run_id, artifact="output")
     output_path = failure_output_path(run_dir)
     if output_path is None:
         raise RecordingError(f"no captured failure output found in run: {run_dir}")
@@ -1874,21 +2557,11 @@ def play_recording(
 ) -> int:
     if cast_override:
         cast_path = relative_path(cast_override)
-    elif run_id:
-        run_dir = (
-            run_dir_for_id(spec, run_id)
-            if spec is not None
-            else find_run_dir_by_id(run_id)
-        )
+    else:
+        run_dir = run_dir_for_optional_id(spec, run_id, artifact="play")
         cast_path = run_cast_path(run_dir)
         if cast_path is None:
             raise RecordingError(f"no preserved cast found in run: {run_dir}")
-    else:
-        if spec is None:
-            cast_path = find_latest_run_cast()
-        else:
-            outputs = as_mapping(spec.get("outputs"), field="outputs")
-            cast_path = relative_path(require_string(outputs, "cast"))
     if not cast_path.exists():
         raise RecordingError(f"cast not found: {cast_path}")
     check_asciinema()
@@ -1914,11 +2587,39 @@ def control_config_from_hydra_cfg(cfg: Any) -> dict[str, Any]:
     return config
 
 
+def tool_step(config: dict[str, Any], default: str) -> str:
+    step = config.get("step")
+    if isinstance(step, str) and step:
+        return step
+    action = config.get("action")
+    if action in {None, "build"}:
+        return default
+    if isinstance(action, str) and action:
+        return action
+    return default
+
+
 def run_tool_from_hydra_cfg(cfg: Any) -> int:
     config = control_config_from_hydra_cfg(cfg)
-    action = config.get("action", "record")
+    action = tool_step(config, "record")
     if action == "list":
         return list_recordings()
+    if action == "runs":
+        spec = spec_from_hydra_cfg(cfg)
+        output_format = config.get("output_format", "text")
+        if not isinstance(output_format, str):
+            raise RecordingError("output_format must be a string")
+        since = parse_runs_since(config.get("runs_since"))
+        limit = parse_runs_limit(config.get("runs_limit"))
+        recording_id = (
+            require_string(spec, "id") if recording_was_explicit(spec) else None
+        )
+        return list_run_jobs(
+            recording_id=recording_id,
+            output_format=output_format,
+            since=since,
+            limit=limit,
+        )
     cast_override = config.get("cast")
     if cast_override is not None and not isinstance(cast_override, str):
         raise RecordingError("cast must be a string or null")
@@ -1927,21 +2628,18 @@ def run_tool_from_hydra_cfg(cfg: Any) -> int:
         raise RecordingError("run_id must be a string or null")
     if action == "play":
         spec = spec_from_hydra_cfg(cfg)
-        overrides = spec.get("_overrides", [])
-        if not isinstance(overrides, list):
-            overrides = []
-        recording_was_explicit = any(
-            str(override).startswith("recording=")
-            for override in overrides
-        )
-        if not cast_override and not recording_was_explicit:
+        if not cast_override and not recording_was_explicit(spec):
             spec = None
         return play_recording(spec, run_id=run_id, cast_override=cast_override)
     spec = spec_from_hydra_cfg(cfg)
     if action == "inspect":
-        return inspect_run(spec, run_id=run_id_from_config(config, action=action))
+        if not recording_was_explicit(spec):
+            spec = None
+        return inspect_run(spec, run_id=run_id)
     if action == "output":
-        return output_run(spec, run_id=run_id_from_config(config, action=action))
+        if not recording_was_explicit(spec):
+            spec = None
+        return output_run(spec, run_id=run_id)
     if action == "session":
         validate_manifest(spec)
         check_required_commands(spec)
@@ -1975,22 +2673,41 @@ def list_recordings() -> int:
 
 @hydra.main(version_base=None, config_path=str(CONFIG_DIR), config_name="config")
 def main(cfg: DictConfig) -> None:
+    use_color = host_color_enabled(sys.stderr)
     try:
         raise SystemExit(run_tool_from_hydra_cfg(cfg))
     except RecordingInterrupted as exc:
-        print(f"interrupted: {exc}", file=sys.stderr)
+        print(
+            color_text(f"interrupted: {exc}", ANSI_YELLOW_BOLD, enabled=use_color),
+            file=sys.stderr,
+        )
         raise SystemExit(130) from exc
     except RecordingError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        print(
+            color_text("error:", ANSI_RED_BOLD, enabled=use_color)
+            + f" {exc}",
+            file=sys.stderr,
+        )
         raise SystemExit(1) from exc
     except subprocess.CalledProcessError as exc:
         print(
-            f"error: command failed with exit code {exc.returncode}: {exc.cmd}",
+            color_text(
+                f"error: command failed with exit code {exc.returncode}: {exc.cmd}",
+                ANSI_RED_BOLD,
+                enabled=use_color,
+            ),
             file=sys.stderr,
         )
         raise SystemExit(exc.returncode) from exc
     except KeyboardInterrupt:
-        print("interrupted: recording cancelled by user", file=sys.stderr)
+        print(
+            color_text(
+                "interrupted: recording cancelled by user",
+                ANSI_YELLOW_BOLD,
+                enabled=use_color,
+            ),
+            file=sys.stderr,
+        )
         raise SystemExit(130)
 
 

@@ -32,6 +32,7 @@ temp/
 # Generated media studio caches.
 media/cache/
 media/runs/
+media/studio-runs/
 
 # Local Arbiter config scratchspace. Generated configs may contain
 # credentials or host-specific settings and should not be committed.

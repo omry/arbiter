@@ -318,9 +318,21 @@ edit_requirements() {
 }
 
 bundle_list_roots() {
+  local repo_root=""
+  local line
+
   require_file "$requirements_file"
   validate_requirements_file "$requirements_file"
-  awk '
+  repo_root="$(find_repo_root 2>/dev/null || true)"
+
+  while IFS= read -r line; do
+    printf 'root\t%s' "$line"
+    if bundle_root_requirement_is_local "$line" "$repo_root"; then
+      printf '\tlocal'
+    fi
+    printf '\n'
+  done < <(
+    awk '
     {
       line = $0
       sub(/^[[:space:]]+/, "", line)
@@ -329,9 +341,31 @@ bundle_list_roots() {
       if (line == "") {
         next
       }
-      printf "root\t%s\n", line
+      print line
     }
   ' "$requirements_file"
+  )
+}
+
+bundle_root_requirement_is_local() {
+  local requirement="$1"
+  local repo_root="$2"
+  local package_name
+  local package_base
+  local source_dir
+
+  case "$requirement" in
+    /source/arbiter|/source/arbiter/*|/wheels/*.whl)
+      return 0
+      ;;
+  esac
+
+  [[ -n "$repo_root" ]] || return 1
+  [[ "$requirement" != /* ]] || return 1
+  package_name="${requirement%%==*}"
+  package_base="${package_name%%[*}"
+  source_dir="$(repo_source_dir_for_package "$package_base")"
+  [[ -n "$source_dir" && -f "$repo_root/$source_dir/pyproject.toml" ]]
 }
 
 bundle_list_all() {
@@ -1109,6 +1143,7 @@ repo_source_dir_for_package() {
       printf 'meta/arbiter-suite\n'
       ;;
   esac
+  [[ -f "$bundle_plugins_file" ]] || return 0
   awk -F '\t' -v package="$package" '
     $0 == "" || $1 ~ /^#/ {
       next
@@ -1880,12 +1915,19 @@ test_server_url() {
     fi
     sleep 1
   done
-  rm -f "$output_file"
   printf ' '
   doctor_prefix 31 "✘"
   printf ' Server test: '
   doctor_prefix 94 "$url"
   printf '\n'
+  printf '       command: ARBITER_URL=%s %s info server\n' "$url" "$client_command" >&2
+  printf '       last client output:\n' >&2
+  if [[ -s "$output_file" ]]; then
+    sed 's/^/       /' "$output_file" >&2
+  else
+    printf '       <empty>\n' >&2
+  fi
+  rm -f "$output_file"
   return 1
 }
 
@@ -2270,7 +2312,7 @@ docker_subnet_conflict() {
     network_name="${network_line%% *}"
     network_subnets="${network_line#* }"
     [[ "$network_subnets" != "$network_line" ]] || continue
-    [[ "$network_name" != "$configured_network" ]] || continue
+    [[ "$network_name" == "$configured_network" ]] && continue
     for network_subnet in $network_subnets; do
       [[ "$network_subnet" == */* ]] || continue
       if cidr_overlaps "$candidate_subnet" "$network_subnet"; then
@@ -3491,7 +3533,7 @@ doctor_check_docker_network_subnet() {
     network_name="${network_line%% *}"
     network_subnets="${network_line#* }"
     [[ "$network_subnets" != "$network_line" ]] || continue
-    [[ "$network_name" != "$configured_network" ]] || continue
+    [[ "$network_name" == "$configured_network" ]] && continue
     for network_subnet in $network_subnets; do
       [[ "$network_subnet" == */* ]] || continue
       if cidr_overlaps "$configured_subnet" "$network_subnet"; then

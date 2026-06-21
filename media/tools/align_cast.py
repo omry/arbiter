@@ -349,7 +349,9 @@ def run_tool_from_hydra_cfg(cfg: DictConfig) -> int:
     try:
         config = container_from_hydra_cfg(cfg)
         spec = load_recording_spec_from_hydra_cfg(cfg)
-        action = config.get("action", "align")
+        action = config.get("step") or config.get("action", "align")
+        if action == "build":
+            action = "align"
         if action not in {"align", "check"}:
             raise AlignmentError("action must be 'align' or 'check'")
         cast_override = config.get("cast")

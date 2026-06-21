@@ -28,6 +28,7 @@ from studio_config import (
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+PROMPT_MATCH_TOLERANCE_SECONDS = 0.4
 
 
 class RetimeError(RuntimeError):
@@ -113,6 +114,47 @@ def output_path_from_manifest(spec: dict[str, Any], cast_path: Path) -> Path:
     if isinstance(retimed, str) and retimed:
         return relative_path(retimed)
     return cast_path.with_name(f"{cast_path.stem}.retimed{cast_path.suffix}")
+
+
+def audio_metadata_path_from_manifest(spec: dict[str, Any]) -> Path | None:
+    outputs = as_mapping(spec.get("outputs"))
+    configured = outputs.get("audio_metadata")
+    if configured is not None:
+        if not isinstance(configured, str) or not configured:
+            raise RetimeError("recording config outputs.audio_metadata must be a string")
+        return relative_path(configured)
+    audio = outputs.get("audio")
+    if isinstance(audio, str) and audio:
+        return relative_path(audio).with_suffix(".json")
+    return None
+
+
+def read_audio_segment_durations(path: Path | None) -> dict[str, float]:
+    if path is None or not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise RetimeError(f"invalid audio metadata JSON: {path}") from exc
+    if not isinstance(payload, dict):
+        raise RetimeError(f"audio metadata must be a mapping: {path}")
+    segments = payload.get("segments")
+    if not isinstance(segments, list):
+        raise RetimeError(f"audio metadata missing segments list: {path}")
+    durations: dict[str, float] = {}
+    for index, segment in enumerate(segments):
+        if not isinstance(segment, dict):
+            raise RetimeError(f"audio metadata segment must be a mapping: {path}:{index}")
+        segment_id = segment.get("id")
+        duration = segment.get("duration")
+        if not isinstance(segment_id, str) or not segment_id:
+            raise RetimeError(f"audio metadata segment missing id: {path}:{index}")
+        if not isinstance(duration, (int, float)) or duration < 0:
+            raise RetimeError(
+                f"audio metadata segment {segment_id!r} has invalid duration"
+            )
+        durations[segment_id] = float(duration)
+    return durations
 
 
 def require_number(mapping: dict[str, Any], key: str, default: float) -> float:
@@ -291,16 +333,128 @@ def tokenize_terminal_payload(payload: str) -> list[str]:
     return [token for token in tokens if token]
 
 
-def prompt_events_for_interval(
-    events: list[CastEvent], interval: TimelineInterval
+def plain_terminal_text(payload: str) -> str:
+    return ANSI_RE.sub("", payload).replace("\r", "")
+
+
+def normalized_command_text(text: str) -> str:
+    lines: list[str] = []
+    for line in plain_terminal_text(text).splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith("$"):
+            stripped = stripped[1:].lstrip()
+        if stripped:
+            lines.append(stripped)
+    return "\n".join(lines)
+
+
+def candidate_prompt_events_for_command(
+    events: list[CastEvent],
+    *,
+    start: float,
+    end: float,
+    command: str,
 ) -> list[CastEvent]:
-    return [
+    if not command:
+        return []
+    normalized_command = normalized_command_text(command)
+    window = [
         event
         for event in events
         if event.event_type == "o"
         and isinstance(event.payload, str)
-        and interval.start <= event.absolute_time <= interval.end
+        and start <= event.absolute_time <= end
     ]
+
+    def with_trailing_prompt_events(
+        candidate: list[CastEvent],
+        *,
+        last_index: int,
+    ) -> list[CastEvent]:
+        extended = list(candidate)
+        for trailing_event in window[last_index + 1 :]:
+            trailing_plain = plain_terminal_text(trailing_event.payload)
+            if trailing_plain.lstrip().startswith("$") or trailing_plain.strip():
+                break
+            extended.append(trailing_event)
+        return extended
+
+    for index, event in enumerate(window):
+        plain = plain_terminal_text(event.payload)
+        if not plain.lstrip().startswith("$"):
+            continue
+        candidate = [event]
+        combined = plain
+        if normalized_command in normalized_command_text(combined):
+            return with_trailing_prompt_events(candidate, last_index=index)
+        for next_index, next_event in enumerate(window[index + 1 :], start=index + 1):
+            next_plain = plain_terminal_text(next_event.payload)
+            next_combined = combined + next_plain
+            next_normalized = normalized_command_text(next_combined)
+            if next_plain.lstrip().startswith("$"):
+                current_normalized = normalized_command_text(combined)
+                if current_normalized and not normalized_command.startswith(
+                    current_normalized + "\n"
+                ):
+                    break
+                candidate.append(next_event)
+                combined = next_combined
+                if normalized_command in next_normalized:
+                    return with_trailing_prompt_events(
+                        candidate,
+                        last_index=next_index,
+                    )
+                continue
+            if next_plain.strip() and not (
+                normalized_command.startswith(next_normalized)
+                or normalized_command in next_normalized
+            ):
+                break
+            candidate.append(next_event)
+            combined = next_combined
+            if normalized_command in next_normalized:
+                return with_trailing_prompt_events(candidate, last_index=next_index)
+    return []
+
+
+def prompt_events_for_interval(
+    events: list[CastEvent], interval: TimelineInterval
+) -> list[CastEvent]:
+    start = interval.start - PROMPT_MATCH_TOLERANCE_SECONDS
+    end = interval.end + PROMPT_MATCH_TOLERANCE_SECONDS
+    command = str(interval.start_event.get("command", "")).strip()
+    command_matched = candidate_prompt_events_for_command(
+        events,
+        start=start,
+        end=end,
+        command=command,
+    )
+    if command_matched:
+        return command_matched
+    if command:
+        return []
+
+    matched: list[CastEvent] = []
+    collecting = False
+    for event in events:
+        if event.event_type != "o" or not isinstance(event.payload, str):
+            continue
+        if event.absolute_time < start:
+            continue
+        if event.absolute_time > end:
+            if collecting:
+                break
+            continue
+        plain = plain_terminal_text(event.payload)
+        if not collecting:
+            if plain.lstrip().startswith("$"):
+                collecting = True
+                matched.append(event)
+            continue
+        if plain.strip():
+            break
+        matched.append(event)
+    return matched
 
 
 def shifted_time(
@@ -320,10 +474,48 @@ def shift_before(timestamp: float, insertions: list[tuple[float, float]]) -> flo
     return sum(amount for anchor, amount in insertions if anchor < timestamp)
 
 
+def inserted_duration_within(
+    insertions: list[tuple[float, float]],
+    *,
+    start: float,
+    end: float,
+) -> float:
+    return sum(amount for anchor, amount in insertions if start < anchor <= end)
+
+
+def add_audio_duration_insertions(
+    insertions: list[tuple[float, float]],
+    timeline: list[dict[str, Any]],
+    audio_durations: dict[str, float],
+) -> None:
+    if not audio_durations:
+        return
+    beat_intervals = pair_intervals(
+        timeline,
+        start_phase="beat_start",
+        end_phase="beat_end",
+    )
+    for interval in beat_intervals:
+        beat_id = str(interval.start_event.get("beat", ""))
+        desired = audio_durations.get(beat_id)
+        if desired is None:
+            continue
+        observed = max(0.0, interval.end - interval.start)
+        already_inserted = inserted_duration_within(
+            insertions,
+            start=interval.start,
+            end=interval.end,
+        )
+        insertion = max(0.0, desired - observed - already_inserted)
+        if insertion > 0:
+            insertions.append((interval.end, insertion))
+
+
 def retime_events(
     events: list[CastEvent],
     timeline: list[dict[str, Any]],
     rules: TimingRules,
+    audio_durations: dict[str, float] | None = None,
 ) -> list[ScheduledEvent]:
     prompt_intervals = pair_intervals(
         timeline,
@@ -345,8 +537,10 @@ def retime_events(
         prompt_events = prompt_events_for_interval(events, interval)
         if not prompt_events:
             continue
-        original_duration = max(0.0, interval.end - interval.start)
-        local_time = interval.start
+        prompt_start = prompt_events[0].absolute_time
+        prompt_end = prompt_events[-1].absolute_time
+        original_duration = max(0.0, prompt_end - prompt_start)
+        local_time = prompt_start
         replacement_order = prompt_events[0].index - 0.25
         for event in prompt_events:
             removed_event_indexes.add(event.index)
@@ -359,16 +553,16 @@ def retime_events(
                             event_type=event.event_type,
                             payload=token,
                         ),
-                        interval.start,
+                        prompt_start,
                     )
                 )
                 replacement_order += 0.0001
                 local_time += token_delay(token, rules)
-        typing_duration = max(0.0, local_time - interval.start)
+        typing_duration = max(0.0, local_time - prompt_start)
         extra_typing_time = max(0.0, typing_duration - original_duration)
         insertion = extra_typing_time + rules.post_enter_pause
         if insertion > 0:
-            insertions.append((interval.end, insertion))
+            insertions.append((prompt_end, insertion))
 
     for interval in run_intervals:
         if rules.post_command_pause > 0:
@@ -382,6 +576,8 @@ def retime_events(
         insertion = max(0.0, float(desired) - observed)
         if insertion > 0:
             insertions.append((interval.end, insertion))
+
+    add_audio_duration_insertions(insertions, timeline, audio_durations or {})
 
     insertions.sort()
     scheduled: list[ScheduledEvent] = []
@@ -399,8 +595,8 @@ def retime_events(
             )
         )
 
-    for event, prompt_start in replacements:
-        prior_shift = shift_before(prompt_start, insertions)
+    for event, prompt_anchor in replacements:
+        prior_shift = shift_before(prompt_anchor, insertions)
         scheduled.append(
             ScheduledEvent(
                 absolute_time=event.absolute_time + prior_shift,
@@ -433,12 +629,13 @@ def retime_cast(
     timeline_path: Path,
     output_path: Path,
     rules: TimingRules,
+    audio_durations: dict[str, float] | None = None,
 ) -> None:
     header, events = read_cast(cast_path)
     timeline = read_timeline(timeline_path)
     if not events:
         raise RetimeError(f"cast contains no events: {cast_path}")
-    scheduled = retime_events(events, timeline, rules)
+    scheduled = retime_events(events, timeline, rules, audio_durations)
     write_cast(output_path, header, scheduled)
 
 
@@ -446,7 +643,9 @@ def run_tool_from_hydra_cfg(cfg: DictConfig) -> int:
     try:
         config = container_from_hydra_cfg(cfg)
         spec = load_recording_spec_from_hydra_cfg(cfg)
-        action = config.get("action", "retime")
+        action = config.get("step") or config.get("action", "retime")
+        if action == "build":
+            action = "retime"
         if action not in {"retime", "check"}:
             raise RetimeError("action must be 'retime' or 'check'")
         cast_override = config.get("cast")
@@ -474,6 +673,8 @@ def run_tool_from_hydra_cfg(cfg: DictConfig) -> int:
             if output_override
             else output_path_from_manifest(spec, cast_path)
         )
+        audio_metadata_path = audio_metadata_path_from_manifest(spec)
+        audio_durations = read_audio_segment_durations(audio_metadata_path)
         rules = timing_rules_from_manifest(spec)
         header, events = read_cast(cast_path)
         timeline = read_timeline(timeline_path)
@@ -487,10 +688,11 @@ def run_tool_from_hydra_cfg(cfg: DictConfig) -> int:
                 f"{spec['_recording_id']} retime "
                 f"cast={display_path(cast_path)} "
                 f"timeline={display_path(timeline_path)} "
-                f"output={display_path(output_path)}"
+                f"output={display_path(output_path)} "
+                f"audio_segments={len(audio_durations)}"
             )
             return 0
-        scheduled = retime_events(events, timeline, rules)
+        scheduled = retime_events(events, timeline, rules, audio_durations)
         write_cast(output_path, header, scheduled)
         print(f"wrote {display_path(output_path)}")
         return 0

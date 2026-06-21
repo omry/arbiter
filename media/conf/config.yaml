@@ -3,20 +3,30 @@ defaults:
   - profile: release
   - package_source: pypi_latest
   - recording: install-and-bootstrap
+  - optional narration: ${recording}
   - _self_
 
-action: record
+action: build
+step: null
+output_format: text
+load_env_file: true
+env_file: .env
+env_override: false
 output: null
 cast: null
 timeline: null
+surface: null
+dry_run: false
 headed: false
 force: false
 timestamps: false
 allow_mismatch: false
 run_id: null
+runs_since: null
+runs_limit: 10
 
 hydra:
   run:
-    dir: media/runs/${recording.id}/${now:%Y%m%d-%H%M%S}
+    dir: ${studio_run_dir:${action},${step},${dry_run},${recording.id},${now:%Y%m%d-%H%M%S}}
   job:
     chdir: false

@@ -43,6 +43,7 @@ class MailboxStore:
         self._folders: dict[str, list[StoredMessage]] = {
             "INBOX": [],
             "Sent": [],
+            "Trash": [],
         }
 
     def folders(self) -> list[str]:

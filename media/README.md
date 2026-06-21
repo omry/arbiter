@@ -14,9 +14,21 @@ notice. Generated artifacts such as asciinema casts, rendered images, audio
 tracks, captions, and transcripts should be outputs from that script, not the
 source of truth.
 
+The studio vocabulary is:
+
+- scene: a complete recording or a large chapter, such as "Install Arbiter
+  Server"
+- beat: one uninterrupted narrated unit inside a scene
+- action: visible terminal work inside a beat
+- guide: an optional follow-along checkpoint for the viewer
+- setup: hidden preparation work before the visible scene starts
+- cleanup: hidden teardown work that runs when the scene exits, including after
+  failures
+- segment: generated audio or timing data derived from a beat
+
 The durable source should describe separate tracks:
 
-- terminal actions: commands, expected output beats, waits, and cleanup
+- terminal actions: commands, expected output events, waits, and cleanup
 - narration: spoken text suitable for AI TTS generation
 - captions: concise on-screen explanation for silent playback
 - markers: chapter and sync points for the asciinema player
@@ -90,16 +102,136 @@ Verify the recorder before regenerating media:
 asciinema --version
 ```
 
-The local runner composes a Hydra config from `media/conf/`:
+The `studio` frontend composes a Hydra config from `media/conf/` and is the
+single entry point for normal recording work:
 
 ```bash
-media/tools/record.py recording=install-and-bootstrap action=check
-media/tools/record.py recording=install-and-bootstrap package_source.version=0.9.2.dev1
-media/tools/record.py recording=install-and-bootstrap package_source=local profile=local-dev
+media/tools/studio recording=install-and-bootstrap
+media/tools/studio recording=install-and-bootstrap action=check
+media/tools/studio recording=install-and-bootstrap action=build
+media/tools/studio recording=install-and-bootstrap action=build dry_run=true
+media/tools/studio recording=install-and-bootstrap step=record package_source.version=0.9.2.dev1
+media/tools/studio recording=install-and-bootstrap step=record package_source=local profile=local-dev
 ```
 
-Hydra creates a per-run output directory from `hydra.run.dir`. The recorder uses
-that output directory for per-run operator workspace, mail-lab state, logs, and
+`action=build` runs the normal end-to-end production chain:
+`sync_narration`, `record`, `audio_generate`, `audio_publish`, `retime`, and
+publish the selected surface.
+Use `dry_run=true` to print the Makefile-style build graph and concrete
+inputs/outputs without running recording, TTS, publishing, or retiming.
+Individual steps are available through the same frontend for iteration and
+postmortem work.
+
+Recording manifests can declare hidden setup and cleanup directives. Setup
+prepares per-scene resources such as operator environments or local services.
+Cleanup tears down resources owned by that scene, such as Docker staging
+deployments, even when the visible recording fails. Cleanup output is captured
+in the run directory for postmortem inspection instead of being shown in the
+cast.
+
+The recording config declares publish surfaces. The default surface is what
+plain `action=build` produces; override it with `surface=<name>` when you want
+another output:
+
+```yaml
+publish:
+  default: docusaurus
+  surfaces:
+    docusaurus:
+      type: docusaurus_mdx
+      file: website/docs/media/terminal-recordings.mdx
+      placeholder: install-and-bootstrap
+      component: TerminalCast
+      intro_segment: overview
+
+    plain_html:
+      type: plain_html
+      file: website/static/media/terminal-recordings.html
+      placeholder: install-and-bootstrap
+      intro_segment: overview
+
+    standalone_html:
+      type: standalone_html
+      file: website/static/casts/install-and-bootstrap.html
+      intro_segment: overview
+```
+
+Holder-based surfaces replace only the marked region and leave the rest of the
+target file human-owned:
+
+```md
+<!-- studio:install-and-bootstrap:start -->
+generated embed goes here
+<!-- studio:install-and-bootstrap:end -->
+```
+
+Supported surface types:
+
+- `docusaurus_mdx`: replaces a holder in a Docusaurus `.md` or `.mdx` page
+  with a Docusaurus component, currently `TerminalCast`.
+- `plain_html`: replaces a holder in an HTML page with an iframe fragment
+  pointing at the static cast player.
+- `standalone_html`: writes a disposable full HTML example page.
+
+Artifact generation follows this state machine:
+
+```mermaid
+flowchart LR
+    subgraph Studio["Studio artifact generation"]
+        direction LR
+
+        subgraph Source["Source extraction"]
+            direction LR
+            Markdown["Scene.md<br/>prose + studio-directive blocks"]
+            YAML["Scene.yaml<br/>generated narration, beats, source hash"]
+        end
+
+        subgraph Terminal["Terminal track"]
+            direction LR
+            Baseline["Baseline cast<br/>recorded terminal session"]
+            Retimed["Retimed cast<br/>watchable presentation timing"]
+        end
+
+        subgraph Voiceover["Voiceover track"]
+            direction LR
+            Missing["Missing audio<br/>new cache key"]
+            AudioFragments["Audio fragments<br/>one generated file per beat"]
+        end
+
+        subgraph Output["Published output"]
+            Surface["Publish surface<br/>Docusaurus MDX or HTML"]
+        end
+
+        Markdown -->|extract directives| YAML
+        YAML -->|record| Baseline
+        Baseline -->|retime base| Retimed
+
+        YAML -->|audio_generate| AudioFragments
+        AudioFragments -->|timing input| Retimed
+        AudioFragments -->|audio_publish| Surface
+        Retimed -->|publish_surface| Surface
+
+        YAML -. changed narration .-> Missing
+        Missing -. audio_generate .-> AudioFragments
+    end
+
+    style Studio fill:#1f2335,stroke:#8be9fd,stroke-width:2px,color:#f8f8f2
+    style Source fill:#282a36,stroke:#6272a4,color:#f8f8f2
+    style Terminal fill:#282a36,stroke:#6272a4,color:#f8f8f2
+    style Voiceover fill:#282a36,stroke:#6272a4,color:#f8f8f2
+    style Output fill:#282a36,stroke:#6272a4,color:#f8f8f2
+```
+
+Editing `studio-directive` blocks in `Scene.md` makes `Scene.yaml` stale; run
+`step=sync_narration` to regenerate it before producing cast or audio
+artifacts.
+
+Hydra creates a per-job output directory from `hydra.run.dir`. Jobs that
+produce or preserve a terminal recording use `media/runs/<scene>/<run-id>/`.
+Helper jobs such as `inspect`, `output`, `play`, `runs`, `check`, and build dry
+runs use `media/studio-runs/<action>/<scene>/<run-id>/` so they do not pollute
+the preserved recording history. The recorder uses the real recording output
+directory for per-run operator workspace, mail-lab state, logs, and
 intermediate files. Finished casts and timeline sidecars are swapped into the
 website output path only after the recording completes successfully.
 
@@ -114,35 +246,51 @@ subshell in the operator workspace with the recording's operator virtualenv
 activated:
 
 ```bash
-media/tools/record.py recording=install-and-bootstrap action=inspect run_id=<run-id>
+media/tools/studio recording=install-and-bootstrap action=inspect run_id=<run-id>
+```
+
+For PyPI-backed recordings, the operator virtualenv is cached under
+`media/cache/operator-venvs/` by resolved package requirement and Python
+version. A run keeps a small `operator-venv` symlink for postmortem shells
+instead of storing a fresh copy of the installed environment every time.
+
+List the latest preserved recording jobs with their scene id, age, result,
+successful cast length, or failure reason. The default is the latest 10
+completed jobs; override by count, by age, or both:
+
+```bash
+media/tools/studio action=runs
+media/tools/studio recording=install-and-bootstrap action=runs
+media/tools/studio action=runs runs_limit=25
+media/tools/studio action=runs runs_since=30m
 ```
 
 Use the play action without a run id to replay the newest preserved run cast
 across all recordings:
 
 ```bash
-media/tools/record.py action=play
+media/tools/studio action=play
 ```
 
 Pass a run id to replay a specific preserved run cast. The recording id is
 deduced from the run id unless the run id is ambiguous across recordings:
 
 ```bash
-media/tools/record.py action=play run_id=<run-id>
+media/tools/studio action=play run_id=<run-id>
 ```
 
-Pass an explicit recording id without a run id to play that recording's
-configured output cast:
+Pass an explicit recording id without a run id to play the newest preserved
+run cast for that scene:
 
 ```bash
-media/tools/record.py recording=install-and-bootstrap action=play
+media/tools/studio recording=install-and-bootstrap action=play
 ```
 
 Use the output action to review the captured failure output. It opens a pager in
 an interactive terminal and streams the output otherwise:
 
 ```bash
-media/tools/record.py recording=install-and-bootstrap action=output run_id=<run-id>
+media/tools/studio recording=install-and-bootstrap action=output run_id=<run-id>
 ```
 
 The recorder produces the baseline cast and a `.timeline.jsonl` sidecar. For
@@ -150,14 +298,16 @@ release media, prefer a fast baseline capture and then generate the watchable
 presentation timing as a separate step:
 
 ```bash
-media/tools/retime_cast.py recording=install-and-bootstrap action=check
-media/tools/retime_cast.py recording=install-and-bootstrap action=retime
+media/tools/studio recording=install-and-bootstrap step=retime_check
+media/tools/studio recording=install-and-bootstrap step=retime
 ```
 
 The retimer uses visible timeline markers to synthesize command typing, insert
 short pauses after Enter and command output, and restore recording viewer holds.
-Future audio timing can add the same kind of pause constraints from narration
-durations without rerunning the terminal workflow.
+When published audio metadata exists, the retimer also uses narration segment
+durations as minimum beat durations. A narration timing change can therefore be
+handled by regenerating audio and rerunning retime, without rerecording the
+terminal workflow.
 
 Run the recorder with the Python environment that should drive the recording.
 The session prepends that Python's `bin` directory to `PATH`, so a dedicated
@@ -173,7 +323,7 @@ The alignment proof-of-concept compares a finished cast back to its config by
 matching visible captions and command lines:
 
 ```bash
-media/tools/align_cast.py recording=install-and-bootstrap action=align
+media/tools/studio recording=install-and-bootstrap step=align
 ```
 
 Treat alignment as a review gate. If the command reports misalignment, stop and
@@ -211,26 +361,67 @@ Before writing a cast into the website tree, the recorder normalizes public cast
 metadata so local checkout paths and shell names do not ship in the asciinema
 header.
 
-The audio generator reads narration blocks from the movie script, combines them
-with the recording config's `audio` settings, and writes cached TTS segments:
+The Markdown movie script is the authoring source of truth for narration.
+Machine-readable script fields must live inside fenced `studio-directive` YAML
+blocks. Everything outside those blocks is human prose. The blocks may be split
+for readability, or combined into one larger directive block; the tooling treats
+them as one logical directive stream.
+
+Each narrated beat must include a stable beat id, heading, and narration:
+
+````markdown
+### Bootstrap Docker Staging Directory
+
+```studio-directive
+beat:
+  id: init-staging
+  heading: Bootstrap Docker Staging Directory
+  narration: >-
+    Start by bootstrapping a Docker staging directory.
+```
+````
+
+Before generating audio, sync narration from the script into a generated Hydra
+config group:
 
 ```bash
-media/tools/audio.py recording=install-and-bootstrap action=check
-media/tools/audio.py recording=install-and-bootstrap action=dry_run
-media/tools/audio.py recording=install-and-bootstrap action=generate
+media/tools/studio recording=install-and-bootstrap step=sync_narration
 ```
 
-Use `action=check` to validate the script and config without contacting
-the TTS provider. Use `action=dry_run` to inspect the segment cache keys
-and output paths.
-The final command calls the configured provider and requires the environment
-variable named by the recording config, for example
-`OPENAI_ARBITER_CINEMA_AUDIO_API_KEY`.
+The generated file lives under `media/conf/narration/` and is intentionally
+checked in so the resolved recording config contains the exact voiceover text
+used by the runtime tools. Do not edit generated narration YAML by hand; edit
+the Markdown script and rerun the sync action.
+
+The audio generator reads generated narration from the composed recording
+config, combines it with the recording config's `audio` settings, and writes
+cached TTS segments:
+
+```bash
+media/tools/studio recording=install-and-bootstrap step=sync_narration
+media/tools/studio recording=install-and-bootstrap step=audio_check
+media/tools/studio recording=install-and-bootstrap step=audio_dry_run
+media/tools/studio recording=install-and-bootstrap step=audio_generate
+media/tools/studio recording=install-and-bootstrap step=audio_publish
+```
+
+Use `step=audio_check` to validate the generated narration, source-script
+hash, and config without contacting the TTS provider. Use
+`step=audio_dry_run` to see a human-readable summary of cached, reusable, and
+missing voiceover segments. Add `output_format=json` only when a script needs
+the machine-readable plan.
+
+By default, Studio loads repo-root `.env` before running actions and does not
+override variables already present in the shell. Disable this with
+`load_env_file=false`, choose a different file with `env_file=path/to/.env`, or
+allow the file to replace existing values with `env_override=true`. Audio
+generation requires the environment variable named by the recording config, for
+example `OPENAI_ARBITER_CINEMA_AUDIO_API_KEY`.
 
 To also request transcription timestamps for generated audio, use:
 
 ```bash
-media/tools/audio.py recording=install-and-bootstrap action=generate timestamps=true
+media/tools/studio recording=install-and-bootstrap step=audio_generate timestamps=true
 ```
 
 The timestamp step writes `*.timeline.json` sidecars next to the cached audio
@@ -288,7 +479,7 @@ generation is requested without it.
 
 Keep TTS inputs committed as text. Generated audio may be committed only when it
 is intended to ship with the website. If narration is generated in segments,
-cache by script section text so minor script edits do not require regenerating
+cache by beat narration text so minor script edits do not require regenerating
 unchanged audio.
 
 Cache generated audio by a stable hash of the normalized audio script segment
@@ -374,11 +565,13 @@ media/
   tools/                    # local studio runners and generators
 ```
 
-Hydra run directories under `media/runs/` are per-run scratch space, not
-published assets. Future tooling can add directories for generated command
-files, TTS inputs, caption manifests, or render manifests. Finished website
-assets should still land under `website/static/`, and published documentation
-should still live under `website/docs/`.
+Hydra job directories under `media/runs/` and `media/studio-runs/` are scratch
+space, not published assets. `media/runs/` is reserved for preserved recording
+jobs; `media/studio-runs/` is for helper invocations that should not appear in
+the recording job list. Future tooling can add directories for generated
+command files, TTS inputs, caption manifests, or render manifests. Finished
+website assets should still land under `website/static/`, and published
+documentation should still live under `website/docs/`.
 
 ## Initial Production
 

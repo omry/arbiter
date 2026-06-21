@@ -7,7 +7,11 @@ import json
 import mimetypes
 import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
+import textwrap
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -20,12 +24,14 @@ if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
 import hydra
+import yaml
 from omegaconf import DictConfig
 
 from studio_config import (
     CONFIG_DIR,
     StudioConfigError,
     container_from_hydra_cfg,
+    load_configured_env_file,
     load_recording_spec,
     load_recording_spec_from_hydra_cfg,
 )
@@ -49,6 +55,12 @@ class NarrationSegment:
     segment_id: str
     heading: str
     text: str
+
+
+@dataclass(frozen=True)
+class ScriptNarration:
+    scene_title: str
+    segments: list[NarrationSegment]
 
 
 @dataclass(frozen=True)
@@ -107,66 +119,122 @@ def relative_path(path: str) -> Path:
     return REPO_ROOT / candidate
 
 
-def slugify(text: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
-    return slug or "segment"
-
-
 def normalize_narration_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def strip_wrapping_quotes(text: str) -> str:
-    text = text.strip()
-    if len(text) >= 2 and text[0] == '"' and text[-1] == '"':
-        return text[1:-1].strip()
-    return text
-
-
-def extract_narration_segments(script_text: str) -> list[NarrationSegment]:
-    segments: list[NarrationSegment] = []
-    heading = "intro"
-    heading_counts: dict[str, int] = {}
+def studio_directive_blocks(script_text: str) -> list[dict[str, Any]]:
+    blocks: list[dict[str, Any]] = []
     lines = script_text.splitlines()
     index = 0
     while index < len(lines):
         stripped = lines[index].strip()
-        heading_match = re.fullmatch(r"#{1,6}\s+(.+)", stripped)
-        if heading_match:
-            heading = heading_match.group(1).strip()
+        if stripped not in {"```studio-directive", "```studio-directive yaml"}:
             index += 1
             continue
-        if stripped != "Narration:":
-            index += 1
-            continue
-
+        start_line = index + 1
         index += 1
-        while index < len(lines) and not lines[index].strip():
+        block_lines: list[str] = []
+        while index < len(lines) and lines[index].strip() != "```":
+            block_lines.append(lines[index])
             index += 1
-        block: list[str] = []
-        while index < len(lines):
-            candidate = lines[index]
-            candidate_stripped = candidate.strip()
-            if not candidate_stripped:
-                break
-            if candidate_stripped.startswith("```"):
-                break
-            if candidate_stripped.endswith(":") and not block:
-                break
-            block.append(candidate_stripped)
-            index += 1
-            if len(block) > 1 and block[0].startswith('"') and block[-1].endswith('"'):
-                break
-        text = normalize_narration_text(strip_wrapping_quotes(" ".join(block)))
-        if text:
-            base_id = slugify(heading)
-            heading_counts[base_id] = heading_counts.get(base_id, 0) + 1
-            suffix = heading_counts[base_id]
-            segment_id = base_id if suffix == 1 else f"{base_id}-{suffix}"
-            segments.append(
-                NarrationSegment(segment_id=segment_id, heading=heading, text=text)
+        if index >= len(lines):
+            raise AudioError(
+                f"studio-directive block starting on line {start_line} is not closed"
             )
-    return segments
+        text = "\n".join(block_lines).strip()
+        if text:
+            try:
+                value = yaml.safe_load(text)
+            except yaml.YAMLError as exc:
+                raise AudioError(
+                    f"invalid studio-directive YAML near line {start_line}: {exc}"
+                ) from exc
+            if not isinstance(value, dict):
+                raise AudioError(
+                    f"studio-directive block near line {start_line} must be a mapping"
+                )
+            blocks.append(value)
+        index += 1
+    return blocks
+
+
+def scene_title_from_directive(value: object) -> str:
+    if isinstance(value, str):
+        title = value.strip()
+    elif isinstance(value, dict):
+        title_value = value.get("title")
+        title = title_value.strip() if isinstance(title_value, str) else ""
+    else:
+        title = ""
+    if not title:
+        raise AudioError("studio-directive scene must define a non-empty title")
+    return title
+
+
+def beat_from_directive(value: object) -> NarrationSegment:
+    if not isinstance(value, dict):
+        raise AudioError("studio-directive beat must be a mapping")
+    segment_id = value.get("id")
+    heading = value.get("heading")
+    narration = value.get("narration")
+    if not isinstance(segment_id, str) or not segment_id.strip():
+        raise AudioError("studio-directive beat.id must be a non-empty string")
+    if not isinstance(heading, str) or not heading.strip():
+        raise AudioError("studio-directive beat.heading must be a non-empty string")
+    if not isinstance(narration, str) or not narration.strip():
+        raise AudioError("studio-directive beat.narration must be a non-empty string")
+    return NarrationSegment(
+        segment_id=segment_id.strip(),
+        heading=heading.strip(),
+        text=normalize_narration_text(narration),
+    )
+
+
+def beat_values_from_directive(block: dict[str, Any]) -> list[object]:
+    values: list[object] = []
+    if "beat" in block:
+        values.append(block["beat"])
+    if "beats" in block:
+        beats = block["beats"]
+        if not isinstance(beats, list):
+            raise AudioError("studio-directive beats must be a list")
+        values.extend(beats)
+    return values
+
+
+def extract_directive_narration(script_text: str) -> ScriptNarration:
+    scene_title = ""
+    segments: list[NarrationSegment] = []
+    seen_ids: set[str] = set()
+    for block in studio_directive_blocks(script_text):
+        if "scene" in block:
+            if scene_title:
+                raise AudioError("duplicate studio-directive scene")
+            scene_title = scene_title_from_directive(block["scene"])
+        for beat_value in beat_values_from_directive(block):
+            segment = beat_from_directive(beat_value)
+            if segment.segment_id in seen_ids:
+                raise AudioError(f"duplicate narration beat id: {segment.segment_id}")
+            seen_ids.add(segment.segment_id)
+            segments.append(segment)
+    return ScriptNarration(scene_title=scene_title, segments=segments)
+
+
+def extract_script_narration(script_text: str) -> ScriptNarration:
+    script_narration = extract_directive_narration(script_text)
+    if script_narration.scene_title or script_narration.segments:
+        return script_narration
+    if re.search(r"(?m)^(Scene:|Beat: `|Narration:)", script_text):
+        raise AudioError(
+            "machine-readable script fields must be inside "
+            "```studio-directive``` blocks"
+        )
+    return script_narration
+
+
+def extract_narration_segments(script_text: str) -> list[NarrationSegment]:
+    return extract_script_narration(script_text).segments
 
 
 def audio_settings(spec: dict[str, Any]) -> AudioSettings:
@@ -242,13 +310,151 @@ def script_path_from_manifest(spec: dict[str, Any]) -> Path:
     return relative_path(script)
 
 
-def load_narration_segments(spec: dict[str, Any]) -> list[NarrationSegment]:
+def sha256_file(path: Path) -> str:
+    return sha256(path.read_bytes()).hexdigest()
+
+
+def narration_config_path(recording_id: str) -> Path:
+    return CONFIG_DIR / "narration" / f"{recording_id}.yaml"
+
+
+def yaml_block_scalar(text: str, *, indent: int) -> str:
+    prefix = " " * indent
+    wrapped = textwrap.wrap(text, width=78 - indent) or [""]
+    return "\n".join(f"{prefix}{line}" for line in wrapped)
+
+
+def narration_yaml_text(
+    recording_id: str,
+    script_path: Path,
+    source_digest: str,
+    script_narration: ScriptNarration,
+) -> str:
+    lines = [
+        "# @package narration",
+        "# Generated by media/tools/audio.py action=sync_narration.",
+        "# Source of truth: edit the Markdown script, then rerun the sync action.",
+        "",
+        f"source_script: {json.dumps(display_path(script_path))}",
+        f"source_sha256: {json.dumps(source_digest)}",
+        "generated: true",
+        "scene:",
+        f"  id: {json.dumps(recording_id)}",
+        f"  title: {json.dumps(script_narration.scene_title)}",
+        "beats:",
+    ]
+    for segment in script_narration.segments:
+        lines.extend(
+            [
+                f"  - id: {json.dumps(segment.segment_id)}",
+                f"    heading: {json.dumps(segment.heading)}",
+                "    text: >-",
+                yaml_block_scalar(segment.text, indent=6),
+            ]
+        )
+    return "\n".join(lines) + "\n"
+
+
+def recording_beat_ids(spec: dict[str, Any]) -> list[str]:
+    beats = spec.get("beats")
+    if not isinstance(beats, list):
+        return []
+    ids: list[str] = []
+    for beat in beats:
+        if isinstance(beat, dict) and isinstance(beat.get("id"), str):
+            ids.append(beat["id"])
+    return ids
+
+
+def validate_script_narration_against_recording(
+    script_narration: ScriptNarration,
+    spec: dict[str, Any],
+) -> None:
+    known = {"overview", *recording_beat_ids(spec)}
+    missing = [
+        segment.segment_id
+        for segment in script_narration.segments
+        if segment.segment_id not in known
+    ]
+    if missing:
+        raise AudioError(
+            "narration script references unknown beat id(s): " + ", ".join(missing)
+        )
+
+
+def sync_narration_config(spec: dict[str, Any], *, output_path: Path | None = None) -> Path:
+    recording_id = require_string(spec, "_recording_id", field="recording")
     script_path = script_path_from_manifest(spec)
     if not script_path.exists():
         raise AudioError(f"script not found: {script_path}")
-    segments = extract_narration_segments(script_path.read_text(encoding="utf-8"))
-    if not segments:
+    source_digest = sha256_file(script_path)
+    script_narration = extract_script_narration(script_path.read_text(encoding="utf-8"))
+    if not script_narration.segments:
         raise AudioError(f"no Narration blocks found in {script_path}")
+    validate_script_narration_against_recording(script_narration, spec)
+    target = output_path or narration_config_path(recording_id)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        narration_yaml_text(recording_id, script_path, source_digest, script_narration),
+        encoding="utf-8",
+    )
+    return target
+
+
+def narration_mapping_from_spec(spec: dict[str, Any]) -> dict[str, Any]:
+    narration = spec.get("narration")
+    if not isinstance(narration, dict) or not narration:
+        raise AudioError(
+            "recording narration config is missing; run "
+            "media/tools/audio.py action=sync_narration"
+        )
+    return narration
+
+
+def load_narration_segments(spec: dict[str, Any]) -> list[NarrationSegment]:
+    narration = narration_mapping_from_spec(spec)
+    source_script = narration.get("source_script")
+    source_digest = narration.get("source_sha256")
+    if isinstance(source_script, str) and isinstance(source_digest, str):
+        script_path = relative_path(source_script)
+        if not script_path.exists():
+            raise AudioError(f"narration source script not found: {source_script}")
+        actual_digest = sha256_file(script_path)
+        if actual_digest != source_digest:
+            raise AudioError(
+                "generated narration config is stale; run "
+                "media/tools/audio.py action=sync_narration"
+            )
+
+    beats = narration.get("beats")
+    if not isinstance(beats, list) or not beats:
+        raise AudioError("recording narration config must contain non-empty beats")
+    segments: list[NarrationSegment] = []
+    seen: set[str] = set()
+    for index, beat in enumerate(beats):
+        if not isinstance(beat, dict):
+            raise AudioError(f"narration.beats.{index} must be a mapping")
+        segment_id = beat.get("id")
+        heading = beat.get("heading")
+        text = beat.get("text")
+        if not isinstance(segment_id, str) or not segment_id:
+            raise AudioError(f"narration.beats.{index}.id must be a non-empty string")
+        if segment_id in seen:
+            raise AudioError(f"duplicate narration beat id: {segment_id}")
+        seen.add(segment_id)
+        if not isinstance(heading, str) or not heading:
+            raise AudioError(
+                f"narration.beats.{index}.heading must be a non-empty string"
+            )
+        if not isinstance(text, str) or not text.strip():
+            raise AudioError(f"narration.beats.{index}.text must be a non-empty string")
+        segments.append(
+            NarrationSegment(
+                segment_id=segment_id,
+                heading=heading,
+                text=normalize_narration_text(text),
+            )
+        )
     return segments
 
 
@@ -283,6 +489,15 @@ def plan_audio(
             )
         )
     return items
+
+
+def reusable_cache_path(item: AudioPlanItem, settings: AudioSettings) -> Path | None:
+    for candidate in item.output_path.parent.glob(
+        f"*-{item.cache_key}.{settings.format}"
+    ):
+        if candidate != item.output_path:
+            return candidate
+    return None
 
 
 def openai_speech_bytes(
@@ -344,6 +559,12 @@ def generate_audio(
             written.append(item.output_path)
             continue
         item.output_path.parent.mkdir(parents=True, exist_ok=True)
+        if not force:
+            existing = reusable_cache_path(item, settings)
+            if existing is not None:
+                shutil.copy2(existing, item.output_path)
+                written.append(item.output_path)
+                continue
         audio_bytes = synthesize(item.segment, settings)
         if not audio_bytes:
             raise AudioError(
@@ -352,6 +573,263 @@ def generate_audio(
         item.output_path.write_bytes(audio_bytes)
         written.append(item.output_path)
     return written
+
+
+def output_audio_path(
+    spec: dict[str, Any], recording_id: str, settings: AudioSettings
+) -> Path:
+    outputs = as_mapping(spec.get("outputs"), field="outputs")
+    configured = outputs.get("audio")
+    if configured is None:
+        return REPO_ROOT / "website" / "static" / "audio" / "casts" / (
+            f"{recording_id}.{settings.format}"
+        )
+    if not isinstance(configured, str) or not configured:
+        raise AudioError("outputs.audio must be a non-empty string")
+    return relative_path(configured)
+
+
+def output_audio_metadata_path(spec: dict[str, Any], output_path: Path) -> Path:
+    outputs = as_mapping(spec.get("outputs"), field="outputs")
+    configured = outputs.get("audio_metadata")
+    if configured is None:
+        return output_path.with_suffix(".json")
+    if not isinstance(configured, str) or not configured:
+        raise AudioError("outputs.audio_metadata must be a non-empty string")
+    return relative_path(configured)
+
+
+def ffmpeg_concat_file_entry(path: Path) -> str:
+    escaped = str(path).replace("'", "'\\''")
+    return f"file '{escaped}'\n"
+
+
+def publish_audio(
+    plan: list[AudioPlanItem],
+    output_path: Path,
+    *,
+    ffmpeg: str = "ffmpeg",
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> Path:
+    if not plan:
+        raise AudioError("no audio segments to publish")
+    for item in plan:
+        if not item.output_path.exists():
+            raise AudioError(
+                "audio segment is missing; run action=generate first: "
+                f"{display_path(item.output_path)}"
+            )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    concat_file = tempfile.NamedTemporaryFile(
+        "w", encoding="utf-8", suffix=".ffconcat", delete=False
+    )
+    concat_path = Path(concat_file.name)
+    try:
+        with concat_file:
+            for item in plan:
+                concat_file.write(ffmpeg_concat_file_entry(item.output_path))
+        result = run(
+            [
+                ffmpeg,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                str(concat_path),
+                "-c",
+                "copy",
+                str(output_path),
+            ],
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        concat_path.unlink(missing_ok=True)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        if not detail:
+            detail = f"exit code {result.returncode}"
+        raise AudioError(f"ffmpeg failed while publishing audio: {detail}")
+    return output_path
+
+
+def audio_duration_seconds(
+    path: Path,
+    *,
+    ffprobe: str = "ffprobe",
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> float:
+    result = run(
+        [
+            ffprobe,
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=nw=1:nk=1",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        if not detail:
+            detail = f"exit code {result.returncode}"
+        raise AudioError(f"ffprobe failed while reading audio duration: {detail}")
+    value = result.stdout.strip()
+    try:
+        duration = float(value)
+    except ValueError as exc:
+        raise AudioError(
+            f"ffprobe returned invalid duration for {path}: {value}"
+        ) from exc
+    if duration < 0:
+        raise AudioError(f"ffprobe returned negative duration for {path}: {value}")
+    return duration
+
+
+def audio_metadata_payload(
+    recording_id: str,
+    plan: list[AudioPlanItem],
+    output_path: Path,
+    *,
+    guide_by_segment_id: dict[str, dict[str, str]] | None = None,
+    ffprobe: str = "ffprobe",
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> dict[str, Any]:
+    offset = 0.0
+    segments: list[dict[str, Any]] = []
+    for item in plan:
+        duration = audio_duration_seconds(item.output_path, ffprobe=ffprobe, run=run)
+        segment = {
+            "id": item.segment.segment_id,
+            "heading": item.segment.heading,
+            "text": item.segment.text,
+            "audio": display_path(item.output_path),
+            "offset": round(offset, 3),
+            "duration": round(duration, 3),
+        }
+        if guide_by_segment_id and item.segment.segment_id in guide_by_segment_id:
+            segment["guide"] = guide_by_segment_id[item.segment.segment_id]
+        segments.append(segment)
+        offset += duration
+    return {
+        "recording": recording_id,
+        "audio": display_path(output_path),
+        "duration": round(
+            audio_duration_seconds(output_path, ffprobe=ffprobe, run=run),
+            3,
+        ),
+        "segments": segments,
+    }
+
+
+def guide_payload(value: object) -> dict[str, str] | None:
+    if not isinstance(value, dict):
+        return None
+    try_command = value.get("try_command")
+    if not isinstance(try_command, str) or not try_command.strip():
+        return None
+    payload = {"try_command": normalize_narration_text(try_command)}
+    success_hint = value.get("success_hint")
+    if isinstance(success_hint, str) and success_hint.strip():
+        payload["success_hint"] = normalize_narration_text(success_hint)
+    return payload
+
+
+def guide_by_segment_id_from_spec(
+    spec: dict[str, Any],
+    plan: list[AudioPlanItem],
+) -> dict[str, dict[str, str]]:
+    beats = spec.get("beats")
+    if not isinstance(beats, list) or not plan:
+        return {}
+    segment_offset = 1 if plan[0].segment.segment_id == "overview" else 0
+    guides: dict[str, dict[str, str]] = {}
+    for index, beat in enumerate(beats):
+        if not isinstance(beat, dict):
+            continue
+        segment_index = index + segment_offset
+        if segment_index >= len(plan):
+            break
+        guide = guide_payload(beat.get("guide"))
+        if guide is not None:
+            guides[plan[segment_index].segment.segment_id] = guide
+    return guides
+
+
+def format_browse_timestamp(seconds: float) -> str:
+    total_seconds = int(round(max(0.0, seconds)))
+    minutes, remainder = divmod(total_seconds, 60)
+    return f"{minutes:02d}m{remainder:02d}s"
+
+
+def refresh_ordered_audio_browse_links(
+    plan: list[AudioPlanItem],
+    segments: list[dict[str, Any]],
+    *,
+    browse_dir: Path | None = None,
+) -> Path | None:
+    if not plan:
+        return None
+    if len(plan) != len(segments):
+        raise AudioError("audio browse link count does not match audio plan")
+    target_dir = browse_dir or plan[0].output_path.parent / "ordered"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    for path in target_dir.iterdir():
+        if path.is_file() or path.is_symlink():
+            path.unlink()
+
+    for item, segment in zip(plan, segments, strict=True):
+        offset = segment.get("offset")
+        duration = segment.get("duration")
+        if not isinstance(offset, (int, float)) or not isinstance(
+            duration, (int, float)
+        ):
+            raise AudioError("audio metadata segment is missing numeric timing")
+        start = format_browse_timestamp(float(offset))
+        end = format_browse_timestamp(float(offset) + float(duration))
+        link = target_dir / f"{start}-{end}-{item.output_path.name}"
+        target = Path("..") / item.output_path.name
+        try:
+            link.symlink_to(target)
+        except OSError:
+            shutil.copy2(item.output_path, link)
+    return target_dir
+
+
+def publish_audio_metadata(
+    recording_id: str,
+    plan: list[AudioPlanItem],
+    output_path: Path,
+    metadata_path: Path,
+    *,
+    guide_by_segment_id: dict[str, dict[str, str]] | None = None,
+    ffprobe: str = "ffprobe",
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> Path:
+    payload = audio_metadata_payload(
+        recording_id,
+        plan,
+        output_path,
+        guide_by_segment_id=guide_by_segment_id,
+        ffprobe=ffprobe,
+        run=run,
+    )
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    refresh_ordered_audio_browse_links(plan, payload["segments"])
+    return metadata_path
 
 
 def multipart_escape(value: str) -> str:
@@ -520,43 +998,160 @@ def display_path(path: Path) -> str:
         return str(path)
 
 
-def print_plan(plan: list[AudioPlanItem]) -> None:
+def audio_plan_status(
+    item: AudioPlanItem,
+    settings: AudioSettings,
+) -> tuple[str, Path | None]:
+    if item.output_path.exists():
+        return "cached", None
+    reusable = reusable_cache_path(item, settings)
+    if reusable is not None:
+        return "reusable", reusable
+    return "missing", None
+
+
+def audio_plan_item_payload(
+    item: AudioPlanItem,
+    settings: AudioSettings,
+) -> dict[str, Any]:
+    status, reusable = audio_plan_status(item, settings)
+    payload = {
+        "segment": item.segment.segment_id,
+        "heading": item.segment.heading,
+        "status": status,
+        "cache_key": item.cache_key,
+        "output": display_path(item.output_path),
+        "timeline": display_path(timeline_path_for(item)),
+        "text": item.segment.text,
+    }
+    if reusable is not None:
+        payload["reuses"] = display_path(reusable)
+    return payload
+
+
+def shortened_text(text: str, *, width: int = 110) -> str:
+    return textwrap.shorten(normalize_narration_text(text), width=width, placeholder="...")
+
+
+def print_plan_json(
+    plan: list[AudioPlanItem],
+    settings: AudioSettings,
+    published_audio: Path,
+    published_metadata: Path,
+) -> None:
     for item in plan:
-        print(
-            json.dumps(
-                {
-                    "segment": item.segment.segment_id,
-                    "heading": item.segment.heading,
-                    "cache_key": item.cache_key,
-                    "output": display_path(item.output_path),
-                    "timeline": display_path(timeline_path_for(item)),
-                    "text": item.segment.text,
-                },
-                sort_keys=True,
-            )
+        print(json.dumps(audio_plan_item_payload(item, settings), sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "published_audio": display_path(published_audio),
+                "published_audio_metadata": display_path(published_metadata),
+            },
+            sort_keys=True,
         )
+    )
+
+
+def print_plan_text(
+    plan: list[AudioPlanItem],
+    settings: AudioSettings,
+    published_audio: Path,
+    published_metadata: Path,
+) -> None:
+    payloads = [audio_plan_item_payload(item, settings) for item in plan]
+    counts = {
+        "cached": sum(1 for payload in payloads if payload["status"] == "cached"),
+        "reusable": sum(1 for payload in payloads if payload["status"] == "reusable"),
+        "missing": sum(1 for payload in payloads if payload["status"] == "missing"),
+    }
+    print("Audio dry run")
+    print(f"  segments: {len(plan)}")
+    print(
+        "  cache: "
+        f"{counts['cached']} cached, "
+        f"{counts['reusable']} reusable, "
+        f"{counts['missing']} missing"
+    )
+    print(f"  published audio: {display_path(published_audio)}")
+    print(f"  metadata: {display_path(published_metadata)}")
+    if not plan:
+        return
+    print()
+    print("Segments:")
+    for item, payload in zip(plan, payloads, strict=True):
+        status = str(payload["status"])
+        print(f"  {status:<8} {item.segment.segment_id} - {item.segment.heading}")
+        print(f"           audio: {payload['output']}")
+        if "reuses" in payload:
+            print(f"           reuses: {payload['reuses']}")
+        print(f"           text: {shortened_text(item.segment.text)}")
+
+
+def print_plan(
+    plan: list[AudioPlanItem],
+    settings: AudioSettings,
+    published_audio: Path,
+    published_metadata: Path,
+    *,
+    output_format: str = "text",
+) -> None:
+    if output_format == "json":
+        print_plan_json(plan, settings, published_audio, published_metadata)
+        return
+    if output_format == "text":
+        print_plan_text(plan, settings, published_audio, published_metadata)
+        return
+    raise AudioError("output_format must be 'text' or 'json'")
 
 
 def run_tool_from_hydra_cfg(cfg: DictConfig) -> int:
     try:
         config = container_from_hydra_cfg(cfg)
+        load_configured_env_file(config)
         spec = load_recording_spec_from_hydra_cfg(cfg)
-        action = config.get("action", "generate")
-        if action not in {"generate", "check", "dry_run"}:
-            raise AudioError("action must be 'generate', 'check', or 'dry_run'")
+        action = config.get("step") or config.get("action", "generate")
+        if action == "build":
+            action = "generate"
+        if action not in {
+            "generate",
+            "check",
+            "dry_run",
+            "publish",
+            "sync_narration",
+        }:
+            raise AudioError(
+                "action must be 'generate', 'check', 'dry_run', 'publish', "
+                "or 'sync_narration'"
+            )
         force = config.get("force", False)
         timestamps = config.get("timestamps", False)
+        output_format = config.get("output_format", "text")
         if not isinstance(force, bool):
             raise AudioError("force must be a boolean")
         if not isinstance(timestamps, bool):
             raise AudioError("timestamps must be a boolean")
+        if not isinstance(output_format, str):
+            raise AudioError("output_format must be a string")
+        recording_id = require_string(spec, "_recording_id", field="recording")
+        if action == "sync_narration":
+            path = sync_narration_config(spec)
+            print(f"synced narration {display_path(path)}")
+            return 0
         settings = audio_settings(spec)
         transcription = transcription_settings(spec)
         segments = load_narration_segments(spec)
-        recording_id = require_string(spec, "_recording_id", field="recording")
         plan = plan_audio(recording_id, segments, settings)
+        guide_by_segment_id = guide_by_segment_id_from_spec(spec, plan)
+        published_audio = output_audio_path(spec, recording_id, settings)
+        published_metadata = output_audio_metadata_path(spec, published_audio)
         if action == "dry_run":
-            print_plan(plan)
+            print_plan(
+                plan,
+                settings,
+                published_audio,
+                published_metadata,
+                output_format=output_format,
+            )
             return 0
         if action == "check":
             state = "enabled" if settings.enabled else "disabled"
@@ -565,6 +1160,18 @@ def run_tool_from_hydra_cfg(cfg: DictConfig) -> int:
                 f"{len(plan)} narration segment(s), provider {settings.provider}, "
                 f"transcription {transcription.model}"
             )
+            return 0
+        if action == "publish":
+            path = publish_audio(plan, published_audio)
+            metadata_path = publish_audio_metadata(
+                recording_id,
+                plan,
+                published_audio,
+                published_metadata,
+                guide_by_segment_id=guide_by_segment_id,
+            )
+            print(f"published audio {display_path(path)}")
+            print(f"published audio metadata {display_path(metadata_path)}")
             return 0
         if not settings.enabled:
             raise AudioError("audio is disabled in the recording config")

@@ -8,4 +8,4 @@ studio:
 
 hydra:
   run:
-    dir: media/runs/${recording.id}/local-dev-${now:%Y%m%d-%H%M%S}
+    dir: ${studio_run_dir:${action},${step},${dry_run},${recording.id},local-dev-${now:%Y%m%d-%H%M%S}}

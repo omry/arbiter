@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import os
+import shlex
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -23,34 +25,95 @@ class StudioConfigError(RuntimeError):
     pass
 
 
-class ToolAction(str, Enum):
-    record = "record"
-    session = "session"
+def normalize_studio_token(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, Enum):
+        return str(value.value)
+    return str(value)
+
+
+def studio_run_dir(
+    action: object,
+    step: object,
+    dry_run: object,
+    recording_id: object,
+    timestamp: object,
+) -> str:
+    action_text = normalize_studio_token(action) or "build"
+    step_text = normalize_studio_token(step)
+    recording_text = normalize_studio_token(recording_id) or "recording"
+    timestamp_text = normalize_studio_token(timestamp)
+    dry_run_enabled = str(dry_run).lower() == "true"
+    is_recording_run = not dry_run_enabled and (
+        step_text in {"record", "session"}
+        or (not step_text and action_text in {"build", "record"})
+    )
+    if is_recording_run:
+        return f"media/runs/{recording_text}/{timestamp_text}"
+    job_kind = step_text or action_text
+    return f"media/studio-runs/{job_kind}/{recording_text}/{timestamp_text}"
+
+
+def register_resolvers() -> None:
+    if not OmegaConf.has_resolver("studio_run_dir"):
+        OmegaConf.register_new_resolver("studio_run_dir", studio_run_dir)
+
+
+class StudioAction(str, Enum):
+    build = "build"
     check = "check"
-    dry_run = "dry_run"
-    list = "list"
-    retime = "retime"
-    generate = "generate"
-    align = "align"
+    play = "play"
     inspect = "inspect"
     output = "output"
-    play = "play"
+    runs = "runs"
+    list = "list"
+
+
+class StudioStep(str, Enum):
+    record = "record"
+    record_check = "record_check"
+    record_dry_run = "record_dry_run"
+    session = "session"
+    dry_run = "dry_run"
+    sync_narration = "sync_narration"
+    retime = "retime"
+    retime_check = "retime_check"
+    generate = "generate"
+    publish = "publish"
+    audio_check = "audio_check"
+    audio_dry_run = "audio_dry_run"
+    audio_generate = "audio_generate"
+    audio_publish = "audio_publish"
+    align = "align"
+    align_check = "align_check"
 
 
 @dataclass
 class StudioConfig:
-    action: ToolAction = ToolAction.record
+    action: StudioAction = StudioAction.build
+    step: StudioStep | None = None
+    output_format: str = "text"
+    load_env_file: bool = True
+    env_file: str | None = ".env"
+    env_override: bool = False
     output: str | None = None
     cast: str | None = None
     timeline: str | None = None
+    surface: str | None = None
+    dry_run: bool = False
     headed: bool = False
     force: bool = False
     timestamps: bool = False
     allow_mismatch: bool = False
     run_id: str | None = None
+    runs_since: str | None = None
+    runs_limit: int | None = 10
     profile: dict[str, Any] = field(default_factory=dict)
     studio: dict[str, Any] = field(default_factory=dict)
     package_source: dict[str, Any] = field(default_factory=dict)
+    narration: dict[str, Any] = field(default_factory=dict)
+    publish: dict[str, Any] = field(default_factory=dict)
     recording: dict[str, Any] = field(default_factory=dict)
 
 
@@ -58,6 +121,7 @@ def register_studio_schema() -> None:
     ConfigStore.instance().store(name="studio_schema", node=StudioConfig)
 
 
+register_resolvers()
 register_studio_schema()
 
 
@@ -109,6 +173,71 @@ def container_from_hydra_cfg(cfg: DictConfig) -> dict[str, Any]:
     return data
 
 
+def resolve_config_path(path: str) -> Path:
+    candidate = Path(path)
+    if candidate.is_absolute():
+        return candidate
+    return REPO_ROOT / candidate
+
+
+def dotenv_entry(line: str, *, path: Path, line_number: int) -> tuple[str, str] | None:
+    try:
+        tokens = shlex.split(line, comments=True, posix=True)
+    except ValueError as exc:
+        raise StudioConfigError(
+            f"failed to parse env file {path}:{line_number}: {exc}"
+        ) from exc
+    if not tokens:
+        return None
+    if tokens[0] == "export":
+        tokens = tokens[1:]
+    if len(tokens) != 1 or "=" not in tokens[0]:
+        raise StudioConfigError(
+            f"failed to parse env file {path}:{line_number}: expected KEY=VALUE"
+        )
+    key, value = tokens[0].split("=", 1)
+    if not key.isidentifier():
+        raise StudioConfigError(
+            f"failed to parse env file {path}:{line_number}: invalid key {key!r}"
+        )
+    return key, value
+
+
+def load_env_file(path: Path, *, override: bool = False) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    loaded: dict[str, str] = {}
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        entry = dotenv_entry(line, path=path, line_number=line_number)
+        if entry is None:
+            continue
+        key, value = entry
+        if override or key not in os.environ:
+            os.environ[key] = value
+            loaded[key] = value
+    return loaded
+
+
+def load_configured_env_file(config: dict[str, Any]) -> dict[str, str]:
+    enabled = config.get("load_env_file", True)
+    if not isinstance(enabled, bool):
+        raise StudioConfigError("load_env_file must be a boolean")
+    if not enabled:
+        return {}
+
+    env_file = config.get("env_file", ".env")
+    if env_file is None:
+        return {}
+    if not isinstance(env_file, str) or not env_file:
+        raise StudioConfigError("env_file must be a non-empty string or null")
+
+    override = config.get("env_override", False)
+    if not isinstance(override, bool):
+        raise StudioConfigError("env_override must be a boolean")
+
+    return load_env_file(resolve_config_path(env_file), override=override)
+
+
 def merge_mapping(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
     merged = dict(base)
     for key, value in overlay.items():
@@ -143,6 +272,8 @@ def recording_spec_from_config(
         "retime",
         "environment",
         "audio",
+        "narration",
+        "publish",
     ]:
         value = config.get(key)
         if not isinstance(value, dict):

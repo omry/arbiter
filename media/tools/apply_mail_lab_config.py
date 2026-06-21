@@ -55,9 +55,15 @@ def update_account_files(config_dir: Path) -> None:
             "folders": {
                 "INBOX": {
                     "description": "Local recording inbox.",
+                    "kind": "INBOX",
                 },
                 "Sent": {
                     "description": "Local recording sent mail.",
+                    "kind": "SENT",
+                },
+                "Trash": {
+                    "description": "Local recording trash.",
+                    "kind": "TRASH",
                 },
             },
         }
@@ -80,6 +86,57 @@ def update_account_files(config_dir: Path) -> None:
         }
     )
     write_yaml(smtp_account, smtp, package="arbiter.account.smtp.bot")
+
+
+def update_policy_files(config_dir: Path) -> None:
+    imap_policy = config_dir / "arbiter" / "policy" / "imap" / "bot_policy.yaml"
+    smtp_policy = config_dir / "arbiter" / "policy" / "smtp" / "bot_policy.yaml"
+
+    imap = load_yaml(imap_policy)
+    imap.update(
+        {
+            "folder_access": {"rules": [{"allow_glob": "*"}]},
+            "operation_defaults": {
+                "read": "allow",
+                "search": "allow",
+                "move": True,
+                "mark_read": "allow",
+                "delete": "allow",
+                "folder_append": "allow",
+                "system_flags": {
+                    "SEEN": "read_write",
+                    "FLAGGED": "read_write",
+                    "ANSWERED": "read_write",
+                    "DELETED": "read_write",
+                    "DRAFT": "read_write",
+                },
+                "user_flags": {},
+            },
+            "folders": {},
+        }
+    )
+    write_yaml(imap_policy, imap, package="arbiter.policy.imap.bot_policy")
+
+    smtp = load_yaml(smtp_policy)
+    smtp.update(
+        {
+            "limits": {
+                "max_messages_per_minute": None,
+                "max_recipients_per_message": None,
+            },
+            "recipient_policy": {
+                "allowed_recipients": [],
+                "blocked_recipients": [],
+                "allowed_domain_patterns": [],
+                "blocked_domain_patterns": [],
+            },
+            "sent_copy": {
+                "enabled": True,
+                "on_failure": "warn",
+            },
+        }
+    )
+    write_yaml(smtp_policy, smtp, package="arbiter.policy.smtp.bot_policy")
 
 
 def read_env_file(path: Path) -> dict[str, str]:
@@ -133,6 +190,7 @@ def update_env_file(config_dir: Path) -> None:
 
 def apply_mail_lab_config(config_dir: Path, *, update_env: bool) -> None:
     update_account_files(config_dir)
+    update_policy_files(config_dir)
     if update_env:
         update_env_file(config_dir)
 

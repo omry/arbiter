@@ -2715,6 +2715,49 @@ def test_cli_deploy_docker_generated_helper_bundle_lists_root_requirements(
     )
 
 
+def test_cli_deploy_docker_generated_helper_bundle_lists_local_root_requirements(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo_dir = tmp_path / "repo"
+    deploy_dir = repo_dir / "docker"
+    for source_dir in ("server", "plugins/imap"):
+        package_dir = repo_dir / source_dir
+        package_dir.mkdir(parents=True)
+        (package_dir / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-server==0.9.2.dev1",
+                "docker.requirement=arbiter-imap==0.9.2.dev1",
+                "docker.requirement=acme-mail==1.0.0",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "bundle", "list"],
+        check=False,
+        cwd=repo_dir,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == (
+        "root\tarbiter-server==0.9.2.dev1\tlocal\n"
+        "root\tarbiter-imap==0.9.2.dev1\tlocal\n"
+        "root\tacme-mail==1.0.0\n"
+    )
+
+
 def test_cli_deploy_docker_generated_helper_bundle_lists_supported_plugins(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -4564,6 +4607,7 @@ def test_cli_deploy_docker_generated_helper_test_probes_https_health(
     assert result.stderr == ""
     assert fake_curl_count.read_text(encoding="utf-8") == "3\n"
 
+    fake_arbiter_count.write_text("0\n", encoding="utf-8")
     result = subprocess.run(
         [deploy_dir / "arbiter-docker", "test"],
         check=False,
@@ -4571,7 +4615,7 @@ def test_cli_deploy_docker_generated_helper_test_probes_https_health(
         env={
             **env,
             "ARBITER_COLOR": "always",
-            "ARBITER_TEST_STATUS": "7",
+            "ARBITER_TEST_TRANSIENT_FAILURES": "9",
             "ARBITER_TEST_TIMEOUT": "0",
         },
         text=True,
@@ -4582,7 +4626,12 @@ def test_cli_deploy_docker_generated_helper_test_probes_https_health(
     assert result.stdout == (
         " \033[31m✘\033[0m Server test: " "\033[94mhttps://127.0.0.1:18075\033[0m\n"
     )
-    assert result.stderr == ""
+    assert result.stderr == (
+        f"       command: ARBITER_URL=http://127.0.0.1:18075 {fake_arbiter} "
+        "info server\n"
+        "       last client output:\n"
+        "       transient server startup error\n"
+    )
 
 
 def test_cli_deploy_docker_generated_helper_config_check_uses_one_shot_container(
@@ -4725,6 +4774,139 @@ def test_cli_deploy_docker_generated_helper_config_check_uses_one_shot_container
     assert result.stderr == ""
 
 
+def test_cli_deploy_docker_generated_helper_config_check_does_not_rewrite_subnet(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    config_dir = deploy_dir / "conf"
+    (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
+    (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker_calls = tmp_path / "docker-calls"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env sh\n"
+        f'printf "%s\\n" "$*" >> "{docker_calls}"\n'
+        'if [ "$1" = info ]; then exit 0; fi\n'
+        'if [ "$1" = network ] && [ "$2" = ls ] && [ "${3:-}" = -q ]; then\n'
+        "  printf 'network-id\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        'if [ "$1" = network ] && [ "$2" = inspect ]; then\n'
+        "  printf 'existing-network 172.31.251.0/24 \\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        'if [ "$1" = compose ]; then exit 0; fi\n'
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "config", "check"],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+    docker_call_text = docker_calls.read_text(encoding="utf-8")
+    assert "network ls" not in docker_call_text
+    assert "network inspect" not in docker_call_text
+    assert "compose --env-file" in docker_call_text
+    assert "ARBITER_DOCKER_SUBNET=172.31.251.0/24\n" in (
+        deploy_dir / "docker.env"
+    ).read_text(encoding="utf-8")
+
+
+def test_cli_deploy_docker_generated_helper_config_check_explains_subnet_overlap(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    deploy_dir = tmp_path / "docker"
+    assert (
+        main(
+            [
+                "deploy",
+                "docker",
+                f"docker.dir={deploy_dir}",
+                "docker.requirement=arbiter-suite==1.2.3",
+                "init",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    config_dir = deploy_dir / "conf"
+    (config_dir / "arbiter-server.yaml").write_text("arbiter: {}\n", encoding="utf-8")
+    (config_dir / "arbiter-server.yaml").chmod(0o640)
+    (config_dir / ".env").write_text("", encoding="utf-8")
+    (config_dir / ".env").chmod(0o600)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker_calls = tmp_path / "docker-calls"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env sh\n"
+        f'printf "%s\\n" "$*" >> "{docker_calls}"\n'
+        'if [ "$1" = info ]; then exit 0; fi\n'
+        'if [ "$1" = compose ]; then\n'
+        "  printf 'failed to create network arbiter-staging: Error response from daemon: invalid pool request: Pool overlaps with other one on this address space\\n' >&2\n"
+        "  exit 1\n"
+        "fi\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+
+    result = subprocess.run(
+        [deploy_dir / "arbiter-docker", "config", "check"],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert "read-only command" in result.stderr
+    assert "configured staging network: arbiter-staging" in result.stderr
+    assert "configured staging subnet: 172.31.251.0/24" in result.stderr
+    assert f"This command will not rewrite {deploy_dir / 'docker.env'}." in (
+        result.stderr
+    )
+    assert "./arbiter-docker up" in result.stderr
+    assert "ARBITER_DOCKER_SUBNET=172.31.251.0/24\n" in (
+        deploy_dir / "docker.env"
+    ).read_text(encoding="utf-8")
+
+
 def test_cli_deploy_docker_generated_helper_live_config_check_uses_one_shot_container(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -4818,7 +5000,7 @@ def test_cli_deploy_docker_generated_helper_live_config_check_uses_one_shot_cont
     assert "-e ARBITER_CONFIG_CHECK_LIVE=1 " in docker_call_text
 
 
-def test_cli_deploy_docker_generated_helper_config_check_does_not_rewrite_subnet(
+def test_cli_deploy_docker_generated_helper_config_check_overlap_keeps_subnet(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:

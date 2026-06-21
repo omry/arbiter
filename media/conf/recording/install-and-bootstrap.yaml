@@ -26,6 +26,21 @@ style:
 
 outputs:
   cast: website/static/casts/install-and-bootstrap.cast
+  audio: website/static/audio/casts/install-and-bootstrap.mp3
+
+publish:
+  default: docusaurus
+  surfaces:
+    docusaurus:
+      type: docusaurus_mdx
+      file: website/docs/media/terminal-recordings.mdx
+      placeholder: install-and-bootstrap
+      component: TerminalCast
+      intro_segment: overview
+    standalone_html:
+      type: standalone_html
+      file: website/static/casts/install-and-bootstrap.html
+      intro_segment: overview
 
 retime:
   typing_char_delay: 0.035
@@ -37,6 +52,8 @@ retime:
 
 environment:
   working_directory: .
+  variables:
+    ARBITER_CINEMA_STAGING_SUBNET: 10.213.240.0/24
 
 audio:
   enabled: true
@@ -55,97 +72,59 @@ audio:
 
 setup:
   - name: Prepare operator commands and local mail lab
-    run: |
-      recording_repo="$PWD"
-      export recording_repo
-      unset IMAP_BOT_ACCOUNT_USERNAME
-      unset IMAP_BOT_ACCOUNT_PASSWORD
-      unset SMTP_BOT_ACCOUNT_USERNAME
-      unset SMTP_BOT_ACCOUNT_PASSWORD
-      operator_venv=""
-
-      if [[ "$recording_package_source_mode" == pypi ]]; then
-        operator_venv="$recording_tmp/operator-venv"
-        "$recording_python" -m venv "$operator_venv"
-        "$operator_venv/bin/python" -m pip install --upgrade pip
-        package_requirement="$recording_package_source_requirement"
-        if [[ -z "$package_requirement" ]]; then
-          if [[ "$recording_package_source_version" == latest ]]; then
-            package_version="$("$recording_python" - "$recording_package_source_package" <<'PY'
-      import json
-      import sys
-      import urllib.request
-      from packaging.version import Version
-
-      package = sys.argv[1]
-      with urllib.request.urlopen(f"https://pypi.org/pypi/{package}/json", timeout=30) as response:
-          data = json.load(response)
-      versions = []
-      for version, files in data["releases"].items():
-          if any(not file.get("yanked", False) for file in files):
-              versions.append(Version(version))
-      if not versions:
-          raise SystemExit(f"no non-yanked releases found for {package}")
-      print(max(versions))
-      PY
-      )"
-          else
-            package_version="$recording_package_source_version"
-          fi
-          package_requirement="$recording_package_source_package==$package_version"
-        fi
-        "$operator_venv/bin/python" -m pip install "$package_requirement"
-        export PATH="$operator_venv/bin:$PATH"
-        export ARBITER_CINEMA_RESOLVED_PACKAGE_REQUIREMENT="$package_requirement"
-      elif [[ "$recording_package_source_mode" == local ]]; then
-        command -v arbiter-server >/dev/null
-        command -v arbiter >/dev/null
-        operator_bin="$(command -v arbiter-server)"
-        detected_venv="$(cd "$(dirname "$operator_bin")/.." && pwd)"
-        if [[ -f "$detected_venv/bin/activate" ]]; then
-          operator_venv="$detected_venv"
-        fi
-      else
-        printf 'unsupported package source mode: %s\n' "$recording_package_source_mode" >&2
-        exit 1
-      fi
-
-      recording_workspace="$recording_tmp/operator-workspace"
-      mkdir -p "$recording_workspace"
-      mail_lab_env="$recording_tmp/mail-lab.env"
-      mail_lab_ready="$recording_tmp/mail-lab.ready"
-      mail_lab_log="$recording_tmp/mail-lab.log"
-      "$recording_python" "$recording_repo/media/tools/mail_lab.py" \
-        --env-file "$mail_lab_env" \
-        --ready-file "$mail_lab_ready" \
-        --seed \
-        >"$mail_lab_log" 2>&1 &
-      mail_lab_pid=$!
-      cleanup_pids+=("$mail_lab_pid")
-      for _attempt in $(seq 1 80); do
-        [[ -s "$mail_lab_env" && -e "$mail_lab_ready" ]] && break
-        sleep 0.1
-      done
-      [[ -s "$mail_lab_env" ]] || { cat "$mail_lab_log" >&2; exit 1; }
-      export MAIL_LAB_ENV_FILE="$mail_lab_env"
-      cd "$recording_workspace"
-      recording_write_postmortem_entrypoint "$recording_workspace" "$operator_venv"
-      arbiter-server version --json
-      arbiter --version
+    run_file: media/scripts/install-and-bootstrap.setup.sh
     expect:
       file_exists:
         - "$MAIL_LAB_ENV_FILE"
 
+cleanup:
+  - name: Stop Docker staging deployment
+    run: |
+      if [[ -f ./arbiter-docker && -x ./arbiter-docker ]]; then
+        ./arbiter-docker down --remove-orphans
+      elif [[ -f arbiter-docker/arbiter-docker && -x arbiter-docker/arbiter-docker ]]; then
+        (cd arbiter-docker && ./arbiter-docker down --remove-orphans)
+      fi
+
 beats:
+  - id: prepare-cli
+    marker: prepare-cli
+    caption: Prepare a local Arbiter command environment.
+    guide:
+      try_command: source arbiter_venv/bin/activate && arbiter-server version
+      success_hint: You should see the Arbiter server version from the local virtual environment.
+    actions:
+      - display: |
+          python3 -m venv arbiter_venv
+          arbiter_venv/bin/python -m pip install arbiter-suite
+          source arbiter_venv/bin/activate
+          arbiter-server version
+        run: |
+          recording_prepare_cli_env
+          true
+          source arbiter_venv/bin/activate
+          arbiter-server version
+        expect:
+          file_exists:
+            - ./arbiter_venv/bin/activate
+          output_contains:
+            - "server"
+            - "api"
+    viewer_hold: 3.0
+
   - id: init-staging
     marker: init-staging
     caption: Create a Docker staging deployment.
+    guide:
+      try_command: cd arbiter-docker && ./arbiter-docker bundle list
+      success_hint: You should enter the staging directory and see the selected runtime bundle.
     actions:
       - display: |
           arbiter-server deploy docker init
           cd arbiter-docker
         run: |
           arbiter-server deploy docker init
+          recording_configure_staging_subnet
           cd arbiter-docker
         expect:
           file_exists:
@@ -156,16 +135,17 @@ beats:
 
   - id: prepare-bundle
     marker: prepare-bundle
-    caption: Add mail plugins and prepare the runtime bundle.
+    caption: Inspect the mail plugin bundle and prepare the runtime.
+    guide:
+      try_command: ./arbiter-docker bundle list
+      success_hint: You should still be inside arbiter-docker and see the prepared bundle selection.
     actions:
       - display: |
-          ./arbiter-docker bundle add imap
-          ./arbiter-docker bundle add smtp
+          ./arbiter-docker bundle list
           ./arbiter-docker bundle prepare
         run: |
-          ./arbiter-docker bundle add imap
-          ./arbiter-docker bundle add smtp
-          ./arbiter-docker bundle prepare
+          ./arbiter-docker bundle list
+          recording_prepare_bundle
         expect:
           file_exists:
             - ./requirements.txt
@@ -174,6 +154,9 @@ beats:
   - id: bootstrap-config
     marker: bootstrap-config
     caption: Bootstrap the server and bot account config.
+    guide:
+      try_command: test -f conf/arbiter/account/imap/bot.yaml && test -f conf/arbiter/account/smtp/bot.yaml && echo "bot accounts generated"
+      success_hint: You should see "bot accounts generated".
     actions:
       - display: |
           arbiter-server --config-dir ./conf bootstrap arbiter
@@ -194,78 +177,219 @@ beats:
             - ./conf/arbiter/account/smtp/bot.yaml
     viewer_hold: 4.0
 
-  - id: bootstrap-env
-    marker: bootstrap-env
-    caption: Bootstrap the deployment env file.
+  - id: review-generated-config
+    marker: review-generated-config
+    caption: Inspect the generated bot account and policy files.
     actions:
       - display: |
-          arbiter-server --config-dir ./conf env bootstrap
+          sed -n '1,26p' conf/arbiter/account/imap/bot.yaml
+          sed -n '1,34p' conf/arbiter/policy/imap/bot_policy.yaml
+          sed -n '1,26p' conf/arbiter/account/smtp/bot.yaml
+          sed -n '1,30p' conf/arbiter/policy/smtp/bot_policy.yaml
         run: |
-          arbiter-server --config-dir ./conf env bootstrap
-        expect:
-          file_exists:
-            - ./conf/.env
-    checks:
-      - name: Apply recording mail lab endpoints and credentials
-        run: |
-          set -a
-          . "$MAIL_LAB_ENV_FILE"
-          set +a
-          "$recording_python" "$recording_repo/media/tools/apply_mail_lab_config.py" \
-            --config-dir ./conf \
-            --update-env
-        expect:
-          file_exists:
-            - ./conf/.env
-            - ./conf/arbiter/account/imap/bot.yaml
-            - ./conf/arbiter/account/smtp/bot.yaml
-    viewer_hold: 3.0
-
-  - id: inspect-bot-config
-    marker: inspect-bot-config
-    caption: Inspect the local bot account endpoints.
-    actions:
-      - display: |
-          sed -n '1,18p' conf/arbiter/account/imap/bot.yaml
-          sed -n '1,16p' conf/arbiter/account/smtp/bot.yaml
-        run: |
-          sed -n '1,18p' conf/arbiter/account/imap/bot.yaml
-          sed -n '1,16p' conf/arbiter/account/smtp/bot.yaml
+          sed -n '1,26p' conf/arbiter/account/imap/bot.yaml
+          sed -n '1,34p' conf/arbiter/policy/imap/bot_policy.yaml
+          sed -n '1,26p' conf/arbiter/account/smtp/bot.yaml
+          sed -n '1,30p' conf/arbiter/policy/smtp/bot_policy.yaml
         expect:
           output_contains:
-            - "host.docker.internal"
-            - "tls: none"
+            - "host: imap.example.com"
+            - "folder_access:"
+            - "host: smtp.example.com"
+            - "recipient_policy:"
+    viewer_hold: 4.0
+
+  - id: edit-bot-access
+    marker: edit-bot-access
+    caption: Edit bot accounts and policies for the local mail lab.
+    guide:
+      try_command: grep -R "host.docker.internal" conf/arbiter/account/imap/bot.yaml conf/arbiter/account/smtp/bot.yaml
+      success_hint: You should see both bot account files pointing at host.docker.internal.
+    actions:
+      - display: |
+          $EDITOR conf/arbiter/account/imap/bot.yaml conf/arbiter/policy/imap/bot_policy.yaml
+          $EDITOR conf/arbiter/account/smtp/bot.yaml conf/arbiter/policy/smtp/bot_policy.yaml
+          sed -n '1,26p' conf/arbiter/account/imap/bot.yaml
+          sed -n '1,34p' conf/arbiter/policy/imap/bot_policy.yaml
+          sed -n '1,26p' conf/arbiter/account/smtp/bot.yaml
+          sed -n '1,30p' conf/arbiter/policy/smtp/bot_policy.yaml
+        run: |
+          recording_apply_mail_lab_config
+          sed -n '1,26p' conf/arbiter/account/imap/bot.yaml
+          sed -n '1,34p' conf/arbiter/policy/imap/bot_policy.yaml
+          sed -n '1,26p' conf/arbiter/account/smtp/bot.yaml
+          sed -n '1,30p' conf/arbiter/policy/smtp/bot_policy.yaml
+        expect:
+          output_contains:
+            - "host: host.docker.internal"
+            - "allow_glob: '*'"
+            - "delete: allow"
+            - "folder_append: allow"
+            - "max_messages_per_minute: null"
+            - "max_recipients_per_message: null"
+    viewer_hold: 5.0
+
+  - id: bootstrap-env
+    marker: bootstrap-env
+    caption: Bootstrap the deployment env file with demo credentials.
+    guide:
+      try_command: grep "BOT_ACCOUNT" conf/.env
+      success_hint: You should see IMAP and SMTP bot username and password entries.
+    actions:
+      - display: |
+          arbiter-server --config-dir ./conf env bootstrap
+          sed -n '1,16p' conf/.env
+        run: |
+          arbiter-server --config-dir ./conf env bootstrap
+          recording_apply_mail_lab_config --update-env
+          sed -n '1,16p' conf/.env
+        expect:
+          file_exists:
+            - ./conf/.env
+          output_contains:
+            - "IMAP_BOT_ACCOUNT_USERNAME=bot@example.test"
+            - "IMAP_BOT_ACCOUNT_PASSWORD=bot-password"
+            - "SMTP_BOT_ACCOUNT_USERNAME=bot@example.test"
+            - "SMTP_BOT_ACCOUNT_PASSWORD=bot-password"
     viewer_hold: 4.0
 
   - id: stage-server
     marker: stage-server
-    caption: Start staging on the staging HTTP port.
+    caption: Check config and start staging on the staging HTTP port.
+    guide:
+      try_command: ./arbiter-docker test
+      success_hint: You should see the staged server test pass on http://127.0.0.1:18075.
     actions:
       - display: |
+          ./arbiter-docker config check
           ./arbiter-docker up
           ./arbiter-docker test
-          arbiter arbiter.url=http://127.0.0.1:18075 info plugins | jq .plugins
         run: |
+          ./arbiter-docker config check
           ./arbiter-docker up
           ./arbiter-docker test
-          arbiter arbiter.url=http://127.0.0.1:18075 info plugins | jq .plugins
+        expect:
+          output_regex:
+            - 'server\s+\|\s+pass'
+            - 'imap\s+\|\s+pass'
+            - 'smtp\s+\|\s+pass'
+          output_contains:
+            - "URL:"
+            - "http://127.0.0.1:18075"
+            - "Server test:"
+    viewer_hold: 5.0
+
+  - id: client-discovery
+    marker: client-discovery
+    caption: Discover capabilities with the Arbiter client.
+    guide:
+      try_command: arbiter arbiter.url=http://127.0.0.1:18075 plugins | jq .
+      success_hint: You should see the imap and smtp plugins.
+    actions:
+      - display: |
+          arbiter arbiter.url=http://127.0.0.1:18075 plugins | jq .
+          arbiter arbiter.url=http://127.0.0.1:18075 plugins smtp account bot | jq .
+          arbiter arbiter.url=http://127.0.0.1:18075 op list smtp | jq .
+          arbiter arbiter.url=http://127.0.0.1:18075 op desc smtp:send_email | jq '{id, description, input_schema}'
+        run: |
+          arbiter arbiter.url=http://127.0.0.1:18075 plugins | jq .
+          arbiter arbiter.url=http://127.0.0.1:18075 plugins smtp account bot | jq .
+          arbiter arbiter.url=http://127.0.0.1:18075 op list smtp | jq .
+          arbiter arbiter.url=http://127.0.0.1:18075 op desc smtp:send_email | jq '{id, description, input_schema}'
         expect:
           output_contains:
-            - "URL: http://127.0.0.1:18075"
-            - "Server test: http://127.0.0.1:18075"
             - "imap"
             - "smtp"
+            - "bot"
+            - "smtp:send_email"
+            - "input_schema"
     viewer_hold: 5.0
+
+  - id: send-test-message
+    marker: send-test-message
+    caption: Send a test message from the bot to itself.
+    guide:
+      try_command: arbiter arbiter.url=http://127.0.0.1:18075 op run imap:search_messages --args '{"account":"bot","folder":"INBOX","query":"Arbiter install smoke test","limit":1}' | jq .
+      success_hint: You should see one matching message in the bot INBOX.
+    actions:
+      - display: |
+          arbiter arbiter.url=http://127.0.0.1:18075 op run smtp:send_email --args '{"account":"bot","to":["bot@example.test"],"subject":"Arbiter install smoke test","text_body":"Hello from Arbiter staging.","idempotency_key":"install-smoke-1"}' | jq .
+        run: |
+          arbiter arbiter.url=http://127.0.0.1:18075 op run smtp:send_email --args '{"account":"bot","to":["bot@example.test"],"subject":"Arbiter install smoke test","text_body":"Hello from Arbiter staging.","idempotency_key":"install-smoke-1"}' | jq .
+        expect:
+          output_contains:
+            - "message_id"
+            - "recipient_count"
+            - "sent_copy"
+    checks:
+      - name: Wait for delivered test message
+        run: |
+          message_found=1
+          for _attempt in $(seq 1 20); do
+            if arbiter arbiter.url=http://127.0.0.1:18075 op run imap:search_messages --args '{"account":"bot","folder":"INBOX","query":"Arbiter install smoke test","limit":1}' | jq -er '.result.messages[0].uid' >/dev/null; then
+              message_found=0
+              break
+            fi
+            sleep 0.25
+          done
+          if [[ "$message_found" != 0 ]]; then
+            arbiter arbiter.url=http://127.0.0.1:18075 op run imap:search_messages --args '{"account":"bot","folder":"INBOX","query":"Arbiter install smoke test","limit":1}' | jq .
+          fi
+          [[ "$message_found" == 0 ]]
+        expect:
+          exit_code: 0
+    viewer_hold: 4.0
+
+  - id: fetch-test-message
+    marker: fetch-test-message
+    caption: Fetch the delivered message through IMAP.
+    guide:
+      try_command: arbiter arbiter.url=http://127.0.0.1:18075 op run imap:search_messages --args '{"account":"bot","folder":"INBOX","query":"Arbiter install smoke test","limit":1}' | jq -er '.result.messages[0].subject'
+      success_hint: You should see "Arbiter install smoke test".
+    actions:
+      - display: |
+          message_uid="$(arbiter arbiter.url=http://127.0.0.1:18075 op run imap:search_messages --args '{"account":"bot","folder":"INBOX","query":"Arbiter install smoke test","limit":1}' | jq -er '.result.messages[0].uid')"
+          printf 'message_uid=%s\n' "$message_uid"
+          arbiter arbiter.url=http://127.0.0.1:18075 op run imap:get_message --args "{\"account\":\"bot\",\"folder\":\"INBOX\",\"message_id\":\"$message_uid\"}" | jq '{subject: .result.message.subject, text_body: .result.message.text_body}'
+        run: |
+          message_uid="$(arbiter arbiter.url=http://127.0.0.1:18075 op run imap:search_messages --args '{"account":"bot","folder":"INBOX","query":"Arbiter install smoke test","limit":1}' | jq -er '.result.messages[0].uid')"
+          printf 'message_uid=%s\n' "$message_uid"
+          arbiter arbiter.url=http://127.0.0.1:18075 op run imap:get_message --args "{\"account\":\"bot\",\"folder\":\"INBOX\",\"message_id\":\"$message_uid\"}" | jq '{subject: .result.message.subject, text_body: .result.message.text_body}'
+        expect:
+          output_contains:
+            - "message_uid="
+            - "Arbiter install smoke test"
+            - "Hello from Arbiter staging."
+    viewer_hold: 5.0
+
+  - id: staging-vs-installed
+    marker: staging-vs-installed
+    caption: Compare staging and installed server endpoints.
+    actions:
+      - display: |
+          printf 'staging URL:   http://127.0.0.1:18075\n'
+          printf 'installed URL: http://127.0.0.1:8075\n'
+        run: |
+          printf 'staging URL:   http://127.0.0.1:18075\n'
+          printf 'installed URL: http://127.0.0.1:8075\n'
+        expect:
+          output_contains:
+            - "staging URL:"
+            - "installed URL:"
+    viewer_hold: 3.0
 
   - id: preinstall-check
     marker: preinstall-check
-    caption: Run the preinstall doctor from staging.
+    caption: Run the preinstall doctor for the Codex agent user.
+    guide:
+      try_command: ./arbiter-docker doctor --preinstall --agent-user codex
+      success_hint: The doctor should pass before you promote the staged deployment.
     actions:
       - display: |
-          ./arbiter-docker doctor --preinstall
+          ./arbiter-docker doctor --preinstall --agent-user codex
         run: |
-          ./arbiter-docker doctor --preinstall
-    viewer_hold: 3.0
+          ./arbiter-docker doctor --preinstall --agent-user codex
+    viewer_hold: 4.0
 
   - id: review-install-plan
     marker: review-install-plan
