@@ -72,6 +72,19 @@ This file is the day-to-day queue for design and implementation gaps.
       timeout where possible; and document when agents should narrow a mail
       query versus increasing the timeout.
 
+- [ ] `P1` Harden runtime error handling for IMAP and SMTP plugins.
+      Runtime upstream failures should not fall through as generic Arbiter
+      internal errors. IMAP and SMTP operations need a shared pattern for
+      mapping provider/network/auth/protocol failures into structured,
+      client-useful errors without leaking secrets or provider internals.
+      Acceptance checks: define the plugin/runtime exception taxonomy for
+      upstream service failures; map unreachable provider, auth failure,
+      timeout, protocol refusal, and provider disconnect cases to stable HTTP
+      error codes and CLI messages; keep true Arbiter bugs as internal errors;
+      apply the pattern consistently to IMAP and SMTP operations, not only
+      account smoke tests; and add unit/integration coverage for representative
+      provider failures.
+
 ## Post-v1
 
 - [ ] `P2` Consider returning operation timing information to clients.
