@@ -4655,7 +4655,7 @@ def test_cli_deploy_docker_generated_helper_test_probes_https_health(
     assert result.returncode == 1
     assert result.stdout == (
         " \033[31m✘\033[0m Server test: " "\033[94mhttps://127.0.0.1:18075\033[0m\n"
-        )
+    )
     assert result.stderr == (
         "       command: curl --fail --silent --show-error --insecure --max-time 5 "
         "https://127.0.0.1:18075/_health_\n"
@@ -7340,6 +7340,7 @@ def test_cli_deploy_docker_generated_helper_install_handles_docker_unit_availabi
         encoding="utf-8",
     )
     (fake_bin / "arbiter").write_text("#!/usr/bin/env sh\nexit 0\n", encoding="utf-8")
+    (fake_bin / "curl").write_text("#!/usr/bin/env sh\nexit 0\n", encoding="utf-8")
     (fake_bin / "chown").write_text("#!/usr/bin/env sh\nexit 0\n", encoding="utf-8")
     for fake_command in (
         "id",
@@ -7349,6 +7350,7 @@ def test_cli_deploy_docker_generated_helper_install_handles_docker_unit_availabi
         "docker",
         "systemctl",
         "arbiter",
+        "curl",
         "chown",
     ):
         (fake_bin / fake_command).chmod(0o755)
