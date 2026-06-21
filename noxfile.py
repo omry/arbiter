@@ -146,3 +146,17 @@ def lint(session: nox.Session) -> None:
         *BLACK_TARGETS,
     )
     session.run("pyrefly", "check", "--config", "pyrefly.toml", *PYREFLY_TARGETS)
+
+
+@nox.session(name="lint-fix")
+def lint_fix(session: nox.Session) -> None:
+    install_project(session)
+    session.run(
+        "black",
+        "--target-version",
+        "py310",
+        "--workers",
+        "1",
+        *(session.posargs or BLACK_TARGETS),
+    )
+    session.notify("lint")
