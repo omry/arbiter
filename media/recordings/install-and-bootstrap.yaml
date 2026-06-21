@@ -1,0 +1,229 @@
+id: install-and-bootstrap
+title: Install Arbiter Server
+script: media/scripts/install-and-bootstrap.md
+
+capture:
+  window_size: 100x28
+  headless: true
+  baseline_compressed: true
+
+requirements:
+  commands:
+    - arbiter
+    - arbiter-server
+    - docker
+    - jq
+
+style:
+  color: true
+  typing: true
+  typing_min_delay: 0.025
+  typing_max_delay: 0.095
+  typing_space_delay: 0.04
+  typing_punctuation_delay: 0.08
+  typing_newline_delay: 0.22
+  typing_seed: 17
+
+outputs:
+  cast: website/static/casts/install-and-bootstrap.cast
+
+retime:
+  typing_char_delay: 0.035
+  typing_space_delay: 0.02
+  typing_punctuation_delay: 0.05
+  typing_newline_delay: 0.0
+  post_enter_pause: 0.35
+  post_command_pause: 0.85
+
+environment:
+  working_directory: .
+
+audio:
+  enabled: true
+  provider: openai
+  env: OPENAI_ARBITER_CINEMA_AUDIO_API_KEY
+  model: gpt-4o-mini-tts
+  voice: marin
+  format: mp3
+  instructions: Speak clearly and calmly, like a concise technical walkthrough.
+  cache_dir: media/cache/audio
+  transcription:
+    model: whisper-1
+    timestamp_granularities:
+      - word
+      - segment
+
+setup:
+  - name: Start local SMTP and IMAP mail lab
+    run: |
+      recording_repo="$PWD"
+      export recording_repo
+      unset IMAP_BOT_ACCOUNT_USERNAME
+      unset IMAP_BOT_ACCOUNT_PASSWORD
+      unset SMTP_BOT_ACCOUNT_USERNAME
+      unset SMTP_BOT_ACCOUNT_PASSWORD
+      recording_workspace="$recording_tmp/operator-workspace"
+      mkdir -p "$recording_workspace"
+      mail_lab_env="$recording_tmp/mail-lab.env"
+      mail_lab_ready="$recording_tmp/mail-lab.ready"
+      mail_lab_log="$recording_tmp/mail-lab.log"
+      "$recording_python" "$recording_repo/media/tools/mail_lab.py" \
+        --env-file "$mail_lab_env" \
+        --ready-file "$mail_lab_ready" \
+        --seed \
+        >"$mail_lab_log" 2>&1 &
+      mail_lab_pid=$!
+      cleanup_pids+=("$mail_lab_pid")
+      for _attempt in $(seq 1 80); do
+        [[ -s "$mail_lab_env" && -e "$mail_lab_ready" ]] && break
+        sleep 0.1
+      done
+      [[ -s "$mail_lab_env" ]] || { cat "$mail_lab_log" >&2; exit 1; }
+      export MAIL_LAB_ENV_FILE="$mail_lab_env"
+      cd "$recording_workspace"
+    expect:
+      file_exists:
+        - "$MAIL_LAB_ENV_FILE"
+
+beats:
+  - id: init-staging
+    marker: init-staging
+    caption: Create a Docker staging deployment.
+    actions:
+      - display: |
+          arbiter-server deploy docker init
+          cd arbiter-docker
+        run: |
+          arbiter-server deploy docker init
+          cd arbiter-docker
+        expect:
+          file_exists:
+            - ./arbiter-docker
+            - ./compose.yaml
+            - ./docker.env
+    viewer_hold: 3.0
+
+  - id: prepare-bundle
+    marker: prepare-bundle
+    caption: Add mail plugins and prepare the runtime bundle.
+    actions:
+      - display: |
+          ./arbiter-docker bundle add imap
+          ./arbiter-docker bundle add smtp
+          ./arbiter-docker bundle prepare
+        run: |
+          ./arbiter-docker bundle add imap
+          ./arbiter-docker bundle add smtp
+          ./arbiter-docker bundle prepare
+        expect:
+          file_exists:
+            - ./requirements.txt
+    viewer_hold: 3.0
+
+  - id: bootstrap-config
+    marker: bootstrap-config
+    caption: Bootstrap the server and bot account config.
+    actions:
+      - display: |
+          arbiter-server --config-dir ./conf bootstrap arbiter
+          arbiter-server --config-dir ./conf bootstrap plugin imap account bot
+          arbiter-server --config-dir ./conf bootstrap plugin smtp account bot
+          arbiter-server --config-dir ./conf config activate account imap bot
+          arbiter-server --config-dir ./conf config activate account smtp bot
+        run: |
+          arbiter-server --config-dir ./conf bootstrap arbiter
+          arbiter-server --config-dir ./conf bootstrap plugin imap account bot
+          arbiter-server --config-dir ./conf bootstrap plugin smtp account bot
+          arbiter-server --config-dir ./conf config activate account imap bot
+          arbiter-server --config-dir ./conf config activate account smtp bot
+        expect:
+          file_exists:
+            - ./conf/arbiter-server.yaml
+            - ./conf/arbiter/account/imap/bot.yaml
+            - ./conf/arbiter/account/smtp/bot.yaml
+    viewer_hold: 4.0
+
+  - id: bootstrap-env
+    marker: bootstrap-env
+    caption: Bootstrap the deployment env file.
+    actions:
+      - display: |
+          arbiter-server --config-dir ./conf env bootstrap
+        run: |
+          arbiter-server --config-dir ./conf env bootstrap
+        expect:
+          file_exists:
+            - ./conf/.env
+    checks:
+      - name: Apply recording mail lab endpoints and credentials
+        run: |
+          set -a
+          . "$MAIL_LAB_ENV_FILE"
+          set +a
+          "$recording_python" "$recording_repo/media/tools/apply_mail_lab_config.py" \
+            --config-dir ./conf \
+            --update-env
+        expect:
+          file_exists:
+            - ./conf/.env
+            - ./conf/arbiter/account/imap/bot.yaml
+            - ./conf/arbiter/account/smtp/bot.yaml
+    viewer_hold: 3.0
+
+  - id: inspect-bot-config
+    marker: inspect-bot-config
+    caption: Inspect the local bot account endpoints.
+    actions:
+      - display: |
+          sed -n '1,18p' conf/arbiter/account/imap/bot.yaml
+          sed -n '1,16p' conf/arbiter/account/smtp/bot.yaml
+        run: |
+          sed -n '1,18p' conf/arbiter/account/imap/bot.yaml
+          sed -n '1,16p' conf/arbiter/account/smtp/bot.yaml
+        expect:
+          output_contains:
+            - "host.docker.internal"
+            - "tls: none"
+    viewer_hold: 4.0
+
+  - id: stage-server
+    marker: stage-server
+    caption: Start staging on the staging MCP port.
+    actions:
+      - display: |
+          ./arbiter-docker up
+          ./arbiter-docker test
+          arbiter arbiter.mcp_url=http://127.0.0.1:18025/mcp info plugins | jq .plugins
+        run: |
+          ./arbiter-docker up
+          ./arbiter-docker test
+          arbiter arbiter.mcp_url=http://127.0.0.1:18025/mcp info plugins | jq .plugins
+        expect:
+          output_contains:
+            - "imap"
+            - "smtp"
+    viewer_hold: 5.0
+
+  - id: preinstall-check
+    marker: preinstall-check
+    caption: Run the preinstall doctor from staging.
+    actions:
+      - display: |
+          ./arbiter-docker doctor --preinstall
+        run: |
+          ./arbiter-docker doctor --preinstall
+    viewer_hold: 3.0
+
+  - id: review-install-plan
+    marker: review-install-plan
+    caption: Review the production install plan for port 8025.
+    actions:
+      - display: |
+          ./arbiter-docker install --dry-run --to /opt/arbiter --user arbiter
+        run: |
+          ./arbiter-docker install --dry-run --to /opt/arbiter --user arbiter
+        expect:
+          output_contains:
+            - "would"
+            - "/opt/arbiter"
+    viewer_hold: 5.0

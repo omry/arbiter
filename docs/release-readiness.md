@@ -12,6 +12,10 @@ run, it is not done.
 - Local release rehearsal from built artifacts has not been run end to end.
 - Documentation pass across the published-package install, client and skill
   installation, and deployment path has not been completed.
+- Public docs and skill examples still use port `8025`, which reads as
+  SMTP-adjacent. Choose a free, neutral local Arbiter example port and update
+  the docs, skill instructions, and any generated deployment examples that
+  should use the new convention.
 - Security analysis has not been completed.
 - Cleanup of the earlier platform-specific skill package attempt has not been
   planned or executed.
@@ -145,9 +149,27 @@ Review the public docs against the installed-package world:
 - security model and limitations
 - plugin author docs
 - release process
+- example local ports, replacing `8025` with a free neutral Arbiter port where
+  the docs are not intentionally demonstrating an installed deployment value
 
 The pass should confirm that examples use current package names, console entry
 points, config shape, version expectations, and security claims.
+
+For release media, run the media alignment gate for each published recording:
+
+```bash
+.venv/bin/python media/tools/record.py --check install-and-bootstrap
+media/tools/align_cast.py install-and-bootstrap
+```
+
+Any misalignment requires manual review. Decide whether to refresh the base
+recording, update the recording manifest, or revise the movie script for the
+current major-version workflow before publishing derived media.
+
+For install-oriented media, confirm the recording uses the intended package
+source before publication. A rehearsal may display install commands while using
+a prepared recording environment, but release evidence must install from PyPI, a
+built wheelhouse, or another release-approved artifact path.
 
 ### 5. Security readiness
 

@@ -29,7 +29,12 @@ deploy/run-local.sh
 # Local AWD runtime state and other scratch artifacts.
 temp/
 
+# Generated media studio caches.
+media/cache/
+
 # Local Arbiter config scratchspace. Generated configs may contain
 # credentials or host-specific settings and should not be committed.
 config.local/
 /arbiter-docker/
+
+.env
