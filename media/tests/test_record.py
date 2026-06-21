@@ -1177,6 +1177,19 @@ def test_timeline_progress_messages_use_setup_stage_and_command_labels() -> None
             {
                 "phase": "command_run_start",
                 "beat": "run",
+                "progress": "fetch delivered message",
+                "command": "arbiter op run imap:get_message",
+            },
+            beat_indexes=beat_indexes,
+            beat_count=beat_count,
+        )
+        == "running: fetch delivered message"
+    )
+    assert (
+        record.progress_message_for_event(
+            {
+                "phase": "command_run_start",
+                "beat": "run",
                 "command": "./arbiter-docker up\n./arbiter-docker test",
             },
             beat_indexes=beat_indexes,
@@ -1237,6 +1250,46 @@ def test_multiline_action_outputs_after_each_command() -> None:
         "second\n", second_prompt + len(second_prompt_text)
     )
     assert first_prompt < first_output < second_prompt < second_output
+
+
+def test_prompt_reflects_activated_virtual_environment(tmp_path: Path) -> None:
+    spec = minimal_spec(
+        beats=[
+            {
+                "id": "prepare",
+                "actions": [
+                    {
+                        "display": "source arbiter_venv/bin/activate\n",
+                        "run": (
+                            "mkdir -p arbiter_venv/bin\n"
+                            'printf \'VIRTUAL_ENV="$PWD/arbiter_venv"\\n'
+                            "export VIRTUAL_ENV\\n' > arbiter_venv/bin/activate\n"
+                            "source arbiter_venv/bin/activate\n"
+                        ),
+                    },
+                    {
+                        "display": "arbiter-server version\n",
+                        "run": "printf 'server 1.0\\n'",
+                    },
+                ],
+            }
+        ]
+    )
+    spec["environment"]["working_directory"] = str(tmp_path)
+
+    result = run_rendered_session(
+        spec,
+        env={
+            "VIRTUAL_ENV": "/host/project/.venv",
+            "VIRTUAL_ENV_PROMPT": "(.venv) ",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "$ source arbiter_venv/bin/activate\n" in result.stdout
+    assert "(.venv) $" not in result.stdout
+    assert "(arbiter_venv) $ \n" in result.stdout
+    assert "(arbiter_venv) $ arbiter-server version\n" in result.stdout
 
 
 def test_color_enabled_recording_forces_color_environment() -> None:

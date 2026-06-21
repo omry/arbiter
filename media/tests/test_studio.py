@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import sys
 from pathlib import Path
@@ -32,6 +33,45 @@ def cfg(action: str) -> Any:
 
 def step_cfg(step: str) -> Any:
     return OmegaConf.create({"step": step, "recording": {"id": "demo"}})
+
+
+def minimal_build_spec(tmp_path: Path) -> dict[str, Any]:
+    cast = tmp_path / "demo.cast"
+    return {
+        "id": "demo",
+        "_recording_id": "demo",
+        "title": "Demo Build",
+        "outputs": {
+            "cast": str(cast),
+            "audio": str(tmp_path / "demo.mp3"),
+        },
+        "audio": {
+            "env": "OPENAI_API_KEY",
+            "model": "gpt-4o-mini-tts",
+            "voice": "marin",
+            "format": "mp3",
+            "cache_dir": str(tmp_path / "audio-cache"),
+        },
+        "beats": [{"id": "one", "actions": [{"run": "true"}]}],
+    }
+
+
+def write_minimal_recording_outputs(spec: dict[str, Any]) -> None:
+    cast = Path(spec["outputs"]["cast"])
+    cast.parent.mkdir(parents=True, exist_ok=True)
+    cast.write_text(
+        json.dumps(
+            {
+                "version": 3,
+                "term": {"cols": 80, "rows": 24},
+                "timestamp": 1,
+                "title": "Demo Build",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    studio.retime_cast.timeline_path_for_cast(cast).write_text("", encoding="utf-8")
 
 
 def test_default_without_recording_lists_available_scripts(
@@ -71,14 +111,22 @@ def test_build_runs_full_media_pipeline(
     tmp_path: Path, monkeypatch: Any, capsys: Any
 ) -> None:
     calls: list[tuple[str, str]] = []
+    spec = minimal_build_spec(tmp_path)
 
     def runner(name: str) -> Any:
         def run(cfg: Any) -> int:
             calls.append((name, cfg.step))
+            if name == "record":
+                write_minimal_recording_outputs(spec)
             return 0
 
         return run
 
+    monkeypatch.setattr(
+        studio,
+        "recording_spec_from_config",
+        lambda *_args, **_kwargs: spec,
+    )
     monkeypatch.setattr(studio.audio, "run_tool_from_hydra_cfg", runner("audio"))
     monkeypatch.setattr(studio.record, "run_tool_from_hydra_cfg", runner("record"))
     monkeypatch.setattr(studio.retime_cast, "run_tool_from_hydra_cfg", runner("retime"))
@@ -97,12 +145,173 @@ def test_build_runs_full_media_pipeline(
     assert "media/tools/studio recording=demo step=align\n" in output
 
 
+def test_build_skips_fresh_recording(
+    tmp_path: Path, monkeypatch: Any, capsys: Any
+) -> None:
+    calls: list[tuple[str, str]] = []
+    spec = minimal_build_spec(tmp_path)
+    write_minimal_recording_outputs(spec)
+    studio.write_recording_fingerprint(spec)
+
+    def runner(name: str) -> Any:
+        def run(cfg: Any) -> int:
+            calls.append((name, cfg.step))
+            return 0
+
+        return run
+
+    monkeypatch.setattr(
+        studio,
+        "recording_spec_from_config",
+        lambda *_args, **_kwargs: spec,
+    )
+    monkeypatch.setattr(studio.audio, "run_tool_from_hydra_cfg", runner("audio"))
+    monkeypatch.setattr(studio.record, "run_tool_from_hydra_cfg", runner("record"))
+    monkeypatch.setattr(studio.retime_cast, "run_tool_from_hydra_cfg", runner("retime"))
+
+    assert studio.run_tool_from_hydra_cfg(cfg("build")) == 0
+
+    assert calls == [
+        ("audio", "generate"),
+        ("audio", "publish"),
+        ("retime", "retime"),
+    ]
+    output = capsys.readouterr().out
+    assert "skip record baseline cast" in output
+
+
+def test_build_force_records_even_when_recording_is_fresh(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    calls: list[tuple[str, str]] = []
+    spec = minimal_build_spec(tmp_path)
+    write_minimal_recording_outputs(spec)
+    studio.write_recording_fingerprint(spec)
+
+    def runner(name: str) -> Any:
+        def run(cfg: Any) -> int:
+            calls.append((name, cfg.step))
+            if name == "record":
+                write_minimal_recording_outputs(spec)
+            return 0
+
+        return run
+
+    monkeypatch.setattr(
+        studio,
+        "recording_spec_from_config",
+        lambda *_args, **_kwargs: spec,
+    )
+    monkeypatch.setattr(studio.audio, "run_tool_from_hydra_cfg", runner("audio"))
+    monkeypatch.setattr(studio.record, "run_tool_from_hydra_cfg", runner("record"))
+    monkeypatch.setattr(studio.retime_cast, "run_tool_from_hydra_cfg", runner("retime"))
+
+    config = OmegaConf.create(
+        {"action": "build", "force": True, "recording": {"id": "demo"}}
+    )
+    assert studio.run_tool_from_hydra_cfg(config) == 0
+
+    assert calls == [
+        ("record", "record"),
+        ("audio", "generate"),
+        ("audio", "publish"),
+        ("retime", "retime"),
+    ]
+
+
+def test_recording_fingerprint_tracks_run_file_content(tmp_path: Path) -> None:
+    spec = minimal_build_spec(tmp_path)
+    run_file = tmp_path / "setup.sh"
+    run_file.write_text("echo before\n", encoding="utf-8")
+    spec["setup"] = [{"run_file": str(run_file)}]
+    write_minimal_recording_outputs(spec)
+    studio.write_recording_fingerprint(spec)
+
+    assert studio.recording_skip_reason(spec) is None
+
+    run_file.write_text("echo after\n", encoding="utf-8")
+
+    assert studio.recording_skip_reason(spec) == "recording fingerprint changed"
+
+
+def test_recording_fingerprint_requires_configured_script(tmp_path: Path) -> None:
+    spec = minimal_build_spec(tmp_path)
+    missing_script = tmp_path / "missing.md"
+    spec["script"] = str(missing_script)
+    write_minimal_recording_outputs(spec)
+    fingerprint_path = studio.recording_fingerprint_path(Path(spec["outputs"]["cast"]))
+    fingerprint_path.write_text(
+        json.dumps(
+            {
+                "version": studio.RECORDING_FINGERPRINT_VERSION,
+                "fingerprint": "stale",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert (
+        studio.recording_skip_reason(spec)
+        == f"recording dependency is missing: {missing_script}"
+    )
+    try:
+        studio.write_recording_fingerprint(spec)
+    except studio.StudioError as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("missing configured script should fail fingerprint write")
+    assert f"recording fingerprint dependency is missing: {missing_script}" == message
+
+
+def test_direct_record_writes_recording_fingerprint(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    spec = minimal_build_spec(tmp_path)
+
+    def run(cfg: Any) -> int:
+        assert cfg.step == "record"
+        write_minimal_recording_outputs(spec)
+        return 0
+
+    monkeypatch.setattr(
+        studio,
+        "recording_spec_from_config",
+        lambda *_args, **_kwargs: spec,
+    )
+    monkeypatch.setattr(studio.record, "run_tool_from_hydra_cfg", run)
+
+    assert studio.run_tool_from_hydra_cfg(step_cfg("record")) == 0
+
+    fingerprint_path = studio.recording_fingerprint_path(Path(spec["outputs"]["cast"]))
+    assert fingerprint_path.exists()
+    assert studio.recording_skip_reason(spec) is None
+
+
+def test_recording_fingerprint_excludes_retime_tool(tmp_path: Path) -> None:
+    spec = minimal_build_spec(tmp_path)
+
+    paths = studio.fingerprint_dependency_paths(spec)
+
+    assert Path(studio.record.__file__) in paths
+    assert Path(studio.retime_cast.__file__) not in paths
+
+
 def test_build_success_followups_are_suppressed_for_json(
     tmp_path: Path, monkeypatch: Any, capsys: Any
 ) -> None:
-    def run(_cfg: Any) -> int:
+    spec = minimal_build_spec(tmp_path)
+
+    def run(cfg: Any) -> int:
+        if cfg.step == "record":
+            write_minimal_recording_outputs(spec)
         return 0
 
+    monkeypatch.setattr(
+        studio,
+        "recording_spec_from_config",
+        lambda *_args, **_kwargs: spec,
+    )
     monkeypatch.setattr(studio.audio, "run_tool_from_hydra_cfg", run)
     monkeypatch.setattr(studio.record, "run_tool_from_hydra_cfg", run)
     monkeypatch.setattr(studio.retime_cast, "run_tool_from_hydra_cfg", run)
@@ -192,7 +401,9 @@ def test_record_step_dry_run_delegates_to_record_dry_run(monkeypatch: Any) -> No
     assert calls == ["dry_run"]
 
 
-def test_publish_docusaurus_mdx_replaces_holder(tmp_path: Path) -> None:
+def test_publish_docusaurus_mdx_replaces_holder(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
     page = tmp_path / "page.mdx"
     page.write_text(
         "\n".join(
@@ -248,6 +459,12 @@ def test_publish_docusaurus_mdx_replaces_holder(tmp_path: Path) -> None:
         },
     }
 
+    monkeypatch.setattr(
+        studio.retime_cast,
+        "require_fresh_retimed_cast",
+        lambda **_kwargs: None,
+    )
+
     assert studio.publish_surface(config) == page
 
     output = page.read_text(encoding="utf-8")
@@ -262,7 +479,7 @@ def test_publish_docusaurus_mdx_replaces_holder(tmp_path: Path) -> None:
     assert 'introSegment="overview"' in output
 
 
-def test_publish_plain_html_replaces_holder(tmp_path: Path) -> None:
+def test_publish_plain_html_replaces_holder(tmp_path: Path, monkeypatch: Any) -> None:
     page = tmp_path / "page.html"
     page.write_text(
         "\n".join(
@@ -319,6 +536,12 @@ def test_publish_plain_html_replaces_holder(tmp_path: Path) -> None:
         },
     }
 
+    monkeypatch.setattr(
+        studio.retime_cast,
+        "require_fresh_retimed_cast",
+        lambda **_kwargs: None,
+    )
+
     assert studio.publish_surface(config) == page
 
     output = page.read_text(encoding="utf-8")
@@ -343,9 +566,10 @@ def test_check_runs_non_artifact_checks(monkeypatch: Any) -> None:
 
     monkeypatch.setattr(studio.record, "run_tool_from_hydra_cfg", runner("record"))
     monkeypatch.setattr(studio.audio, "run_tool_from_hydra_cfg", runner("audio"))
+    monkeypatch.setattr(studio.retime_cast, "run_tool_from_hydra_cfg", runner("retime"))
 
     assert studio.run_tool_from_hydra_cfg(cfg("check")) == 0
-    assert calls == [("record", "check"), ("audio", "check")]
+    assert calls == [("record", "check"), ("audio", "check"), ("retime", "check")]
 
 
 def test_empty_action_has_short_public_error() -> None:
@@ -406,6 +630,7 @@ def test_individual_actions_delegate_to_owning_tool(monkeypatch: Any) -> None:
 
 def test_failed_step_stops_pipeline(tmp_path: Path, monkeypatch: Any) -> None:
     calls: list[tuple[str, str]] = []
+    spec = minimal_build_spec(tmp_path)
 
     def audio_run(cfg: Any) -> int:
         calls.append(("audio", cfg.step))
@@ -419,6 +644,11 @@ def test_failed_step_stops_pipeline(tmp_path: Path, monkeypatch: Any) -> None:
         calls.append(("retime", cfg.step))
         return 0
 
+    monkeypatch.setattr(
+        studio,
+        "recording_spec_from_config",
+        lambda *_args, **_kwargs: spec,
+    )
     monkeypatch.setattr(studio.audio, "run_tool_from_hydra_cfg", audio_run)
     monkeypatch.setattr(studio.record, "run_tool_from_hydra_cfg", record_run)
     monkeypatch.setattr(studio.retime_cast, "run_tool_from_hydra_cfg", retime_run)

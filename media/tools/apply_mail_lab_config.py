@@ -78,8 +78,7 @@ def update_account_files(config_dir: Path) -> None:
             "authenticate": True,
             "username": "${oc.env:SMTP_BOT_ACCOUNT_USERNAME}",
             "password": "${oc.env:SMTP_BOT_ACCOUNT_PASSWORD}",
-            "from_email": os.environ.get("BOT_FROM_EMAIL")
-            or require_env("BOT_EMAIL"),
+            "from_email": os.environ.get("BOT_FROM_EMAIL") or require_env("BOT_EMAIL"),
             "from_name": "Arbiter",
             "tls": "none",
             "verify_peer": False,

@@ -21,7 +21,19 @@ def load_studio_config() -> Any:
     return module
 
 
+def load_studio_tool() -> Any:
+    path = REPO_ROOT / "media" / "tools" / "studio.py"
+    spec = importlib.util.spec_from_file_location("studio", path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["studio"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 studio_config = load_studio_config()
+studio = load_studio_tool()
 
 
 def recording_run_file_text(path: str) -> str:
@@ -30,6 +42,75 @@ def recording_run_file_text(path: str) -> str:
 
 def action_display(action: dict[str, Any]) -> str:
     return action.get("display", action["run"])
+
+
+def test_record_action_invalidates_retimed_cast_before_record(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    retimed = tmp_path / "demo.retimed.cast"
+    retimed.write_text("old retime\n", encoding="utf-8")
+    saw_retimed_exists: list[bool] = []
+    spec = {
+        "id": "demo",
+        "_recording_id": "demo",
+        "outputs": {
+            "cast": str(tmp_path / "demo.cast"),
+            "audio": str(tmp_path / "demo.mp3"),
+        },
+    }
+
+    monkeypatch.setattr(studio, "container_from_hydra_cfg", lambda cfg: {})
+    monkeypatch.setattr(
+        studio,
+        "recording_spec_from_config",
+        lambda *_args, **_kwargs: spec,
+    )
+
+    def fake_invalidate(recording_spec: dict[str, Any]) -> Path:
+        assert recording_spec is spec
+        retimed.unlink()
+        return retimed
+
+    def fake_record(cfg: Any) -> int:
+        saw_retimed_exists.append(retimed.exists())
+        return 0
+
+    monkeypatch.setattr(studio, "invalidate_retimed_cast_for_spec", fake_invalidate)
+    monkeypatch.setattr(studio.record, "run_tool_from_hydra_cfg", fake_record)
+
+    studio.run_record_action(
+        studio.OmegaConf.create({"output_format": "json"}),
+        "record",
+        "record baseline cast",
+    )
+
+    assert saw_retimed_exists == [False]
+
+
+def test_studio_check_includes_retime_freshness_check(monkeypatch: Any) -> None:
+    calls: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        studio,
+        "run_record_action",
+        lambda cfg, action, label=None: calls.append(("record", action)),
+    )
+    monkeypatch.setattr(
+        studio,
+        "run_audio_action",
+        lambda cfg, action, label=None: calls.append(("audio", action)),
+    )
+    monkeypatch.setattr(
+        studio,
+        "run_retime_action",
+        lambda cfg, action, label=None: calls.append(("retime", action)),
+    )
+
+    result = studio.run_check(studio.OmegaConf.create({}))
+
+    assert result == 0
+    assert calls == [("record", "check"), ("audio", "check"), ("retime", "check")]
 
 
 def test_default_config_composes_install_recording() -> None:
@@ -188,8 +269,7 @@ def test_install_recording_uses_current_client_discovery_command() -> None:
 
     plugin_command = "arbiter arbiter.url=https://127.0.0.1:18075 plugins | jq ."
     account_command = (
-        "arbiter arbiter.url=https://127.0.0.1:18075 "
-        "plugins smtp account bot | jq ."
+        "arbiter arbiter.url=https://127.0.0.1:18075 " "plugins smtp account bot | jq ."
     )
 
     assert plugin_command in action_display(action)
@@ -265,9 +345,7 @@ def test_install_recording_prepares_visible_cli_environment() -> None:
     install_narration = next(
         beat for beat in spec["narration"]["beats"] if beat["id"] == "install-suite"
     )
-    assert prepare_narration["heading"] == (
-        "Create and activate a virtual environment"
-    )
+    assert prepare_narration["heading"] == ("Create and activate a virtual environment")
     assert "Create a small Python virtual environment and activate it" in (
         prepare_narration["text"]
     )
@@ -292,6 +370,7 @@ def test_install_recording_prepares_visible_cli_environment() -> None:
     )
     assert "arbiter-server version" in install_action["display"]
     assert "arbiter-server version" in install_action["run"]
+    assert "arbiter-server version --json" not in install_action["display"]
     assert "./arbiter_venv/bin/arbiter-server" in (
         install_action["expect"]["file_exists"]
     )
@@ -339,11 +418,15 @@ def test_install_recording_sends_and_fetches_a_self_addressed_message() -> None:
     assert "bot@example.test" in action_display(send_action)
     assert "install-smoke-1" in action_display(send_action)
     assert send_check["run_file"] == (
-        "media/recording-scripts/install-and-bootstrap/"
-        "wait-for-delivered-message.sh"
+        "media/recording-scripts/install-and-bootstrap/" "wait-for-delivered-message.sh"
     )
     assert "imap:search_messages" in action_display(fetch_action)
     assert "imap:get_message" in action_display(fetch_action)
+    assert fetch_action["progress"] == [
+        "search delivered message",
+        "fetch delivered message",
+    ]
+    assert "printf 'message_uid=%s\\n' \"$message_uid\" && \\" in fetch_action["run"]
     assert "Hello from Arbiter staging." in fetch_action["expect"]["output_contains"]
 
 
@@ -354,9 +437,8 @@ def test_install_recording_preinstall_doctor_checks_codex_agent_user() -> None:
     )
     action = preinstall["actions"][0]
 
-    assert (
-        "./arbiter-docker doctor --preinstall --agent-user codex"
-        in action_display(action)
+    assert "./arbiter-docker doctor --preinstall --agent-user codex" in action_display(
+        action
     )
     assert "./arbiter-docker doctor --preinstall --agent-user codex" in action["run"]
 
@@ -408,7 +490,10 @@ def test_pypi_arbiter_source_uses_artifact_keyed_operator_venv_cache() -> None:
     assert "recording_operator_wheelhouse_metadata()" in setup_run
     assert "recording_prepare_operator_venv_from_wheelhouse()" in setup_run
     assert "recording_prepare_pypi_operator_venv()" in setup_run
-    assert 'recording_operator_venv_cache_root="$recording_repo/media/cache/operator-venvs"' in setup_run
+    assert (
+        'recording_operator_venv_cache_root="$recording_repo/media/cache/operator-venvs"'
+        in setup_run
+    )
     assert "recording_operator_venv_is_healthy()" in setup_run
     assert '"$venv/bin/arbiter-server" "$venv/bin/arbiter"' in setup_run
     assert 'recording_operator_venv_is_healthy "$operator_venv"' in setup_run
@@ -426,16 +511,17 @@ def test_pypi_arbiter_source_uses_artifact_keyed_operator_venv_cache() -> None:
     assert '"$cached_venv/bin/python" -m pip install \\' in setup_run
     assert '--find-links "$wheelhouse"' in setup_run
     assert 'ln -sfn "$cached_venv" "$operator_venv"' in setup_run
-    assert 'export ARBITER_CINEMA_OPERATOR_VENV_CACHE_KEY="$cache_key"' in (
-        setup_run
+    assert 'export ARBITER_CINEMA_OPERATOR_VENV_CACHE_KEY="$cache_key"' in (setup_run)
+    assert (
+        'operator_venv_cache_retain="${recording_param_operator_venv_cache_retain:-8}"'
+        in setup_run
     )
-    assert 'operator_venv_cache_retain="${recording_param_operator_venv_cache_retain:-8}"' in setup_run
     assert "recording_validate_operator_venv_cache_retain()" in setup_run
     assert "recording_prune_operator_venv_cache()" in setup_run
     assert 'touch "$ready_file"' in setup_run
     assert 'recording_prune_operator_venv_cache "$cache_key"' in setup_run
     assert 'rmdir "$lock_dir" 2>/dev/null || true\n        return 1' in setup_run
-    assert 'keep.add(current_cache_key)' in setup_run
+    assert "keep.add(current_cache_key)" in setup_run
 
 
 def test_local_arbiter_source_uses_dirty_source_artifact_keyed_operator_cache() -> None:
@@ -447,17 +533,29 @@ def test_local_arbiter_source_uses_dirty_source_artifact_keyed_operator_cache() 
     assert "recording_wheel_path()" in setup_run
     assert "command -v arbiter-server" not in setup_run
     assert "command -v arbiter >/dev/null" not in setup_run
-    assert "server\n    client\n    plugins/smtp\n    plugins/imap\n    meta/arbiter-suite" in setup_run
+    assert (
+        "server\n    client\n    plugins/smtp\n    plugins/imap\n    meta/arbiter-suite"
+        in setup_run
+    )
     assert "build local operator wheel: $package_source" in setup_run
     assert "build local operator dependency wheelhouse" not in setup_run
     assert '"$recording_python" -m pip wheel \\' in setup_run
     assert '--wheel-dir "$wheelhouse"' in setup_run
     assert '"$source_dir"' in setup_run
-    assert 'package_requirement="$(recording_wheel_requirement "$wheelhouse" "$arbiter_package")"' in setup_run
-    assert 'local_package_wheels+=("$(recording_wheel_path "$wheelhouse" "$package_name")")' in setup_run
+    assert (
+        'package_requirement="$(recording_wheel_requirement "$wheelhouse" "$arbiter_package")"'
+        in setup_run
+    )
+    assert (
+        'local_package_wheels+=("$(recording_wheel_path "$wheelhouse" "$package_name")")'
+        in setup_run
+    )
     assert '--find-links "$wheelhouse"' in setup_run
-    assert 'recording_prepare_operator_venv_from_wheelhouse \\' in setup_run
-    assert '"$package_requirement" "$wheelhouse" online "${local_package_wheels[@]}"' in setup_run
+    assert "recording_prepare_operator_venv_from_wheelhouse \\" in setup_run
+    assert (
+        '"$package_requirement" "$wheelhouse" online "${local_package_wheels[@]}"'
+        in setup_run
+    )
     assert 'export ARBITER_REPO_ROOT="$recording_repo"' in setup_run
     assert 'export ARBITER_PYTHON="$recording_python"' in setup_run
 
@@ -554,9 +652,7 @@ def test_unknown_script_parameter_override_fails() -> None:
 
 def test_hydra_override_values_with_equals_are_quoted_for_composition() -> None:
     assert (
-        studio_config.normalize_hydra_override(
-            "output=path=with=equals"
-        )
+        studio_config.normalize_hydra_override("output=path=with=equals")
         == "output='path=with=equals'"
     )
 

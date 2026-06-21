@@ -60,7 +60,9 @@ def normalize_token(text: str) -> str:
 
 
 def sentence_tokens(sentence: str) -> list[str]:
-    return [token for token in (normalize_token(part) for part in sentence.split()) if token]
+    return [
+        token for token in (normalize_token(part) for part in sentence.split()) if token
+    ]
 
 
 def word_token(word: dict[str, Any]) -> str:
@@ -108,12 +110,24 @@ def align_sentences_to_words(
 
     source_only = [token for _, token in source]
     transcript_only = [word_token(word) for word in words]
-    matcher = difflib.SequenceMatcher(None, source_only, transcript_only, autojunk=False)
-    matches_by_sentence: dict[int, list[int]] = {index: [] for index in range(len(sentences))}
-    for tag, source_start, source_end, transcript_start, _transcript_end in matcher.get_opcodes():
+    matcher = difflib.SequenceMatcher(
+        None, source_only, transcript_only, autojunk=False
+    )
+    matches_by_sentence: dict[int, list[int]] = {
+        index: [] for index in range(len(sentences))
+    }
+    for (
+        tag,
+        source_start,
+        source_end,
+        transcript_start,
+        _transcript_end,
+    ) in matcher.get_opcodes():
         if tag != "equal":
             continue
-        for offset, transcript_index in enumerate(range(transcript_start, transcript_start + source_end - source_start)):
+        for offset, transcript_index in enumerate(
+            range(transcript_start, transcript_start + source_end - source_start)
+        ):
             sentence_index = source[source_start + offset][0]
             matches_by_sentence[sentence_index].append(transcript_index)
 
@@ -121,7 +135,9 @@ def align_sentences_to_words(
     for sentence_index, sentence in enumerate(sentences):
         matched = matches_by_sentence[sentence_index]
         if not matched:
-            raise audio.AudioError(f"could not align sentence {sentence_index + 1}: {sentence}")
+            raise audio.AudioError(
+                f"could not align sentence {sentence_index + 1}: {sentence}"
+            )
         starts = [float(words[index]["start"]) for index in matched]
         ends = [float(words[index]["end"]) for index in matched]
         raw_start = min(starts)
@@ -337,9 +353,15 @@ def main(argv: list[str] | None = None) -> int:
 
         words = transcript.get("words", [])
         if not isinstance(words, list) or not words:
-            raise audio.AudioError("transcription response did not include word timestamps")
+            raise audio.AudioError(
+                "transcription response did not include word timestamps"
+            )
         duration = transcript.get("duration")
-        duration_value = float(duration) if isinstance(duration, (int, float)) else probe_duration(full_audio_path)
+        duration_value = (
+            float(duration)
+            if isinstance(duration, (int, float))
+            else probe_duration(full_audio_path)
+        )
         spans = align_sentences_to_words(
             sentences,
             words,

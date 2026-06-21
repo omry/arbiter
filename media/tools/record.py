@@ -317,6 +317,15 @@ def shell_expect_args(expect: dict[str, Any]) -> list[str]:
     return args
 
 
+def action_progress_labels(action: dict[str, Any], *, field: str) -> list[str]:
+    labels: list[str] = []
+    for value in as_list(action.get("progress"), field=f"{field}.progress"):
+        if not isinstance(value, str) or not value:
+            raise RecordingError(f"{field}.progress values must be non-empty strings")
+        labels.append(value)
+    return labels
+
+
 def timeline_path_for_cast(cast_path: Path) -> Path:
     return cast_path.with_suffix(".timeline.jsonl")
 
@@ -523,6 +532,9 @@ def progress_message_for_event(
             return f"stage {beat_indexes[beat]}/{beat_count}: {caption}"
         return f"stage: {caption}"
     if phase == "command_run_start":
+        label = event.get("progress")
+        if isinstance(label, str) and label:
+            return f"running: {label}"
         command = event.get("command")
         if not isinstance(command, str) or not command:
             return None
@@ -1159,6 +1171,8 @@ def render_session_script(spec: dict[str, Any]) -> str:
             'if [[ -n "$recording_timeline_path" ]]; then',
             '  : > "$recording_timeline_path"',
             "fi",
+            "unset VIRTUAL_ENV",
+            "unset VIRTUAL_ENV_PROMPT",
         ]
     )
     for key, value in sorted(parameters.items()):
@@ -1528,14 +1542,38 @@ def render_session_script(spec: dict[str, Any]) -> str:
             "PY",
             "}",
             "",
+            "recording_prompt_text() {",
+            '  local venv_name=""',
+            '  if [[ -n "${VIRTUAL_ENV:-}" ]]; then',
+            '    venv_name="$(basename "$VIRTUAL_ENV")"',
+            "  fi",
+            '  if [[ -n "$venv_name" ]]; then',
+            '    printf "(%s) $" "$venv_name"',
+            "  else",
+            "    printf '$'",
+            "  fi",
+            "}",
+            "",
+            "print_idle_prompt() {",
+            "  local prompt",
+            '  prompt="$(recording_prompt_text)"',
+            '  if [[ "$recording_color" == 1 ]]; then',
+            '    printf "\\033[32;1m%s\\033[0m " "$prompt"',
+            "  else",
+            '    printf "%s " "$prompt"',
+            "  fi",
+            "}",
+            "",
             "print_command_line() {",
             '  local line="$1"',
             '  local continuation="$2"',
+            "  local prompt",
+            '  prompt="$(recording_prompt_text)"',
             '  if [[ "$recording_color" == 1 ]]; then',
             '    if [[ "$continuation" == 1 ]]; then',
             "      printf '  \\033[1m'",
             "    else",
-            "      printf '\\033[32;1m$\\033[0m \\033[1m'",
+            '      printf "\\033[32;1m%s\\033[0m \\033[1m" "$prompt"',
             "    fi",
             '    type_text "$line"',
             "    printf '\\033[0m\\n'",
@@ -1543,7 +1581,7 @@ def render_session_script(spec: dict[str, Any]) -> str:
             '    if [[ "$continuation" == 1 ]]; then',
             "      printf '  '",
             "    else",
-            "      printf '$ '",
+            '      printf "%s " "$prompt"',
             "    fi",
             '    type_text "$line"',
             "    printf '\\n'",
@@ -1597,6 +1635,24 @@ def render_session_script(spec: dict[str, Any]) -> str:
             '  if [[ -n "$chunk" ]]; then',
             '    target+=("$chunk")',
             "  fi",
+            "}",
+            "",
+            "load_progress_labels() {",
+            '  local labels_json="$1"',
+            '  local target_name="$2"',
+            '  local -n target="$target_name"',
+            "  target=()",
+            '  [[ -n "$labels_json" ]] || return',
+            "  while IFS= read -r label; do",
+            '    target+=("$label")',
+            '  done < <("$recording_python" - "$labels_json" <<\'PY\'',
+            "import json",
+            "import sys",
+            "",
+            "for value in json.loads(sys.argv[1]):",
+            "    print(value)",
+            "PY",
+            "  )",
             "}",
             "",
             "run_visible_command_chunk() {",
@@ -1756,17 +1812,20 @@ def render_session_script(spec: dict[str, Any]) -> str:
             '  local action_id="$2"',
             '  local display_command="$3"',
             '  local command="$4"',
-            "  shift 4",
+            '  local progress_json="$5"',
+            "  shift 5",
             '  local marker="::: action ${action_id}"',
             '  printf "%s start beat=%s\\n" "$marker" "$beat_id" >>"$recording_progress_path"',
-            '  local stdout_start',
-            '  local stderr_start',
+            "  local stdout_start",
+            "  local stderr_start",
             '  stdout_start="$(wc -c <"$recording_stdout_path")"',
             '  stderr_start="$(wc -c <"$recording_stderr_path")"',
             "  local display_chunks=()",
             "  local command_chunks=()",
+            "  local progress_labels=()",
             '  split_commands "$display_command" display_chunks',
             '  split_commands "$command" command_chunks',
+            '  load_progress_labels "$progress_json" progress_labels',
             '  timeline_event action_start "$beat_id" "" "" action_id "$action_id"',
             "  set +e",
             "  local status=0",
@@ -1776,7 +1835,7 @@ def render_session_script(spec: dict[str, Any]) -> str:
             '      timeline_event command_prompt_start "$beat_id" "" "" action_id "$action_id" chunk_index "$index" command "${display_chunks[$index]}"',
             '      print_command "${display_chunks[$index]}"',
             '      timeline_event command_prompt_end "$beat_id" "" "" action_id "$action_id" chunk_index "$index" command "${display_chunks[$index]}"',
-            '      timeline_event command_run_start "$beat_id" "" "" action_id "$action_id" chunk_index "$index" command "${command_chunks[$index]}"',
+            '      timeline_event command_run_start "$beat_id" "" "" action_id "$action_id" chunk_index "$index" command "${command_chunks[$index]}" progress "${progress_labels[$index]:-}"',
             '      run_visible_command_chunk "$action_id" "$marker" "${command_chunks[$index]}" "$index"',
             "      status=$?",
             '      timeline_event command_run_end "$beat_id" "" "" action_id "$action_id" chunk_index "$index" status "$status"',
@@ -1786,7 +1845,7 @@ def render_session_script(spec: dict[str, Any]) -> str:
             '    timeline_event command_prompt_start "$beat_id" "" "" action_id "$action_id" chunk_index fallback command "$display_command"',
             '    print_command "$display_command"',
             '    timeline_event command_prompt_end "$beat_id" "" "" action_id "$action_id" chunk_index fallback command "$display_command"',
-            '    timeline_event command_run_start "$beat_id" "" "" action_id "$action_id" chunk_index fallback command "$command"',
+            '    timeline_event command_run_start "$beat_id" "" "" action_id "$action_id" chunk_index fallback command "$command" progress "${progress_labels[0]:-}"',
             '    run_visible_command_chunk "$action_id" "$marker" "$command" fallback',
             "    status=$?",
             '    timeline_event command_run_end "$beat_id" "" "" action_id "$action_id" chunk_index fallback status "$status"',
@@ -1825,6 +1884,7 @@ def render_session_script(spec: dict[str, Any]) -> str:
             "        ;;",
             "    esac",
             "  done",
+            "  print_idle_prompt",
             '  printf "%s end status=%s\\n" "$marker" "$status" >>"$recording_progress_path"',
             '  timeline_event action_end "$beat_id" "" "" action_id "$action_id" status "$status"',
             "  printf '\\n'",
@@ -1839,8 +1899,8 @@ def render_session_script(spec: dict[str, Any]) -> str:
             '  local marker="::: check ${check_id}"',
             '  timeline_event check_start "$beat_id" "$check_id" "$check_name"',
             '  printf "%s start beat=%s name=%s\\n" "$marker" "$beat_id" "$check_name" >>"$recording_progress_path"',
-            '  local stdout_start',
-            '  local stderr_start',
+            "  local stdout_start",
+            "  local stderr_start",
             '  stdout_start="$(wc -c <"$recording_stdout_path")"',
             '  stderr_start="$(wc -c <"$recording_stderr_path")"',
             "  set +e",
@@ -1959,13 +2019,18 @@ def render_session_script(spec: dict[str, Any]) -> str:
                 action.get("expect"), field=f"beats.{beat_id}.actions.{index}.expect"
             )
             gate_args = [shell_quote(value) for value in shell_expect_args(expect)]
+            progress_labels = action_progress_labels(
+                action, field=f"beats.{beat_id}.actions.{index}"
+            )
+            progress_json = json.dumps(progress_labels)
             action_id = f"{safe_beat_id}_{index}"
             lines.append(
                 "run_action "
                 f"{shell_quote(beat_id)} "
                 f"{shell_quote(action_id)} "
                 f"{shell_quote(display_command)} "
-                f"{shell_quote(command)} " + " ".join(gate_args)
+                f"{shell_quote(command)} "
+                f"{shell_quote(progress_json)} " + " ".join(gate_args)
             )
         checks = as_list(beat.get("checks"), field=f"beats.{beat_id}.checks")
         for index, check in enumerate(checks, start=1):

@@ -340,8 +340,11 @@ recording:
     actions:
     - run: |
         message_uid="$(arbiter arbiter.url=${recording.vars.staging_url} op run imap:search_messages --args '{"account":"bot","folder":"INBOX","query":"Arbiter install smoke test","limit":1}' | jq -er '.result.messages[0].uid')"
-        printf 'message_uid=%s\n' "$message_uid"
+        printf 'message_uid=%s\n' "$message_uid" && \
         arbiter arbiter.url=${recording.vars.staging_url} op run imap:get_message --args "{\"account\":\"bot\",\"folder\":\"INBOX\",\"message_id\":\"$message_uid\"}" | jq '{subject: .result.message.subject, text_body: .result.message.text_body}'
+      progress:
+      - search delivered message
+      - fetch delivered message
       expect:
         output_contains:
         - message_uid=
@@ -856,6 +859,7 @@ Action:
 
 ```bash
 message_uid="$(arbiter arbiter.url=https://127.0.0.1:18075 op run imap:search_messages --args '{"account":"bot","folder":"INBOX","query":"Arbiter install smoke test","limit":1}' | jq -er '.result.messages[0].uid')"
+printf 'message_uid=%s\n' "$message_uid" && \
 arbiter arbiter.url=https://127.0.0.1:18075 op run imap:get_message --args "{\"account\":\"bot\",\"folder\":\"INBOX\",\"message_id\":\"$message_uid\"}" | jq '{subject: .result.message.subject, text_body: .result.message.text_body}'
 ```
 

@@ -415,6 +415,7 @@
       let introSeconds = Math.max(0, Number(params.get('introSeconds') || '0'));
       const introSegment = params.get('introSegment') || '';
       const titleText = params.get('title') || 'Terminal recording';
+      const narrationPostPauseSeconds = 2.0;
 
       const terminal = document.getElementById('terminal');
       const narration = document.getElementById('narration');
@@ -1294,20 +1295,24 @@
         const introIndex = selectedIntroSegmentIndex();
         if (introIndex >= 0) {
           const segment = narrationSegments[introIndex];
+          const presentationEnd = Math.max(introSeconds, segment.duration);
           audioPlaybackSegments.push({
             ...segment,
             audioStart: segment.offset,
             audioEnd: segment.offset + segment.duration,
             presentationStart: 0,
-            presentationEnd: Math.max(introSeconds, segment.duration),
+            presentationEnd,
+            postPauseEnd: presentationEnd + narrationPostPauseSeconds,
           });
         }
 
         let segmentIndex = introIndex >= 0 ? introIndex + 1 : 0;
-        let shift = introSeconds;
+        let shift = introIndex >= 0
+          ? Math.max(introSeconds, narrationSegments[introIndex].duration) + narrationPostPauseSeconds
+          : introSeconds;
         let captionCount = 0;
         let currentSection = null;
-        let nextSectionStart = introSeconds;
+        let nextSectionStart = shift;
         const presentationEvents = [];
 
         for (const event of rawEvents) {
@@ -1327,6 +1332,7 @@
             if (segment.duration > 0) {
               const presentationStart = Math.max(shifted.time, nextSectionStart);
               const presentationEnd = presentationStart + segment.duration;
+              const postPauseEnd = presentationEnd + narrationPostPauseSeconds;
               if (captionCount > 1 && currentSection) {
                 guidedPausePoints.push({
                   time: presentationStart,
@@ -1346,12 +1352,13 @@
                 audioEnd: segment.offset + segment.duration,
                 presentationStart,
                 presentationEnd,
+                postPauseEnd,
               });
               audioPresentationSeconds = Math.max(
                 audioPresentationSeconds,
-                presentationEnd,
+                postPauseEnd,
               );
-              nextSectionStart = presentationEnd;
+              nextSectionStart = postPauseEnd;
             }
           }
         }
@@ -1359,7 +1366,9 @@
         if (audioPlaybackSegments.length) {
           audioPresentationSeconds = Math.max(
             audioPresentationSeconds,
-            ...audioPlaybackSegments.map((segment) => segment.presentationEnd),
+            ...audioPlaybackSegments.map((segment) => (
+              segment.postPauseEnd || segment.presentationEnd
+            )),
           );
         }
 

@@ -45,6 +45,7 @@ SUPPORTED_FORMATS = {"mp3", "opus", "aac", "flac", "wav", "pcm"}
 SUPPORTED_TIMESTAMP_GRANULARITIES = {"word", "segment"}
 DEFAULT_TRANSCRIPTION_MODEL = "whisper-1"
 DEFAULT_TIMESTAMP_GRANULARITIES = ("word", "segment")
+DEFAULT_OPENAI_TTS_USD_PER_1M_CHARACTERS = 15.0
 
 
 class AudioError(RuntimeError):
@@ -74,6 +75,7 @@ class AudioSettings:
     format: str
     cache_dir: Path
     instructions: str | None = None
+    tts_usd_per_1m_characters: float = DEFAULT_OPENAI_TTS_USD_PER_1M_CHARACTERS
 
 
 @dataclass(frozen=True)
@@ -87,6 +89,13 @@ class AudioPlanItem:
     segment: NarrationSegment
     cache_key: str
     output_path: Path
+
+
+@dataclass(frozen=True)
+class AudioBillingSummary:
+    generated_segments: int
+    billable_characters: int
+    estimated_cost_usd: float
 
 
 def load_manifest(
@@ -226,6 +235,18 @@ def audio_settings(spec: dict[str, Any]) -> AudioSettings:
     cache_dir = audio.get("cache_dir", "media/cache/audio")
     if not isinstance(cache_dir, str) or not cache_dir:
         raise AudioError("audio.cache_dir must be a non-empty string")
+    billing = as_mapping(audio.get("billing"), field="audio.billing")
+    tts_usd_per_1m_characters = billing.get(
+        "tts_usd_per_1m_characters",
+        DEFAULT_OPENAI_TTS_USD_PER_1M_CHARACTERS,
+    )
+    if isinstance(tts_usd_per_1m_characters, bool) or not isinstance(
+        tts_usd_per_1m_characters,
+        (int, float),
+    ):
+        raise AudioError("audio.billing.tts_usd_per_1m_characters must be a number")
+    if tts_usd_per_1m_characters < 0:
+        raise AudioError("audio.billing.tts_usd_per_1m_characters must not be negative")
     return AudioSettings(
         enabled=bool(audio.get("enabled", False)),
         provider=provider,
@@ -235,6 +256,7 @@ def audio_settings(spec: dict[str, Any]) -> AudioSettings:
         format=fmt,
         instructions=instructions,
         cache_dir=relative_path(cache_dir),
+        tts_usd_per_1m_characters=float(tts_usd_per_1m_characters),
     )
 
 
@@ -471,6 +493,61 @@ def reusable_cache_path(item: AudioPlanItem, settings: AudioSettings) -> Path | 
     return None
 
 
+def audio_items_requiring_synthesis(
+    plan: list[AudioPlanItem],
+    settings: AudioSettings,
+    *,
+    force: bool = False,
+) -> list[AudioPlanItem]:
+    if force:
+        return list(plan)
+    needed: list[AudioPlanItem] = []
+    for item in plan:
+        if item.output_path.exists():
+            continue
+        if reusable_cache_path(item, settings) is not None:
+            continue
+        needed.append(item)
+    return needed
+
+
+def openai_tts_billable_characters(
+    segment: NarrationSegment,
+    settings: AudioSettings,
+) -> int:
+    return len(segment.text) + len(settings.instructions or "")
+
+
+def estimate_openai_tts_billing(
+    items: list[AudioPlanItem],
+    settings: AudioSettings,
+) -> AudioBillingSummary:
+    characters = sum(
+        openai_tts_billable_characters(item.segment, settings) for item in items
+    )
+    cost = characters * settings.tts_usd_per_1m_characters / 1_000_000
+    return AudioBillingSummary(
+        generated_segments=len(items),
+        billable_characters=characters,
+        estimated_cost_usd=cost,
+    )
+
+
+def format_usd(value: float) -> str:
+    if value == 0:
+        return "$0.00"
+    if value < 0.01:
+        return f"${value:.6f}"
+    return f"${value:.2f}"
+
+
+def print_openai_tts_billing_summary(summary: AudioBillingSummary) -> None:
+    print(
+        "OpenAI TTS estimated cost this run: "
+        f"{format_usd(summary.estimated_cost_usd)}"
+    )
+
+
 def openai_speech_bytes(
     segment: NarrationSegment,
     settings: AudioSettings,
@@ -526,16 +603,17 @@ def generate_audio(
 ) -> list[Path]:
     written: list[Path] = []
     for item in plan:
-        if item.output_path.exists() and not force:
-            written.append(item.output_path)
-            continue
-        item.output_path.parent.mkdir(parents=True, exist_ok=True)
         if not force:
+            if item.output_path.exists():
+                written.append(item.output_path)
+                continue
             existing = reusable_cache_path(item, settings)
             if existing is not None:
+                item.output_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(existing, item.output_path)
                 written.append(item.output_path)
                 continue
+        item.output_path.parent.mkdir(parents=True, exist_ok=True)
         audio_bytes = synthesize(item.segment, settings)
         if not audio_bytes:
             raise AudioError(
@@ -1209,9 +1287,17 @@ def run_tool_from_hydra_cfg(cfg: DictConfig) -> int:
             return 0
         if not settings.enabled:
             raise AudioError("audio is disabled in the recording config")
+        synthesized_items = audio_items_requiring_synthesis(
+            plan,
+            settings,
+            force=force,
+        )
         paths = generate_audio(plan, settings, force=force)
         for path in paths:
             print(f"audio {display_path(path)}")
+        if settings.provider == "openai":
+            billing = estimate_openai_tts_billing(synthesized_items, settings)
+            print_openai_tts_billing_summary(billing)
         if timestamps:
             timeline_paths = generate_timestamps(
                 recording_id,

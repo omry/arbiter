@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -73,10 +74,34 @@ def test_retime_synthesizes_command_typing_and_pauses(tmp_path: Path) -> None:
         timeline,
         [
             {"phase": "beat_start", "beat": "show", "time": 0.0},
-            {"phase": "command_prompt_start", "beat": "show", "action_id": "show_1", "chunk_index": 0, "time": 0.25},
-            {"phase": "command_prompt_end", "beat": "show", "action_id": "show_1", "chunk_index": 0, "time": 0.35},
-            {"phase": "command_run_start", "beat": "show", "action_id": "show_1", "chunk_index": 0, "time": 0.36},
-            {"phase": "command_run_end", "beat": "show", "action_id": "show_1", "chunk_index": 0, "time": 0.5},
+            {
+                "phase": "command_prompt_start",
+                "beat": "show",
+                "action_id": "show_1",
+                "chunk_index": 0,
+                "time": 0.25,
+            },
+            {
+                "phase": "command_prompt_end",
+                "beat": "show",
+                "action_id": "show_1",
+                "chunk_index": 0,
+                "time": 0.35,
+            },
+            {
+                "phase": "command_run_start",
+                "beat": "show",
+                "action_id": "show_1",
+                "chunk_index": 0,
+                "time": 0.36,
+            },
+            {
+                "phase": "command_run_end",
+                "beat": "show",
+                "action_id": "show_1",
+                "chunk_index": 0,
+                "time": 0.5,
+            },
             {"phase": "hold_start", "beat": "show", "seconds": 1.5, "time": 0.51},
             {"phase": "hold_end", "beat": "show", "seconds": 1.5, "time": 0.51},
             {"phase": "beat_end", "beat": "show", "time": 0.51},
@@ -98,7 +123,9 @@ def test_retime_synthesizes_command_typing_and_pauses(tmp_path: Path) -> None:
     )
 
     events = read_output_events(output)
-    prompt_tokens = [payload for _time, payload in events if payload in {"$", " ", "h", "i"}]
+    prompt_tokens = [
+        payload for _time, payload in events if payload in {"$", " ", "h", "i"}
+    ]
     assert prompt_tokens == ["$", " ", "h", "i"]
     prompt_times = [time for time, payload in events if payload in {"$", " ", "h", "i"}]
     assert prompt_times == [0.3, 0.4, 0.5, 0.6]
@@ -107,6 +134,80 @@ def test_retime_synthesizes_command_typing_and_pauses(tmp_path: Path) -> None:
     assert events[-1][0] >= 3.0
     assert "".join(payload for _time, payload in events) == (
         "# Show a command.\r\n\r\n$ hi\r\nok\r\n"
+    )
+
+
+def test_retime_synthesizes_typing_for_virtualenv_prompt(tmp_path: Path) -> None:
+    cast = tmp_path / "baseline.cast"
+    output = tmp_path / "retimed.cast"
+    timeline = tmp_path / "baseline.timeline.jsonl"
+    write_cast(
+        cast,
+        [
+            (0.1, "# Prepare.\r\n\r\n"),
+            (0.1, "(arbiter_venv) $ python3 -m venv arbiter_venv\r\n"),
+            (0.1, "(arbiter_venv) $ source arbiter_venv/bin/activate"),
+            (0.0, "\r\n"),
+        ],
+    )
+    write_timeline(
+        timeline,
+        [
+            {
+                "phase": "command_prompt_start",
+                "beat": "prepare",
+                "action_id": "prepare_1",
+                "chunk_index": 0,
+                "command": "python3 -m venv arbiter_venv",
+                "time": 0.18,
+            },
+            {
+                "phase": "command_prompt_end",
+                "beat": "prepare",
+                "action_id": "prepare_1",
+                "chunk_index": 0,
+                "command": "python3 -m venv arbiter_venv",
+                "time": 0.22,
+            },
+            {
+                "phase": "command_prompt_start",
+                "beat": "prepare",
+                "action_id": "prepare_1",
+                "chunk_index": 1,
+                "command": "source arbiter_venv/bin/activate",
+                "time": 0.28,
+            },
+            {
+                "phase": "command_prompt_end",
+                "beat": "prepare",
+                "action_id": "prepare_1",
+                "chunk_index": 1,
+                "command": "source arbiter_venv/bin/activate",
+                "time": 0.32,
+            },
+        ],
+    )
+
+    retime_cast.retime_cast(
+        cast_path=cast,
+        timeline_path=timeline,
+        output_path=output,
+        rules=retime_cast.TimingRules(
+            typing_char_delay=0.1,
+            typing_space_delay=0.1,
+            typing_punctuation_delay=0.1,
+            typing_newline_delay=0.0,
+            post_enter_pause=0.0,
+            post_command_pause=0.0,
+        ),
+    )
+
+    events = read_output_events(output)
+    assert any(payload == "p" for _time, payload in events)
+    assert any(payload == "s" for _time, payload in events)
+    assert not any(
+        payload == "(arbiter_venv) $ python3 -m venv arbiter_venv\r\n"
+        for _time, payload in events
     )
 
 
@@ -128,10 +229,34 @@ def test_retime_matches_prompt_near_timeline_without_absorbing_output(
     write_timeline(
         timeline,
         [
-            {"phase": "command_prompt_start", "beat": "show", "action_id": "show_1", "chunk_index": 0, "time": 0.5},
-            {"phase": "command_prompt_end", "beat": "show", "action_id": "show_1", "chunk_index": 0, "time": 0.52},
-            {"phase": "command_run_start", "beat": "show", "action_id": "show_1", "chunk_index": 0, "time": 0.53},
-            {"phase": "command_run_end", "beat": "show", "action_id": "show_1", "chunk_index": 0, "time": 0.54},
+            {
+                "phase": "command_prompt_start",
+                "beat": "show",
+                "action_id": "show_1",
+                "chunk_index": 0,
+                "time": 0.5,
+            },
+            {
+                "phase": "command_prompt_end",
+                "beat": "show",
+                "action_id": "show_1",
+                "chunk_index": 0,
+                "time": 0.52,
+            },
+            {
+                "phase": "command_run_start",
+                "beat": "show",
+                "action_id": "show_1",
+                "chunk_index": 0,
+                "time": 0.53,
+            },
+            {
+                "phase": "command_run_end",
+                "beat": "show",
+                "action_id": "show_1",
+                "chunk_index": 0,
+                "time": 0.54,
+            },
         ],
     )
 
@@ -150,9 +275,14 @@ def test_retime_matches_prompt_near_timeline_without_absorbing_output(
     )
 
     events = read_output_events(output)
-    prompt_tokens = [payload for _time, payload in events if payload in {"$", " ", "h", "i"}]
+    prompt_tokens = [
+        payload for _time, payload in events if payload in {"$", " ", "h", "i"}
+    ]
     assert prompt_tokens == ["$", " ", "h", "i"]
-    assert "".join(payload for _time, payload in events) == "# Caption.\r\n\r\n$ hi\r\nok\r\n"
+    assert (
+        "".join(payload for _time, payload in events)
+        == "# Caption.\r\n\r\n$ hi\r\nok\r\n"
+    )
 
 
 def test_retime_matches_split_multiline_prompt_by_command(tmp_path: Path) -> None:
@@ -487,13 +617,14 @@ def test_retime_aligns_hidden_setup_timeline_to_visible_cast(
     prompt_tokens = [
         payload for _time, payload in events if payload in {"$", " ", "h", "i"}
     ]
-    prompt_times = [
-        time for time, payload in events if payload in {"$", " ", "h", "i"}
-    ]
+    prompt_times = [time for time, payload in events if payload in {"$", " ", "h", "i"}]
     assert prompt_tokens == ["$", " ", "h", "i"]
     assert prompt_times == [0.2, 0.3, 0.4, 0.5]
     assert events[-1] == (2.05, "")
-    assert "".join(payload for _time, payload in events) == "# Caption.\r\n\r\n$ hi\r\nok\r\n"
+    assert (
+        "".join(payload for _time, payload in events)
+        == "# Caption.\r\n\r\n$ hi\r\nok\r\n"
+    )
 
 
 def test_retime_audio_duration_counts_existing_viewer_hold(tmp_path: Path) -> None:
@@ -554,11 +685,24 @@ def test_retime_uses_manifest_paths_and_rules(tmp_path: Path, monkeypatch: Any) 
     timeline = tmp_path / "demo.timeline.jsonl"
     output = tmp_path / "demo.presentation.cast"
     write_cast(cast, [(0.1, "$ x\r\n")])
+    write_cast(output, [(0.1, "$ x\r\n")])
     write_timeline(
         timeline,
         [
-            {"phase": "command_prompt_start", "beat": "demo", "action_id": "demo_1", "chunk_index": 0, "time": 0.05},
-            {"phase": "command_prompt_end", "beat": "demo", "action_id": "demo_1", "chunk_index": 0, "time": 0.15},
+            {
+                "phase": "command_prompt_start",
+                "beat": "demo",
+                "action_id": "demo_1",
+                "chunk_index": 0,
+                "time": 0.05,
+            },
+            {
+                "phase": "command_prompt_end",
+                "beat": "demo",
+                "action_id": "demo_1",
+                "chunk_index": 0,
+                "time": 0.15,
+            },
         ],
     )
     monkeypatch.setattr(
@@ -586,3 +730,65 @@ def test_retime_uses_manifest_paths_and_rules(tmp_path: Path, monkeypatch: Any) 
 
     assert result == 0
     assert retime_cast.timeline_path_for_cast(cast) == timeline
+
+
+def test_retime_check_rejects_stale_output(tmp_path: Path, monkeypatch: Any) -> None:
+    cast = tmp_path / "demo.cast"
+    timeline = tmp_path / "demo.timeline.jsonl"
+    output = tmp_path / "demo.presentation.cast"
+    write_cast(cast, [(0.1, "$ x\r\n")])
+    write_timeline(
+        timeline,
+        [
+            {
+                "phase": "command_prompt_start",
+                "beat": "demo",
+                "action_id": "demo_1",
+                "chunk_index": 0,
+                "time": 0.05,
+            },
+            {
+                "phase": "command_prompt_end",
+                "beat": "demo",
+                "action_id": "demo_1",
+                "chunk_index": 0,
+                "time": 0.15,
+            },
+        ],
+    )
+    write_cast(output, [(0.1, "$ x\r\n")])
+    os.utime(output, (1000, 1000))
+    os.utime(cast, (1010, 1010))
+    os.utime(timeline, (1020, 1020))
+    monkeypatch.setattr(
+        retime_cast,
+        "container_from_hydra_cfg",
+        lambda cfg: {"action": "check"},
+    )
+    monkeypatch.setattr(
+        retime_cast,
+        "load_recording_spec_from_hydra_cfg",
+        lambda cfg: {
+            "_recording_id": "demo",
+            "id": "demo",
+            "title": "Demo",
+            "outputs": {
+                "cast": str(cast),
+                "retimed_cast": str(output),
+            },
+            "retime": {},
+            "beats": [{"id": "demo", "actions": [{"run": "true"}]}],
+        },
+    )
+
+    try:
+        retime_cast.run_tool_from_hydra_cfg(object())
+    except retime_cast.RetimeError as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("stale retimed cast should fail retime check")
+
+    assert "retimed cast is stale" in message
+    assert str(output) in message
+    assert "demo.cast" in message
+    assert "demo.timeline.jsonl" in message

@@ -339,12 +339,8 @@ def validate_recording_inline_run_lengths(spec: dict[str, Any]) -> None:
             raise StudioConfigError(f"recording.{field} must be a list")
         for index, step in enumerate(value, start=1):
             if not isinstance(step, dict):
-                raise StudioConfigError(
-                    f"recording.{field}.{index} must be a mapping"
-                )
-            validate_step_inline_run_length(
-                step, field=f"recording.{field}.{index}"
-            )
+                raise StudioConfigError(f"recording.{field}.{index} must be a mapping")
+            validate_step_inline_run_length(step, field=f"recording.{field}.{index}")
     beats = spec.get("beats")
     if beats is None:
         return
@@ -530,9 +526,7 @@ def resolved_script_parameters(
         raise StudioConfigError("script_params must be a mapping")
     unknown = sorted(set(overrides) - set(defaults))
     if unknown:
-        raise StudioConfigError(
-            "unknown script parameter(s): " + ", ".join(unknown)
-        )
+        raise StudioConfigError("unknown script parameter(s): " + ", ".join(unknown))
     return merge_mapping(defaults, overrides)
 
 

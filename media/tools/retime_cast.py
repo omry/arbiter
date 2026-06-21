@@ -28,6 +28,7 @@ from studio_config import (
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+PROMPT_PREFIX_RE = re.compile(r"^(?:\([^)\r\n]+\)\s*)?\$\s*")
 PROMPT_MATCH_TOLERANCE_SECONDS = 0.4
 
 
@@ -121,12 +122,76 @@ def audio_metadata_path_from_manifest(spec: dict[str, Any]) -> Path | None:
     configured = outputs.get("audio_metadata")
     if configured is not None:
         if not isinstance(configured, str) or not configured:
-            raise RetimeError("recording config outputs.audio_metadata must be a string")
+            raise RetimeError(
+                "recording config outputs.audio_metadata must be a string"
+            )
         return relative_path(configured)
     audio = outputs.get("audio")
     if isinstance(audio, str) and audio:
         return relative_path(audio).with_suffix(".json")
     return None
+
+
+def retime_freshness_inputs(
+    cast_path: Path,
+    timeline_path: Path,
+    audio_metadata_path: Path | None,
+) -> list[Path]:
+    inputs = [cast_path, timeline_path, Path(__file__)]
+    if audio_metadata_path is not None and audio_metadata_path.exists():
+        inputs.append(audio_metadata_path)
+    return inputs
+
+
+def require_fresh_output(
+    *,
+    output_path: Path,
+    input_paths: list[Path],
+    artifact_name: str,
+    rerun_hint: str,
+) -> None:
+    if not output_path.exists():
+        raise RetimeError(
+            f"{artifact_name} is missing: {display_path(output_path)}; {rerun_hint}"
+        )
+    try:
+        output_mtime = output_path.stat().st_mtime_ns
+    except OSError as exc:
+        raise RetimeError(f"could not stat {artifact_name}: {output_path}") from exc
+    stale_inputs = []
+    for path in input_paths:
+        if not path.exists():
+            continue
+        try:
+            if path.stat().st_mtime_ns > output_mtime:
+                stale_inputs.append(path)
+        except OSError as exc:
+            raise RetimeError(f"could not stat retime input: {path}") from exc
+    if stale_inputs:
+        formatted = ", ".join(display_path(path) for path in stale_inputs)
+        raise RetimeError(
+            f"{artifact_name} is stale: {display_path(output_path)} "
+            f"is older than {formatted}; {rerun_hint}"
+        )
+
+
+def require_fresh_retimed_cast(
+    *,
+    cast_path: Path,
+    timeline_path: Path,
+    output_path: Path,
+    audio_metadata_path: Path | None,
+) -> None:
+    require_fresh_output(
+        output_path=output_path,
+        input_paths=retime_freshness_inputs(
+            cast_path,
+            timeline_path,
+            audio_metadata_path,
+        ),
+        artifact_name="retimed cast",
+        rerun_hint="run media/tools/studio step=retime",
+    )
 
 
 def read_audio_segment_durations(path: Path | None) -> dict[str, float]:
@@ -144,7 +209,9 @@ def read_audio_segment_durations(path: Path | None) -> dict[str, float]:
     durations: dict[str, float] = {}
     for index, segment in enumerate(segments):
         if not isinstance(segment, dict):
-            raise RetimeError(f"audio metadata segment must be a mapping: {path}:{index}")
+            raise RetimeError(
+                f"audio metadata segment must be a mapping: {path}:{index}"
+            )
         segment_id = segment.get("id")
         duration = segment.get("duration")
         if not isinstance(segment_id, str) or not segment_id:
@@ -227,7 +294,9 @@ def read_cast(path: Path) -> tuple[dict[str, Any], list[CastEvent]]:
     return header, events
 
 
-def write_cast(path: Path, header: dict[str, Any], events: list[ScheduledEvent]) -> None:
+def write_cast(
+    path: Path, header: dict[str, Any], events: list[ScheduledEvent]
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     ordered = sorted(events, key=lambda event: (event.absolute_time, event.order))
     lines = [json.dumps(header, separators=(",", ":"))]
@@ -236,7 +305,9 @@ def write_cast(path: Path, header: dict[str, Any], events: list[ScheduledEvent])
         absolute = max(previous, event.absolute_time)
         delay = round(absolute - previous, 6)
         previous = absolute
-        lines.append(json.dumps([delay, event.event_type, event.payload], separators=(",", ":")))
+        lines.append(
+            json.dumps([delay, event.event_type, event.payload], separators=(",", ":"))
+        )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -244,17 +315,23 @@ def read_timeline(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         raise RetimeError(f"timeline file not found: {path}")
     events: list[dict[str, Any]] = []
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for line_number, line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), 1
+    ):
         if not line:
             continue
         try:
             event = json.loads(line)
         except json.JSONDecodeError as exc:
-            raise RetimeError(f"invalid timeline event in {path}:{line_number}") from exc
+            raise RetimeError(
+                f"invalid timeline event in {path}:{line_number}"
+            ) from exc
         if not isinstance(event, dict):
             raise RetimeError(f"timeline event must be a mapping: {path}:{line_number}")
         if not isinstance(event.get("time"), (int, float)):
-            raise RetimeError(f"timeline event missing numeric time: {path}:{line_number}")
+            raise RetimeError(
+                f"timeline event missing numeric time: {path}:{line_number}"
+            )
         events.append(event)
     return sorted(events, key=lambda event: float(event["time"]))
 
@@ -389,11 +466,14 @@ def normalized_command_text(text: str) -> str:
     lines: list[str] = []
     for line in plain_terminal_text(text).splitlines():
         stripped = line.lstrip()
-        if stripped.startswith("$"):
-            stripped = stripped[1:].lstrip()
+        stripped = PROMPT_PREFIX_RE.sub("", stripped, count=1)
         if stripped:
             lines.append(stripped)
     return "\n".join(lines)
+
+
+def is_prompt_payload(payload: str) -> bool:
+    return bool(PROMPT_PREFIX_RE.match(plain_terminal_text(payload).lstrip()))
 
 
 def candidate_prompt_events_for_command(
@@ -429,7 +509,7 @@ def candidate_prompt_events_for_command(
 
     for index, event in enumerate(window):
         plain = plain_terminal_text(event.payload)
-        if not plain.lstrip().startswith("$"):
+        if not is_prompt_payload(event.payload):
             continue
         candidate = [event]
         combined = plain
@@ -439,7 +519,7 @@ def candidate_prompt_events_for_command(
             next_plain = plain_terminal_text(next_event.payload)
             next_combined = combined + next_plain
             next_normalized = normalized_command_text(next_combined)
-            if next_plain.lstrip().startswith("$"):
+            if is_prompt_payload(next_event.payload):
                 current_normalized = normalized_command_text(combined)
                 if current_normalized and not normalized_command.startswith(
                     current_normalized + "\n"
@@ -495,7 +575,7 @@ def prompt_events_for_interval(
             continue
         plain = plain_terminal_text(event.payload)
         if not collecting:
-            if plain.lstrip().startswith("$"):
+            if is_prompt_payload(event.payload):
                 collecting = True
                 matched.append(event)
             continue
@@ -618,7 +698,9 @@ def retime_events(
             insertions.append((interval.end, rules.post_command_pause))
 
     for interval in hold_intervals:
-        desired = interval.end_event.get("seconds", interval.start_event.get("seconds", 0.0))
+        desired = interval.end_event.get(
+            "seconds", interval.start_event.get("seconds", 0.0)
+        )
         if not isinstance(desired, (int, float)):
             continue
         observed = max(0.0, interval.end - interval.start)
@@ -732,6 +814,12 @@ def run_tool_from_hydra_cfg(cfg: DictConfig) -> int:
                 raise RetimeError(f"cast contains no events: {cast_path}")
             if not timeline:
                 raise RetimeError(f"timeline contains no events: {timeline_path}")
+            require_fresh_retimed_cast(
+                cast_path=cast_path,
+                timeline_path=timeline_path,
+                output_path=output_path,
+                audio_metadata_path=audio_metadata_path,
+            )
             print(
                 "ok: "
                 f"{spec['_recording_id']} retime "

@@ -99,9 +99,7 @@ def cast_path_from_manifest(spec: dict[str, Any]) -> Path:
     outputs = as_mapping(spec.get("outputs"))
     cast = outputs.get("cast")
     if not isinstance(cast, str) or not cast:
-        raise AlignmentError(
-            "recording config outputs.cast must be a non-empty string"
-        )
+        raise AlignmentError("recording config outputs.cast must be a non-empty string")
     return relative_path(cast)
 
 

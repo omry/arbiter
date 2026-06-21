@@ -295,6 +295,7 @@ def test_audio_settings_and_plan_use_manifest_values(tmp_path: Path) -> None:
             "voice": "marin",
             "format": "mp3",
             "instructions": "Speak clearly.",
+            "billing": {"tts_usd_per_1m_characters": 20.0},
             "cache_dir": str(tmp_path / "cache"),
         }
     }
@@ -309,6 +310,7 @@ def test_audio_settings_and_plan_use_manifest_values(tmp_path: Path) -> None:
 
     assert settings.enabled is True
     assert settings.instructions == "Speak clearly."
+    assert settings.tts_usd_per_1m_characters == 20.0
     assert len(plan) == 1
     assert plan[0].output_path.parent == tmp_path / "cache" / "demo"
     assert plan[0].output_path.name.startswith("intro-")
@@ -406,6 +408,84 @@ def test_generate_audio_reuses_matching_cache_key_when_segment_id_changes(
 
     assert paths == [new_plan[0].output_path]
     assert new_plan[0].output_path.read_bytes() == b"cached-by-key"
+
+
+def test_openai_tts_billing_counts_only_generated_segments(tmp_path: Path) -> None:
+    settings = audio.AudioSettings(
+        enabled=True,
+        provider="openai",
+        env="OPENAI_TEST_KEY",
+        model="gpt-4o-mini-tts",
+        voice="marin",
+        format="mp3",
+        instructions="Speak clearly.",
+        cache_dir=tmp_path,
+    )
+    segments = [
+        audio.NarrationSegment("cached", "Cached", "Already generated."),
+        audio.NarrationSegment("renamed", "Renamed", "Same cached words."),
+        audio.NarrationSegment("missing", "Missing", "Fresh narration."),
+    ]
+    plan = audio.plan_audio("demo", segments, settings)
+    plan[0].output_path.parent.mkdir(parents=True)
+    plan[0].output_path.write_bytes(b"cached")
+    old_plan = audio.plan_audio(
+        "demo",
+        [audio.NarrationSegment("old", "Old", "Same cached words.")],
+        settings,
+    )
+    old_plan[0].output_path.write_bytes(b"reusable")
+
+    items = audio.audio_items_requiring_synthesis(plan, settings)
+    billing = audio.estimate_openai_tts_billing(items, settings)
+
+    expected_characters = len("Fresh narration.") + len("Speak clearly.")
+    assert [item.segment.segment_id for item in items] == ["missing"]
+    assert billing.generated_segments == 1
+    assert billing.billable_characters == expected_characters
+    assert billing.estimated_cost_usd == (
+        expected_characters * settings.tts_usd_per_1m_characters / 1_000_000
+    )
+
+
+def test_openai_tts_billing_force_counts_all_segments(tmp_path: Path) -> None:
+    settings = audio.AudioSettings(
+        enabled=True,
+        provider="openai",
+        env="OPENAI_TEST_KEY",
+        model="gpt-4o-mini-tts",
+        voice="marin",
+        format="mp3",
+        instructions=None,
+        cache_dir=tmp_path,
+    )
+    segments = [
+        audio.NarrationSegment("first", "First", "One."),
+        audio.NarrationSegment("second", "Second", "Two."),
+    ]
+    plan = audio.plan_audio("demo", segments, settings)
+    plan[0].output_path.parent.mkdir(parents=True)
+    plan[0].output_path.write_bytes(b"cached")
+
+    items = audio.audio_items_requiring_synthesis(plan, settings, force=True)
+    billing = audio.estimate_openai_tts_billing(items, settings)
+
+    assert [item.segment.segment_id for item in items] == ["first", "second"]
+    assert billing.billable_characters == len("One.") + len("Two.")
+
+
+def test_openai_tts_billing_summary_prints_total_cost(capsys: Any) -> None:
+    audio.print_openai_tts_billing_summary(
+        audio.AudioBillingSummary(
+            generated_segments=1,
+            billable_characters=100,
+            estimated_cost_usd=0.0015,
+        )
+    )
+
+    assert capsys.readouterr().out == (
+        "OpenAI TTS estimated cost this run: $0.001500\n"
+    )
 
 
 def test_audio_dry_run_prints_human_summary_by_default(

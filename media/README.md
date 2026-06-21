@@ -114,12 +114,14 @@ media/tools/studio recording=install-and-bootstrap step=record +script_params.ar
 media/tools/studio recording=install-and-bootstrap step=record +script_params.arbiter_source=local
 ```
 
-`action=build` runs the normal end-to-end production chain: `record`,
-`audio_generate`, `audio_publish`, `retime`, and publish the selected surface.
-Use `dry_run=true` to print the Makefile-style build graph and concrete
-inputs/outputs without running recording, TTS, publishing, or retiming.
-Individual steps are available through the same frontend for iteration and
-postmortem work.
+`action=build` runs the normal end-to-end production chain: refresh the terminal
+recording when its inputs are stale, `audio_generate`, `audio_publish`, `retime`,
+and publish the selected surface. Fresh baseline casts are reused through the
+`.recording.json` fingerprint sidecar; pass `force=true` when you intentionally
+want to re-record the terminal workflow. Use `dry_run=true` to print the
+Makefile-style build graph and concrete inputs/outputs without running
+recording, TTS, publishing, or retiming. Individual steps are available through
+the same frontend for iteration and postmortem work.
 
 Recording scripts can declare hidden setup and cleanup directives in
 `studio-directive` blocks. Setup prepares per-scene resources such as operator

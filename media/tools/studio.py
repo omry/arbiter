@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import html
 import json
 import shlex
@@ -23,6 +24,7 @@ import align_cast
 import audio
 import record
 import retime_cast
+import studio_config as studio_config_module
 from studio_config import (
     CONFIG_DIR,
     StudioAction,
@@ -37,6 +39,10 @@ from studio_config import (
 
 class StudioError(RuntimeError):
     pass
+
+
+RECORDING_FINGERPRINT_VERSION = 1
+FINGERPRINT_PRIVATE_SPEC_KEYS = {"_overrides", "_recording_id"}
 
 
 ToolRunner = Callable[[Any], int]
@@ -120,9 +126,46 @@ def run_step(label: str, runner: ToolRunner, cfg: DictConfig, step: str) -> None
 
 
 def run_record_action(cfg: DictConfig, action: str, label: str | None = None) -> None:
+    spec: dict[str, Any] | None = None
+    output_format = OmegaConf.select(cfg, "output_format", default="text")
+    if action == "record":
+        config = container_from_hydra_cfg(cfg)
+        spec = recording_spec_from_config(config, recording_id=None, overrides=())
+        invalidated = invalidate_retimed_cast_for_spec(spec)
+        if invalidated is not None and output_format != "json":
+            print(f"invalidated retimed cast {display_path(invalidated)}")
     run_step(
         label or action.replace("_", " "), record.run_tool_from_hydra_cfg, cfg, action
     )
+    if spec is not None:
+        fingerprint_path = write_recording_fingerprint(spec)
+        if output_format != "json":
+            print(f"wrote {display_path(fingerprint_path)}")
+
+
+def run_build_record_action(cfg: DictConfig) -> None:
+    config = container_from_hydra_cfg(cfg)
+    spec = recording_spec_from_config(config, recording_id=None, overrides=())
+    output_format = OmegaConf.select(cfg, "output_format", default="text")
+    if not bool_config(config, "force"):
+        reason = recording_skip_reason(spec)
+        if reason is None:
+            if output_format != "json":
+                cast_path = retime_cast.cast_path_from_manifest(spec)
+                print(
+                    "::: studio: skip record baseline cast "
+                    f"({display_path(cast_path)} is fresh)"
+                )
+            return
+        if output_format != "json":
+            print(f"::: studio: record baseline cast ({reason})")
+    invalidated = invalidate_retimed_cast_for_spec(spec)
+    if invalidated is not None and output_format != "json":
+        print(f"invalidated retimed cast {display_path(invalidated)}")
+    run_step("record baseline cast", record.run_tool_from_hydra_cfg, cfg, "record")
+    fingerprint_path = write_recording_fingerprint(spec)
+    if output_format != "json":
+        print(f"wrote {display_path(fingerprint_path)}")
 
 
 def run_audio_action(cfg: DictConfig, action: str, label: str | None = None) -> None:
@@ -261,6 +304,189 @@ def artifact_paths(spec: dict[str, Any]) -> dict[str, Path]:
     }
 
 
+def recording_fingerprint_path(cast_path: Path) -> Path:
+    return cast_path.with_suffix(".recording.json")
+
+
+def normalize_fingerprint_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): normalize_fingerprint_value(item)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+            if not (
+                str(key).startswith("_")
+                and str(key) not in FINGERPRINT_PRIVATE_SPEC_KEYS
+            )
+        }
+    if isinstance(value, list):
+        return [normalize_fingerprint_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [normalize_fingerprint_value(item) for item in value]
+    if isinstance(value, Path):
+        return display_path(value)
+    return value
+
+
+def collect_run_file_values(value: Any) -> list[str]:
+    if isinstance(value, dict):
+        paths: list[str] = []
+        for key, item in value.items():
+            if key == "run_file" and isinstance(item, str) and item:
+                paths.append(item)
+            else:
+                paths.extend(collect_run_file_values(item))
+        return paths
+    if isinstance(value, list):
+        paths = []
+        for item in value:
+            paths.extend(collect_run_file_values(item))
+        return paths
+    return []
+
+
+def fingerprint_dependency_paths(spec: dict[str, Any]) -> list[Path]:
+    paths: list[Path] = []
+    for field in ["script", "_manifest_path"]:
+        value = spec.get(field)
+        if isinstance(value, str) and value:
+            paths.append(retime_cast.relative_path(value))
+    for value in collect_run_file_values(spec):
+        paths.append(retime_cast.relative_path(value))
+    paths.extend(
+        [
+            Path(__file__),
+            Path(record.__file__),
+            Path(studio_config_module.__file__),
+        ]
+    )
+    return sorted(set(paths), key=lambda path: display_path(path) or str(path))
+
+
+def file_fingerprint_entry(path: Path) -> dict[str, Any]:
+    entry: dict[str, Any] = {"path": display_path(path)}
+    if not path.exists():
+        entry["missing"] = True
+        return entry
+    if not path.is_file():
+        entry["type"] = "non-file"
+        return entry
+    entry["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return entry
+
+
+def recording_fingerprint_payload(spec: dict[str, Any]) -> dict[str, Any]:
+    spec_payload = normalize_fingerprint_value(spec)
+    dependencies = [
+        file_fingerprint_entry(path) for path in fingerprint_dependency_paths(spec)
+    ]
+    fingerprint_input = {
+        "version": RECORDING_FINGERPRINT_VERSION,
+        "spec": spec_payload,
+        "dependencies": dependencies,
+    }
+    encoded = json.dumps(
+        fingerprint_input, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("utf-8")
+    return {
+        "version": RECORDING_FINGERPRINT_VERSION,
+        "recording": str(spec.get("_recording_id") or spec.get("id") or ""),
+        "fingerprint": hashlib.sha256(encoded).hexdigest(),
+        "spec_sha256": hashlib.sha256(
+            json.dumps(
+                spec_payload,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            ).encode("utf-8")
+        ).hexdigest(),
+        "dependencies": dependencies,
+    }
+
+
+def dependency_missing(payload: dict[str, Any]) -> str | None:
+    dependencies = payload.get("dependencies")
+    if not isinstance(dependencies, list):
+        return None
+    for dependency in dependencies:
+        if not isinstance(dependency, dict):
+            continue
+        if dependency.get("missing"):
+            return str(dependency.get("path") or "unknown dependency")
+    return None
+
+
+def read_recording_fingerprint(path: Path) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except json.JSONDecodeError as exc:
+        raise StudioError(
+            f"invalid recording fingerprint JSON: {display_path(path)}"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise StudioError(
+            f"recording fingerprint must be a mapping: {display_path(path)}"
+        )
+    return payload
+
+
+def write_recording_fingerprint(spec: dict[str, Any]) -> Path:
+    cast_path = retime_cast.cast_path_from_manifest(spec)
+    fingerprint_path = recording_fingerprint_path(cast_path)
+    payload = recording_fingerprint_payload(spec)
+    missing = dependency_missing(payload)
+    if missing is not None:
+        raise StudioError(f"recording fingerprint dependency is missing: {missing}")
+    fingerprint_path.parent.mkdir(parents=True, exist_ok=True)
+    fingerprint_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return fingerprint_path
+
+
+def recording_skip_reason(spec: dict[str, Any]) -> str | None:
+    cast_path = retime_cast.cast_path_from_manifest(spec)
+    paths = {
+        "cast": cast_path,
+        "timeline": retime_cast.timeline_path_for_cast(cast_path),
+    }
+    for name, path in paths.items():
+        if not path.exists():
+            return f"{name} is missing"
+    fingerprint_path = recording_fingerprint_path(cast_path)
+    try:
+        stored = read_recording_fingerprint(fingerprint_path)
+    except StudioError as exc:
+        return str(exc)
+    if stored is None:
+        return "recording fingerprint is missing"
+    current = recording_fingerprint_payload(spec)
+    missing = dependency_missing(current)
+    if missing is not None:
+        return f"recording dependency is missing: {missing}"
+    if stored.get("version") != RECORDING_FINGERPRINT_VERSION:
+        return "recording fingerprint version changed"
+    if stored.get("fingerprint") != current["fingerprint"]:
+        return "recording fingerprint changed"
+    return None
+
+
+def invalidate_retimed_cast_for_spec(spec: dict[str, Any]) -> Path | None:
+    cast_path = retime_cast.cast_path_from_manifest(spec)
+    retimed_path = retime_cast.output_path_from_manifest(spec, cast_path)
+    if not retimed_path.exists():
+        return None
+    retimed_path.unlink()
+    return retimed_path
+
+
+def invalidate_retimed_cast(config: dict[str, Any]) -> Path | None:
+    spec = recording_spec_from_config(config, recording_id=None, overrides=())
+    return invalidate_retimed_cast_for_spec(spec)
+
+
 def publish_config(spec: dict[str, Any]) -> dict[str, Any]:
     publish = spec.get("publish")
     if publish is None:
@@ -324,6 +550,9 @@ def build_plan(config: dict[str, Any]) -> dict[str, Any]:
         "outputs": {
             "baseline_cast": display_path(paths["cast"]),
             "timeline": display_path(paths["timeline"]),
+            "recording_fingerprint": display_path(
+                recording_fingerprint_path(paths["cast"])
+            ),
             "audio_fragments": display_path(paths["audio_cache"] / "*.mp3"),
             "voiceover": display_path(paths["audio"]),
             "audio_metadata": display_path(paths["audio_metadata"]),
@@ -494,6 +723,16 @@ def publish_surface(config: dict[str, Any]) -> Path | None:
     selected = selected_surface(config, spec)
     if selected is None:
         return None
+    paths = artifact_paths(spec)
+    try:
+        retime_cast.require_fresh_retimed_cast(
+            cast_path=paths["cast"],
+            timeline_path=paths["timeline"],
+            output_path=paths["retimed_cast"],
+            audio_metadata_path=paths["audio_metadata"],
+        )
+    except retime_cast.RetimeError as exc:
+        raise StudioError(str(exc)) from exc
     _surface_name, surface = selected
     surface_type = optional_string(surface.get("type"))
     file_name = optional_string(surface.get("file"))
@@ -562,7 +801,7 @@ def print_success_followups(cfg: DictConfig) -> None:
 
 
 def run_build(cfg: DictConfig) -> int:
-    run_record_action(cfg, "record", "record baseline cast")
+    run_build_record_action(cfg)
     run_audio_action(cfg, "generate", "generate audio")
     run_audio_action(cfg, "publish", "publish audio")
     run_retime_action(cfg, "retime", "retime cast")
@@ -574,6 +813,7 @@ def run_build(cfg: DictConfig) -> int:
 def run_check(cfg: DictConfig) -> int:
     run_record_action(cfg, "check", "check recording")
     run_audio_action(cfg, "check", "check audio")
+    run_retime_action(cfg, "check", "check retime")
     return 0
 
 

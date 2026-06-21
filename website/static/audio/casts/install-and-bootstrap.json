@@ -1,27 +1,39 @@
 {
   "audio": "website/static/audio/casts/install-and-bootstrap.mp3",
-  "duration": 247.848,
+  "duration": 237.816,
   "recording": "install-and-bootstrap",
   "segments": [
     {
-      "audio": "media/cache/audio/install-and-bootstrap/overview-36122afcd07930ab.mp3",
-      "duration": 18.168,
+      "audio": "media/cache/audio/install-and-bootstrap/overview-5fd23265812c7148.mp3",
+      "duration": 10.32,
       "heading": "Overview",
       "id": "overview",
       "offset": 0.0,
-      "text": "This video guides you through installing Arbiter for the first time using Arbiter's Docker tooling. We create a local command environment, create a staging directory, select the IMAP and SMTP plugins, configure and test them through the Arbiter client, and finish by reviewing the permanent install plan."
+      "text": "In this tutorial, we will prepare Arbiter in a staging directory, configure the server, test it with the Arbiter client, and then install it as a permanent Docker service."
     },
     {
-      "audio": "media/cache/audio/install-and-bootstrap/prepare-cli-ab8b704b6d54cdff.mp3",
-      "duration": 22.512,
+      "audio": "media/cache/audio/install-and-bootstrap/prepare-cli-dda75a2d33040126.mp3",
+      "duration": 10.416,
       "guide": {
         "success_hint": "You should see the Arbiter server version from the local virtual environment.",
         "try_command": "source arbiter_venv/bin/activate && arbiter-server version"
       },
-      "heading": "Prepare Arbiter Commands",
+      "heading": "Create and activate a virtual environment",
       "id": "prepare-cli",
-      "offset": 18.168,
-      "text": "First prepare a small Python virtual environment for the Arbiter command line tools. This installs `arbiter-server`, which creates the Docker staging directory, and `arbiter`, which we use later to test the staged server. This environment is only needed while preparing and testing staging; after permanent installation, the server runs from the installed deployment and no longer depends on it."
+      "offset": 10.32,
+      "text": "Create a small Python virtual environment and activate it. This keeps the Arbiter command line tools separate from the system Python while we prepare and test the deployment."
+    },
+    {
+      "audio": "media/cache/audio/install-and-bootstrap/install-suite-fed3caf0b06a3d3f.mp3",
+      "duration": 15.912,
+      "guide": {
+        "success_hint": "You should see the Arbiter server version from the local virtual environment.",
+        "try_command": "source arbiter_venv/bin/activate && arbiter-server version"
+      },
+      "heading": "Install Arbiter suite",
+      "id": "install-suite",
+      "offset": 20.736,
+      "text": "Install the `arbiter-suite` package set into the virtual environment. One of those packages is `arbiter-server`, which we use next to create the Docker staging directory. The suite also installs `arbiter`, the client we use later to test the staged server."
     },
     {
       "audio": "media/cache/audio/install-and-bootstrap/init-staging-bb788b6ce3b92aa2.mp3",
@@ -32,7 +44,7 @@
       },
       "heading": "Bootstrap Docker Staging Directory",
       "id": "init-staging",
-      "offset": 40.68,
+      "offset": 36.648,
       "text": "Start by creating a Docker staging directory. This workspace is where the operator prepares configuration, builds the runtime bundle, and tests the deployment before installing the server and config permanently."
     },
     {
@@ -44,7 +56,7 @@
       },
       "heading": "Prepare Mail Bundle",
       "id": "prepare-bundle",
-      "offset": 52.08,
+      "offset": 48.048,
       "text": "This demo uses the IMAP and SMTP plugins. The bundle records the server and plugin package set, then prepares the wheelhouse the container installs from. That makes later staging runs independent of live package resolution."
     },
     {
@@ -56,7 +68,7 @@
       },
       "heading": "Bootstrap Bot Account Files",
       "id": "bootstrap-config",
-      "offset": 65.64,
+      "offset": 61.608,
       "text": "Next create the server config and the bot account scaffolds. Arbiter writes separate account and policy files for IMAP and SMTP. The accounts describe where the services are; the policies describe what an agent is allowed to do through those accounts."
     },
     {
@@ -64,7 +76,7 @@
       "duration": 15.048,
       "heading": "Review Generated Bot Config",
       "id": "review-generated-config",
-      "offset": 81.96,
+      "offset": 77.928,
       "text": "Before editing, inspect the generated files. The bot has one IMAP account, one SMTP account, and matching policies. In a real deployment these files point at your mail provider and enforce the access level you want agents to have."
     },
     {
@@ -76,7 +88,7 @@
       },
       "heading": "Edit Bot Access",
       "id": "edit-bot-access",
-      "offset": 97.008,
+      "offset": 92.976,
       "text": "For this tutorial the bot is intentionally broad: it can read, search, append, mark, move, and delete in the local IMAP mailbox, and it can send through the local SMTP account. This is safe here because the recording uses disposable mail servers created just for the demo."
     },
     {
@@ -88,7 +100,7 @@
       },
       "heading": "Bootstrap Env File",
       "id": "bootstrap-env",
-      "offset": 114.576,
+      "offset": 110.544,
       "text": "The account files read credentials from the deployment environment. This demo uses dedicated local mail servers, so it is okay to show the generated username and password. In production, the env file contains real secrets and should stay protected."
     },
     {
@@ -100,7 +112,7 @@
       },
       "heading": "Check and Start Staging",
       "id": "stage-server",
-      "offset": 129.744,
+      "offset": 125.712,
       "text": "Before starting the server, run a config check. It verifies the server config, the plugin configuration, and the account-to-policy pairs. Then start staging on port 18075 and run the helper's server test."
     },
     {
@@ -112,7 +124,7 @@
       },
       "heading": "Discover with the Arbiter Client",
       "id": "client-discovery",
-      "offset": 144.648,
+      "offset": 140.616,
       "text": "Now use the Arbiter client against the staged server. Agents start by discovering plugins, then inspect accounts and operation schemas before running an operation. They see capabilities and policy-shaped controls, not service credentials."
     },
     {
@@ -124,7 +136,7 @@
       },
       "heading": "Send a Test Message",
       "id": "send-test-message",
-      "offset": 159.648,
+      "offset": 155.616,
       "text": "With discovery complete, send a real message through the staged server. The SMTP plugin submits the message using the configured bot account. The caller provides only the operation input: account name, recipient, subject, body, and an idempotency key for safe retries."
     },
     {
@@ -136,16 +148,16 @@
       },
       "heading": "Fetch the Test Message",
       "id": "fetch-test-message",
-      "offset": 176.304,
+      "offset": 172.272,
       "text": "The local SMTP server delivers into the same mailbox that the IMAP server exposes. Search the bot inbox by subject, keep the returned IMAP UID, then fetch the message body through `imap:get_message`."
     },
     {
-      "audio": "media/cache/audio/install-and-bootstrap/staging-vs-installed-93e3ce12221ce2ee.mp3",
-      "duration": 19.464,
+      "audio": "media/cache/audio/install-and-bootstrap/staging-vs-installed-9093f802b5cf8f91.mp3",
+      "duration": 20.856,
       "heading": "Staging Versus Installed",
       "id": "staging-vs-installed",
-      "offset": 190.872,
-      "text": "Staging proves the bundle, configuration, mail access, and client operations before any privileged install step. It is still an operator workspace, not the long-running production service. The installed deployment uses protected ownership, systemd lifecycle management, and the production port, 8075."
+      "offset": 186.84,
+      "text": "Staging proves the bundle, configuration, mail access, and client operations before any privileged install step. It is still an operator workspace, not the long-running production service. The installed deployment uses protected ownership, systemd lifecycle management, and the production server port, 8075."
     },
     {
       "audio": "media/cache/audio/install-and-bootstrap/preinstall-check-b2f9a9b0b0278745.mp3",
@@ -156,16 +168,16 @@
       },
       "heading": "Preinstall Doctor",
       "id": "preinstall-check",
-      "offset": 210.336,
+      "offset": 207.696,
       "text": "Before promotion, run the preinstall doctor. Passing `--agent-user codex` also checks that the agent identity does not have inappropriate access to deployment state. This catches production-install mistakes while the deployment is still staged and easy to fix."
     },
     {
-      "audio": "media/cache/audio/install-and-bootstrap/review-install-plan-46c99166e97d16b9.mp3",
-      "duration": 20.856,
-      "heading": "Review Install Plan",
-      "id": "review-install-plan",
-      "offset": 226.992,
-      "text": "Finally, review the install plan. A dry run shows what promotion would do: copy the checked deployment to the protected target, preserve or replace installed config according to flags, set ownership, write the systemd unit, and prepare the production service. The recording stops here, before real sudo or host mutation."
+      "audio": "media/cache/audio/install-and-bootstrap/install-server-3f1452bb86691ada.mp3",
+      "duration": 13.464,
+      "heading": "Install Arbiter",
+      "id": "install-server",
+      "offset": 224.352,
+      "text": "Finally, run the install command a production operator uses. It promotes the checked staging deployment to the protected target, writes the systemd unit, applies service ownership, and prepares Arbiter to run from /opt/arbiter."
     }
   ]
 }

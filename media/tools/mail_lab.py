@@ -275,10 +275,12 @@ class LocalIMAPServer:
                     f"{tag} OK FETCH completed\r\n"
                 ).encode()
             return (
-                f"* {uid} FETCH "
-                f"(UID {uid} RFC822 {{{len(message.content)}}}\r\n"
-            ).encode() + message.content + (
-                b")\r\n" + f"{tag} OK FETCH completed\r\n".encode()
+                (
+                    f"* {uid} FETCH "
+                    f"(UID {uid} RFC822 {{{len(message.content)}}}\r\n"
+                ).encode()
+                + message.content
+                + (b")\r\n" + f"{tag} OK FETCH completed\r\n".encode())
             )
         if subcommand == "STORE":
             uid, _, _flags = args.partition(" ")
