@@ -50,7 +50,7 @@
         display: flex;
         align-items: center;
         gap: 0.75rem;
-        min-height: 3.25rem;
+        min-height: 2.9rem;
         padding: 0.65rem 0.8rem;
         border-bottom: 1px solid var(--border);
         background: var(--panel);
@@ -90,6 +90,38 @@
       button:disabled {
         cursor: not-allowed;
         opacity: 0.55;
+      }
+
+      .icon-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 2rem;
+        min-width: 2rem;
+        height: 2rem;
+        min-height: 2rem;
+        padding: 0;
+      }
+
+      .icon-button svg {
+        width: 1rem;
+        height: 1rem;
+        stroke: currentColor;
+        stroke-width: 2.25;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        fill: none;
+      }
+
+      .icon-button[data-active="true"] {
+        border-color: var(--cyan);
+        color: var(--cyan);
+      }
+
+      .transport {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
       }
 
       .terminal {
@@ -181,7 +213,7 @@
       .status {
         display: flex;
         align-items: center;
-        gap: 0.7rem;
+        gap: 0.55rem;
         min-height: 2.4rem;
         padding: 0.45rem 0.8rem;
         border-top: 1px solid var(--border);
@@ -277,9 +309,18 @@
       }
 
       .status button {
-        min-height: 1.75rem;
-        padding: 0.2rem 0.55rem;
+        min-height: 2rem;
+        padding: 0;
         font-size: 0.82rem;
+      }
+
+      #clock {
+        flex: 0 0 auto;
+        min-width: 4.8rem;
+      }
+
+      #voice {
+        flex: 0 0 auto;
       }
 
       .ansi-black { color: #21222c; }
@@ -300,11 +341,17 @@
       .ansi-bright-white { color: #ffffff; }
 
       @media (max-width: 620px) {
-        .bar {
+        .bar,
+        .status {
           flex-wrap: wrap;
         }
 
         .narration {
+          flex-basis: 100%;
+        }
+
+        .progress-wrap {
+          order: 3;
           flex-basis: 100%;
         }
       }
@@ -314,10 +361,6 @@
     <main class="player">
       <div class="bar">
         <div class="narration" id="narration">Terminal recording</div>
-        <button id="play" type="button">Play with voiceover</button>
-        <button id="guided" type="button">Guided: off</button>
-        <button id="pause" type="button" disabled>Pause</button>
-        <button id="restart" type="button" disabled>Restart</button>
       </div>
       <div class="stage">
         <pre class="terminal" id="terminal" aria-live="polite"></pre>
@@ -337,6 +380,13 @@
       </div>
       <div class="status">
         <span id="clock">0:00 / 0:00</span>
+        <div class="transport" aria-label="Playback controls">
+          <button class="icon-button" id="prev-section" type="button" aria-label="Previous section" title="Previous section" disabled></button>
+          <button class="icon-button" id="play" type="button" aria-label="Play" title="Play"></button>
+          <button class="icon-button" id="restart" type="button" aria-label="Restart" title="Restart" disabled></button>
+          <button class="icon-button" id="next-section" type="button" aria-label="Next section" title="Next section" disabled></button>
+          <button class="icon-button" id="guided" type="button" aria-label="Guided mode off" title="Guided mode"></button>
+        </div>
         <div class="progress-wrap" id="progress-wrap">
           <input
             class="progress"
@@ -350,7 +400,7 @@
           <div class="section-markers" id="section-markers" aria-hidden="true"></div>
           <div class="section-tooltip" id="section-tooltip" role="tooltip" hidden></div>
         </div>
-        <button id="mute" type="button" disabled>Mute</button>
+        <button class="icon-button" id="mute" type="button" aria-label="Mute" title="Mute" disabled></button>
         <span id="voice">voiceover loading</span>
       </div>
     </main>
@@ -369,8 +419,9 @@
       const terminal = document.getElementById('terminal');
       const narration = document.getElementById('narration');
       const playButton = document.getElementById('play');
-      const pauseButton = document.getElementById('pause');
       const restartButton = document.getElementById('restart');
+      const prevSectionButton = document.getElementById('prev-section');
+      const nextSectionButton = document.getElementById('next-section');
       const muteButton = document.getElementById('mute');
       const clock = document.getElementById('clock');
       const progressWrap = document.getElementById('progress-wrap');
@@ -418,6 +469,17 @@
       let guideDrag = null;
       let scrubbing = false;
       const checkpointSnapSeconds = 3.0;
+
+      const icons = {
+        play: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>',
+        pause: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5v14"/><path d="M15 5v14"/></svg>',
+        restart: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v6h6"/></svg>',
+        previous: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 20 9 12l10-8v16z"/><path d="M5 19V5"/></svg>',
+        next: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 4 10 8-10 8V4z"/><path d="M19 5v14"/></svg>',
+        guided: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z"/><path d="M9 12l2 2 4-5"/></svg>',
+        volume: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M16 9.5a4 4 0 0 1 0 5"/><path d="M19 7a8 8 0 0 1 0 10"/></svg>',
+        muted: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="m17 9 4 4"/><path d="m21 9-4 4"/></svg>',
+      };
 
       const colorMap = {
         30: 'ansi-black',
@@ -677,6 +739,7 @@
         progress.style.setProperty('--position', `${percent}%`);
         updateNarration(clamped);
         updateSectionMarkerState(clamped);
+        updateTransportButtons();
       }
 
       function clearTimers() {
@@ -694,22 +757,69 @@
         }
       }
 
-      function playLabel() {
-        if (pausedAtGuidedPoint) {
-          return 'Continue';
+      function setIconButton(button, iconName, label) {
+        if (button.dataset.icon !== iconName) {
+          button.innerHTML = icons[iconName];
+          button.dataset.icon = iconName;
         }
-        if (!audioReady) {
-          return 'Play';
-        }
-        return guidedMode ? 'Play guided' : 'Play with voiceover';
+        button.setAttribute('aria-label', label);
+        button.title = label;
       }
 
-      function updateGuidedButton() {
-        guidedButton.textContent = guidedMode ? 'Guided: on' : 'Guided: off';
-        guidedButton.setAttribute('aria-pressed', guidedMode ? 'true' : 'false');
-        if (!playing) {
-          playButton.textContent = playLabel();
+      function sectionStartTimes() {
+        const source = audioPlaybackSegments.length
+          ? audioPlaybackSegments.map((segment) => segment.presentationStart)
+          : [0, ...guidedPausePoints.map((point) => point.time)];
+        return [...new Set(source
+          .map((value) => Number(value))
+          .filter((value) => Number.isFinite(value) && value >= 0 && value <= totalSeconds))]
+          .sort((left, right) => left - right);
+      }
+
+      function currentSectionIndex(seconds) {
+        const starts = sectionStartTimes();
+        let active = -1;
+        for (let index = 0; index < starts.length; index += 1) {
+          if (starts[index] <= seconds + 0.05) {
+            active = index;
+          }
         }
+        return active;
+      }
+
+      function hasPreviousSection(seconds) {
+        const starts = sectionStartTimes();
+        const active = currentSectionIndex(seconds);
+        return active > 0 || (active === 0 && seconds > starts[0] + 0.75);
+      }
+
+      function hasNextSection(seconds) {
+        return sectionStartTimes().some((start) => start > seconds + 0.25);
+      }
+
+      function updateTransportButtons() {
+        const clamped = Math.min(currentSeconds, totalSeconds);
+        const ready = Boolean(events.length && totalSeconds);
+        const playLabel = playing
+          ? 'Pause'
+          : pausedAtGuidedPoint
+            ? 'Continue'
+            : clamped >= totalSeconds && totalSeconds > 0
+              ? 'Play again'
+              : 'Play';
+        setIconButton(playButton, playing ? 'pause' : 'play', playLabel);
+        setIconButton(restartButton, 'restart', 'Restart');
+        setIconButton(prevSectionButton, 'previous', 'Previous section');
+        setIconButton(nextSectionButton, 'next', 'Next section');
+        setIconButton(guidedButton, 'guided', guidedMode ? 'Guided mode on' : 'Guided mode off');
+        guidedButton.dataset.active = guidedMode ? 'true' : 'false';
+        guidedButton.setAttribute('aria-pressed', guidedMode ? 'true' : 'false');
+        setIconButton(muteButton, muted ? 'muted' : 'volume', muted ? 'Unmute' : 'Mute');
+        playButton.disabled = !ready;
+        restartButton.disabled = !ready;
+        prevSectionButton.disabled = !ready || !hasPreviousSection(clamped);
+        nextSectionButton.disabled = !ready || !hasNextSection(clamped);
+        muteButton.disabled = !audioReady;
       }
 
       function resetGuidePosition() {
@@ -840,6 +950,32 @@
         return nearestCheckpoint(seconds)?.time ?? seconds;
       }
 
+      function jumpSection(direction) {
+        const starts = sectionStartTimes();
+        if (!starts.length) {
+          return;
+        }
+        const liveSeconds = playing
+          ? (performance.now() - startedAt) / 1000
+          : currentSeconds;
+        const clamped = Math.max(0, Math.min(liveSeconds, totalSeconds));
+        const active = currentSectionIndex(clamped);
+        let target = null;
+        if (direction < 0) {
+          if (active > 0 && clamped <= starts[active] + 0.75) {
+            target = starts[active - 1];
+          } else if (active >= 0) {
+            target = starts[active];
+          }
+        } else {
+          target = starts.find((start) => start > clamped + 0.25) ?? null;
+        }
+        if (target == null) {
+          return;
+        }
+        seekTo(target, {resume: playing});
+      }
+
       function progressValueSeconds() {
         return totalSeconds
           ? (Number(progress.value) / 1000) * totalSeconds
@@ -891,9 +1027,6 @@
         }
         pausedAtGuidedPoint = false;
         hideGuideModal();
-        pauseButton.disabled = true;
-        playButton.disabled = false;
-        playButton.textContent = 'Play again';
         updateProgress();
       }
 
@@ -908,10 +1041,6 @@
         }
         voice.textContent = audioReady ? 'waiting for continue' : 'voiceover unavailable';
         showGuideModal(point);
-        playButton.textContent = playLabel();
-        playButton.disabled = false;
-        pauseButton.disabled = true;
-        restartButton.disabled = false;
         updateProgress();
       }
 
@@ -986,12 +1115,6 @@
         hideGuideModal();
         renderAt(0);
         voice.textContent = audioReady ? 'voiceover ready' : 'voiceover unavailable';
-        playButton.disabled = false;
-        pauseButton.disabled = true;
-        restartButton.disabled = false;
-        playButton.textContent = playLabel();
-        updateMuteButton();
-        updateGuidedButton();
         updateProgress();
       }
 
@@ -1012,18 +1135,10 @@
         }
         if (shouldResume && currentSeconds < totalSeconds) {
           playing = true;
-          playButton.disabled = true;
-          pauseButton.disabled = false;
-          restartButton.disabled = false;
           scheduleEvents();
           startAudio();
         } else {
-          playButton.textContent = currentSeconds >= totalSeconds
-            ? 'Play again'
-            : playLabel();
-          playButton.disabled = false;
-          pauseButton.disabled = true;
-          restartButton.disabled = false;
+          updateTransportButtons();
         }
       }
 
@@ -1093,8 +1208,7 @@
         if (audio) {
           audio.muted = muted;
         }
-        muteButton.textContent = muted ? 'Unmute' : 'Mute';
-        muteButton.disabled = !audioReady;
+        updateTransportButtons();
       }
 
       function toggleMute() {
@@ -1193,6 +1307,7 @@
         let shift = introSeconds;
         let captionCount = 0;
         let currentSection = null;
+        let nextSectionStart = introSeconds;
         const presentationEvents = [];
 
         for (const event of rawEvents) {
@@ -1206,20 +1321,20 @@
             isCaptionPayload(event.data) &&
             segmentIndex < narrationSegments.length
           ) {
-            if (captionCount > 0 && currentSection) {
-              guidedPausePoints.push({
-                time: shifted.time,
-                sectionStart: currentSection.start,
-                heading: currentSection.heading,
-                guide: currentSection.guide,
-              });
-            }
             captionCount += 1;
             const segment = narrationSegments[segmentIndex];
             segmentIndex += 1;
             if (segment.duration > 0) {
-              const presentationStart = shifted.time;
+              const presentationStart = Math.max(shifted.time, nextSectionStart);
               const presentationEnd = presentationStart + segment.duration;
+              if (captionCount > 1 && currentSection) {
+                guidedPausePoints.push({
+                  time: presentationStart,
+                  sectionStart: currentSection.start,
+                  heading: currentSection.heading,
+                  guide: currentSection.guide,
+                });
+              }
               currentSection = {
                 start: presentationStart,
                 heading: segment.heading,
@@ -1236,7 +1351,7 @@
                 audioPresentationSeconds,
                 presentationEnd,
               );
-              shift += segment.duration;
+              nextSectionStart = presentationEnd;
             }
           }
         }
@@ -1298,9 +1413,7 @@
         pausedAtGuidedPoint = false;
         hideGuideModal();
         playing = true;
-        playButton.disabled = true;
-        pauseButton.disabled = false;
-        restartButton.disabled = false;
+        updateTransportButtons();
         scheduleEvents();
         startAudio();
       }
@@ -1317,9 +1430,6 @@
         }
         pausedAtGuidedPoint = false;
         hideGuideModal();
-        playButton.textContent = 'Resume';
-        playButton.disabled = false;
-        pauseButton.disabled = true;
         updateProgress();
       }
 
@@ -1332,6 +1442,14 @@
         ) {
           return;
         }
+        if (playing) {
+          pause();
+        } else {
+          play();
+        }
+      }
+
+      function togglePlayPause() {
         if (playing) {
           pause();
         } else {
@@ -1395,7 +1513,7 @@
         });
       }
 
-      playButton.addEventListener('click', play);
+      playButton.addEventListener('click', togglePlayPause);
       guideContinueButton.addEventListener('click', play);
       guideCopyButton.addEventListener('click', copyGuideCommand);
       guideRestartButton.addEventListener('click', restartGuidedSection);
@@ -1411,18 +1529,19 @@
         guidedMode = !guidedMode;
         pausedAtGuidedPoint = false;
         hideGuideModal();
-        updateGuidedButton();
+        updateTransportButtons();
         if (playing) {
           currentSeconds = (performance.now() - startedAt) / 1000;
           scheduleEvents();
           startAudio();
         }
       });
-      pauseButton.addEventListener('click', pause);
       restartButton.addEventListener('click', () => {
         resetPlayback();
         play();
       });
+      prevSectionButton.addEventListener('click', () => jumpSection(-1));
+      nextSectionButton.addEventListener('click', () => jumpSection(1));
       muteButton.addEventListener('click', toggleMute);
       terminal.addEventListener('click', togglePlaybackFromTerminal);
       progressWrap.addEventListener('pointermove', showSectionTooltip);
@@ -1448,6 +1567,8 @@
         scrubbing = false;
       });
 
+      updateTransportButtons();
+
       loadAudioMeta()
         .then(() => Promise.all([loadCast(), loadAudio()]))
         .then(() => {
@@ -1457,8 +1578,9 @@
         .catch((error) => {
           terminal.textContent = error.message;
           playButton.disabled = true;
-          pauseButton.disabled = true;
           restartButton.disabled = true;
+          prevSectionButton.disabled = true;
+          nextSectionButton.disabled = true;
           guidedButton.disabled = true;
           muteButton.disabled = true;
           voice.textContent = 'recording unavailable';

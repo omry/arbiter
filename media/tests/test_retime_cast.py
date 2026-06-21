@@ -412,6 +412,90 @@ def test_retime_extends_beat_to_audio_duration(tmp_path: Path) -> None:
     assert "".join(payload for _time, payload in events) == "# Intro.\r\nready\r\n"
 
 
+def test_retime_aligns_hidden_setup_timeline_to_visible_cast(
+    tmp_path: Path,
+) -> None:
+    cast = tmp_path / "baseline.cast"
+    output = tmp_path / "retimed.cast"
+    timeline = tmp_path / "baseline.timeline.jsonl"
+    write_cast(
+        cast,
+        [
+            (0.1, "# Caption.\r\n\r\n"),
+            (0.1, "$ hi\r\n"),
+            (0.1, "ok\r\n"),
+        ],
+    )
+    write_timeline(
+        timeline,
+        [
+            {"phase": "check_start", "beat": "__setup__", "time": 0.0},
+            {"phase": "check_end", "beat": "__setup__", "time": 8.0},
+            {"phase": "beat_start", "beat": "show", "time": 8.05},
+            {"phase": "caption_start", "beat": "show", "time": 8.1},
+            {"phase": "caption_end", "beat": "show", "time": 8.11},
+            {
+                "phase": "command_prompt_start",
+                "beat": "show",
+                "action_id": "show_1",
+                "chunk_index": 0,
+                "command": "hi",
+                "time": 8.2,
+            },
+            {
+                "phase": "command_prompt_end",
+                "beat": "show",
+                "action_id": "show_1",
+                "chunk_index": 0,
+                "command": "hi",
+                "time": 8.21,
+            },
+            {
+                "phase": "command_run_start",
+                "beat": "show",
+                "action_id": "show_1",
+                "chunk_index": 0,
+                "time": 8.22,
+            },
+            {
+                "phase": "command_run_end",
+                "beat": "show",
+                "action_id": "show_1",
+                "chunk_index": 0,
+                "time": 8.3,
+            },
+            {"phase": "beat_end", "beat": "show", "time": 8.31},
+        ],
+    )
+
+    retime_cast.retime_cast(
+        cast_path=cast,
+        timeline_path=timeline,
+        output_path=output,
+        rules=retime_cast.TimingRules(
+            typing_char_delay=0.1,
+            typing_space_delay=0.1,
+            typing_punctuation_delay=0.1,
+            typing_newline_delay=0.0,
+            post_enter_pause=0.2,
+            post_command_pause=0.0,
+        ),
+        audio_durations={"show": 2.0},
+    )
+
+    events = read_output_events(output)
+    prompt_tokens = [
+        payload for _time, payload in events if payload in {"$", " ", "h", "i"}
+    ]
+    prompt_times = [
+        time for time, payload in events if payload in {"$", " ", "h", "i"}
+    ]
+    assert prompt_tokens == ["$", " ", "h", "i"]
+    assert prompt_times == [0.2, 0.3, 0.4, 0.5]
+    assert events[-1] == (2.05, "")
+    assert "".join(payload for _time, payload in events) == "# Caption.\r\n\r\n$ hi\r\nok\r\n"
+
+
 def test_retime_audio_duration_counts_existing_viewer_hold(tmp_path: Path) -> None:
     cast = tmp_path / "baseline.cast"
     output = tmp_path / "retimed.cast"

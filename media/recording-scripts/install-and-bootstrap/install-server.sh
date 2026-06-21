@@ -5,7 +5,16 @@ rm -rf "$install_root"
 mkdir -p "$install_root/bin" "$install_root/etc/systemd/system"
 cat > "$install_root/bin/sudo" <<'SH'
 #!/usr/bin/env sh
-exec fakeroot "$@"
+exec fakeroot sh -c '
+container_user=""
+if [ -f docker.env ]; then
+  container_user="$(sed -n "s/^ARBITER_CONTAINER_USER=//p" docker.env | tail -n 1)"
+fi
+case "$container_user" in
+  *:*) chown -R "$container_user" data/server data/plugins 2>/dev/null || true ;;
+esac
+exec "$@"
+' sudo-shim "$@"
 SH
 cat > "$install_root/bin/systemctl" <<'SH'
 #!/usr/bin/env sh

@@ -81,6 +81,8 @@ recording:
       default: latest
     arbiter_package:
       default: arbiter-suite
+    operator_venv_cache_retain:
+      default: 8
   setup:
   - name: Prepare operator commands and local mail lab
     expect:
@@ -91,31 +93,44 @@ recording:
   - name: Stop Docker staging deployment
     run: |
       if [[ -f ./arbiter-docker && -x ./arbiter-docker ]]; then
-        ./arbiter-docker down --remove-orphans
+        COMPOSE_PROGRESS=quiet ./arbiter-docker down --remove-orphans 2> >(recording_filter_docker_compose_progress >&2)
       elif [[ -f arbiter-docker/arbiter-docker && -x arbiter-docker/arbiter-docker ]]; then
-        (cd arbiter-docker && ./arbiter-docker down --remove-orphans)
+        (cd arbiter-docker && COMPOSE_PROGRESS=quiet ./arbiter-docker down --remove-orphans 2> >(recording_filter_docker_compose_progress >&2))
       fi
   beats:
   - id: prepare-cli
     marker: prepare-cli
-    caption: Prepare a local Python environment.
+    caption: Create and activate a virtual environment.
     guide:
       try_command: source arbiter_venv/bin/activate && arbiter-server version
       success_hint: You should see the Arbiter server version from the local virtual environment.
     actions:
     - display: |
         python3 -m venv arbiter_venv
-        arbiter_venv/bin/python -m pip install arbiter-suite
         source arbiter_venv/bin/activate
-        arbiter-server version
       run: |
         recording_prepare_cli_env
-        true
         source arbiter_venv/bin/activate
-        arbiter-server version
       expect:
         file_exists:
         - ./arbiter_venv/bin/activate
+    viewer_hold: 2.0
+  - id: install-suite
+    marker: install-suite
+    caption: Install the Arbiter suite packages.
+    guide:
+      try_command: source arbiter_venv/bin/activate && arbiter-server version
+      success_hint: You should see the Arbiter server version from the local virtual environment.
+    actions:
+    - display: |
+        arbiter_venv/bin/python -m pip install arbiter-suite
+        arbiter-server version
+      run: |
+        true
+        arbiter-server version
+      expect:
+        file_exists:
+        - ./arbiter_venv/bin/arbiter-server
         output_contains:
         - server
         - api
@@ -253,15 +268,19 @@ recording:
       try_command: ./arbiter-docker test
       success_hint: You should see the staged server test pass on ${recording.vars.staging_url}.
     actions:
-    - run: |
+    - display: |
         ./arbiter-docker config check
         ./arbiter-docker up
         ./arbiter-docker test
+      run: |
+        COMPOSE_PROGRESS=quiet ./arbiter-docker config check 2> >(recording_filter_docker_compose_progress >&2)
+        COMPOSE_PROGRESS=quiet ./arbiter-docker up 2> >(recording_filter_docker_compose_progress >&2)
+        ./arbiter-docker test
       expect:
         output_regex:
-        - server:\s+pass
-        - imap:\s+pass
-        - smtp:\s+pass
+        - server\s+\|\s+pass
+        - imap\s+\|\s+pass
+        - smtp\s+\|\s+pass
         output_contains:
         - 'URL:'
         - ${recording.vars.staging_url}
@@ -271,13 +290,13 @@ recording:
     marker: client-discovery
     caption: Discover capabilities with the Arbiter client.
     guide:
-      try_command: arbiter arbiter.url=${recording.vars.staging_url} info plugins
+      try_command: arbiter arbiter.url=${recording.vars.staging_url} plugins
         | jq .
       success_hint: You should see the imap and smtp plugins.
     actions:
     - run: |
-        arbiter arbiter.url=${recording.vars.staging_url} info plugins | jq .
-        arbiter arbiter.url=${recording.vars.staging_url} info account smtp bot | jq .
+        arbiter arbiter.url=${recording.vars.staging_url} plugins | jq .
+        arbiter arbiter.url=${recording.vars.staging_url} plugins smtp account bot | jq .
         arbiter arbiter.url=${recording.vars.staging_url} op list smtp | jq .
         arbiter arbiter.url=${recording.vars.staging_url} op desc smtp:send_email | jq '{id, description, input_schema}'
       expect:
@@ -479,11 +498,9 @@ beat:
   id: overview
   heading: Overview
   narration: >-
-    This video guides you through installing Arbiter for the first time using
-    Arbiter's Docker tooling. We create a local Python environment, create a
-    staging directory, select the IMAP and SMTP plugins, configure and test
-    them through the Arbiter client, and finish by reviewing the permanent
-    install plan.
+    In this tutorial, we will prepare Arbiter in a staging directory, configure
+    the server, test it with the Arbiter client, and then install it as a
+    permanent Docker service.
 ```
 
 Introduce the workflow before the terminal commands begin.
@@ -492,30 +509,54 @@ Wait:
 
 Viewer hold: pause until the overview narration segment completes.
 
-### Prepare Arbiter Commands
+### Create and activate a virtual environment
 
 ```yaml studio-directive
 beat:
   id: prepare-cli
-  heading: Prepare Arbiter Commands
+  heading: Create and activate a virtual environment
   narration: >-
-    First prepare a small Python virtual environment for the Arbiter command
-    line tools. This installs `arbiter-server`, which creates the Docker
-    staging directory, and `arbiter`, which we use later to test the staged
-    server. This environment is only needed while preparing and testing
-    staging; after permanent installation, the server runs from the installed
-    deployment and no longer depends on it.
+    Create a small Python virtual environment and activate it. This keeps the
+    Arbiter command line tools separate from the system Python while we prepare
+    and test the deployment.
 ```
 
-Install the Arbiter command line tools in an operator-owned virtual
-environment before creating the Docker staging directory.
+Create and activate an operator-owned virtual environment before installing
+Arbiter's command line packages.
 
 Action:
 
 ```bash
 python3 -m venv arbiter_venv
-arbiter_venv/bin/python -m pip install arbiter-suite
 source arbiter_venv/bin/activate
+```
+
+Wait:
+
+Event gate: the virtual environment activation script exists.
+
+Viewer hold: pause 2 seconds on the activated environment.
+
+### Install Arbiter suite
+
+```yaml studio-directive
+beat:
+  id: install-suite
+  heading: Install Arbiter suite
+  narration: >-
+    Install the `arbiter-suite` package set into the virtual environment. One
+    of those packages is `arbiter-server`, which we use next to create the
+    Docker staging directory. The suite also installs `arbiter`, the client we
+    use later to test the staged server.
+```
+
+Install the Arbiter command line packages and verify the server command before
+moving on to Docker staging.
+
+Action:
+
+```bash
+arbiter_venv/bin/python -m pip install arbiter-suite
 arbiter-server version
 ```
 
@@ -755,8 +796,8 @@ Show the client commands an agent uses to discover available capabilities.
 Action:
 
 ```bash
-arbiter arbiter.url=https://127.0.0.1:18075 info plugins | jq .
-arbiter arbiter.url=https://127.0.0.1:18075 info account smtp bot | jq .
+arbiter arbiter.url=https://127.0.0.1:18075 plugins | jq .
+arbiter arbiter.url=https://127.0.0.1:18075 plugins smtp account bot | jq .
 arbiter arbiter.url=https://127.0.0.1:18075 op list smtp | jq .
 arbiter arbiter.url=https://127.0.0.1:18075 op desc smtp:send_email | jq '{id, description, input_schema}'
 ```
@@ -911,6 +952,8 @@ Viewer hold: pause 5 seconds on the dry-run summary.
 
 ## Marker Plan
 
+- `prepare-cli`: create and activate the local virtual environment
+- `install-suite`: install the Arbiter suite and verify `arbiter-server`
 - `init-staging`: create the Docker staging directory
 - `prepare-bundle`: inspect the IMAP and SMTP bundle and prepare the container
   runtime bundle

@@ -457,8 +457,8 @@ def test_script_parameters_export_session_variables() -> None:
 
     assert "recording_param_arbiter_source=latest" in script
     assert "recording_param_arbiter_package=arbiter-suite" in script
-    assert "recording_operator_venv_cache_root=" in script
-    assert "media/cache/operator-venvs" in script
+    assert "recording_operator_venv_cache_root=" not in script
+    assert "media/cache/operator-venvs" not in script
 
 
 def test_script_parameter_names_must_be_shell_safe() -> None:
@@ -1318,8 +1318,10 @@ def test_script_cleanup_runs_after_success(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     assert not target.exists()
     stdout_log = (run_dir / "stdout").read_text(encoding="utf-8")
-    assert "::: cleanup cleanup_1 start Remove target\n" in stdout_log
-    assert "::: cleanup cleanup_1 end status=0\n" in stdout_log
+    progress_log = (run_dir / "progress").read_text(encoding="utf-8")
+    assert "::: cleanup cleanup_1 start Remove target\n" in progress_log
+    assert "::: cleanup cleanup_1 end status=0\n" in progress_log
+    assert "::: cleanup cleanup_1 start Remove target\n" not in stdout_log
     assert "cleanup ran\n" in stdout_log
     assert not (run_dir / "cleanup_1.out").exists()
     assert not (run_dir / "cleanup_1.name").exists()
@@ -1352,8 +1354,10 @@ def test_script_cleanup_runs_after_action_failure(tmp_path: Path) -> None:
     assert result.returncode == 1
     assert not target.exists()
     stdout_log = (run_dir / "stdout").read_text(encoding="utf-8")
-    assert "::: cleanup cleanup_1 start Remove target\n" in stdout_log
-    assert "::: cleanup cleanup_1 end status=0\n" in stdout_log
+    progress_log = (run_dir / "progress").read_text(encoding="utf-8")
+    assert "::: cleanup cleanup_1 start Remove target\n" in progress_log
+    assert "::: cleanup cleanup_1 end status=0\n" in progress_log
+    assert "::: cleanup cleanup_1 start Remove target\n" not in stdout_log
     assert "cleanup ran\n" in stdout_log
     assert not (run_dir / "cleanup_1.out").exists()
     assert not (run_dir / "cleanup_1.name").exists()
@@ -1393,14 +1397,16 @@ def test_visible_output_hides_pip_package_summary_but_keeps_action_log(
     assert "after\n" in result.stdout
     assert "Installing collected packages" not in result.stdout
     assert "Successfully installed" not in result.stdout
-    action_log = (run_dir / "stdout").read_text(encoding="utf-8")
-    assert "::: action stage_server_1 start beat=stage-server\n" in action_log
-    assert "Installing collected packages: a, b\n" in action_log
-    assert "Successfully installed a-1 b-2\n" in action_log
+    stdout_log = (run_dir / "stdout").read_text(encoding="utf-8")
+    progress_log = (run_dir / "progress").read_text(encoding="utf-8")
+    assert "::: action stage_server_1 start beat=stage-server\n" in progress_log
+    assert "::: action stage_server_1 start beat=stage-server\n" not in stdout_log
+    assert "Installing collected packages: a, b\n" in stdout_log
+    assert "Successfully installed a-1 b-2\n" in stdout_log
     assert not (run_dir / "stage_server_1.out").exists()
 
 
-def test_stage_markers_use_single_run_logs(tmp_path: Path) -> None:
+def test_stage_markers_use_progress_log(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     spec = minimal_spec(
         beats=[
@@ -1422,6 +1428,7 @@ def test_stage_markers_use_single_run_logs(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     stdout_log = (run_dir / "stdout").read_text(encoding="utf-8")
     stderr_log = (run_dir / "stderr").read_text(encoding="utf-8")
+    progress_log = (run_dir / "progress").read_text(encoding="utf-8")
     expected_markers = [
         "::: stage 1/2 start beat=prepare-cli\n",
         "::: stage 1/2 end beat=prepare-cli\n",
@@ -1429,8 +1436,9 @@ def test_stage_markers_use_single_run_logs(tmp_path: Path) -> None:
         "::: stage 2/2 end beat=stage-server\n",
     ]
     for marker in expected_markers:
-        assert marker in stdout_log
-        assert marker in stderr_log
+        assert marker in progress_log
+        assert marker not in stdout_log
+        assert marker not in stderr_log
     assert "prepared\n" in stdout_log
     assert "checked\n" in stdout_log
     assert not list(run_dir.glob("*.out"))
@@ -1712,11 +1720,13 @@ def test_top_level_setup_failure_writes_failure_report(tmp_path: Path) -> None:
     assert report["message"] == "exited 1, expected 0"
     assert (
         "::: check setup_check_1 start beat=__setup__ name=prepare hidden state\n"
-        in report["stderr"]
+        in report["progress"]
     )
+    assert "::: check setup_check_1 start" not in report["stderr"]
     assert "setup stderr\n" in report["stderr"]
     assert report["output_path"].endswith("/stdout")
     assert report["stderr_path"].endswith("/stderr")
+    assert report["progress_path"].endswith("/progress")
 
 
 def test_visible_action_failure_reports_exit_before_output_gate() -> None:
@@ -1847,11 +1857,13 @@ def test_hidden_check_failure_writes_failure_report(tmp_path: Path) -> None:
     assert report["message"] == "missing text: expected hidden output"
     assert (
         "::: check verify_check_1 start beat=verify name=hidden proof\n"
-        in report["output"]
+        in report["progress"]
     )
+    assert "::: check verify_check_1 start" not in report["output"]
     assert "actual hidden output\n" in report["output"]
     assert report["output_path"].endswith("/stdout")
     assert report["stderr_path"].endswith("/stderr")
+    assert report["progress_path"].endswith("/progress")
     assert report["postmortem_path"].endswith("/enter")
 
 
@@ -1882,11 +1894,13 @@ def test_hidden_check_exit_writes_failure_report(tmp_path: Path) -> None:
     assert report["message"] == "exited 7, expected 0"
     assert (
         "::: check verify_check_1 start beat=verify name=hidden proof\n"
-        in report["output"]
+        in report["progress"]
     )
+    assert "::: check verify_check_1 start" not in report["output"]
     assert "before exit\n" in report["output"]
     assert report["output_path"].endswith("/stdout")
     assert report["stderr_path"].endswith("/stderr")
+    assert report["progress_path"].endswith("/progress")
 
 
 def test_record_reports_session_failure_sidecar(
@@ -1920,6 +1934,8 @@ def test_record_reports_session_failure_sidecar(
                     "output_path": str(output_path),
                     "stderr": "stderr reason\n",
                     "stderr_path": str(stderr_path),
+                    "progress": "progress reason\n",
+                    "progress_path": str(tmp_path / "progress"),
                     "run_dir": str(tmp_path),
                     "postmortem_path": str(postmortem_path),
                     "recording_id": "install-and-bootstrap",
@@ -1945,6 +1961,7 @@ def test_record_reports_session_failure_sidecar(
         "session failed during check 'prepare hidden state' (setup_check_1)" in message
     )
     assert "reason: exited 1, expected 0" in message
+    assert "progress reason" not in message
     assert "stderr reason" in message
     assert "real reason" not in message
     assert "captured output:" not in message

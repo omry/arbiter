@@ -310,6 +310,54 @@ def pair_hold_intervals(timeline: list[dict[str, Any]]) -> list[TimelineInterval
     return intervals
 
 
+def first_output_event_time(events: list[CastEvent]) -> float | None:
+    for event in events:
+        if event.event_type == "o" and isinstance(event.payload, str) and event.payload:
+            return event.absolute_time
+    return None
+
+
+def first_visible_timeline_anchor(timeline: list[dict[str, Any]]) -> float | None:
+    preferred_phases = (
+        "caption_start",
+        "command_prompt_start",
+        "command_run_start",
+        "action_start",
+        "beat_start",
+    )
+    for phase in preferred_phases:
+        for event in timeline:
+            if event.get("beat") == "__setup__" or event.get("phase") != phase:
+                continue
+            time_value = event.get("time")
+            if isinstance(time_value, int | float):
+                return float(time_value)
+    return None
+
+
+def align_timeline_to_cast(
+    timeline: list[dict[str, Any]], events: list[CastEvent]
+) -> list[dict[str, Any]]:
+    if not any(event.get("beat") == "__setup__" for event in timeline):
+        return timeline
+    cast_start = first_output_event_time(events)
+    timeline_start = first_visible_timeline_anchor(timeline)
+    if cast_start is None or timeline_start is None:
+        return timeline
+    offset = timeline_start - cast_start
+    if offset <= 0:
+        return timeline
+
+    aligned: list[dict[str, Any]] = []
+    for event in timeline:
+        copied = dict(event)
+        time_value = copied.get("time")
+        if isinstance(time_value, int | float):
+            copied["time"] = float(time_value) - offset
+        aligned.append(copied)
+    return aligned
+
+
 def token_delay(token: str, rules: TimingRules) -> float:
     if not token or ANSI_RE.fullmatch(token):
         return 0.0
@@ -517,6 +565,7 @@ def retime_events(
     rules: TimingRules,
     audio_durations: dict[str, float] | None = None,
 ) -> list[ScheduledEvent]:
+    timeline = align_timeline_to_cast(timeline, events)
     prompt_intervals = pair_intervals(
         timeline,
         start_phase="command_prompt_start",

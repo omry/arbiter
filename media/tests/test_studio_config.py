@@ -38,6 +38,7 @@ def test_default_config_composes_install_recording() -> None:
     assert spec["id"] == "install-and-bootstrap"
     assert spec["parameters"]["arbiter_source"] == "latest"
     assert spec["parameters"]["arbiter_package"] == "arbiter-suite"
+    assert spec["parameters"]["operator_venv_cache_retain"] == 8
     assert spec["vars"]["loopback_host"] == "127.0.0.1"
     assert spec["vars"]["staging_port"] == 18075
     assert spec["vars"]["installed_port"] == 8075
@@ -46,6 +47,8 @@ def test_default_config_composes_install_recording() -> None:
     assert spec["environment"]["variables"]["ARBITER_CINEMA_STAGING_URL"] == (
         "https://127.0.0.1:18075"
     )
+    assert spec["style"]["typing"] is True
+    assert spec["retime"]["typing_char_delay"] > 0
     assert "package_source" not in spec
     assert spec["_manifest_path"].endswith(
         "media/recording-scripts/install-and-bootstrap.md"
@@ -53,6 +56,11 @@ def test_default_config_composes_install_recording() -> None:
     assert spec["script"] == "media/recording-scripts/install-and-bootstrap.md"
     assert spec["narration"]["scene"]["title"] == "Install Arbiter Server"
     assert spec["narration"]["beats"][0]["id"] == "overview"
+    assert spec["narration"]["beats"][0]["text"] == (
+        "In this tutorial, we will prepare Arbiter in a staging directory, "
+        "configure the server, test it with the Arbiter client, and then "
+        "install it as a permanent Docker service."
+    )
     assert spec["narration"]["source_script"] == (
         "media/recording-scripts/install-and-bootstrap.md"
     )
@@ -178,12 +186,20 @@ def test_install_recording_uses_current_client_discovery_command() -> None:
     )
     action = client_discovery["actions"][0]
 
-    plugin_command = "arbiter arbiter.url=https://127.0.0.1:18075 info plugins | jq ."
+    plugin_command = "arbiter arbiter.url=https://127.0.0.1:18075 plugins | jq ."
+    account_command = (
+        "arbiter arbiter.url=https://127.0.0.1:18075 "
+        "plugins smtp account bot | jq ."
+    )
 
     assert plugin_command in action_display(action)
     assert plugin_command in action["run"]
+    assert account_command in action_display(action)
+    assert account_command in action["run"]
     assert action_display(action).count("arbiter.url=") == 4
     assert action["run"].count("arbiter.url=") == 4
+    assert "info plugins" not in action_display(action)
+    assert "info account" not in action_display(action)
     assert "smtp:send_email" in action["expect"]["output_contains"]
 
 
@@ -191,13 +207,25 @@ def test_install_recording_checks_config_before_starting_staging() -> None:
     spec = studio_config.load_recording_spec("install-and-bootstrap")
     stage_server = next(beat for beat in spec["beats"] if beat["id"] == "stage-server")
     action = stage_server["actions"][0]
+    cleanup_command = spec["cleanup"][0]["run"]
+    setup_run = recording_run_file_text(spec["setup"][0]["run_file"])
 
     assert "./arbiter-docker config check" in action_display(action)
-    assert "./arbiter-docker config check" in action["run"]
+    assert "COMPOSE_PROGRESS=quiet ./arbiter-docker config check" in action["run"]
+    assert "recording_filter_docker_compose_progress()" in setup_run
+    assert "grep -vE" not in action["run"]
+    assert (
+        "COMPOSE_PROGRESS=quiet ./arbiter-docker up "
+        "2> >(recording_filter_docker_compose_progress >&2)"
+    ) in action["run"]
+    assert (
+        "COMPOSE_PROGRESS=quiet ./arbiter-docker down --remove-orphans "
+        "2> >(recording_filter_docker_compose_progress >&2)"
+    ) in cleanup_command
     assert action["expect"]["output_regex"][:3] == [
-        r"server:\s+pass",
-        r"imap:\s+pass",
-        r"smtp:\s+pass",
+        r"server\s+\|\s+pass",
+        r"imap\s+\|\s+pass",
+        r"smtp\s+\|\s+pass",
     ]
     assert "https://127.0.0.1:18075" in action["expect"]["output_contains"]
 
@@ -222,15 +250,53 @@ def test_install_recording_inspects_selected_bundle_before_prepare() -> None:
 def test_install_recording_prepares_visible_cli_environment() -> None:
     spec = studio_config.load_recording_spec("install-and-bootstrap")
     prepare_cli = next(beat for beat in spec["beats"] if beat["id"] == "prepare-cli")
-    action = prepare_cli["actions"][0]
+    install_suite = next(
+        beat for beat in spec["beats"] if beat["id"] == "install-suite"
+    )
+    prepare_action = prepare_cli["actions"][0]
+    install_action = install_suite["actions"][0]
     setup_run = recording_run_file_text(spec["setup"][0]["run_file"])
 
-    assert "python3 -m venv arbiter_venv" in action["display"]
-    assert "arbiter_venv/bin/python -m pip install arbiter-suite" in action["display"]
-    assert "source arbiter_venv/bin/activate" in action["display"]
-    assert "arbiter-server version" in action["display"]
-    assert "recording_prepare_cli_env" in action["run"]
-    assert "./arbiter_venv/bin/activate" in action["expect"]["file_exists"]
+    assert prepare_cli["caption"] == "Create and activate a virtual environment."
+    assert install_suite["caption"] == "Install the Arbiter suite packages."
+    prepare_narration = next(
+        beat for beat in spec["narration"]["beats"] if beat["id"] == "prepare-cli"
+    )
+    install_narration = next(
+        beat for beat in spec["narration"]["beats"] if beat["id"] == "install-suite"
+    )
+    assert prepare_narration["heading"] == (
+        "Create and activate a virtual environment"
+    )
+    assert "Create a small Python virtual environment and activate it" in (
+        prepare_narration["text"]
+    )
+    assert install_narration["heading"] == "Install Arbiter suite"
+    assert "`arbiter-server`, which we use next to create the" in (
+        install_narration["text"]
+    )
+    assert "python3 -m venv arbiter_venv" in prepare_action["display"]
+    assert "source arbiter_venv/bin/activate" in prepare_action["display"]
+    assert "arbiter_venv/bin/python -m pip install arbiter-suite" not in (
+        prepare_action["display"]
+    )
+    assert "recording_prepare_cli_env" in prepare_action["run"]
+    assert prepare_action["run"].strip().splitlines() == [
+        "recording_prepare_cli_env",
+        "source arbiter_venv/bin/activate",
+    ]
+    assert "./arbiter_venv/bin/activate" in prepare_action["expect"]["file_exists"]
+    assert (
+        "arbiter_venv/bin/python -m pip install arbiter-suite"
+        in install_action["display"]
+    )
+    assert "arbiter-server version" in install_action["display"]
+    assert "arbiter-server version" in install_action["run"]
+    assert "./arbiter_venv/bin/arbiter-server" in (
+        install_action["expect"]["file_exists"]
+    )
+    assert "server" in install_action["expect"]["output_contains"]
+    assert "api" in install_action["expect"]["output_contains"]
     assert spec["setup"][0]["run_file"] == (
         "media/recording-scripts/install-and-bootstrap/setup-main.sh"
     )
@@ -305,7 +371,9 @@ def test_install_recording_install_helper_is_aux_file() -> None:
         "media/recording-scripts/install-and-bootstrap/install-server.sh"
     )
     assert "sudo ./arbiter-docker install" in action["display"]
-    assert 'exec fakeroot "$@"' in install_run
+    assert "exec fakeroot sh -c" in install_run
+    assert "ARBITER_CONTAINER_USER" in install_run
+    assert 'chown -R "$container_user" data/server data/plugins' in install_run
     assert "rewrite_install_output()" in install_run
 
 
@@ -322,34 +390,76 @@ def test_local_arbiter_source_exposes_repo_root_for_docker_bundle_prepare() -> N
     assert 'export ARBITER_PYTHON="$recording_python"' in setup_run
     assert "recording_prepare_bundle()" in setup_run
     assert "recording_apply_mail_lab_config()" in setup_run
+    assert '"$recording_repo/media/tools/mail_lab.py" \\' in setup_run
+    assert "--host 0.0.0.0" in setup_run
+    assert "--container-host host.docker.internal" in setup_run
     assert './arbiter-docker bundle add-source "$recording_repo/server"' in setup_run
     assert 'local_packages = {"arbiter-server", "arbiter-imap", "arbiter-smtp"}' in (
         setup_run
     )
-    assert "arbiter-server version --json || return 1" in setup_run
-    assert "arbiter --version || return 1" in setup_run
+    assert '"$operator_venv/bin/arbiter-server" version --json || return 1' in setup_run
+    assert '"$operator_venv/bin/arbiter" --version || return 1' in setup_run
 
 
-def test_pypi_arbiter_source_uses_cached_operator_venv() -> None:
+def test_pypi_arbiter_source_uses_artifact_keyed_operator_venv_cache() -> None:
     spec = studio_config.load_recording_spec("install-and-bootstrap")
     setup_run = recording_run_file_text(spec["setup"][0]["run_file"])
-    cached_call = (
-        'cached_operator_venv="$(recording_cached_operator_venv '
-        '"$package_requirement")"'
-    )
 
-    assert "recording_cached_operator_venv()" in setup_run
-    assert "recording_operator_venv_cache_root" in setup_run
+    assert "recording_operator_wheelhouse_metadata()" in setup_run
+    assert "recording_prepare_operator_venv_from_wheelhouse()" in setup_run
+    assert "recording_prepare_pypi_operator_venv()" in setup_run
+    assert 'recording_operator_venv_cache_root="$recording_repo/media/cache/operator-venvs"' in setup_run
     assert "recording_operator_venv_is_healthy()" in setup_run
-    assert cached_call in setup_run
-    assert 'ln -sfn "$cached_operator_venv" "$operator_venv"' in setup_run
+    assert '"$venv/bin/arbiter-server" "$venv/bin/arbiter"' in setup_run
+    assert 'recording_operator_venv_is_healthy "$operator_venv"' in setup_run
+    assert 'recording_prepare_pypi_operator_venv "$package_requirement"' in setup_run
+    assert 'operator_venv="$recording_tmp/operator-venv"' in setup_run
+    assert 'wheelhouse="$recording_tmp/operator-wheelhouse"' in setup_run
+    assert "recording_run_operator_venv_step()" in setup_run
+    assert 'recording_operator_venv_log="$recording_tmp/operator-venv.log"' in setup_run
+    assert '"$recording_python" -m pip wheel \\' in setup_run
+    assert "--wheel-dir" in setup_run
+    assert '"$recording_python" -m pip download' not in setup_run
+    assert "--no-cache-dir" in setup_run
+    assert "cache_key" in setup_run
     assert '"$recording_python" -m venv "$cached_venv"' in setup_run
-    assert 'mv "$tmp_dir" "$cache_dir"' not in setup_run
-    assert '"$recording_python" -m venv "$tmp_dir/venv"' not in setup_run
-    assert (
-        'operator_venv="$recording_tmp/operator-venv"\n'
-        '  "$recording_python" -m venv "$operator_venv"'
-    ) not in setup_run
+    assert '"$cached_venv/bin/python" -m pip install \\' in setup_run
+    assert '--find-links "$wheelhouse"' in setup_run
+    assert 'ln -sfn "$cached_venv" "$operator_venv"' in setup_run
+    assert 'export ARBITER_CINEMA_OPERATOR_VENV_CACHE_KEY="$cache_key"' in (
+        setup_run
+    )
+    assert 'operator_venv_cache_retain="${recording_param_operator_venv_cache_retain:-8}"' in setup_run
+    assert "recording_validate_operator_venv_cache_retain()" in setup_run
+    assert "recording_prune_operator_venv_cache()" in setup_run
+    assert 'touch "$ready_file"' in setup_run
+    assert 'recording_prune_operator_venv_cache "$cache_key"' in setup_run
+    assert 'rmdir "$lock_dir" 2>/dev/null || true\n        return 1' in setup_run
+    assert 'keep.add(current_cache_key)' in setup_run
+
+
+def test_local_arbiter_source_uses_dirty_source_artifact_keyed_operator_cache() -> None:
+    spec = studio_config.load_recording_spec("install-and-bootstrap")
+    setup_run = recording_run_file_text(spec["setup"][0]["run_file"])
+
+    assert "recording_prepare_local_operator_venv()" in setup_run
+    assert "recording_wheel_requirement()" in setup_run
+    assert "recording_wheel_path()" in setup_run
+    assert "command -v arbiter-server" not in setup_run
+    assert "command -v arbiter >/dev/null" not in setup_run
+    assert "server\n    client\n    plugins/smtp\n    plugins/imap\n    meta/arbiter-suite" in setup_run
+    assert "build local operator wheel: $package_source" in setup_run
+    assert "build local operator dependency wheelhouse" not in setup_run
+    assert '"$recording_python" -m pip wheel \\' in setup_run
+    assert '--wheel-dir "$wheelhouse"' in setup_run
+    assert '"$source_dir"' in setup_run
+    assert 'package_requirement="$(recording_wheel_requirement "$wheelhouse" "$arbiter_package")"' in setup_run
+    assert 'local_package_wheels+=("$(recording_wheel_path "$wheelhouse" "$package_name")")' in setup_run
+    assert '--find-links "$wheelhouse"' in setup_run
+    assert 'recording_prepare_operator_venv_from_wheelhouse \\' in setup_run
+    assert '"$package_requirement" "$wheelhouse" online "${local_package_wheels[@]}"' in setup_run
+    assert 'export ARBITER_REPO_ROOT="$recording_repo"' in setup_run
+    assert 'export ARBITER_PYTHON="$recording_python"' in setup_run
 
 
 def test_hydra_output_dir_is_attached_to_recording_spec() -> None:
