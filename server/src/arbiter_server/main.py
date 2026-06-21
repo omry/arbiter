@@ -1558,7 +1558,12 @@ def _print_runtime_version_info(
 
     server_info = cast(dict[str, str], version_info["server"])
     print(f"server {server_info['version']} (api {server_info['api_version']})")
-    print(f"deployment scope {version_info['deployment_scope']}")
+    deployment_scope = version_info["deployment_scope"]
+    if deployment_scope in {
+        DeploymentScope.staged.value,
+        DeploymentScope.installed.value,
+    }:
+        print(f"deployment scope {deployment_scope}")
     source = cast(dict[str, object], version_info["source"])
     if source["commit"] is not None:
         dirty = " dirty" if source["dirty"] else ""

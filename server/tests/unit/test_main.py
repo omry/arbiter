@@ -8890,7 +8890,6 @@ def test_cli_version_prints_server_and_plugin_versions(
     plugins = cast(list[dict[str, str]], version_info["plugins"])
     assert capsys.readouterr().out == (
         f"server {server['version']} (api {server['api_version']})\n"
-        "deployment scope unknown\n"
         "source abc123 dirty\n"
         "plugins:\n"
         f"  {plugins[0]['name']} {plugins[0]['version']} "
@@ -8898,6 +8897,44 @@ def test_cli_version_prints_server_and_plugin_versions(
         f"  {plugins[1]['name']} {plugins[1]['version']} "
         f"(server api {plugins[1]['server_api_version']})\n"
     )
+
+
+def test_cli_version_prints_known_deployment_scope(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "arbiter_server.main.runtime_version_info",
+        lambda service_plugins=None: {
+            "server": {"version": "1.2.3", "api_version": "0.9"},
+            "deployment_scope": "staged",
+            "source": {"commit": None, "dirty": None, "build_time": None},
+            "plugins": [],
+        },
+    )
+
+    assert main(["--config-dir", "/tmp", "version"]) == 0
+
+    assert "deployment scope staged\n" in capsys.readouterr().out
+
+
+def test_cli_version_prints_installed_deployment_scope(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "arbiter_server.main.runtime_version_info",
+        lambda service_plugins=None: {
+            "server": {"version": "1.2.3", "api_version": "0.9"},
+            "deployment_scope": "installed",
+            "source": {"commit": None, "dirty": None, "build_time": None},
+            "plugins": [],
+        },
+    )
+
+    assert main(["--config-dir", "/tmp", "version"]) == 0
+
+    assert "deployment scope installed\n" in capsys.readouterr().out
 
 
 def test_cli_version_can_print_json(
