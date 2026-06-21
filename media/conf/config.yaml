@@ -1,0 +1,22 @@
+defaults:
+  - studio_schema
+  - profile: release
+  - package_source: pypi_latest
+  - recording: install-and-bootstrap
+  - _self_
+
+action: record
+output: null
+cast: null
+timeline: null
+headed: false
+force: false
+timestamps: false
+allow_mismatch: false
+run_id: null
+
+hydra:
+  run:
+    dir: media/runs/${recording.id}/${now:%Y%m%d-%H%M%S}
+  job:
+    chdir: false

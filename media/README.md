@@ -64,7 +64,7 @@ caption timing, and viewer holds, can be adjusted for readability. Runtime
 timing from installs, config checks, server startup, and client calls is
 observed product behavior. Compress or normalize it only as an explicit,
 reviewable editorial choice. For example, a visible `sleep 10` command must
-occupy ten seconds in every rendered output unless the manifest explicitly
+occupy ten seconds in every rendered output unless the recording config explicitly
 marks that interval as presentation-compressed.
 
 ## Technical Production Spec
@@ -90,11 +90,45 @@ Verify the recorder before regenerating media:
 asciinema --version
 ```
 
-The local runner reads `.yaml` recording manifests:
+The local runner composes a Hydra config from `media/conf/`:
 
 ```bash
-.venv/bin/python media/tools/record.py --check install-and-bootstrap
-.venv/bin/python media/tools/record.py install-and-bootstrap
+media/tools/record.py recording=install-and-bootstrap action=check
+media/tools/record.py recording=install-and-bootstrap package_source.version=0.9.2.dev1
+media/tools/record.py recording=install-and-bootstrap package_source=local profile=local-dev
+```
+
+Hydra creates a per-run output directory from `hydra.run.dir`. The recorder uses
+that output directory for per-run operator workspace, mail-lab state, logs, and
+intermediate files. Finished casts and timeline sidecars are swapped into the
+website output path only after the recording completes successfully.
+
+Each run also writes an executable postmortem entrypoint in the run directory:
+
+```bash
+media/runs/install-and-bootstrap/<run-id>/enter
+```
+
+Use the recorder's inspect action after a recording to open an interactive
+subshell in the operator workspace with the recording's operator virtualenv
+activated:
+
+```bash
+media/tools/record.py recording=install-and-bootstrap action=inspect run_id=<run-id>
+```
+
+Use the play action to replay a preserved run cast. The recording id is
+deduced from the run id unless the run id is ambiguous across recordings:
+
+```bash
+media/tools/record.py action=play run_id=<run-id>
+```
+
+Use the output action to review the captured failure output. It opens a pager in
+an interactive terminal and streams the output otherwise:
+
+```bash
+media/tools/record.py recording=install-and-bootstrap action=output run_id=<run-id>
 ```
 
 The recorder produces the baseline cast and a `.timeline.jsonl` sidecar. For
@@ -102,12 +136,12 @@ release media, prefer a fast baseline capture and then generate the watchable
 presentation timing as a separate step:
 
 ```bash
-.venv/bin/python media/tools/retime_cast.py --check install-and-bootstrap
-.venv/bin/python media/tools/retime_cast.py install-and-bootstrap
+media/tools/retime_cast.py recording=install-and-bootstrap action=check
+media/tools/retime_cast.py recording=install-and-bootstrap action=retime
 ```
 
 The retimer uses visible timeline markers to synthesize command typing, insert
-short pauses after Enter and command output, and restore manifest viewer holds.
+short pauses after Enter and command output, and restore recording viewer holds.
 Future audio timing can add the same kind of pause constraints from narration
 durations without rerunning the terminal workflow.
 
@@ -116,42 +150,44 @@ The session prepends that Python's `bin` directory to `PATH`, so a dedicated
 recording virtualenv can own the installed Arbiter commands without falling back
 to a developer checkout `.venv`.
 
-The runner expects PyYAML in the recording Python environment.
-Recording manifests are trusted studio automation: action and check commands run
-as shell snippets. Review manifests before running them, and do not execute
-manifests from untrusted sources.
+The runner expects `hydra-core` in the recording Python environment. Recording
+configs are trusted studio automation: action and check commands run as shell
+snippets. Review configs before running them, and do not execute configs from
+untrusted sources.
 
-The alignment proof-of-concept compares a finished cast back to its manifest by
+The alignment proof-of-concept compares a finished cast back to its config by
 matching visible captions and command lines:
 
 ```bash
-media/tools/align_cast.py install-and-bootstrap
+media/tools/align_cast.py recording=install-and-bootstrap action=align
 ```
 
 Treat alignment as a review gate. If the command reports misalignment, stop and
-review whether the base recording should be refreshed, the recording manifest
+review whether the base recording should be refreshed, the recording config
 should be updated, or the movie script no longer matches the current major
-version workflow. Use `--allow-mismatch` only for exploratory inspection, not
-for release readiness.
+version workflow. Use `allow_mismatch=true` only for exploratory
+inspection, not for release readiness.
 
 Recording beats can also include off-camera `checks`. Actions tell the visible
 story; checks assert that the workflow still satisfies hidden expectations. A
 successful check prints nothing into the recording. A failed check stops the
-recording and prints the captured check output so the script can be reviewed.
-Successful checks write start and end events to a `.timeline.jsonl` sidecar, and
-the recorder subtracts those check intervals from the baseline cast so off-camera
-assertions do not add dead air to the viewer timeline. If visible terminal
-output occurs during a hidden-check interval, the recorder fails instead of
-shipping a cast that silently hides a timing or logging problem.
+recording, prints stderr only, and points at `action=inspect`, `action=play`,
+and `action=output` commands for postmortem review. Successful checks write
+start and end events to a `.timeline.jsonl` sidecar, and the recorder subtracts
+those check intervals from the baseline cast so off-camera assertions do not add
+dead air to the viewer timeline. If visible terminal output occurs during a
+hidden-check interval, the recorder fails instead of shipping a cast that
+silently hides a timing or logging problem.
 
-Recording manifests can also include a top-level `setup` list. Setup runs
+Recording configs can also include a top-level `setup` list. Setup runs
 before the first visible beat, uses the same hidden timeline handling as
 checks, and can prepare per-recording state such as a temporary operator
 workspace or local service fixtures. Keep viewer-facing workflow steps as
 actions; use setup only for studio scaffolding that should not appear in the
-movie.
+movie. Setup can call `recording_write_postmortem_entrypoint "$workspace"
+"$venv"` after it creates a recording-specific workspace and virtualenv.
 
-Base recordings preserve terminal event timing by default. A manifest can set
+Base recordings preserve terminal event timing by default. A config can set
 `capture.baseline_compressed: true` to skip synthetic typing and viewer holds
 during capture, while still preserving real command runtime. Do not set
 `capture.idle_time_limit` unless the recording intentionally asks asciinema
@@ -162,28 +198,29 @@ metadata so local checkout paths and shell names do not ship in the asciinema
 header.
 
 The audio generator reads narration blocks from the movie script, combines them
-with the manifest's `audio` settings, and writes cached TTS segments:
+with the recording config's `audio` settings, and writes cached TTS segments:
 
 ```bash
-.venv/bin/python media/tools/audio.py --check install-and-bootstrap
-.venv/bin/python media/tools/audio.py --dry-run install-and-bootstrap
-.venv/bin/python media/tools/audio.py install-and-bootstrap
+media/tools/audio.py recording=install-and-bootstrap action=check
+media/tools/audio.py recording=install-and-bootstrap action=dry_run
+media/tools/audio.py recording=install-and-bootstrap action=generate
 ```
 
-Use `--check` to validate the script and manifest without contacting the TTS
-provider. Use `--dry-run` to inspect the segment cache keys and output paths.
+Use `action=check` to validate the script and config without contacting
+the TTS provider. Use `action=dry_run` to inspect the segment cache keys
+and output paths.
 The final command calls the configured provider and requires the environment
-variable named by the recording manifest, for example
+variable named by the recording config, for example
 `OPENAI_ARBITER_CINEMA_AUDIO_API_KEY`.
 
 To also request transcription timestamps for generated audio, use:
 
 ```bash
-.venv/bin/python media/tools/audio.py --timestamps install-and-bootstrap
+media/tools/audio.py recording=install-and-bootstrap action=generate timestamps=true
 ```
 
 The timestamp step writes `*.timeline.json` sidecars next to the cached audio
-segments. It uses the manifest's `audio.transcription` settings.
+segments. It uses the recording config's `audio.transcription` settings.
 
 Audio segment cache files are written under `media/cache/audio/` by default and
 are ignored by git. Cache keys include the normalized narration text plus the
@@ -318,15 +355,16 @@ terminal session itself predictable and easy to debug.
 ```text
 media/
   README.md                 # studio vision and workflow
-  recordings/               # machine-readable .yaml recording manifests
+  conf/                     # Hydra config groups for recordings and profiles
   scripts/                  # human movie scripts and shot lists
   tools/                    # local studio runners and generators
 ```
 
-Future tooling can add directories for generated command files, TTS inputs,
-caption manifests, render manifests, or scratch output. Finished website assets
-should still land under `website/static/`, and published documentation should
-still live under `website/docs/`.
+Hydra run directories under `media/runs/` are per-run scratch space, not
+published assets. Future tooling can add directories for generated command
+files, TTS inputs, caption manifests, or render manifests. Finished website
+assets should still land under `website/static/`, and published documentation
+should still live under `website/docs/`.
 
 ## Initial Production
 

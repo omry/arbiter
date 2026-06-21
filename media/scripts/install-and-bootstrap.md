@@ -16,8 +16,8 @@ the script before regenerating casts, narration, captions, or static renders.
 Install-proof note: the recording should use the release-approved Docker
 deployment tooling from the Arbiter server package. Do not show a local Python
 virtual environment as the server install path in this recording. The only
-local Python assumption is that `arbiter-server` is already available so it can
-write the Docker staging directory.
+local Python assumption is that the recorder can create an off-camera operator
+environment that provides `arbiter-server` and `arbiter`.
 
 ## Setup
 
@@ -30,8 +30,13 @@ write the Docker staging directory.
 - Renderer line height: 1.4.
 - Prompt: short and quiet.
 - Working directory: an empty operator workspace created by the recorder.
-- Path: use the `arbiter-server` and `arbiter` commands from the installed
-  release package.
+- Path: use the `arbiter-server` and `arbiter` commands from the recording
+  package source. For this tutorial, the default source is PyPI latest via the
+  `arbiter-suite` meta package. For a pinned release proof, set
+  `package_source.version=VERSION` or
+  `package_source.requirement=arbiter-suite==VERSION` as a Hydra override.
+  Local checkout commands are reserved for development rehearsals and should be
+  selected explicitly with `package_source=local`.
 - Baseline capture: record as quickly as possible. The baseline cast is proof
   that the workflow runs; it is not the watchable edit.
 - Presentation timing: generate a retimed cast from the baseline cast and
@@ -52,7 +57,7 @@ write the Docker staging directory.
 ### Audio
 
 - Narration source: this script's `Narration` blocks.
-- TTS credentials: read from the recording manifest's audio env var only when
+- TTS credentials: read from the recording config's audio env var only when
   generating audio.
 - Segment strategy: one generated audio segment per script section, with
   scripted silence between segments.
@@ -63,6 +68,13 @@ write the Docker staging directory.
 
 - Docker: Docker Compose must be available to the operator running the staging
   checks.
+- Package source: the recorder prepares an off-camera operator virtual
+  environment before capture. In PyPI mode, it installs `arbiter-suite` from
+  PyPI, resolving the latest non-yanked release unless
+  `package_source.version` or `package_source.requirement` pins an exact
+  package requirement. In local mode, it uses the `arbiter-server` and
+  `arbiter` commands already on `PATH`. Do not let local package versions
+  silently choose PyPI pins for this tutorial.
 - Staging directory: create a disposable `arbiter-docker/` staging directory in
   the recording workspace.
 - Permanent install target: promote the staged deployment to `/opt/arbiter`.

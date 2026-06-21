@@ -1,3 +1,5 @@
+# @package recording
+
 id: install-and-bootstrap
 title: Install Arbiter Server
 script: media/scripts/install-and-bootstrap.md
@@ -9,8 +11,6 @@ capture:
 
 requirements:
   commands:
-    - arbiter
-    - arbiter-server
     - docker
     - jq
 
@@ -54,7 +54,7 @@ audio:
       - segment
 
 setup:
-  - name: Start local SMTP and IMAP mail lab
+  - name: Prepare PyPI operator commands and local mail lab
     run: |
       recording_repo="$PWD"
       export recording_repo
@@ -62,6 +62,54 @@ setup:
       unset IMAP_BOT_ACCOUNT_PASSWORD
       unset SMTP_BOT_ACCOUNT_USERNAME
       unset SMTP_BOT_ACCOUNT_PASSWORD
+      operator_venv=""
+
+      if [[ "$recording_package_source_mode" == pypi ]]; then
+        operator_venv="$recording_tmp/operator-venv"
+        "$recording_python" -m venv "$operator_venv"
+        "$operator_venv/bin/python" -m pip install --upgrade pip
+        package_requirement="$recording_package_source_requirement"
+        if [[ -z "$package_requirement" ]]; then
+          if [[ "$recording_package_source_version" == latest ]]; then
+            package_version="$("$recording_python" - "$recording_package_source_package" <<'PY'
+      import json
+      import sys
+      import urllib.request
+      from packaging.version import Version
+
+      package = sys.argv[1]
+      with urllib.request.urlopen(f"https://pypi.org/pypi/{package}/json", timeout=30) as response:
+          data = json.load(response)
+      versions = []
+      for version, files in data["releases"].items():
+          if any(not file.get("yanked", False) for file in files):
+              versions.append(Version(version))
+      if not versions:
+          raise SystemExit(f"no non-yanked releases found for {package}")
+      print(max(versions))
+      PY
+      )"
+          else
+            package_version="$recording_package_source_version"
+          fi
+          package_requirement="$recording_package_source_package==$package_version"
+        fi
+        "$operator_venv/bin/python" -m pip install "$package_requirement"
+        export PATH="$operator_venv/bin:$PATH"
+        export ARBITER_CINEMA_RESOLVED_PACKAGE_REQUIREMENT="$package_requirement"
+      elif [[ "$recording_package_source_mode" == local ]]; then
+        command -v arbiter-server >/dev/null
+        command -v arbiter >/dev/null
+        operator_bin="$(command -v arbiter-server)"
+        detected_venv="$(cd "$(dirname "$operator_bin")/.." && pwd)"
+        if [[ -f "$detected_venv/bin/activate" ]]; then
+          operator_venv="$detected_venv"
+        fi
+      else
+        printf 'unsupported package source mode: %s\n' "$recording_package_source_mode" >&2
+        exit 1
+      fi
+
       recording_workspace="$recording_tmp/operator-workspace"
       mkdir -p "$recording_workspace"
       mail_lab_env="$recording_tmp/mail-lab.env"
@@ -81,6 +129,9 @@ setup:
       [[ -s "$mail_lab_env" ]] || { cat "$mail_lab_log" >&2; exit 1; }
       export MAIL_LAB_ENV_FILE="$mail_lab_env"
       cd "$recording_workspace"
+      recording_write_postmortem_entrypoint "$recording_workspace" "$operator_venv"
+      arbiter-server version --json
+      arbiter --version
     expect:
       file_exists:
         - "$MAIL_LAB_ENV_FILE"
@@ -188,18 +239,20 @@ beats:
 
   - id: stage-server
     marker: stage-server
-    caption: Start staging on the staging MCP port.
+    caption: Start staging on the staging HTTP port.
     actions:
       - display: |
           ./arbiter-docker up
           ./arbiter-docker test
-          arbiter arbiter.mcp_url=http://127.0.0.1:18025/mcp info plugins | jq .plugins
+          arbiter arbiter.url=http://127.0.0.1:18075 info plugins | jq .plugins
         run: |
           ./arbiter-docker up
           ./arbiter-docker test
-          arbiter arbiter.mcp_url=http://127.0.0.1:18025/mcp info plugins | jq .plugins
+          arbiter arbiter.url=http://127.0.0.1:18075 info plugins | jq .plugins
         expect:
           output_contains:
+            - "URL: http://127.0.0.1:18075"
+            - "Server test: http://127.0.0.1:18075"
             - "imap"
             - "smtp"
     viewer_hold: 5.0
@@ -216,7 +269,7 @@ beats:
 
   - id: review-install-plan
     marker: review-install-plan
-    caption: Review the production install plan for port 8025.
+    caption: Review the production install plan for port 8075.
     actions:
       - display: |
           ./arbiter-docker install --dry-run --to /opt/arbiter --user arbiter

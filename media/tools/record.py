@@ -1,52 +1,73 @@
 #!/usr/bin/env python3
-"""Record Arbiter media casts from YAML recording manifests."""
+"""Record Arbiter media casts from Hydra-composed studio configs."""
 
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import re
 import shlex
 import shutil
+import signal
+import stat
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
-try:
-    import yaml
-except ModuleNotFoundError:  # pragma: no cover - exercised only outside dev envs.
-    yaml = None
+TOOLS_DIR = Path(__file__).resolve().parent
+if str(TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(TOOLS_DIR))
+
+import hydra
+from omegaconf import DictConfig
+
+from studio_config import (
+    CONFIG_DIR,
+    StudioConfigError,
+    container_from_hydra_cfg,
+    list_recording_ids,
+    load_recording_spec,
+    load_recording_spec_from_hydra_cfg,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-RECORDINGS_DIR = REPO_ROOT / "media" / "recordings"
 
 
 class RecordingError(RuntimeError):
     pass
 
 
-def load_manifest(recording_id: str) -> dict[str, Any]:
-    if yaml is None:
-        raise RecordingError(
-            "PyYAML is required; install it in the recording environment"
-        )
-    path = RECORDINGS_DIR / f"{recording_id}.yaml"
-    if not path.exists():
-        raise RecordingError(f"recording manifest not found: {path}")
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise RecordingError(f"recording manifest must be a mapping: {path}")
-    data["_manifest_path"] = str(path)
-    return data
+class RecordingInterrupted(RuntimeError):
+    pass
+
+
+INTERRUPT_RETURNCODES = {
+    128 + signal.SIGINT,
+    128 + signal.SIGTERM,
+    -signal.SIGINT,
+    -signal.SIGTERM,
+}
+
+
+def load_manifest(
+    recording_id: str, overrides: list[str] | tuple[str, ...] = ()
+) -> dict[str, Any]:
+    try:
+        return load_recording_spec(recording_id, overrides)
+    except StudioConfigError as exc:
+        raise RecordingError(str(exc)) from exc
 
 
 def require_string(mapping: dict[str, Any], key: str) -> str:
     value = mapping.get(key)
     if not isinstance(value, str) or not value:
-        raise RecordingError(f"manifest field {key!r} must be a non-empty string")
+        raise RecordingError(
+            f"recording config field {key!r} must be a non-empty string"
+        )
     return value
 
 
@@ -54,7 +75,7 @@ def as_mapping(value: object, *, field: str) -> dict[str, Any]:
     if value is None:
         return {}
     if not isinstance(value, dict):
-        raise RecordingError(f"manifest field {field!r} must be a mapping")
+        raise RecordingError(f"recording config field {field!r} must be a mapping")
     return value
 
 
@@ -62,7 +83,7 @@ def as_list(value: object, *, field: str) -> list[Any]:
     if value is None:
         return []
     if not isinstance(value, list):
-        raise RecordingError(f"manifest field {field!r} must be a list")
+        raise RecordingError(f"recording config field {field!r} must be a list")
     return value
 
 
@@ -153,6 +174,27 @@ def validate_manifest(spec: dict[str, Any]) -> None:
     baseline_compressed = capture.get("baseline_compressed", False)
     if not isinstance(baseline_compressed, bool):
         raise RecordingError("capture.baseline_compressed must be a boolean")
+    package_source = spec.get("package_source")
+    if package_source is not None:
+        package_source = as_mapping(package_source, field="package_source")
+        mode = package_source.get("mode", "local")
+        if mode not in {"local", "pypi"}:
+            raise RecordingError("package_source.mode must be 'local' or 'pypi'")
+        package = package_source.get("package", "arbiter-suite")
+        if not isinstance(package, str) or not package:
+            raise RecordingError("package_source.package must be a non-empty string")
+        version = package_source.get("version", "latest")
+        if not isinstance(version, str) or not version:
+            raise RecordingError("package_source.version must be a non-empty string")
+        requirement = package_source.get("requirement", "")
+        if not isinstance(requirement, str):
+            raise RecordingError("package_source.requirement must be a string")
+    hydra_output_dir = spec.get("_hydra_output_dir")
+    if not isinstance(hydra_output_dir, str) or not hydra_output_dir:
+        raise RecordingError("Hydra output directory is required for recording")
+    keep_output_dir = spec.get("_keep_hydra_output_dir", False)
+    if not isinstance(keep_output_dir, bool):
+        raise RecordingError("_keep_hydra_output_dir must be a boolean")
     setup = as_list(spec.get("setup"), field="setup")
     for index, step in enumerate(setup, start=1):
         if not isinstance(step, dict):
@@ -163,7 +205,7 @@ def validate_manifest(spec: dict[str, Any]) -> None:
             raise RecordingError(f"setup.{index}.name must be a non-empty string")
     beats = as_list(spec.get("beats"), field="beats")
     if not beats:
-        raise RecordingError("manifest must contain at least one beat")
+        raise RecordingError("recording config must contain at least one beat")
     for beat in beats:
         if not isinstance(beat, dict):
             raise RecordingError("each beat must be a mapping")
@@ -211,6 +253,276 @@ def failure_path_for_cast(cast_path: Path) -> Path:
     return cast_path.with_suffix(".failure.json")
 
 
+def staged_cast_path_for(cast_path: Path) -> Path:
+    token = f"recording-{os.getpid()}"
+    for index in range(100):
+        suffix = "" if index == 0 else f"-{index}"
+        candidate = cast_path.with_name(f".{cast_path.name}.{token}{suffix}.cast")
+        if not candidate.exists():
+            return candidate
+    raise RecordingError(f"could not allocate staged recording path beside {cast_path}")
+
+
+def remove_recording_artifacts(paths: list[Path]) -> list[Path]:
+    removed: list[Path] = []
+    for path in paths:
+        try:
+            if path.is_dir():
+                shutil.rmtree(path)
+            elif path.exists() or path.is_symlink():
+                path.unlink()
+            else:
+                continue
+        except OSError as exc:
+            raise RecordingError(
+                f"failed to remove interrupted recording artifact: {path}"
+            ) from exc
+        removed.append(path)
+    return removed
+
+
+def run_artifact_dir(spec: dict[str, Any]) -> Path:
+    return relative_path(require_string(spec, "_hydra_output_dir"))
+
+
+def copy_run_artifact(source: Path, destination: Path) -> None:
+    if not source.exists():
+        return
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, destination)
+
+
+def preserve_successful_run_artifacts(
+    spec: dict[str, Any], *, cast_path: Path, timeline_path: Path
+) -> None:
+    run_dir = run_artifact_dir(spec)
+    copy_run_artifact(cast_path, run_dir / "recording.cast")
+    copy_run_artifact(timeline_path, run_dir / "recording.timeline.jsonl")
+
+
+def preserve_failed_run_artifacts(
+    spec: dict[str, Any], *, cast_path: Path, timeline_path: Path
+) -> None:
+    run_dir = run_artifact_dir(spec)
+    copy_run_artifact(cast_path, run_dir / "failed.cast")
+    copy_run_artifact(timeline_path, run_dir / "failed.timeline.jsonl")
+
+
+def format_interrupted_recording(cast_path: Path, removed: list[Path]) -> str:
+    lines = ["recording cancelled by user", f"output was not updated: {cast_path}"]
+    if removed:
+        lines.append("removed staged recording artifacts:")
+        lines.extend(f"- {path}" for path in removed)
+    else:
+        lines.append("no staged recording artifacts were present")
+    return "\n".join(lines)
+
+
+def recording_was_interrupted(returncode: int) -> bool:
+    return returncode in INTERRUPT_RETURNCODES
+
+
+def postmortem_entrypoint_text(*, run_dir: str, workdir: str, venv: str) -> str:
+    run_id = Path(run_dir).name
+    prompt_name = f"arbiter-recorder:{run_id}"
+    lines = [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        f"run_dir={shlex.quote(run_dir)}",
+        f"workdir={shlex.quote(workdir)}",
+        f"venv={shlex.quote(venv)}",
+        f"export ARBITER_CINEMA_RUN_ID={shlex.quote(run_id)}",
+        "export ARBITER_CINEMA_POSTMORTEM=1",
+        'export ARBITER_CINEMA_RUN_DIR="$run_dir"',
+        'export ARBITER_CINEMA_WORKDIR="$workdir"',
+        'export ARBITER_CINEMA_VENV="$venv"',
+        'cd "$workdir"',
+        'if [[ -n "$venv" && -f "$venv/bin/activate" ]]; then',
+        '  . "$venv/bin/activate"',
+        'elif [[ -n "$venv" ]]; then',
+        '  printf \'warning: venv activate script not found: %s\\n\' "$venv/bin/activate" >&2',
+        "fi",
+        "printf 'Arbiter cinema postmortem shell\\n'",
+        'printf \'  run dir: %s\\n\' "$run_dir"',
+        'printf \'  workdir: %s\\n\' "$workdir"',
+        'if [[ -n "$venv" ]]; then',
+        '  printf \'  venv: %s\\n\' "$venv"',
+        "fi",
+        'prompt_dir="$run_dir/shell"',
+        'mkdir -p "$prompt_dir"',
+        'shell_path="${SHELL:-/bin/sh}"',
+        'shell_name="$(basename "$shell_path")"',
+        'case "$shell_name" in',
+        "  zsh)",
+        '    zsh_dir="$prompt_dir/zsh"',
+        '    mkdir -p "$zsh_dir"',
+        '    cat > "$zsh_dir/.zshrc" <<\'EOF\'',
+        f"PROMPT='%F{{cyan}}[{prompt_name}]%f %~ %# '",
+        "RPROMPT=''",
+        "EOF",
+        '    ZDOTDIR="$zsh_dir" exec "$shell_path" -i',
+        "    ;;",
+        "  bash)",
+        '    bashrc="$prompt_dir/bashrc"',
+        '    cat > "$bashrc" <<\'EOF\'',
+        f"PS1='\\[\\033[36m\\][{prompt_name}]\\[\\033[0m\\] \\w \\$ '",
+        "EOF",
+        '    exec "$shell_path" --rcfile "$bashrc" -i',
+        "    ;;",
+        "  *)",
+        f"    PS1='[{prompt_name}] $ '",
+        "    export PS1",
+        '    exec "$shell_path" -i',
+        "    ;;",
+        "esac",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def write_postmortem_entrypoint(
+    path: Path, *, run_dir: str, workdir: str, venv: str
+) -> None:
+    path.write_text(
+        postmortem_entrypoint_text(run_dir=run_dir, workdir=workdir, venv=venv),
+        encoding="utf-8",
+    )
+    path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    metadata = {
+        "entrypoint": str(path),
+        "run_dir": run_dir,
+        "venv": venv,
+        "workdir": workdir,
+    }
+    path.with_suffix(".json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def refresh_postmortem_entrypoint(path: Path) -> None:
+    metadata_path = path.with_suffix(".json")
+    if not metadata_path.exists():
+        return
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise RecordingError(f"invalid postmortem metadata: {metadata_path}") from exc
+    if not isinstance(metadata, dict):
+        raise RecordingError(f"postmortem metadata must be a mapping: {metadata_path}")
+    run_dir = metadata.get("run_dir")
+    workdir = metadata.get("workdir")
+    venv = metadata.get("venv", "")
+    if not isinstance(run_dir, str) or not run_dir:
+        raise RecordingError(f"postmortem metadata missing run_dir: {metadata_path}")
+    if not isinstance(workdir, str) or not workdir:
+        raise RecordingError(f"postmortem metadata missing workdir: {metadata_path}")
+    if not isinstance(venv, str):
+        raise RecordingError(
+            f"postmortem metadata field venv must be a string: {metadata_path}"
+        )
+    write_postmortem_entrypoint(path, run_dir=run_dir, workdir=workdir, venv=venv)
+
+
+def beat_progress_index(spec: dict[str, Any]) -> tuple[dict[str, int], int]:
+    beats = [
+        beat
+        for beat in as_list(spec.get("beats"), field="beats")
+        if isinstance(beat, dict) and isinstance(beat.get("id"), str)
+    ]
+    return {str(beat["id"]): index for index, beat in enumerate(beats, 1)}, len(beats)
+
+
+def progress_message_for_event(
+    event: dict[str, Any],
+    *,
+    beat_indexes: dict[str, int],
+    beat_count: int,
+) -> str | None:
+    phase = event.get("phase")
+    beat = event.get("beat")
+    if phase == "check_start" and beat == "__setup__":
+        check = event.get("check") or event.get("check_id") or "setup"
+        return f"setup: {check}"
+    if phase == "caption_start":
+        caption = event.get("caption")
+        if not isinstance(caption, str) or not caption:
+            return None
+        if isinstance(beat, str) and beat in beat_indexes:
+            return f"stage {beat_indexes[beat]}/{beat_count}: {caption}"
+        return f"stage: {caption}"
+    if phase == "command_run_start":
+        command = event.get("command")
+        if not isinstance(command, str) or not command:
+            return None
+        first_line = command.strip().splitlines()[0] if command.strip() else ""
+        if first_line:
+            return f"running: {first_line}"
+    if phase == "check_start" and beat != "__setup__":
+        check = event.get("check") or event.get("check_id")
+        if isinstance(check, str) and check:
+            return f"check: {check}"
+    return None
+
+
+class TimelineProgressReporter:
+    def __init__(self, path: Path, spec: dict[str, Any], *, enabled: bool) -> None:
+        self.path = path
+        self.enabled = enabled
+        self.beat_indexes, self.beat_count = beat_progress_index(spec)
+        self._line_count = 0
+        self._seen: set[str] = set()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if not self.enabled:
+            return
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        if self._thread is None:
+            return
+        self._stop.set()
+        self._thread.join(timeout=1.0)
+        self._emit_new_events()
+
+    def _run(self) -> None:
+        while not self._stop.wait(0.25):
+            self._emit_new_events()
+
+    def _emit_new_events(self) -> None:
+        try:
+            lines = self.path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return
+        if self._line_count > len(lines):
+            self._line_count = 0
+            self._seen.clear()
+        parsed = 0
+        for line in lines[self._line_count :]:
+            if not line:
+                parsed += 1
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                break
+            parsed += 1
+            if not isinstance(event, dict):
+                continue
+            message = progress_message_for_event(
+                event,
+                beat_indexes=self.beat_indexes,
+                beat_count=self.beat_count,
+            )
+            if message is None or message in self._seen:
+                continue
+            self._seen.add(message)
+            print(f"::: {message}", file=sys.stderr, flush=True)
+        self._line_count += parsed
+
+
 def read_timeline_events(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
@@ -244,6 +556,63 @@ def read_failure_report(path: Path) -> dict[str, Any] | None:
     if not isinstance(report, dict):
         raise RecordingError(f"failure report must be a mapping: {path}")
     return report
+
+
+def failure_run_identity(report: dict[str, Any]) -> tuple[str | None, str | None]:
+    recording_id = report.get("recording_id")
+    run_id = report.get("run_id")
+    if (
+        isinstance(recording_id, str)
+        and recording_id
+        and isinstance(run_id, str)
+        and run_id
+    ):
+        return recording_id, run_id
+    run_dir = report.get("run_dir")
+    if not isinstance(run_dir, str) or not run_dir:
+        return (
+            recording_id if isinstance(recording_id, str) and recording_id else None,
+            run_id if isinstance(run_id, str) and run_id else None,
+        )
+    path = Path(run_dir)
+    if not isinstance(run_id, str) or not run_id:
+        run_id = path.name
+    if not isinstance(recording_id, str) or not recording_id:
+        recording_id = path.parent.name if path.parent.name else None
+    return recording_id, run_id
+
+
+def recording_tool_command(
+    *, recording_id: str | None = None, action: str, run_id: str
+) -> str:
+    parts = ["media/tools/record.py"]
+    if recording_id:
+        parts.append(f"recording={recording_id}")
+    parts.extend([f"action={action}", f"run_id={run_id}"])
+    return " ".join(shlex.quote(part) for part in parts)
+
+
+def append_run_action_hints(lines: list[str], report: dict[str, Any]) -> None:
+    recording_id, run_id = failure_run_identity(report)
+    if not run_id:
+        return
+    lines.append(f"run_id: {run_id}")
+    lines.append("Inspect run with:")
+    lines.append(
+        "  "
+        + recording_tool_command(
+            recording_id=recording_id, action="inspect", run_id=run_id
+        )
+    )
+    lines.append("Play run with:")
+    lines.append("  " + recording_tool_command(action="play", run_id=run_id))
+    lines.append("View output with:")
+    lines.append(
+        "  "
+        + recording_tool_command(
+            recording_id=recording_id, action="output", run_id=run_id
+        )
+    )
 
 
 def check_intervals_from_timeline(
@@ -316,11 +685,15 @@ def format_recording_failure(
         message = report.get("message")
         if isinstance(message, str) and message:
             lines.append(f"reason: {message}")
-        output = report.get("output")
-        if isinstance(output, str) and output:
-            lines.append("--- captured output ---")
-            lines.append(output.rstrip())
-            lines.append("--- end captured output ---")
+        stderr = report.get("stderr")
+        if isinstance(stderr, str) and stderr:
+            label = "stderr"
+            if report.get("stderr_truncated"):
+                label = "stderr (last 12000 chars)"
+            lines.append(f"--- {label} ---")
+            lines.append(stderr.rstrip())
+            lines.append("--- end stderr ---")
+        append_run_action_hints(lines, report)
         return "\n".join(lines)
 
     events = read_timeline_events(timeline_path)
@@ -429,7 +802,10 @@ def normalize_cast_header(cast_path: Path, spec: dict[str, Any]) -> None:
     if not isinstance(header, dict):
         raise RecordingError(f"asciinema header must be a mapping: {cast_path}")
 
-    header["command"] = f"media/tools/record.py --session {require_string(spec, 'id')}"
+    header["command"] = (
+        f"media/tools/record.py recording={require_string(spec, 'id')} "
+        "action=session"
+    )
     header.pop("env", None)
 
     capture = as_mapping(spec.get("capture"), field="capture")
@@ -441,6 +817,42 @@ def normalize_cast_header(cast_path: Path, spec: dict[str, Any]) -> None:
     output_lines = [json.dumps(header, separators=(",", ":"))]
     output_lines.extend(raw_lines[1:])
     cast_path.write_text("\n".join(output_lines) + "\n", encoding="utf-8")
+
+
+CONTROL_OVERRIDE_PREFIXES = (
+    "action=",
+    "output=",
+    "cast=",
+    "timeline=",
+    "headed=",
+    "force=",
+    "timestamps=",
+    "allow_mismatch=",
+    "run_id=",
+)
+
+
+def is_control_override(override: object) -> bool:
+    text = str(override)
+    return any(text.startswith(prefix) for prefix in CONTROL_OVERRIDE_PREFIXES)
+
+
+def session_overrides_from_spec(spec: dict[str, Any]) -> list[str]:
+    overrides = spec.get("_overrides", [])
+    if not isinstance(overrides, list):
+        overrides = []
+    result = [
+        str(override)
+        for override in overrides
+        if not is_control_override(override)
+        and not str(override).startswith("hydra.run.dir=")
+        and not str(override).startswith("recording=")
+    ]
+    result.insert(0, f"recording={require_string(spec, 'id')}")
+    result.append("action=session")
+    hydra_output_dir = require_string(spec, "_hydra_output_dir")
+    result.append(f"hydra.run.dir={hydra_output_dir}")
+    return result
 
 
 def render_session_script(spec: dict[str, Any]) -> str:
@@ -476,6 +888,13 @@ def render_session_script(spec: dict[str, Any]) -> str:
     capture = as_mapping(spec.get("capture"), field="capture")
     baseline_compressed = bool(capture.get("baseline_compressed", False))
     session_typing = typing and not baseline_compressed
+    package_source = as_mapping(spec.get("package_source"), field="package_source")
+    package_source_mode = package_source.get("mode", "local")
+    package_source_package = package_source.get("package", "arbiter-suite")
+    package_source_version = package_source.get("version", "latest")
+    package_source_requirement = package_source.get("requirement", "")
+    hydra_output_dir = require_string(spec, "_hydra_output_dir")
+    keep_hydra_output_dir = bool(spec.get("_keep_hydra_output_dir", False))
 
     lines = [
         "#!/usr/bin/env bash",
@@ -487,15 +906,35 @@ def render_session_script(spec: dict[str, Any]) -> str:
     lines.extend(
         [
             f"recording_color={shell_quote(1 if color else 0)}",
+            f"recording_id={shell_quote(require_string(spec, 'id'))}",
             f"recording_python={shell_quote(sys.executable)}",
             f"recording_baseline_compressed={shell_quote(1 if baseline_compressed else 0)}",
             f"recording_typing={shell_quote(1 if session_typing else 0)}",
+            f"recording_package_source_mode={shell_quote(package_source_mode)}",
+            f"recording_package_source_package={shell_quote(package_source_package)}",
+            f"recording_package_source_version={shell_quote(package_source_version)}",
+            f"recording_package_source_requirement={shell_quote(package_source_requirement)}",
             f"recording_typing_min_delay={shell_quote(typing_min_delay)}",
             f"recording_typing_max_delay={shell_quote(typing_max_delay)}",
             f"recording_typing_space_delay={shell_quote(typing_space_delay)}",
             f"recording_typing_punctuation_delay={shell_quote(typing_punctuation_delay)}",
             f"recording_typing_newline_delay={shell_quote(typing_newline_delay)}",
             f"recording_typing_seed={shell_quote(typing_seed)}",
+            'if [[ "$recording_color" == 1 ]]; then',
+            "  export ARBITER_COLOR=always",
+            "  export CLICOLOR_FORCE=1",
+            "  export FORCE_COLOR=1",
+            "  export PY_COLORS=1",
+            "  export TERM=xterm-256color",
+            "  unset NO_COLOR",
+            "else",
+            "  export ARBITER_COLOR=never",
+            "  export NO_COLOR=1",
+            "fi",
+            "export recording_package_source_mode",
+            "export recording_package_source_package",
+            "export recording_package_source_version",
+            "export recording_package_source_requirement",
             "export recording_typing_min_delay",
             "export recording_typing_max_delay",
             "export recording_typing_space_delay",
@@ -512,8 +951,102 @@ def render_session_script(spec: dict[str, Any]) -> str:
             'if [[ -n "$recording_timeline_path" ]]; then',
             '  : > "$recording_timeline_path"',
             "fi",
-            'recording_tmp="$(mktemp -d)"',
-            'cleanup_paths=("$recording_tmp")',
+        ]
+    )
+    run_dir_path = relative_path(hydra_output_dir)
+    postmortem_path = run_dir_path / "enter"
+    lines.extend(
+        [
+            f"recording_run_dir={shell_quote(run_dir_path)}",
+            f"recording_tmp={shell_quote(run_dir_path)}",
+            f"recording_postmortem_path={shell_quote(postmortem_path)}",
+            'recording_run_id="$(basename "$recording_run_dir")"',
+            'recording_run_failure_path="$recording_run_dir/failure.json"',
+            f"recording_keep_hydra_output_dir={shell_quote(1 if keep_hydra_output_dir else 0)}",
+            'mkdir -p "$recording_tmp"',
+            "recording_write_postmortem_entrypoint() {",
+            '  local workdir="${1:-$PWD}"',
+            '  local venv="${2:-}"',
+            '  "$recording_python" - "$recording_postmortem_path" "$workdir" "$venv" "$recording_run_dir" <<\'PY\'',
+            "import json",
+            "import shlex",
+            "import stat",
+            "import sys",
+            "from pathlib import Path",
+            "",
+            "path = Path(sys.argv[1])",
+            "workdir = sys.argv[2]",
+            "venv = sys.argv[3]",
+            "run_dir = sys.argv[4]",
+            "run_id = Path(run_dir).name",
+            "prompt_name = f'arbiter-recorder:{run_id}'",
+            "lines = [",
+            "    '#!/usr/bin/env bash',",
+            "    'set -euo pipefail',",
+            "    f'run_dir={shlex.quote(run_dir)}',",
+            "    f'workdir={shlex.quote(workdir)}',",
+            "    f'venv={shlex.quote(venv)}',",
+            "    f'export ARBITER_CINEMA_RUN_ID={shlex.quote(run_id)}',",
+            "    'export ARBITER_CINEMA_POSTMORTEM=1',",
+            "    'export ARBITER_CINEMA_RUN_DIR=\"$run_dir\"',",
+            "    'export ARBITER_CINEMA_WORKDIR=\"$workdir\"',",
+            "    'export ARBITER_CINEMA_VENV=\"$venv\"',",
+            "    'cd \"$workdir\"',",
+            "    'if [[ -n \"$venv\" && -f \"$venv/bin/activate\" ]]; then',",
+            "    '  . \"$venv/bin/activate\"',",
+            "    'elif [[ -n \"$venv\" ]]; then',",
+            "    \"  printf 'warning: venv activate script not found: %s\\\\n' \\\"$venv/bin/activate\\\" >&2\",",
+            "    'fi',",
+            "    \"printf 'Arbiter cinema postmortem shell\\\\n'\",",
+            "    \"printf '  run dir: %s\\\\n' \\\"$run_dir\\\"\",",
+            "    \"printf '  workdir: %s\\\\n' \\\"$workdir\\\"\",",
+            "    'if [[ -n \"$venv\" ]]; then',",
+            "    \"  printf '  venv: %s\\\\n' \\\"$venv\\\"\",",
+            "    'fi',",
+            "    'prompt_dir=\"$run_dir/shell\"',",
+            "    'mkdir -p \"$prompt_dir\"',",
+            "    'shell_path=\"${SHELL:-/bin/sh}\"',",
+            "    'shell_name=\"$(basename \"$shell_path\")\"',",
+            "    'case \"$shell_name\" in',",
+            "    '  zsh)',",
+            "    '    zsh_dir=\"$prompt_dir/zsh\"',",
+            "    '    mkdir -p \"$zsh_dir\"',",
+            "    '    cat > \"$zsh_dir/.zshrc\" <<\\'EOF\\'',",
+            "    f\"PROMPT='%F{{cyan}}[{prompt_name}]%f %~ %# '\",",
+            "    \"RPROMPT=''\",",
+            "    'EOF',",
+            "    '    ZDOTDIR=\"$zsh_dir\" exec \"$shell_path\" -i',",
+            "    '    ;;',",
+            "    '  bash)',",
+            "    '    bashrc=\"$prompt_dir/bashrc\"',",
+            "    '    cat > \"$bashrc\" <<\\'EOF\\'',",
+            "    f\"PS1='\\\\[\\\\033[36m\\\\][{prompt_name}]\\\\[\\\\033[0m\\\\] \\\\w \\\\$ '\",",
+            "    'EOF',",
+            "    '    exec \"$shell_path\" --rcfile \"$bashrc\" -i',",
+            "    '    ;;',",
+            "    '  *)',",
+            "    f\"    PS1='[{prompt_name}] $ '\",",
+            "    '    export PS1',",
+            "    '    exec \"$shell_path\" -i',",
+            "    '    ;;',",
+            "    'esac',",
+            "]",
+            "path.write_text('\\n'.join(lines) + '\\n', encoding='utf-8')",
+            "path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)",
+            "metadata = {'run_dir': run_dir, 'workdir': workdir, 'venv': venv, 'entrypoint': str(path)}",
+            "path.with_suffix('.json').write_text(json.dumps(metadata, indent=2, sort_keys=True) + '\\n', encoding='utf-8')",
+            "PY",
+            "}",
+            'recording_write_postmortem_entrypoint "$PWD" ""',
+            'if [[ "$recording_keep_hydra_output_dir" == 1 ]]; then',
+            "  cleanup_paths=()",
+            "else",
+            '  cleanup_paths=("$recording_tmp")',
+            "fi",
+        ]
+    )
+    lines.extend(
+        [
             "cleanup_pids=()",
             "cleanup() {",
             "  local pid",
@@ -536,34 +1069,54 @@ def render_session_script(spec: dict[str, Any]) -> str:
             '  local step_name="$3"',
             '  local message="$4"',
             '  local output_path="${5:-}"',
-            '  [[ -z "$recording_failure_path" ]] && return',
-            '  "$recording_python" - "$recording_failure_path" "$kind" "$step_id" "$step_name" "$message" "$output_path" <<\'PY\'',
+            '  local stderr_path="${6:-}"',
+            '  "$recording_python" - "$recording_failure_path" "$recording_run_failure_path" "$kind" "$step_id" "$step_name" "$message" "$output_path" "$stderr_path" "$recording_run_dir" "$recording_postmortem_path" "$recording_id" "$recording_run_id" <<\'PY\'',
             "import json",
             "import sys",
+            "from pathlib import Path",
             "",
-            "path, kind, step_id, step_name, message, output_path = sys.argv[1:]",
-            "output = ''",
-            "if output_path:",
-            "    try:",
-            "        with open(output_path, 'r', encoding='utf-8', errors='replace') as handle:",
-            "            output = handle.read()",
-            "    except OSError as exc:",
-            "        output = f'<unable to read captured output: {exc}>'",
+            "sidecar_path, run_failure_path, kind, step_id, step_name, message, output_path, stderr_path, run_dir, postmortem_path, recording_id, run_id = sys.argv[1:]",
             "max_chars = 12000",
-            "truncated = len(output) > max_chars",
-            "if truncated:",
-            "    output = output[-max_chars:]",
+            "",
+            "def read_capped(text_path):",
+            "    if not text_path:",
+            "        return '', False",
+            "    try:",
+            "        with open(text_path, 'r', encoding='utf-8', errors='replace') as handle:",
+            "            text = handle.read()",
+            "    except OSError as exc:",
+            "        return f'<unable to read captured output: {exc}>', False",
+            "    truncated = len(text) > max_chars",
+            "    if truncated:",
+            "        text = text[-max_chars:]",
+            "    return text, truncated",
+            "",
+            "output, output_truncated = read_capped(output_path)",
+            "stderr, stderr_truncated = read_capped(stderr_path)",
             "report = {",
             "    'kind': kind,",
             "    'id': step_id,",
             "    'name': step_name,",
             "    'message': message,",
             "    'output': output,",
-            "    'output_truncated': truncated,",
+            "    'output_path': output_path,",
+            "    'output_truncated': output_truncated,",
+            "    'stderr': stderr,",
+            "    'stderr_path': stderr_path,",
+            "    'stderr_truncated': stderr_truncated,",
+            "    'run_dir': run_dir,",
+            "    'postmortem_path': postmortem_path,",
+            "    'recording_id': recording_id,",
+            "    'run_id': run_id,",
             "}",
-            "with open(path, 'w', encoding='utf-8') as handle:",
-            "    json.dump(report, handle, indent=2, sort_keys=True)",
-            "    handle.write('\\n')",
+            "for report_path in [sidecar_path, run_failure_path]:",
+            "    if not report_path:",
+            "        continue",
+            "    path = Path(report_path)",
+            "    path.parent.mkdir(parents=True, exist_ok=True)",
+            "    with path.open('w', encoding='utf-8') as handle:",
+            "        json.dump(report, handle, indent=2, sort_keys=True)",
+            "        handle.write('\\n')",
             "PY",
             "}",
             "",
@@ -585,16 +1138,28 @@ def render_session_script(spec: dict[str, Any]) -> str:
             '  local check_name="$2"',
             '  local message="$3"',
             '  local output_path="$4"',
-            '  record_failure check "$check_id" "$check_name" "$message" "$output_path"',
+            '  local stderr_path="${5:-}"',
+            '  record_failure check "$check_id" "$check_name" "$message" "$output_path" "$stderr_path"',
             '  if [[ "$recording_color" == 1 ]]; then',
             "    printf '\\n\\033[31;1mrecording check failed:\\033[0m %s %s\\n' \"$check_name\" \"$message\" >&2",
             "  else",
             "    printf '\\nrecording check failed: %s %s\\n' \"$check_name\" \"$message\" >&2",
             "  fi",
-            '  if [[ -s "$output_path" ]]; then',
-            "    printf -- '--- check output ---\\n' >&2",
-            '    cat "$output_path" >&2',
-            "    printf -- '\\n--- end check output ---\\n' >&2",
+            '  if [[ -s "$stderr_path" ]]; then',
+            "    printf -- '--- stderr ---\\n' >&2",
+            '    "$recording_python" - "$stderr_path" <<\'PY\'',
+            "import sys",
+            "",
+            "path = sys.argv[1]",
+            "max_chars = 12000",
+            "with open(path, 'r', encoding='utf-8', errors='replace') as handle:",
+            "    text = handle.read()",
+            "if len(text) > max_chars:",
+            "    print(f'<stderr truncated to last {max_chars} chars>', file=sys.stderr)",
+            "    text = text[-max_chars:]",
+            "print(text, end='' if text.endswith('\\n') else '\\n', file=sys.stderr)",
+            "PY",
+            "    printf -- '--- end stderr ---\\n' >&2",
             "  fi",
             "  exit 1",
             "}",
@@ -773,11 +1338,32 @@ def render_session_script(spec: dict[str, Any]) -> str:
             '  local pipe_path="$recording_tmp/${action_id}.${chunk_id}.pipe"',
             '  rm -f "$pipe_path"',
             '  mkfifo "$pipe_path"',
-            '  tee -a "$output_path" <"$pipe_path" &',
-            "  local tee_pid=$!",
+            '  "$recording_python" - "$pipe_path" "$output_path" <<\'PY\' &',
+            "import re",
+            "import sys",
+            "",
+            "pipe_path, output_path = sys.argv[1:]",
+            "skip_patterns = (",
+            "    re.compile(rb'^Installing collected packages:'),",
+            "    re.compile(rb'^Successfully installed '),",
+            ")",
+            "",
+            "def display_line(line):",
+            "    clean = re.sub(rb'\\x1b\\[[0-9;]*m', b'', line)",
+            "    return not any(pattern.match(clean) for pattern in skip_patterns)",
+            "",
+            "with open(pipe_path, 'rb') as pipe, open(output_path, 'ab') as output:",
+            "    for line in iter(pipe.readline, b''):",
+            "        output.write(line)",
+            "        output.flush()",
+            "        if display_line(line):",
+            "            sys.stdout.buffer.write(line)",
+            "            sys.stdout.buffer.flush()",
+            "PY",
+            "  local filter_pid=$!",
             '  eval "$command_chunk" >"$pipe_path" 2>&1',
             "  local status=$?",
-            '  wait "$tee_pid" 2>/dev/null || true',
+            '  wait "$filter_pid" 2>/dev/null || true',
             '  rm -f "$pipe_path"',
             '  return "$status"',
             "}",
@@ -876,12 +1462,15 @@ def render_session_script(spec: dict[str, Any]) -> str:
             '  local check_name="$3"',
             '  local command="$4"',
             "  shift 4",
+            '  local stdout_path="$recording_tmp/${check_id}.stdout"',
+            '  local stderr_path="$recording_tmp/${check_id}.stderr"',
             '  local output_path="$recording_tmp/${check_id}.out"',
             '  timeline_event check_start "$beat_id" "$check_id" "$check_name"',
             "  set +e",
-            '  eval "$command" >"$output_path" 2>&1',
+            '  eval "$command" >"$stdout_path" 2>"$stderr_path"',
             "  local status=$?",
             "  set -e",
+            '  cat "$stdout_path" "$stderr_path" >"$output_path"',
             "  local expected_exit=0",
             "  local gate_args=(\"$@\")",
             "  local gate",
@@ -900,22 +1489,21 @@ def render_session_script(spec: dict[str, Any]) -> str:
             "      exit)",
             "        ;;",
             "      contains)",
-            '        grep -F -- "$value" "$output_path" >/dev/null || fail_check "$check_id" "$check_name" "missing text: $value" "$output_path"',
+            '        grep -F -- "$value" "$output_path" >/dev/null || fail_check "$check_id" "$check_name" "missing text: $value" "$output_path" "$stderr_path"',
             "        ;;",
             "      regex)",
-            '        grep -E -- "$value" "$output_path" >/dev/null || fail_check "$check_id" "$check_name" "missing regex: $value" "$output_path"',
+            '        grep -E -- "$value" "$output_path" >/dev/null || fail_check "$check_id" "$check_name" "missing regex: $value" "$output_path" "$stderr_path"',
             "        ;;",
             "      file)",
             "        local expanded",
             '        expanded="$(expand_path "$value")"',
-            '        [[ -e "$expanded" ]] || fail_check "$check_id" "$check_name" "missing file: $expanded" "$output_path"',
+            '        [[ -e "$expanded" ]] || fail_check "$check_id" "$check_name" "missing file: $expanded" "$output_path" "$stderr_path"',
             "        ;;",
             "      *)",
-            '        fail_check "$check_id" "$check_name" "unknown gate: $gate" "$output_path"',
+            '        fail_check "$check_id" "$check_name" "unknown gate: $gate" "$output_path" "$stderr_path"',
             "        ;;",
             "    esac",
             "  done",
-            '  [[ "$status" -eq "$expected_exit" ]] || fail_check "$check_id" "$check_name" "exited $status, expected $expected_exit" "$output_path"',
             '  timeline_event check_end "$beat_id" "$check_id" "$check_name"',
             "}",
             "",
@@ -1015,17 +1603,6 @@ def render_session_script(spec: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def run_session(recording_id: str) -> int:
-    spec = load_manifest(recording_id)
-    validate_manifest(spec)
-    check_required_commands(spec)
-    script_text = render_session_script(spec)
-    result = subprocess.run(
-        ["bash"], input=script_text, cwd=REPO_ROOT, text=True, check=False
-    )
-    return result.returncode
-
-
 def record(
     spec: dict[str, Any],
     *,
@@ -1053,6 +1630,10 @@ def record(
     timeline_path.parent.mkdir(parents=True, exist_ok=True)
     if failure_path.exists():
         failure_path.unlink()
+    staged_cast_path = staged_cast_path_for(cast_path)
+    staged_timeline_path = timeline_path_for_cast(staged_cast_path)
+    staged_failure_path = failure_path_for_cast(staged_cast_path)
+    staged_paths = [staged_cast_path, staged_timeline_path, staged_failure_path]
 
     capture = as_mapping(spec.get("capture"), field="capture")
     window_size = str(capture.get("window_size", "100x28"))
@@ -1060,15 +1641,17 @@ def record(
     headless = bool(capture.get("headless", True)) and not headed
 
     session_python = Path(sys.executable)
+    session_args = [
+        shlex.quote(str(session_python)),
+        shlex.quote(str(Path(__file__).resolve())),
+    ]
+    session_args.extend(shlex.quote(override) for override in session_overrides_from_spec(spec))
     runner_command = " ".join(
         [
             "env",
-            "ARBITER_CINEMA_TIMELINE=" + shlex.quote(str(timeline_path)),
-            "ARBITER_CINEMA_FAILURE=" + shlex.quote(str(failure_path)),
-            shlex.quote(str(session_python)),
-            shlex.quote(str(Path(__file__).resolve())),
-            "--session",
-            shlex.quote(require_string(spec, "id")),
+            "ARBITER_CINEMA_TIMELINE=" + shlex.quote(str(staged_timeline_path)),
+            "ARBITER_CINEMA_FAILURE=" + shlex.quote(str(staged_failure_path)),
+            *session_args,
         ]
     )
     command = [
@@ -1085,85 +1668,304 @@ def record(
         command.extend(["--idle-time-limit", str(idle_time_limit)])
     if headless:
         command.append("--headless")
-    command.extend(["--command", runner_command, str(cast_path)])
-    result = subprocess.run(command, cwd=REPO_ROOT, check=False)
+    command.extend(["--command", runner_command, str(staged_cast_path)])
+    progress = TimelineProgressReporter(staged_timeline_path, spec, enabled=headless)
+    try:
+        progress.start()
+        result = subprocess.run(command, cwd=REPO_ROOT, check=False)
+    except KeyboardInterrupt as exc:
+        removed = remove_recording_artifacts(staged_paths)
+        raise RecordingInterrupted(
+            format_interrupted_recording(cast_path, removed)
+        ) from exc
+    finally:
+        progress.stop()
+    if recording_was_interrupted(result.returncode):
+        removed = remove_recording_artifacts(staged_paths)
+        raise RecordingInterrupted(format_interrupted_recording(cast_path, removed))
     if result.returncode != 0:
-        raise RecordingError(
-            format_recording_failure(
-                returncode=result.returncode,
-                command=command,
-                cast_path=cast_path,
-                timeline_path=timeline_path,
-                failure_path=failure_path,
+        try:
+            preserve_failed_run_artifacts(
+                spec,
+                cast_path=staged_cast_path,
+                timeline_path=staged_timeline_path,
+            )
+            raise RecordingError(
+                format_recording_failure(
+                    returncode=result.returncode,
+                    command=command,
+                    cast_path=cast_path,
+                    timeline_path=staged_timeline_path,
+                    failure_path=staged_failure_path,
+                )
+            )
+        finally:
+            remove_recording_artifacts(staged_paths)
+    try:
+        intervals = check_intervals_from_timeline(
+            read_timeline_events(staged_timeline_path)
+        )
+        strip_cast_intervals(staged_cast_path, intervals)
+        normalize_cast_header(staged_cast_path, spec)
+        preserve_successful_run_artifacts(
+            spec,
+            cast_path=staged_cast_path,
+            timeline_path=staged_timeline_path,
+        )
+        staged_timeline_path.replace(timeline_path)
+        staged_cast_path.replace(cast_path)
+    except KeyboardInterrupt as exc:
+        removed = remove_recording_artifacts(staged_paths)
+        raise RecordingInterrupted(
+            format_interrupted_recording(cast_path, removed)
+        ) from exc
+    except Exception:
+        remove_recording_artifacts(staged_paths)
+        raise
+    print(f"wrote {cast_path}")
+    postmortem_path = run_artifact_dir(spec) / "enter"
+    if postmortem_path.exists():
+        run_id = postmortem_path.parent.name
+        print(f"run_id: {run_id}")
+        print("Inspect run with:")
+        print(
+            "  "
+            + recording_tool_command(
+                recording_id=require_string(spec, "id"),
+                action="inspect",
+                run_id=run_id,
             )
         )
-    intervals = check_intervals_from_timeline(read_timeline_events(timeline_path))
-    strip_cast_intervals(cast_path, intervals)
-    normalize_cast_header(cast_path, spec)
-    print(f"wrote {cast_path}")
+        print("Play run with:")
+        print("  " + recording_tool_command(action="play", run_id=run_id))
     return 0
+
+
+def recording_runs_dir(spec: dict[str, Any]) -> Path:
+    recording_id = require_string(spec, "id")
+    hydra_output_dir = relative_path(require_string(spec, "_hydra_output_dir"))
+    if hydra_output_dir.parent.name == recording_id:
+        return hydra_output_dir.parent
+    return REPO_ROOT / "media" / "runs" / recording_id
+
+
+def validate_run_id(run_id: str) -> None:
+    if not run_id or Path(run_id).name != run_id or run_id in {".", ".."}:
+        raise RecordingError("run_id must be a run id, not a path")
+
+
+def run_dir_for_id(spec: dict[str, Any], run_id: str) -> Path:
+    validate_run_id(run_id)
+    run_dir = recording_runs_dir(spec) / run_id
+    if not run_dir.is_dir():
+        raise RecordingError(f"recording run not found: {run_dir}")
+    return run_dir
+
+
+def run_id_from_config(config: dict[str, Any], *, action: str) -> str:
+    run_id = config.get("run_id")
+    if not isinstance(run_id, str) or not run_id:
+        raise RecordingError(f"run_id is required for action={action}")
+    validate_run_id(run_id)
+    return run_id
+
+
+def find_run_dir_by_id(run_id: str) -> Path:
+    validate_run_id(run_id)
+    runs_root = REPO_ROOT / "media" / "runs"
+    matches = sorted(
+        path
+        for path in runs_root.glob(f"*/{run_id}")
+        if path.is_dir() and path.parent != runs_root
+    )
+    if not matches:
+        raise RecordingError(f"recording run not found for run_id: {run_id}")
+    if len(matches) > 1:
+        candidates = ", ".join(path.parent.name for path in matches)
+        raise RecordingError(
+            f"run_id {run_id} is ambiguous across recordings: {candidates}; "
+            "add recording=<id>"
+        )
+    return matches[0]
+
+
+def run_cast_path(run_dir: Path) -> Path | None:
+    for name in ["recording.cast", "failed.cast"]:
+        path = run_dir / name
+        if path.exists():
+            return path
+    return None
+
+
+def inspect_run(spec: dict[str, Any], *, run_id: str) -> int:
+    run_dir = run_dir_for_id(spec, run_id)
+    entrypoint = run_dir / "enter"
+    if not entrypoint.exists():
+        raise RecordingError(f"postmortem entrypoint not found: {entrypoint}")
+    refresh_postmortem_entrypoint(entrypoint)
+    return subprocess.run([str(entrypoint)], cwd=REPO_ROOT, check=False).returncode
+
+
+def failure_output_path(run_dir: Path) -> Path | None:
+    report = read_failure_report(run_dir / "failure.json")
+    if report is None:
+        return None
+    output_path = report.get("output_path")
+    if not isinstance(output_path, str) or not output_path:
+        return None
+    path = Path(output_path)
+    if not path.is_absolute():
+        path = run_dir / path
+    return path
+
+
+def page_or_print(path: Path) -> int:
+    if not path.exists():
+        raise RecordingError(f"captured output file not found: {path}")
+    if sys.stdout.isatty():
+        pager = shlex.split(os.environ.get("PAGER", "less")) or ["less"]
+        try:
+            return subprocess.run([*pager, str(path)], check=False).returncode
+        except OSError as exc:
+            raise RecordingError(f"failed to run pager {pager[0]!r}") from exc
+    sys.stdout.write(path.read_text(encoding="utf-8", errors="replace"))
+    return 0
+
+
+def output_run(spec: dict[str, Any], *, run_id: str) -> int:
+    run_dir = run_dir_for_id(spec, run_id)
+    output_path = failure_output_path(run_dir)
+    if output_path is None:
+        raise RecordingError(f"no captured failure output found in run: {run_dir}")
+    return page_or_print(output_path)
+
+
+def play_recording(
+    spec: dict[str, Any] | None,
+    *,
+    run_id: str | None,
+    cast_override: str | None,
+) -> int:
+    if cast_override:
+        cast_path = relative_path(cast_override)
+    elif run_id:
+        run_dir = (
+            run_dir_for_id(spec, run_id)
+            if spec is not None
+            else find_run_dir_by_id(run_id)
+        )
+        cast_path = run_cast_path(run_dir)
+        if cast_path is None:
+            raise RecordingError(f"no preserved cast found in run: {run_dir}")
+    else:
+        if spec is None:
+            raise RecordingError("run_id or cast is required for action=play")
+        outputs = as_mapping(spec.get("outputs"), field="outputs")
+        cast_path = relative_path(require_string(outputs, "cast"))
+    if not cast_path.exists():
+        raise RecordingError(f"cast not found: {cast_path}")
+    check_asciinema()
+    return subprocess.run(
+        ["asciinema", "play", str(cast_path)],
+        cwd=REPO_ROOT,
+        check=False,
+    ).returncode
+
+
+def spec_from_hydra_cfg(cfg: Any) -> dict[str, Any]:
+    try:
+        return load_recording_spec_from_hydra_cfg(cfg)
+    except StudioConfigError as exc:
+        raise RecordingError(str(exc)) from exc
+
+
+def control_config_from_hydra_cfg(cfg: Any) -> dict[str, Any]:
+    try:
+        config = container_from_hydra_cfg(cfg)
+    except StudioConfigError as exc:
+        raise RecordingError(str(exc)) from exc
+    return config
+
+
+def run_tool_from_hydra_cfg(cfg: Any) -> int:
+    config = control_config_from_hydra_cfg(cfg)
+    action = config.get("action", "record")
+    if action == "list":
+        return list_recordings()
+    cast_override = config.get("cast")
+    if cast_override is not None and not isinstance(cast_override, str):
+        raise RecordingError("cast must be a string or null")
+    run_id = config.get("run_id")
+    if run_id is not None and not isinstance(run_id, str):
+        raise RecordingError("run_id must be a string or null")
+    if action == "play":
+        spec = spec_from_hydra_cfg(cfg)
+        overrides = spec.get("_overrides", [])
+        if not isinstance(overrides, list):
+            overrides = []
+        recording_was_explicit = any(
+            str(override).startswith("recording=")
+            for override in overrides
+        )
+        if run_id and not recording_was_explicit:
+            spec = None
+        return play_recording(spec, run_id=run_id, cast_override=cast_override)
+    spec = spec_from_hydra_cfg(cfg)
+    if action == "inspect":
+        return inspect_run(spec, run_id=run_id_from_config(config, action=action))
+    if action == "output":
+        return output_run(spec, run_id=run_id_from_config(config, action=action))
+    if action == "session":
+        validate_manifest(spec)
+        check_required_commands(spec)
+        script_text = render_session_script(spec)
+        result = subprocess.run(
+            ["bash"], input=script_text, cwd=REPO_ROOT, text=True, check=False
+        )
+        return result.returncode
+    if action not in {"record", "check", "dry_run"}:
+        raise RecordingError(f"unknown action: {action}")
+    output = config.get("output")
+    if output is not None and not isinstance(output, str):
+        raise RecordingError("output must be a string or null")
+    headed = config.get("headed", False)
+    if not isinstance(headed, bool):
+        raise RecordingError("headed must be a boolean")
+    return record(
+        spec,
+        dry_run=action == "dry_run",
+        check_only=action == "check",
+        output_override=output,
+        headed=headed,
+    )
 
 
 def list_recordings() -> int:
-    for path in sorted(RECORDINGS_DIR.glob("*.yaml")):
-        print(path.stem)
+    for recording_id in list_recording_ids():
+        print(recording_id)
     return 0
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "recording", nargs="?", help="Recording id, for example install-and-bootstrap."
-    )
-    parser.add_argument(
-        "--list", action="store_true", help="List available recording manifests."
-    )
-    parser.add_argument(
-        "--dry-run", action="store_true", help="Print the generated session script."
-    )
-    parser.add_argument(
-        "--check",
-        action="store_true",
-        help="Validate tools and manifest without recording.",
-    )
-    parser.add_argument("--output", help="Override the manifest cast output path.")
-    parser.add_argument(
-        "--headed",
-        action="store_true",
-        help="Show the terminal session while recording, overriding capture.headless.",
-    )
-    parser.add_argument("--session", help=argparse.SUPPRESS)
-    return parser
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
+@hydra.main(version_base=None, config_path=str(CONFIG_DIR), config_name="config")
+def main(cfg: DictConfig) -> None:
     try:
-        if args.list:
-            return list_recordings()
-        if args.session:
-            return run_session(args.session)
-        if not args.recording:
-            parser.error("recording id is required unless --list is used")
-        spec = load_manifest(args.recording)
-        return record(
-            spec,
-            dry_run=args.dry_run,
-            check_only=args.check,
-            output_override=args.output,
-            headed=args.headed,
-        )
+        raise SystemExit(run_tool_from_hydra_cfg(cfg))
+    except RecordingInterrupted as exc:
+        print(f"interrupted: {exc}", file=sys.stderr)
+        raise SystemExit(130) from exc
     except RecordingError as exc:
         print(f"error: {exc}", file=sys.stderr)
-        return 1
+        raise SystemExit(1) from exc
     except subprocess.CalledProcessError as exc:
         print(
             f"error: command failed with exit code {exc.returncode}: {exc.cmd}",
             file=sys.stderr,
         )
-        return exc.returncode
+        raise SystemExit(exc.returncode) from exc
+    except KeyboardInterrupt:
+        print("interrupted: recording cancelled by user", file=sys.stderr)
+        raise SystemExit(130)
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()

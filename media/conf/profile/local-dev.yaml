@@ -1,0 +1,11 @@
+# @package _global_
+
+profile:
+  name: local-dev
+
+studio:
+  keep_output_dir: true
+
+hydra:
+  run:
+    dir: media/runs/${recording.id}/local-dev-${now:%Y%m%d-%H%M%S}

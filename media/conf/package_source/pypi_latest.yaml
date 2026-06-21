@@ -1,0 +1,6 @@
+# @package package_source
+
+mode: pypi
+package: arbiter-suite
+version: latest
+requirement: ""

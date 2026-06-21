@@ -111,7 +111,6 @@ def test_retime_synthesizes_command_typing_and_pauses(tmp_path: Path) -> None:
 
 
 def test_retime_uses_manifest_paths_and_rules(tmp_path: Path, monkeypatch: Any) -> None:
-    manifest = tmp_path / "demo.yaml"
     cast = tmp_path / "demo.cast"
     timeline = tmp_path / "demo.timeline.jsonl"
     output = tmp_path / "demo.presentation.cast"
@@ -123,24 +122,28 @@ def test_retime_uses_manifest_paths_and_rules(tmp_path: Path, monkeypatch: Any) 
             {"phase": "command_prompt_end", "beat": "demo", "action_id": "demo_1", "chunk_index": 0, "time": 0.15},
         ],
     )
-    manifest.write_text(
-        json.dumps(
-            {
-                "id": "demo",
-                "title": "Demo",
-                "outputs": {
-                    "cast": str(cast),
-                    "retimed_cast": str(output),
-                },
-                "retime": {"post_enter_pause": 0.2},
-                "beats": [{"id": "demo", "actions": [{"run": "true"}]}],
-            }
-        ),
-        encoding="utf-8",
+    monkeypatch.setattr(
+        retime_cast,
+        "container_from_hydra_cfg",
+        lambda cfg: {"action": "check"},
     )
-    monkeypatch.setattr(retime_cast, "RECORDINGS_DIR", tmp_path)
+    monkeypatch.setattr(
+        retime_cast,
+        "load_recording_spec_from_hydra_cfg",
+        lambda cfg: {
+            "_recording_id": "demo",
+            "id": "demo",
+            "title": "Demo",
+            "outputs": {
+                "cast": str(cast),
+                "retimed_cast": str(output),
+            },
+            "retime": {"post_enter_pause": 0.2},
+            "beats": [{"id": "demo", "actions": [{"run": "true"}]}],
+        },
+    )
 
-    result = retime_cast.main(["demo", "--check"])
+    result = retime_cast.run_tool_from_hydra_cfg(object())
 
     assert result == 0
     assert retime_cast.timeline_path_for_cast(cast) == timeline

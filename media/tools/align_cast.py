@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-"""Align an asciinema cast with a recording manifest.
+"""Align an asciinema cast with a recording config.
 
 This is a proof-of-concept analyzer. It uses visible captions and prompted
-command lines, so it can tell whether a cast still resembles the manifest, but
+command lines, so it can tell whether a cast still resembles the config, but
 it is not a durable sync format.
 """
 
 from __future__ import annotations
 
-import argparse
 import json
 import re
 import sys
@@ -16,14 +15,23 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-try:
-    import yaml
-except ModuleNotFoundError:  # pragma: no cover - exercised only outside dev envs.
-    yaml = None
+TOOLS_DIR = Path(__file__).resolve().parent
+if str(TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(TOOLS_DIR))
+
+import hydra
+from omegaconf import DictConfig
+
+from studio_config import (
+    CONFIG_DIR,
+    StudioConfigError,
+    container_from_hydra_cfg,
+    load_recording_spec,
+    load_recording_spec_from_hydra_cfg,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-RECORDINGS_DIR = REPO_ROOT / "media" / "recordings"
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
@@ -52,17 +60,13 @@ class ExpectedCommand:
     text: str
 
 
-def load_manifest(recording_id: str) -> dict[str, Any]:
-    if yaml is None:
-        raise AlignmentError("PyYAML is required to read recording manifests")
-    path = RECORDINGS_DIR / f"{recording_id}.yaml"
-    if not path.exists():
-        raise AlignmentError(f"recording manifest not found: {path}")
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise AlignmentError(f"recording manifest must be a mapping: {path}")
-    data["_manifest_path"] = str(path)
-    return data
+def load_manifest(
+    recording_id: str, overrides: list[str] | tuple[str, ...] = ()
+) -> dict[str, Any]:
+    try:
+        return load_recording_spec(recording_id, overrides)
+    except StudioConfigError as exc:
+        raise AlignmentError(str(exc)) from exc
 
 
 def as_mapping(value: object) -> dict[str, Any]:
@@ -95,7 +99,9 @@ def cast_path_from_manifest(spec: dict[str, Any]) -> Path:
     outputs = as_mapping(spec.get("outputs"))
     cast = outputs.get("cast")
     if not isinstance(cast, str) or not cast:
-        raise AlignmentError("manifest outputs.cast must be a non-empty string")
+        raise AlignmentError(
+            "recording config outputs.cast must be a non-empty string"
+        )
     return relative_path(cast)
 
 
@@ -255,7 +261,7 @@ def render_report(spec: dict[str, Any], cast_path: Path) -> AlignmentReport:
     observed_cmds = observed_commands(lines)
 
     report: list[str] = [
-        f"manifest: {display_path(Path(spec['_manifest_path']))}",
+        f"config: {display_path(Path(spec['_manifest_path']))}",
         f"cast: {display_path(cast_path)}",
         "",
         "Captions",
@@ -321,7 +327,7 @@ def render_report(spec: dict[str, Any], cast_path: Path) -> AlignmentReport:
                 "",
                 "Review",
                 "  misaligned: manual review required",
-                "  Check whether the recording should be regenerated, the manifest",
+                "  Check whether the recording should be regenerated, the config",
                 "  should be updated, or the movie script no longer matches the",
                 "  versioned workflow.",
             ]
@@ -339,37 +345,41 @@ def render_report(spec: dict[str, Any], cast_path: Path) -> AlignmentReport:
     return AlignmentReport(text="\n".join(report), aligned=aligned)
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "recording", help="Recording id, for example install-and-bootstrap."
-    )
-    parser.add_argument("--cast", help="Override the cast path from the manifest.")
-    parser.add_argument(
-        "--allow-mismatch",
-        action="store_true",
-        help="Print the report but exit 0 even when manual review is required.",
-    )
-    return parser
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
+def run_tool_from_hydra_cfg(cfg: DictConfig) -> int:
     try:
-        spec = load_manifest(args.recording)
+        config = container_from_hydra_cfg(cfg)
+        spec = load_recording_spec_from_hydra_cfg(cfg)
+        action = config.get("action", "align")
+        if action not in {"align", "check"}:
+            raise AlignmentError("action must be 'align' or 'check'")
+        cast_override = config.get("cast")
+        allow_mismatch = config.get("allow_mismatch", False)
+        if cast_override is not None and not isinstance(cast_override, str):
+            raise AlignmentError("cast must be a string or null")
+        if not isinstance(allow_mismatch, bool):
+            raise AlignmentError("allow_mismatch must be a boolean")
         cast_path = (
-            relative_path(args.cast) if args.cast else cast_path_from_manifest(spec)
+            relative_path(cast_override)
+            if cast_override
+            else cast_path_from_manifest(spec)
         )
         report = render_report(spec, cast_path)
         print(report.text)
-        if report.aligned or args.allow_mismatch:
+        if report.aligned or allow_mismatch:
             return 0
         return 2
+    except StudioConfigError as exc:
+        raise AlignmentError(str(exc)) from exc
+
+
+@hydra.main(version_base=None, config_path=str(CONFIG_DIR), config_name="config")
+def main(cfg: DictConfig) -> None:
+    try:
+        raise SystemExit(run_tool_from_hydra_cfg(cfg))
     except AlignmentError as exc:
         print(f"error: {exc}", file=sys.stderr)
-        return 1
+        raise SystemExit(1) from exc
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()

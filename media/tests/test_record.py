@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import pytest
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -31,6 +33,8 @@ def minimal_spec(*, beats: list[dict[str, Any]]) -> dict[str, Any]:
         "id": "test-recording",
         "title": "Test Recording",
         "outputs": {"cast": "website/static/casts/test.cast"},
+        "_hydra_output_dir": "/tmp/arbiter-media-test-runs/test-recording",
+        "_keep_hydra_output_dir": False,
         "style": {"color": False, "typing": False},
         "environment": {"working_directory": "."},
         "beats": beats,
@@ -78,6 +82,7 @@ def write_recorded_header(path: Path) -> None:
         + "\n",
         encoding="utf-8",
     )
+    record.timeline_path_for_cast(path).write_text("", encoding="utf-8")
 
 
 def run_rendered_session(
@@ -153,7 +158,10 @@ def test_record_omits_idle_limit_by_default_and_sanitizes_header(
     assert "--idle-time-limit" not in commands[0]
     assert "--headless" in commands[0]
     header = json.loads(cast.read_text(encoding="utf-8").splitlines()[0])
-    assert header["command"] == "media/tools/record.py --session test-recording"
+    assert (
+        header["command"]
+        == "media/tools/record.py recording=test-recording action=session"
+    )
     assert "env" not in header
     assert "idle_time_limit" not in header
 
@@ -187,6 +195,155 @@ def test_record_headed_override_omits_headless_arg(
 
     assert result == 0
     assert "--headless" not in commands[0]
+
+
+def test_record_stages_cast_and_timeline_before_replacing_outputs(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    cast = tmp_path / "recording.cast"
+    timeline = record.timeline_path_for_cast(cast)
+    cast.write_text("old cast\n", encoding="utf-8")
+    timeline.write_text("old timeline\n", encoding="utf-8")
+    spec = minimal_spec(beats=[{"id": "one", "actions": [{"run": "true"}]}])
+    run_dir = tmp_path / "runs" / "test-recording" / "20260616-160412"
+    spec["_hydra_output_dir"] = str(run_dir)
+    staged_casts: list[Path] = []
+
+    monkeypatch.setattr(record, "check_asciinema", lambda: "asciinema 3.2.0")
+
+    def fake_run(
+        command: list[str], *, cwd: Path, check: bool
+    ) -> subprocess.CompletedProcess[str]:
+        staged_cast = Path(command[-1])
+        staged_casts.append(staged_cast)
+        assert staged_cast != cast
+        assert staged_cast.name.startswith(".recording.cast.recording-")
+        assert cast.read_text(encoding="utf-8") == "old cast\n"
+        assert timeline.read_text(encoding="utf-8") == "old timeline\n"
+        write_recorded_header(staged_cast)
+        record.timeline_path_for_cast(staged_cast).write_text(
+            '{"phase": "done"}\n', encoding="utf-8"
+        )
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(record.subprocess, "run", fake_run)
+
+    result = record.record(
+        spec, dry_run=False, check_only=False, output_override=str(cast)
+    )
+
+    assert result == 0
+    assert staged_casts
+    assert not staged_casts[0].exists()
+    assert not record.timeline_path_for_cast(staged_casts[0]).exists()
+    assert (run_dir / "recording.cast").exists()
+    assert (run_dir / "recording.timeline.jsonl").exists()
+    assert json.loads(cast.read_text(encoding="utf-8").splitlines()[0])[
+        "command"
+    ] == "media/tools/record.py recording=test-recording action=session"
+    assert timeline.read_text(encoding="utf-8") == '{"phase": "done"}\n'
+
+
+def test_record_interrupt_removes_staged_artifacts_and_keeps_outputs(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    cast = tmp_path / "recording.cast"
+    timeline = record.timeline_path_for_cast(cast)
+    cast.write_text("old cast\n", encoding="utf-8")
+    timeline.write_text("old timeline\n", encoding="utf-8")
+    spec = minimal_spec(beats=[{"id": "one", "actions": [{"run": "true"}]}])
+    staged_casts: list[Path] = []
+
+    monkeypatch.setattr(record, "check_asciinema", lambda: "asciinema 3.2.0")
+
+    def fake_run(command: list[str], *, cwd: Path, check: bool) -> None:
+        staged_cast = Path(command[-1])
+        staged_casts.append(staged_cast)
+        staged_cast.write_text("partial cast\n", encoding="utf-8")
+        record.timeline_path_for_cast(staged_cast).write_text(
+            "partial timeline\n", encoding="utf-8"
+        )
+        record.failure_path_for_cast(staged_cast).write_text(
+            "partial failure\n", encoding="utf-8"
+        )
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(record.subprocess, "run", fake_run)
+
+    try:
+        record.record(spec, dry_run=False, check_only=False, output_override=str(cast))
+    except record.RecordingInterrupted as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("interrupted recording should raise RecordingInterrupted")
+
+    assert "recording cancelled by user" in message
+    assert f"output was not updated: {cast}" in message
+    assert cast.read_text(encoding="utf-8") == "old cast\n"
+    assert timeline.read_text(encoding="utf-8") == "old timeline\n"
+    assert staged_casts
+    assert not staged_casts[0].exists()
+    assert not record.timeline_path_for_cast(staged_casts[0]).exists()
+    assert not record.failure_path_for_cast(staged_casts[0]).exists()
+
+
+def test_record_interrupt_returncode_removes_staged_artifacts(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    cast = tmp_path / "recording.cast"
+    cast.write_text("old cast\n", encoding="utf-8")
+    spec = minimal_spec(beats=[{"id": "one", "actions": [{"run": "true"}]}])
+    staged_casts: list[Path] = []
+
+    monkeypatch.setattr(record, "check_asciinema", lambda: "asciinema 3.2.0")
+
+    def fake_run(
+        command: list[str], *, cwd: Path, check: bool
+    ) -> subprocess.CompletedProcess[str]:
+        staged_cast = Path(command[-1])
+        staged_casts.append(staged_cast)
+        staged_cast.write_text("partial cast\n", encoding="utf-8")
+        record.timeline_path_for_cast(staged_cast).write_text(
+            "partial timeline\n", encoding="utf-8"
+        )
+        return subprocess.CompletedProcess(command, 130)
+
+    monkeypatch.setattr(record.subprocess, "run", fake_run)
+
+    try:
+        record.record(spec, dry_run=False, check_only=False, output_override=str(cast))
+    except record.RecordingInterrupted as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("interrupted recording should raise RecordingInterrupted")
+
+    assert "recording cancelled by user" in message
+    assert cast.read_text(encoding="utf-8") == "old cast\n"
+    assert staged_casts
+    assert not staged_casts[0].exists()
+    assert not record.timeline_path_for_cast(staged_casts[0]).exists()
+
+
+def test_main_reports_keyboard_interrupt_without_traceback(
+    monkeypatch: Any, capsys: Any
+) -> None:
+    def fake_record(*args: Any, **kwargs: Any) -> int:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(record, "record", fake_record)
+    monkeypatch.setattr(
+        record.sys,
+        "argv",
+        ["record.py", "recording=install-and-bootstrap"],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        record.main()
+
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 130
+    assert "interrupted: recording cancelled by user" in captured.err
+    assert "Traceback" not in captured.err
 
 
 def test_record_preserves_explicit_idle_limit(tmp_path: Path, monkeypatch: Any) -> None:
@@ -234,6 +391,231 @@ def test_baseline_compressed_disables_session_typing() -> None:
     assert "recording_baseline_compressed=1" in script
     assert "recording_typing=0" in script
     assert 'if [[ "$recording_baseline_compressed" != 1 ]]; then' in script
+
+
+def test_package_source_metadata_exports_session_variables() -> None:
+    spec = minimal_spec(beats=[{"id": "one", "actions": [{"run": "true"}]}])
+    spec["package_source"] = {
+        "mode": "pypi",
+        "package": "arbiter-suite",
+        "version": "latest",
+    }
+
+    script = record.render_session_script(spec)
+
+    assert "recording_package_source_mode=pypi" in script
+    assert "recording_package_source_package=arbiter-suite" in script
+    assert "recording_package_source_version=latest" in script
+
+
+def test_package_source_mode_must_be_known() -> None:
+    spec = minimal_spec(beats=[{"id": "one", "actions": [{"run": "true"}]}])
+    spec["package_source"] = {"mode": "hybrid"}
+
+    try:
+        record.validate_manifest(spec)
+    except record.RecordingError as exc:
+        assert "package_source.mode must be 'local' or 'pypi'" in str(exc)
+    else:
+        raise AssertionError("invalid package source mode should fail validation")
+
+
+def test_setup_can_update_postmortem_entrypoint(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    workspace = run_dir / "operator-workspace"
+    venv = run_dir / "operator-venv"
+    spec = minimal_spec(beats=[{"id": "show", "actions": [{"run": "true"}]}])
+    spec["_hydra_output_dir"] = str(run_dir)
+    spec["_keep_hydra_output_dir"] = True
+    spec["setup"] = [
+        {
+            "name": "prepare postmortem workspace",
+            "run": f"""
+              mkdir -p {shlex.quote(str(workspace))} {shlex.quote(str(venv / "bin"))}
+              : > {shlex.quote(str(venv / "bin" / "activate"))}
+              recording_write_postmortem_entrypoint {shlex.quote(str(workspace))} {shlex.quote(str(venv))}
+              cd {shlex.quote(str(workspace))}
+            """,
+            "expect": {"file_exists": ["$recording_postmortem_path"]},
+        }
+    ]
+
+    result = run_rendered_session(spec)
+
+    assert result.returncode == 0, result.stderr
+    entrypoint = run_dir / "enter"
+    metadata_path = run_dir / "enter.json"
+    assert os.access(entrypoint, os.X_OK)
+    assert json.loads(metadata_path.read_text(encoding="utf-8")) == {
+        "entrypoint": str(entrypoint),
+        "run_dir": str(run_dir),
+        "venv": str(venv),
+        "workdir": str(workspace),
+    }
+    script = entrypoint.read_text(encoding="utf-8")
+    assert f"workdir={shlex.quote(str(workspace))}" in script
+    assert f"venv={shlex.quote(str(venv))}" in script
+    assert "export ARBITER_CINEMA_POSTMORTEM=1" in script
+    assert "export ARBITER_CINEMA_RUN_ID=run" in script
+    assert "[arbiter-recorder:run]" in script
+    assert 'ZDOTDIR="$zsh_dir" exec "$shell_path" -i' in script
+    assert 'exec "$shell_path" --rcfile "$bashrc" -i' in script
+
+
+def test_inspect_run_invokes_postmortem_entrypoint(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    spec = minimal_spec(beats=[{"id": "show", "actions": [{"run": "true"}]}])
+    spec["_hydra_output_dir"] = str(tmp_path / "runs" / "test-recording" / "current")
+    run_dir = tmp_path / "runs" / "test-recording" / "20260616-160412"
+    run_dir.mkdir(parents=True)
+    entrypoint = run_dir / "enter"
+    venv = run_dir / "operator-venv"
+    workspace = run_dir / "operator-workspace"
+    entrypoint.write_text("#!/usr/bin/env bash\n# old prompt\n", encoding="utf-8")
+    (run_dir / "enter.json").write_text(
+        json.dumps(
+            {
+                "entrypoint": str(entrypoint),
+                "run_dir": str(run_dir),
+                "venv": str(venv),
+                "workdir": str(workspace),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    commands: list[list[str]] = []
+
+    def fake_run(
+        command: list[str], *, cwd: Path, check: bool
+    ) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(record.subprocess, "run", fake_run)
+
+    assert record.inspect_run(spec, run_id="20260616-160412") == 0
+    assert commands == [[str(entrypoint)]]
+    assert "[arbiter-recorder:20260616-160412]" in entrypoint.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_output_run_prints_captured_output_when_not_interactive(
+    tmp_path: Path, capsys: Any
+) -> None:
+    spec = minimal_spec(beats=[{"id": "show", "actions": [{"run": "true"}]}])
+    spec["_hydra_output_dir"] = str(tmp_path / "runs" / "test-recording" / "current")
+    run_dir = tmp_path / "runs" / "test-recording" / "20260616-160412"
+    run_dir.mkdir(parents=True)
+    output_path = run_dir / "stage_server_1.out"
+    output_path.write_text("captured output\n", encoding="utf-8")
+    (run_dir / "failure.json").write_text(
+        json.dumps({"output_path": str(output_path)}) + "\n",
+        encoding="utf-8",
+    )
+
+    assert record.output_run(spec, run_id="20260616-160412") == 0
+    assert capsys.readouterr().out == "captured output\n"
+
+
+def test_play_run_finds_preserved_cast_by_run_id(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    run_dir = tmp_path / "media" / "runs" / "test-recording" / "20260616-160412"
+    run_dir.mkdir(parents=True)
+    cast = run_dir / "recording.cast"
+    cast.write_text("cast\n", encoding="utf-8")
+    commands: list[list[str]] = []
+
+    monkeypatch.setattr(record, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(record, "check_asciinema", lambda: "asciinema 3.2.0")
+
+    def fake_run(
+        command: list[str], *, cwd: Path, check: bool
+    ) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(record.subprocess, "run", fake_run)
+
+    result = record.play_recording(
+        None,
+        run_id="20260616-160412",
+        cast_override=None,
+    )
+
+    assert result == 0
+    assert commands == [["asciinema", "play", str(cast)]]
+
+
+def test_play_run_reports_ambiguous_run_id(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    (tmp_path / "media" / "runs" / "one" / "20260616-160412").mkdir(
+        parents=True
+    )
+    (tmp_path / "media" / "runs" / "two" / "20260616-160412").mkdir(
+        parents=True
+    )
+
+    monkeypatch.setattr(record, "REPO_ROOT", tmp_path)
+
+    try:
+        record.play_recording(None, run_id="20260616-160412", cast_override=None)
+    except record.RecordingError as exc:
+        assert "ambiguous across recordings" in str(exc)
+        assert "add recording=<id>" in str(exc)
+    else:
+        raise AssertionError("ambiguous run id should require recording")
+
+
+def test_timeline_progress_messages_use_setup_stage_and_command_labels() -> None:
+    spec = minimal_spec(
+        beats=[
+            {"id": "init", "caption": "Create staging."},
+            {"id": "run", "caption": "Start server."},
+        ]
+    )
+    beat_indexes, beat_count = record.beat_progress_index(spec)
+
+    assert (
+        record.progress_message_for_event(
+            {
+                "phase": "check_start",
+                "beat": "__setup__",
+                "check": "Prepare workspace",
+            },
+            beat_indexes=beat_indexes,
+            beat_count=beat_count,
+        )
+        == "setup: Prepare workspace"
+    )
+    assert (
+        record.progress_message_for_event(
+            {
+                "phase": "caption_start",
+                "beat": "run",
+                "caption": "Start server.",
+            },
+            beat_indexes=beat_indexes,
+            beat_count=beat_count,
+        )
+        == "stage 2/2: Start server."
+    )
+    assert (
+        record.progress_message_for_event(
+            {
+                "phase": "command_run_start",
+                "beat": "run",
+                "command": "./arbiter-docker up\n./arbiter-docker test",
+            },
+            beat_indexes=beat_indexes,
+            beat_count=beat_count,
+        )
+        == "running: ./arbiter-docker up"
+    )
 
 
 def test_multiline_display_renders_separate_prompts() -> None:
@@ -287,6 +669,67 @@ def test_multiline_action_outputs_after_each_command() -> None:
         "second\n", second_prompt + len(second_prompt_text)
     )
     assert first_prompt < first_output < second_prompt < second_output
+
+
+def test_color_enabled_recording_forces_color_environment() -> None:
+    spec = minimal_spec(
+        beats=[
+            {
+                "id": "show",
+                "actions": [
+                    {
+                        "run": (
+                            'printf "color=%s term=%s force=%s\\n" '
+                            '"$ARBITER_COLOR" "$TERM" "$FORCE_COLOR"'
+                        )
+                    }
+                ],
+            }
+        ]
+    )
+    spec["style"] = {"color": True, "typing": False}
+
+    result = run_rendered_session(spec)
+
+    assert result.returncode == 0, result.stderr
+    assert "color=always term=xterm-256color force=1\n" in result.stdout
+
+
+def test_visible_output_hides_pip_package_summary_but_keeps_action_log(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "run"
+    spec = minimal_spec(
+        beats=[
+            {
+                "id": "stage-server",
+                "actions": [
+                    {
+                        "display": "simulate package install\n",
+                        "run": (
+                            "printf 'before\\n'\n"
+                            "printf 'Installing collected packages: a, b\\n'\n"
+                            "printf 'Successfully installed a-1 b-2\\n'\n"
+                            "printf 'after\\n'\n"
+                        )
+                    }
+                ],
+            }
+        ]
+    )
+    spec["_hydra_output_dir"] = str(run_dir)
+    spec["_keep_hydra_output_dir"] = True
+
+    result = run_rendered_session(spec)
+
+    assert result.returncode == 0, result.stderr
+    assert "before\n" in result.stdout
+    assert "after\n" in result.stdout
+    assert "Installing collected packages" not in result.stdout
+    assert "Successfully installed" not in result.stdout
+    action_log = (run_dir / "stage_server_1.out").read_text(encoding="utf-8")
+    assert "Installing collected packages: a, b\n" in action_log
+    assert "Successfully installed a-1 b-2\n" in action_log
 
 
 def test_continuation_display_renders_without_extra_prompt() -> None:
@@ -461,7 +904,7 @@ def test_top_level_setup_emits_timeline_events(tmp_path: Path) -> None:
     assert {event["check"] for event in setup_events} == {"prepare hidden state"}
 
 
-def test_hidden_check_failure_requires_review_and_shows_output() -> None:
+def test_hidden_check_failure_requires_review_without_dumping_stdout() -> None:
     spec = minimal_spec(
         beats=[
             {
@@ -486,7 +929,35 @@ def test_hidden_check_failure_requires_review_and_shows_output() -> None:
         "recording check failed: hidden proof missing text: expected hidden output"
         in result.stderr
     )
-    assert "actual hidden output" in result.stderr
+    assert "actual hidden output" not in result.stderr
+
+
+def test_hidden_check_failure_shows_stderr_only() -> None:
+    spec = minimal_spec(
+        beats=[
+            {
+                "id": "verify",
+                "checks": [
+                    {
+                        "name": "hidden proof",
+                        "run": (
+                            "printf 'hidden stdout\\n'; "
+                            "printf 'hidden stderr\\n' >&2"
+                        ),
+                        "expect": {"output_contains": ["expected hidden output"]},
+                    }
+                ],
+            }
+        ]
+    )
+
+    result = run_rendered_session(spec)
+
+    assert result.returncode == 1
+    assert "--- stderr ---" in result.stderr
+    assert "hidden stderr" in result.stderr
+    assert "hidden stdout" not in result.stderr
+    assert "hidden stdout" not in result.stdout
 
 
 def test_hidden_check_failure_writes_failure_report(tmp_path: Path) -> None:
@@ -517,6 +988,10 @@ def test_hidden_check_failure_writes_failure_report(tmp_path: Path) -> None:
     assert report["name"] == "hidden proof"
     assert report["message"] == "missing text: expected hidden output"
     assert report["output"] == "actual hidden output\n"
+    assert report["stderr"] == ""
+    assert report["output_path"].endswith("/verify_check_1.out")
+    assert report["stderr_path"].endswith("/verify_check_1.stderr")
+    assert report["postmortem_path"].endswith("/enter")
 
 
 def test_record_reports_session_failure_sidecar(
@@ -524,8 +999,16 @@ def test_record_reports_session_failure_sidecar(
 ) -> None:
     cast = tmp_path / "recording.cast"
     spec = minimal_spec(beats=[{"id": "one", "actions": [{"run": "true"}]}])
+    run_dir = tmp_path / "runs" / "test-recording" / "20260616-160412"
+    spec["_hydra_output_dir"] = str(run_dir)
 
     monkeypatch.setattr(record, "check_asciinema", lambda: "asciinema 3.2.0")
+    output_path = tmp_path / "hidden.out"
+    stderr_path = tmp_path / "hidden.stderr"
+    postmortem_path = tmp_path / "enter"
+    output_path.write_text("real reason\n", encoding="utf-8")
+    stderr_path.write_text("stderr reason\n", encoding="utf-8")
+    postmortem_path.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
 
     def fake_run(
         command: list[str], *, cwd: Path, check: bool
@@ -539,6 +1022,13 @@ def test_record_reports_session_failure_sidecar(
                     "name": "prepare hidden state",
                     "message": "exited 1, expected 0",
                     "output": "real reason\n",
+                    "output_path": str(output_path),
+                    "stderr": "stderr reason\n",
+                    "stderr_path": str(stderr_path),
+                    "run_dir": str(tmp_path),
+                    "postmortem_path": str(postmortem_path),
+                    "recording_id": "install-and-bootstrap",
+                    "run_id": "20260616-160412",
                 }
             )
             + "\n",
@@ -558,7 +1048,24 @@ def test_record_reports_session_failure_sidecar(
     assert "asciinema recording failed with exit code 1" in message
     assert "session failed during check 'prepare hidden state' (setup_check_1)" in message
     assert "reason: exited 1, expected 0" in message
-    assert "real reason" in message
+    assert "stderr reason" in message
+    assert "real reason" not in message
+    assert "captured output:" not in message
+    assert "view with: less" not in message
+    assert "run_id: 20260616-160412" in message
+    assert (run_dir / "failed.cast").exists()
+    assert (run_dir / "failed.timeline.jsonl").exists()
+    assert (
+        "media/tools/record.py recording=install-and-bootstrap "
+        "action=inspect run_id=20260616-160412"
+        in message
+    )
+    assert "media/tools/record.py action=play run_id=20260616-160412" in message
+    assert (
+        "media/tools/record.py recording=install-and-bootstrap "
+        "action=output run_id=20260616-160412"
+        in message
+    )
 
 
 def test_check_intervals_are_removed_without_compressing_runtime(

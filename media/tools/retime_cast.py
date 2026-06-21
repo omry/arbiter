@@ -3,21 +3,30 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-try:
-    import yaml
-except ModuleNotFoundError:  # pragma: no cover - exercised only outside dev envs.
-    yaml = None
+TOOLS_DIR = Path(__file__).resolve().parent
+if str(TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(TOOLS_DIR))
+
+import hydra
+from omegaconf import DictConfig
+
+from studio_config import (
+    CONFIG_DIR,
+    StudioConfigError,
+    container_from_hydra_cfg,
+    load_recording_spec,
+    load_recording_spec_from_hydra_cfg,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-RECORDINGS_DIR = REPO_ROOT / "media" / "recordings"
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
@@ -59,17 +68,13 @@ class TimingRules:
     post_command_pause: float = 0.85
 
 
-def load_manifest(recording_id: str) -> dict[str, Any]:
-    if yaml is None:
-        raise RetimeError("PyYAML is required to read recording manifests")
-    path = RECORDINGS_DIR / f"{recording_id}.yaml"
-    if not path.exists():
-        raise RetimeError(f"recording manifest not found: {path}")
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise RetimeError(f"recording manifest must be a mapping: {path}")
-    data["_manifest_path"] = str(path)
-    return data
+def load_manifest(
+    recording_id: str, overrides: list[str] | tuple[str, ...] = ()
+) -> dict[str, Any]:
+    try:
+        return load_recording_spec(recording_id, overrides)
+    except StudioConfigError as exc:
+        raise RetimeError(str(exc)) from exc
 
 
 def as_mapping(value: object) -> dict[str, Any]:
@@ -94,7 +99,7 @@ def cast_path_from_manifest(spec: dict[str, Any]) -> Path:
     outputs = as_mapping(spec.get("outputs"))
     cast = outputs.get("cast")
     if not isinstance(cast, str) or not cast:
-        raise RetimeError("manifest outputs.cast must be a non-empty string")
+        raise RetimeError("recording config outputs.cast must be a non-empty string")
     return relative_path(cast)
 
 
@@ -437,49 +442,49 @@ def retime_cast(
     write_cast(output_path, header, scheduled)
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "recording", help="Recording id, for example install-and-bootstrap."
-    )
-    parser.add_argument("--cast", help="Override the baseline cast path.")
-    parser.add_argument("--timeline", help="Override the timeline sidecar path.")
-    parser.add_argument("--output", help="Override the retimed cast output path.")
-    parser.add_argument(
-        "--check",
-        action="store_true",
-        help="Validate manifest, cast, and timeline without writing output.",
-    )
-    return parser
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
+def run_tool_from_hydra_cfg(cfg: DictConfig) -> int:
     try:
-        spec = load_manifest(args.recording)
-        cast_path = relative_path(args.cast) if args.cast else cast_path_from_manifest(spec)
+        config = container_from_hydra_cfg(cfg)
+        spec = load_recording_spec_from_hydra_cfg(cfg)
+        action = config.get("action", "retime")
+        if action not in {"retime", "check"}:
+            raise RetimeError("action must be 'retime' or 'check'")
+        cast_override = config.get("cast")
+        timeline_override = config.get("timeline")
+        output_override = config.get("output")
+        for name, value in [
+            ("cast", cast_override),
+            ("timeline", timeline_override),
+            ("output", output_override),
+        ]:
+            if value is not None and not isinstance(value, str):
+                raise RetimeError(f"{name} must be a string or null")
+        cast_path = (
+            relative_path(cast_override)
+            if cast_override
+            else cast_path_from_manifest(spec)
+        )
         timeline_path = (
-            relative_path(args.timeline)
-            if args.timeline
+            relative_path(timeline_override)
+            if timeline_override
             else timeline_path_for_cast(cast_path)
         )
         output_path = (
-            relative_path(args.output)
-            if args.output
+            relative_path(output_override)
+            if output_override
             else output_path_from_manifest(spec, cast_path)
         )
         rules = timing_rules_from_manifest(spec)
         header, events = read_cast(cast_path)
         timeline = read_timeline(timeline_path)
-        if args.check:
+        if action == "check":
             if not events:
                 raise RetimeError(f"cast contains no events: {cast_path}")
             if not timeline:
                 raise RetimeError(f"timeline contains no events: {timeline_path}")
             print(
                 "ok: "
-                f"{args.recording} retime "
+                f"{spec['_recording_id']} retime "
                 f"cast={display_path(cast_path)} "
                 f"timeline={display_path(timeline_path)} "
                 f"output={display_path(output_path)}"
@@ -489,9 +494,18 @@ def main(argv: list[str] | None = None) -> int:
         write_cast(output_path, header, scheduled)
         print(f"wrote {display_path(output_path)}")
         return 0
+    except StudioConfigError as exc:
+        raise RetimeError(str(exc)) from exc
+
+
+@hydra.main(version_base=None, config_path=str(CONFIG_DIR), config_name="config")
+def main(cfg: DictConfig) -> None:
+    try:
+        raise SystemExit(run_tool_from_hydra_cfg(cfg))
     except RetimeError as exc:
-        parser.exit(1, f"error: {exc}\n")
+        print(f"error: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()

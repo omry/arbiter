@@ -158,12 +158,12 @@ points, config shape, version expectations, and security claims.
 For release media, run the media alignment gate for each published recording:
 
 ```bash
-.venv/bin/python media/tools/record.py --check install-and-bootstrap
-media/tools/align_cast.py install-and-bootstrap
+media/tools/record.py recording=install-and-bootstrap action=check
+media/tools/align_cast.py recording=install-and-bootstrap action=align
 ```
 
 Any misalignment requires manual review. Decide whether to refresh the base
-recording, update the recording manifest, or revise the movie script for the
+recording, update the recording config, or revise the movie script for the
 current major-version workflow before publishing derived media.
 
 For install-oriented media, confirm the recording uses the intended package

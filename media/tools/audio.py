@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import mimetypes
 import os
@@ -16,14 +15,23 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, Callable
 
-try:
-    import yaml
-except ModuleNotFoundError:  # pragma: no cover - exercised only outside dev envs.
-    yaml = None
+TOOLS_DIR = Path(__file__).resolve().parent
+if str(TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(TOOLS_DIR))
+
+import hydra
+from omegaconf import DictConfig
+
+from studio_config import (
+    CONFIG_DIR,
+    StudioConfigError,
+    container_from_hydra_cfg,
+    load_recording_spec,
+    load_recording_spec_from_hydra_cfg,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-RECORDINGS_DIR = REPO_ROOT / "media" / "recordings"
 OPENAI_SPEECH_URL = "https://api.openai.com/v1/audio/speech"
 OPENAI_TRANSCRIPTIONS_URL = "https://api.openai.com/v1/audio/transcriptions"
 SUPPORTED_FORMATS = {"mp3", "opus", "aac", "flac", "wav", "pcm"}
@@ -68,24 +76,20 @@ class AudioPlanItem:
     output_path: Path
 
 
-def load_manifest(recording_id: str) -> dict[str, Any]:
-    if yaml is None:
-        raise AudioError("PyYAML is required to read recording manifests")
-    path = RECORDINGS_DIR / f"{recording_id}.yaml"
-    if not path.exists():
-        raise AudioError(f"recording manifest not found: {path}")
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise AudioError(f"recording manifest must be a mapping: {path}")
-    data["_manifest_path"] = str(path)
-    return data
+def load_manifest(
+    recording_id: str, overrides: list[str] | tuple[str, ...] = ()
+) -> dict[str, Any]:
+    try:
+        return load_recording_spec(recording_id, overrides)
+    except StudioConfigError as exc:
+        raise AudioError(str(exc)) from exc
 
 
 def as_mapping(value: object, *, field: str) -> dict[str, Any]:
     if value is None:
         return {}
     if not isinstance(value, dict):
-        raise AudioError(f"manifest field {field!r} must be a mapping")
+        raise AudioError(f"recording config field {field!r} must be a mapping")
     return value
 
 
@@ -234,7 +238,7 @@ def transcription_settings(spec: dict[str, Any]) -> TranscriptionSettings:
 def script_path_from_manifest(spec: dict[str, Any]) -> Path:
     script = spec.get("script")
     if not isinstance(script, str) or not script:
-        raise AudioError("manifest field 'script' must be a non-empty string")
+        raise AudioError("recording config field 'script' must be a non-empty string")
     return relative_path(script)
 
 
@@ -533,68 +537,63 @@ def print_plan(plan: list[AudioPlanItem]) -> None:
         )
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "recording", help="Recording id, for example install-and-bootstrap."
-    )
-    parser.add_argument(
-        "--check", action="store_true", help="Validate narration plan only."
-    )
-    parser.add_argument(
-        "--dry-run", action="store_true", help="Print planned audio segments."
-    )
-    parser.add_argument(
-        "--force", action="store_true", help="Regenerate cached audio files."
-    )
-    parser.add_argument(
-        "--timestamps",
-        action="store_true",
-        help="Generate transcription timestamp sidecars for generated audio.",
-    )
-    return parser
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
+def run_tool_from_hydra_cfg(cfg: DictConfig) -> int:
     try:
-        spec = load_manifest(args.recording)
+        config = container_from_hydra_cfg(cfg)
+        spec = load_recording_spec_from_hydra_cfg(cfg)
+        action = config.get("action", "generate")
+        if action not in {"generate", "check", "dry_run"}:
+            raise AudioError("action must be 'generate', 'check', or 'dry_run'")
+        force = config.get("force", False)
+        timestamps = config.get("timestamps", False)
+        if not isinstance(force, bool):
+            raise AudioError("force must be a boolean")
+        if not isinstance(timestamps, bool):
+            raise AudioError("timestamps must be a boolean")
         settings = audio_settings(spec)
         transcription = transcription_settings(spec)
         segments = load_narration_segments(spec)
-        plan = plan_audio(args.recording, segments, settings)
-        if args.dry_run:
+        recording_id = require_string(spec, "_recording_id", field="recording")
+        plan = plan_audio(recording_id, segments, settings)
+        if action == "dry_run":
             print_plan(plan)
             return 0
-        if args.check:
+        if action == "check":
             state = "enabled" if settings.enabled else "disabled"
             print(
-                f"ok: {args.recording} audio {state}; "
+                f"ok: {recording_id} audio {state}; "
                 f"{len(plan)} narration segment(s), provider {settings.provider}, "
                 f"transcription {transcription.model}"
             )
             return 0
         if not settings.enabled:
-            raise AudioError("audio is disabled in the recording manifest")
-        paths = generate_audio(plan, settings, force=args.force)
+            raise AudioError("audio is disabled in the recording config")
+        paths = generate_audio(plan, settings, force=force)
         for path in paths:
             print(f"audio {display_path(path)}")
-        if args.timestamps:
+        if timestamps:
             timeline_paths = generate_timestamps(
-                args.recording,
+                recording_id,
                 plan,
                 settings,
                 transcription,
-                force=args.force,
+                force=force,
             )
             for path in timeline_paths:
                 print(f"timeline {display_path(path)}")
         return 0
+    except StudioConfigError as exc:
+        raise AudioError(str(exc)) from exc
+
+
+@hydra.main(version_base=None, config_path=str(CONFIG_DIR), config_name="config")
+def main(cfg: DictConfig) -> None:
+    try:
+        raise SystemExit(run_tool_from_hydra_cfg(cfg))
     except AudioError as exc:
         print(f"error: {exc}", file=sys.stderr)
-        return 1
+        raise SystemExit(1) from exc
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
