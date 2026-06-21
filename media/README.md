@@ -117,11 +117,25 @@ activated:
 media/tools/record.py recording=install-and-bootstrap action=inspect run_id=<run-id>
 ```
 
-Use the play action to replay a preserved run cast. The recording id is
+Use the play action without a run id to replay the newest preserved run cast
+across all recordings:
+
+```bash
+media/tools/record.py action=play
+```
+
+Pass a run id to replay a specific preserved run cast. The recording id is
 deduced from the run id unless the run id is ambiguous across recordings:
 
 ```bash
 media/tools/record.py action=play run_id=<run-id>
+```
+
+Pass an explicit recording id without a run id to play that recording's
+configured output cast:
+
+```bash
+media/tools/record.py recording=install-and-bootstrap action=play
 ```
 
 Use the output action to review the captured failure output. It opens a pager in

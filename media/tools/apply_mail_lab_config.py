@@ -31,11 +31,11 @@ def load_yaml(path: Path) -> dict[str, Any]:
     return data
 
 
-def write_yaml(path: Path, data: dict[str, Any]) -> None:
-    path.write_text(
-        yaml.safe_dump(data, sort_keys=False, default_flow_style=False),
-        encoding="utf-8",
-    )
+def write_yaml(path: Path, data: dict[str, Any], *, package: str | None = None) -> None:
+    content = yaml.safe_dump(data, sort_keys=False, default_flow_style=False)
+    if package is not None:
+        content = f"# @package {package}\n" + content
+    path.write_text(content, encoding="utf-8")
 
 
 def update_account_files(config_dir: Path) -> None:
@@ -62,7 +62,7 @@ def update_account_files(config_dir: Path) -> None:
             },
         }
     )
-    write_yaml(imap_account, imap)
+    write_yaml(imap_account, imap, package="arbiter.account.imap.bot")
 
     smtp = load_yaml(smtp_account)
     smtp.update(
@@ -79,7 +79,7 @@ def update_account_files(config_dir: Path) -> None:
             "verify_peer": False,
         }
     )
-    write_yaml(smtp_account, smtp)
+    write_yaml(smtp_account, smtp, package="arbiter.account.smtp.bot")
 
 
 def read_env_file(path: Path) -> dict[str, str]:

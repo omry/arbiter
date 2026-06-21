@@ -1,0 +1,113 @@
+{"beat": "__setup__", "check": "Prepare operator commands and local mail lab", "check_id": "setup_check_1", "phase": "check_start", "time": 0.03593158721923828}
+{"beat": "__setup__", "check": "Prepare operator commands and local mail lab", "check_id": "setup_check_1", "phase": "check_end", "time": 0.5981967449188232}
+{"beat": "init-staging", "phase": "beat_start", "time": 0.6126494407653809}
+{"beat": "init-staging", "caption": "Create a Docker staging deployment.", "phase": "caption_start", "time": 0.6272239685058594}
+{"beat": "init-staging", "caption": "Create a Docker staging deployment.", "phase": "caption_end", "time": 0.6415536403656006}
+{"action_id": "init_staging_1", "beat": "init-staging", "phase": "action_start", "time": 0.6561074256896973}
+{"action_id": "init_staging_1", "beat": "init-staging", "chunk_index": 0, "command": "arbiter-server deploy docker init", "phase": "command_prompt_start", "time": 0.67071533203125}
+{"action_id": "init_staging_1", "beat": "init-staging", "chunk_index": 0, "command": "arbiter-server deploy docker init", "phase": "command_prompt_end", "time": 0.6854281425476074}
+{"action_id": "init_staging_1", "beat": "init-staging", "chunk_index": 0, "command": "arbiter-server deploy docker init", "phase": "command_run_start", "time": 0.6998329162597656}
+{"action_id": "init_staging_1", "beat": "init-staging", "chunk_index": 0, "phase": "command_run_end", "status": 0, "time": 3.366001844406128}
+{"action_id": "init_staging_1", "beat": "init-staging", "chunk_index": 1, "command": "cd arbiter-docker", "phase": "command_prompt_start", "time": 3.3811287879943848}
+{"action_id": "init_staging_1", "beat": "init-staging", "chunk_index": 1, "command": "cd arbiter-docker", "phase": "command_prompt_end", "time": 3.3989834785461426}
+{"action_id": "init_staging_1", "beat": "init-staging", "chunk_index": 1, "command": "cd arbiter-docker", "phase": "command_run_start", "time": 3.414579153060913}
+{"action_id": "init_staging_1", "beat": "init-staging", "chunk_index": 1, "phase": "command_run_end", "status": 0, "time": 3.4457812309265137}
+{"action_id": "init_staging_1", "beat": "init-staging", "phase": "action_end", "status": 0, "time": 3.4623727798461914}
+{"beat": "init-staging", "phase": "hold_start", "seconds": 3.0, "time": 3.4776601791381836}
+{"beat": "init-staging", "phase": "hold_end", "seconds": 3.0, "time": 3.49263072013855}
+{"beat": "init-staging", "phase": "beat_end", "time": 3.5074524879455566}
+{"beat": "prepare-bundle", "phase": "beat_start", "time": 3.521855354309082}
+{"beat": "prepare-bundle", "caption": "Add mail plugins and prepare the runtime bundle.", "phase": "caption_start", "time": 3.5362558364868164}
+{"beat": "prepare-bundle", "caption": "Add mail plugins and prepare the runtime bundle.", "phase": "caption_end", "time": 3.5507311820983887}
+{"action_id": "prepare_bundle_1", "beat": "prepare-bundle", "phase": "action_start", "time": 3.565434694290161}
+{"action_id": "prepare_bundle_1", "beat": "prepare-bundle", "chunk_index": 0, "command": "./arbiter-docker bundle add imap", "phase": "command_prompt_start", "time": 3.57985520362854}
+{"action_id": "prepare_bundle_1", "beat": "prepare-bundle", "chunk_index": 0, "command": "./arbiter-docker bundle add imap", "phase": "command_prompt_end", "time": 3.5945115089416504}
+{"action_id": "prepare_bundle_1", "beat": "prepare-bundle", "chunk_index": 0, "command": "./arbiter-docker bundle add imap", "phase": "command_run_start", "time": 3.609589099884033}
+{"action_id": "prepare_bundle_1", "beat": "prepare-bundle", "chunk_index": 0, "phase": "command_run_end", "status": 0, "time": 3.669621706008911}
+{"action_id": "prepare_bundle_1", "beat": "prepare-bundle", "chunk_index": 1, "command": "./arbiter-docker bundle add smtp", "phase": "command_prompt_start", "time": 3.684992790222168}
+{"action_id": "prepare_bundle_1", "beat": "prepare-bundle", "chunk_index": 1, "command": "./arbiter-docker bundle add smtp", "phase": "command_prompt_end", "time": 3.701411008834839}
+{"action_id": "prepare_bundle_1", "beat": "prepare-bundle", "chunk_index": 1, "command": "./arbiter-docker bundle add smtp", "phase": "command_run_start", "time": 3.716310501098633}
+{"action_id": "prepare_bundle_1", "beat": "prepare-bundle", "chunk_index": 1, "phase": "command_run_end", "status": 0, "time": 3.7681732177734375}
+{"action_id": "prepare_bundle_1", "beat": "prepare-bundle", "chunk_index": 2, "command": "./arbiter-docker bundle prepare", "phase": "command_prompt_start", "time": 3.78305983543396}
+{"action_id": "prepare_bundle_1", "beat": "prepare-bundle", "chunk_index": 2, "command": "./arbiter-docker bundle prepare", "phase": "command_prompt_end", "time": 3.797924041748047}
+{"action_id": "prepare_bundle_1", "beat": "prepare-bundle", "chunk_index": 2, "command": "./arbiter-docker bundle prepare", "phase": "command_run_start", "time": 3.8124961853027344}
+{"action_id": "prepare_bundle_1", "beat": "prepare-bundle", "chunk_index": 2, "phase": "command_run_end", "status": 0, "time": 26.294129610061646}
+{"action_id": "prepare_bundle_1", "beat": "prepare-bundle", "phase": "action_end", "status": 0, "time": 26.30943274497986}
+{"beat": "prepare-bundle", "phase": "hold_start", "seconds": 3.0, "time": 26.32468557357788}
+{"beat": "prepare-bundle", "phase": "hold_end", "seconds": 3.0, "time": 26.339313507080078}
+{"beat": "prepare-bundle", "phase": "beat_end", "time": 26.354134798049927}
+{"beat": "bootstrap-config", "phase": "beat_start", "time": 26.369122982025146}
+{"beat": "bootstrap-config", "caption": "Bootstrap the server and bot account config.", "phase": "caption_start", "time": 26.383903741836548}
+{"beat": "bootstrap-config", "caption": "Bootstrap the server and bot account config.", "phase": "caption_end", "time": 26.39866328239441}
+{"action_id": "bootstrap_config_1", "beat": "bootstrap-config", "phase": "action_start", "time": 26.41374683380127}
+{"action_id": "bootstrap_config_1", "beat": "bootstrap-config", "chunk_index": 0, "command": "arbiter-server --config-dir ./conf bootstrap arbiter", "phase": "command_prompt_start", "time": 26.42863702774048}
+{"action_id": "bootstrap_config_1", "beat": "bootstrap-config", "chunk_index": 0, "command": "arbiter-server --config-dir ./conf bootstrap arbiter", "phase": "command_prompt_end", "time": 26.443893432617188}
+{"action_id": "bootstrap_config_1", "beat": "bootstrap-config", "chunk_index": 0, "command": "arbiter-server --config-dir ./conf bootstrap arbiter", "phase": "command_run_start", "time": 26.459476709365845}
+{"action_id": "bootstrap_config_1", "beat": "bootstrap-config", "chunk_index": 0, "phase": "command_run_end", "status": 0, "time": 26.62780499458313}
+{"action_id": "bootstrap_config_1", "beat": "bootstrap-config", "chunk_index": 1, "command": "arbiter-server --config-dir ./conf bootstrap plugin imap account bot", "phase": "command_prompt_start", "time": 26.64341402053833}
+{"action_id": "bootstrap_config_1", "beat": "bootstrap-config", "chunk_index": 1, "command": "arbiter-server --config-dir ./conf bootstrap plugin imap account bot", "phase": "command_prompt_end", "time": 26.658366203308105}
+{"action_id": "bootstrap_config_1", "beat": "bootstrap-config", "chunk_index": 1, "command": "arbiter-server --config-dir ./conf bootstrap plugin imap account bot", "phase": "command_run_start", "time": 26.67290711402893}
+{"action_id": "bootstrap_config_1", "beat": "bootstrap-config", "chunk_index": 1, "phase": "command_run_end", "status": 0, "time": 26.86210012435913}
+{"action_id": "bootstrap_config_1", "beat": "bootstrap-config", "chunk_index": 2, "command": "arbiter-server --config-dir ./conf bootstrap plugin smtp account bot", "phase": "command_prompt_start", "time": 26.87692952156067}
+{"action_id": "bootstrap_config_1", "beat": "bootstrap-config", "chunk_index": 2, "command": "arbiter-server --config-dir ./conf bootstrap plugin smtp account bot", "phase": "command_prompt_end", "time": 26.892054319381714}
+{"action_id": "bootstrap_config_1", "beat": "bootstrap-config", "chunk_index": 2, "command": "arbiter-server --config-dir ./conf bootstrap plugin smtp account bot", "phase": "command_run_start", "time": 26.9076566696167}
+{"action_id": "bootstrap_config_1", "beat": "bootstrap-config", "chunk_index": 2, "phase": "command_run_end", "status": 0, "time": 27.112128973007202}
+{"action_id": "bootstrap_config_1", "beat": "bootstrap-config", "chunk_index": 3, "command": "arbiter-server --config-dir ./conf config activate account imap bot", "phase": "command_prompt_start", "time": 27.127950191497803}
+{"action_id": "bootstrap_config_1", "beat": "bootstrap-config", "chunk_index": 3, "command": "arbiter-server --config-dir ./conf config activate account imap bot", "phase": "command_prompt_end", "time": 27.143482446670532}
+{"action_id": "bootstrap_config_1", "beat": "bootstrap-config", "chunk_index": 3, "command": "arbiter-server --config-dir ./conf config activate account imap bot", "phase": "command_run_start", "time": 27.158496618270874}
+{"action_id": "bootstrap_config_1", "beat": "bootstrap-config", "chunk_index": 3, "phase": "command_run_end", "status": 0, "time": 27.313263416290283}
+{"action_id": "bootstrap_config_1", "beat": "bootstrap-config", "chunk_index": 4, "command": "arbiter-server --config-dir ./conf config activate account smtp bot", "phase": "command_prompt_start", "time": 27.329496145248413}
+{"action_id": "bootstrap_config_1", "beat": "bootstrap-config", "chunk_index": 4, "command": "arbiter-server --config-dir ./conf config activate account smtp bot", "phase": "command_prompt_end", "time": 27.345365285873413}
+{"action_id": "bootstrap_config_1", "beat": "bootstrap-config", "chunk_index": 4, "command": "arbiter-server --config-dir ./conf config activate account smtp bot", "phase": "command_run_start", "time": 27.36064052581787}
+{"action_id": "bootstrap_config_1", "beat": "bootstrap-config", "chunk_index": 4, "phase": "command_run_end", "status": 0, "time": 27.54970932006836}
+{"action_id": "bootstrap_config_1", "beat": "bootstrap-config", "phase": "action_end", "status": 0, "time": 27.567512035369873}
+{"beat": "bootstrap-config", "phase": "hold_start", "seconds": 4.0, "time": 27.584473609924316}
+{"beat": "bootstrap-config", "phase": "hold_end", "seconds": 4.0, "time": 27.600988626480103}
+{"beat": "bootstrap-config", "phase": "beat_end", "time": 27.617681980133057}
+{"beat": "bootstrap-env", "phase": "beat_start", "time": 27.63468861579895}
+{"beat": "bootstrap-env", "caption": "Bootstrap the deployment env file.", "phase": "caption_start", "time": 27.65243887901306}
+{"beat": "bootstrap-env", "caption": "Bootstrap the deployment env file.", "phase": "caption_end", "time": 27.667557954788208}
+{"action_id": "bootstrap_env_1", "beat": "bootstrap-env", "phase": "action_start", "time": 27.682383060455322}
+{"action_id": "bootstrap_env_1", "beat": "bootstrap-env", "chunk_index": 0, "command": "arbiter-server --config-dir ./conf env bootstrap", "phase": "command_prompt_start", "time": 27.696793794631958}
+{"action_id": "bootstrap_env_1", "beat": "bootstrap-env", "chunk_index": 0, "command": "arbiter-server --config-dir ./conf env bootstrap", "phase": "command_prompt_end", "time": 27.711517810821533}
+{"action_id": "bootstrap_env_1", "beat": "bootstrap-env", "chunk_index": 0, "command": "arbiter-server --config-dir ./conf env bootstrap", "phase": "command_run_start", "time": 27.725895881652832}
+{"action_id": "bootstrap_env_1", "beat": "bootstrap-env", "chunk_index": 0, "phase": "command_run_end", "status": 0, "time": 27.978189945220947}
+{"action_id": "bootstrap_env_1", "beat": "bootstrap-env", "phase": "action_end", "status": 0, "time": 27.993834972381592}
+{"beat": "bootstrap-env", "check": "Apply recording mail lab endpoints and credentials", "check_id": "bootstrap_env_check_1", "phase": "check_start", "time": 28.009061336517334}
+{"beat": "bootstrap-env", "check": "Apply recording mail lab endpoints and credentials", "check_id": "bootstrap_env_check_1", "phase": "check_end", "time": 28.057852506637573}
+{"beat": "bootstrap-env", "phase": "hold_start", "seconds": 3.0, "time": 28.07783818244934}
+{"beat": "bootstrap-env", "phase": "hold_end", "seconds": 3.0, "time": 28.096099138259888}
+{"beat": "bootstrap-env", "phase": "beat_end", "time": 28.114020109176636}
+{"beat": "inspect-bot-config", "phase": "beat_start", "time": 28.129821300506592}
+{"beat": "inspect-bot-config", "caption": "Inspect the local bot account endpoints.", "phase": "caption_start", "time": 28.1454656124115}
+{"beat": "inspect-bot-config", "caption": "Inspect the local bot account endpoints.", "phase": "caption_end", "time": 28.162139177322388}
+{"action_id": "inspect_bot_config_1", "beat": "inspect-bot-config", "phase": "action_start", "time": 28.178382635116577}
+{"action_id": "inspect_bot_config_1", "beat": "inspect-bot-config", "chunk_index": 0, "command": "sed -n '1,18p' conf/arbiter/account/imap/bot.yaml", "phase": "command_prompt_start", "time": 28.194698572158813}
+{"action_id": "inspect_bot_config_1", "beat": "inspect-bot-config", "chunk_index": 0, "command": "sed -n '1,18p' conf/arbiter/account/imap/bot.yaml", "phase": "command_prompt_end", "time": 28.21009635925293}
+{"action_id": "inspect_bot_config_1", "beat": "inspect-bot-config", "chunk_index": 0, "command": "sed -n '1,18p' conf/arbiter/account/imap/bot.yaml", "phase": "command_run_start", "time": 28.22702383995056}
+{"action_id": "inspect_bot_config_1", "beat": "inspect-bot-config", "chunk_index": 0, "phase": "command_run_end", "status": 0, "time": 28.26156759262085}
+{"action_id": "inspect_bot_config_1", "beat": "inspect-bot-config", "chunk_index": 1, "command": "sed -n '1,16p' conf/arbiter/account/smtp/bot.yaml", "phase": "command_prompt_start", "time": 28.27639389038086}
+{"action_id": "inspect_bot_config_1", "beat": "inspect-bot-config", "chunk_index": 1, "command": "sed -n '1,16p' conf/arbiter/account/smtp/bot.yaml", "phase": "command_prompt_end", "time": 28.29243230819702}
+{"action_id": "inspect_bot_config_1", "beat": "inspect-bot-config", "chunk_index": 1, "command": "sed -n '1,16p' conf/arbiter/account/smtp/bot.yaml", "phase": "command_run_start", "time": 28.308077812194824}
+{"action_id": "inspect_bot_config_1", "beat": "inspect-bot-config", "chunk_index": 1, "phase": "command_run_end", "status": 0, "time": 28.341557264328003}
+{"action_id": "inspect_bot_config_1", "beat": "inspect-bot-config", "phase": "action_end", "status": 0, "time": 28.35827612876892}
+{"beat": "inspect-bot-config", "phase": "hold_start", "seconds": 4.0, "time": 28.373245239257812}
+{"beat": "inspect-bot-config", "phase": "hold_end", "seconds": 4.0, "time": 28.387943267822266}
+{"beat": "inspect-bot-config", "phase": "beat_end", "time": 28.402841329574585}
+{"beat": "stage-server", "phase": "beat_start", "time": 28.41752028465271}
+{"beat": "stage-server", "caption": "Start staging on the staging MCP port.", "phase": "caption_start", "time": 28.43185782432556}
+{"beat": "stage-server", "caption": "Start staging on the staging MCP port.", "phase": "caption_end", "time": 28.44647717475891}
+{"action_id": "stage_server_1", "beat": "stage-server", "phase": "action_start", "time": 28.46131157875061}
+{"action_id": "stage_server_1", "beat": "stage-server", "chunk_index": 0, "command": "./arbiter-docker up", "phase": "command_prompt_start", "time": 28.476367950439453}
+{"action_id": "stage_server_1", "beat": "stage-server", "chunk_index": 0, "command": "./arbiter-docker up", "phase": "command_prompt_end", "time": 28.492268323898315}
+{"action_id": "stage_server_1", "beat": "stage-server", "chunk_index": 0, "command": "./arbiter-docker up", "phase": "command_run_start", "time": 28.50866436958313}
+{"action_id": "stage_server_1", "beat": "stage-server", "chunk_index": 0, "phase": "command_run_end", "status": 0, "time": 37.266088008880615}
+{"action_id": "stage_server_1", "beat": "stage-server", "chunk_index": 1, "command": "./arbiter-docker test", "phase": "command_prompt_start", "time": 37.28141260147095}
+{"action_id": "stage_server_1", "beat": "stage-server", "chunk_index": 1, "command": "./arbiter-docker test", "phase": "command_prompt_end", "time": 37.296332597732544}
+{"action_id": "stage_server_1", "beat": "stage-server", "chunk_index": 1, "command": "./arbiter-docker test", "phase": "command_run_start", "time": 37.31101727485657}
+{"action_id": "stage_server_1", "beat": "stage-server", "chunk_index": 1, "phase": "command_run_end", "status": 0, "time": 43.39018416404724}
+{"action_id": "stage_server_1", "beat": "stage-server", "chunk_index": 2, "command": "arbiter arbiter.mcp_url=http://127.0.0.1:18025/mcp info plugins | jq .plugins", "phase": "command_prompt_start", "time": 43.40525269508362}
+{"action_id": "stage_server_1", "beat": "stage-server", "chunk_index": 2, "command": "arbiter arbiter.mcp_url=http://127.0.0.1:18025/mcp info plugins | jq .plugins", "phase": "command_prompt_end", "time": 43.42033314704895}
+{"action_id": "stage_server_1", "beat": "stage-server", "chunk_index": 2, "command": "arbiter arbiter.mcp_url=http://127.0.0.1:18025/mcp info plugins | jq .plugins", "phase": "command_run_start", "time": 43.43476605415344}
+{"action_id": "stage_server_1", "beat": "stage-server", "chunk_index": 2, "phase": "command_run_end", "status": 0, "time": 43.47608518600464}
+{"action_id": "stage_server_1", "beat": "stage-server", "phase": "action_end", "status": 0, "time": 43.493473052978516}

@@ -157,10 +157,12 @@ def test_apply_mail_lab_config_updates_staged_account_files(
     imap_text = imap_account.read_text(encoding="utf-8")
     smtp_text = smtp_account.read_text(encoding="utf-8")
     env_text = (config_dir / ".env").read_text(encoding="utf-8")
+    assert "# @package arbiter.account.imap.bot\n" in imap_text
     assert "host: host.docker.internal\n" in imap_text
     assert "port: 2143\n" in imap_text
     assert "tls: none\n" in imap_text
     assert "kind:" not in imap_text
+    assert "# @package arbiter.account.smtp.bot\n" in smtp_text
     assert "host: host.docker.internal\n" in smtp_text
     assert "port: 2525\n" in smtp_text
     assert "from_email: bot@example.test\n" in smtp_text

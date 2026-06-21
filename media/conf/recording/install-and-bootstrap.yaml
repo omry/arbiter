@@ -54,7 +54,7 @@ audio:
       - segment
 
 setup:
-  - name: Prepare PyPI operator commands and local mail lab
+  - name: Prepare operator commands and local mail lab
     run: |
       recording_repo="$PWD"
       export recording_repo

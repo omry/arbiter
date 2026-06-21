@@ -1797,6 +1797,32 @@ def run_cast_path(run_dir: Path) -> Path | None:
     return None
 
 
+def find_latest_run_cast() -> Path:
+    runs_root = REPO_ROOT / "media" / "runs"
+    candidates: list[tuple[int, str, str, Path]] = []
+    if runs_root.is_dir():
+        for recording_dir in runs_root.iterdir():
+            if not recording_dir.is_dir():
+                continue
+            for run_dir in recording_dir.iterdir():
+                if not run_dir.is_dir():
+                    continue
+                cast_path = run_cast_path(run_dir)
+                if cast_path is None:
+                    continue
+                candidates.append(
+                    (
+                        cast_path.stat().st_mtime_ns,
+                        run_dir.name,
+                        recording_dir.name,
+                        cast_path,
+                    )
+                )
+    if not candidates:
+        raise RecordingError(f"no preserved run casts found under: {runs_root}")
+    return max(candidates)[3]
+
+
 def inspect_run(spec: dict[str, Any], *, run_id: str) -> int:
     run_dir = run_dir_for_id(spec, run_id)
     entrypoint = run_dir / "enter"
@@ -1859,9 +1885,10 @@ def play_recording(
             raise RecordingError(f"no preserved cast found in run: {run_dir}")
     else:
         if spec is None:
-            raise RecordingError("run_id or cast is required for action=play")
-        outputs = as_mapping(spec.get("outputs"), field="outputs")
-        cast_path = relative_path(require_string(outputs, "cast"))
+            cast_path = find_latest_run_cast()
+        else:
+            outputs = as_mapping(spec.get("outputs"), field="outputs")
+            cast_path = relative_path(require_string(outputs, "cast"))
     if not cast_path.exists():
         raise RecordingError(f"cast not found: {cast_path}")
     check_asciinema()
@@ -1907,7 +1934,7 @@ def run_tool_from_hydra_cfg(cfg: Any) -> int:
             str(override).startswith("recording=")
             for override in overrides
         )
-        if run_id and not recording_was_explicit:
+        if not cast_override and not recording_was_explicit:
             spec = None
         return play_recording(spec, run_id=run_id, cast_override=cast_override)
     spec = spec_from_hydra_cfg(cfg)

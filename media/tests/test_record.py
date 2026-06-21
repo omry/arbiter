@@ -550,6 +550,69 @@ def test_play_run_finds_preserved_cast_by_run_id(
     assert commands == [["asciinema", "play", str(cast)]]
 
 
+def test_play_without_run_id_uses_latest_preserved_cast(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    old_run = tmp_path / "media" / "runs" / "one" / "20260616-150000"
+    new_run = tmp_path / "media" / "runs" / "two" / "20260616-160000"
+    old_run.mkdir(parents=True)
+    new_run.mkdir(parents=True)
+    old_cast = old_run / "recording.cast"
+    new_cast = new_run / "failed.cast"
+    old_cast.write_text("old\n", encoding="utf-8")
+    new_cast.write_text("new\n", encoding="utf-8")
+    os.utime(old_cast, (100.0, 100.0))
+    os.utime(new_cast, (200.0, 200.0))
+    commands: list[list[str]] = []
+
+    monkeypatch.setattr(record, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(record, "check_asciinema", lambda: "asciinema 3.2.0")
+
+    def fake_run(
+        command: list[str], *, cwd: Path, check: bool
+    ) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(record.subprocess, "run", fake_run)
+
+    result = record.play_recording(None, run_id=None, cast_override=None)
+
+    assert result == 0
+    assert commands == [["asciinema", "play", str(new_cast)]]
+
+
+def test_action_play_without_explicit_recording_uses_latest_run(
+    monkeypatch: Any,
+) -> None:
+    calls: list[tuple[dict[str, Any] | None, str | None, str | None]] = []
+
+    monkeypatch.setattr(
+        record,
+        "control_config_from_hydra_cfg",
+        lambda _cfg: {"action": "play", "run_id": None, "cast": None},
+    )
+    monkeypatch.setattr(
+        record,
+        "spec_from_hydra_cfg",
+        lambda _cfg: {"_overrides": ["action=play"], "outputs": {"cast": "out.cast"}},
+    )
+
+    def fake_play(
+        spec: dict[str, Any] | None,
+        *,
+        run_id: str | None,
+        cast_override: str | None,
+    ) -> int:
+        calls.append((spec, run_id, cast_override))
+        return 0
+
+    monkeypatch.setattr(record, "play_recording", fake_play)
+
+    assert record.run_tool_from_hydra_cfg(object()) == 0
+    assert calls == [(None, None, None)]
+
+
 def test_play_run_reports_ambiguous_run_id(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
@@ -902,6 +965,59 @@ def test_top_level_setup_emits_timeline_events(tmp_path: Path) -> None:
     assert [event["phase"] for event in setup_events] == ["check_start", "check_end"]
     assert {event["beat"] for event in setup_events} == {"__setup__"}
     assert {event["check"] for event in setup_events} == {"prepare hidden state"}
+
+
+def test_visible_action_failure_reports_exit_before_output_gate() -> None:
+    spec = minimal_spec(
+        beats=[
+            {
+                "id": "stage-server",
+                "actions": [
+                    {
+                        "run": "printf 'container name already owned\\n'; false",
+                        "expect": {
+                            "output_contains": ["URL: http://127.0.0.1:18075"]
+                        },
+                    }
+                ],
+            }
+        ]
+    )
+
+    result = run_rendered_session(spec)
+
+    assert result.returncode == 1
+    assert (
+        "recording gate failed: stage_server_1 exited 1, expected 0"
+        in result.stderr
+    )
+    assert "missing text: URL: http://127.0.0.1:18075" not in result.stderr
+
+
+def test_hidden_check_failure_reports_exit_before_output_gate() -> None:
+    spec = minimal_spec(
+        beats=[
+            {
+                "id": "verify",
+                "checks": [
+                    {
+                        "name": "hidden proof",
+                        "run": "printf 'hidden stdout\\n'; false",
+                        "expect": {"output_contains": ["expected hidden output"]},
+                    }
+                ],
+            }
+        ]
+    )
+
+    result = run_rendered_session(spec)
+
+    assert result.returncode == 1
+    assert (
+        "recording check failed: hidden proof exited 1, expected 0"
+        in result.stderr
+    )
+    assert "missing text: expected hidden output" not in result.stderr
 
 
 def test_hidden_check_failure_requires_review_without_dumping_stdout() -> None:
