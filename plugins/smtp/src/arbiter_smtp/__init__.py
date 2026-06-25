@@ -129,6 +129,22 @@ def _format_smtp_exception(exc: Exception) -> str:
     return str(exc)
 
 
+def _smtp_live_auth_error(smtp_config: SMTPConfig) -> str | None:
+    if not smtp_config.authenticate:
+        return None
+    has_username = bool(smtp_config.username.strip())
+    has_password = bool(smtp_config.password)
+    if has_username and not has_password:
+        return "SMTP account missing password for live authentication check"
+    if has_password and not has_username:
+        return "SMTP account missing username for live authentication check"
+    if not has_username and not has_password:
+        return (
+            "SMTP account missing username and password for live authentication check"
+        )
+    return None
+
+
 @dataclass(frozen=True)
 class SendEmailInput:
     account: str = field(
@@ -216,6 +232,14 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
                 progress(account_name)
             smtp_policy = self._policies[smtp_config.policy]
             stage = "connect_auth_noop_idempotency"
+            if auth_error := _smtp_live_auth_error(smtp_config):
+                results[account_name] = {
+                    "status": "failed",
+                    "stage": "configuration",
+                    "error_type": "ValueError",
+                    "message": auth_error,
+                }
+                continue
             strict_sent_copy = self._sent_copy_requires_readiness_check(smtp_policy)
             try:
                 self._smtp_client_factory(smtp_config).test_connection()

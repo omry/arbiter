@@ -114,6 +114,16 @@ def _format_exception_message(exc: BaseException) -> str:
     return str(exc)
 
 
+def _imap_live_auth_error(imap_config: IMAPConfig) -> str | None:
+    has_username = bool(imap_config.username.strip())
+    has_password = bool(imap_config.password)
+    if has_username and not has_password:
+        return "IMAP account missing password for live authentication check"
+    if has_password and not has_username:
+        return "IMAP account missing username for live authentication check"
+    return None
+
+
 def _accessible_trash_folders(
     resolver: IMAPPolicyResolver,
     folder_names: Sequence[str],
@@ -278,6 +288,14 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
         for account_name, imap_config in sorted(self._accounts.items()):
             if progress is not None:
                 progress(account_name)
+            if auth_error := _imap_live_auth_error(imap_config):
+                results[account_name] = {
+                    "status": "failed",
+                    "stage": "configuration",
+                    "error_type": "ValueError",
+                    "message": auth_error,
+                }
+                continue
             client = self._make_client(imap_config)
             try:
                 server_folders = client.list_folders()

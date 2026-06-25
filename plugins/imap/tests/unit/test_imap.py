@@ -733,6 +733,32 @@ def test_runtime_tests_configured_folders_read_only() -> None:
     assert progress_calls == ["primary"]
 
 
+def test_runtime_live_check_requires_password_before_connecting() -> None:
+    def client_factory(config: IMAPConfig) -> IMAPClientProtocol:
+        raise AssertionError("client should not be created")
+
+    runtime = IMAPRuntime(
+        accounts={
+            "primary": IMAPConfig(
+                policy="bot",
+                username="user",
+                password="",
+            )
+        },
+        policies={"bot": _allow_all_policy()},
+        imap_client_factory=client_factory,
+    )
+
+    assert runtime.test_accounts() == {
+        "primary": {
+            "status": "failed",
+            "stage": "configuration",
+            "error_type": "ValueError",
+            "message": "IMAP account missing password for live authentication check",
+        }
+    }
+
+
 def test_runtime_live_check_requires_server_trash_when_delete_allowed() -> None:
     policy = _allow_all_policy()
     policy.operation_defaults.delete = IMAPOperationDecision.allow

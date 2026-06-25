@@ -188,6 +188,32 @@ def test_runtime_tests_accounts_without_sending(tmp_path: Path) -> None:
     assert progress_calls == ["primary"]
 
 
+def test_runtime_requires_password_before_authenticated_live_check(
+    tmp_path: Path,
+) -> None:
+    factory = RecordingSMTPClientFactory()
+    runtime = _runtime(
+        cache_dir=tmp_path,
+        factory=factory,
+        account=SMTPConfig(
+            policy="bot",
+            authenticate=True,
+            username="user",
+            password="",
+        ),
+    )
+
+    assert runtime.test_accounts() == {
+        "primary": {
+            "status": "failed",
+            "stage": "configuration",
+            "error_type": "ValueError",
+            "message": "SMTP account missing password for live authentication check",
+        }
+    }
+    assert factory.clients == []
+
+
 def test_runtime_tests_required_sent_copy_destination(tmp_path: Path) -> None:
     factory = RecordingSMTPClientFactory()
     appender = RecordingSentMessageAppender()
