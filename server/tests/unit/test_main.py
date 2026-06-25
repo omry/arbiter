@@ -32,8 +32,10 @@ from arbiter_server.main import (
     ENV_FILE_MODE,
     _artifact_base_url,
     _build_local_source_wheel,
+    _config_check_output_width,
     _default_container_user,
     _docker_bundle_plugin,
+    _config_check_tree_lines,
     _run_config_check,
     _run_server,
     _server_tls_files,
@@ -627,12 +629,12 @@ def test_config_check_summary_validates_runtime_construction() -> None:
         _app_config_with_smtp_imap(),
         service_plugins=_test_service_plugins(),
     ) == (
-        "server              | pass\n"
-        "Plugins             | pass\n"
-        "├── smtp            | pass\n"
-        "│   └── primary/bot | pass | account/policy pair valid\n"
-        "└── imap            | pass\n"
-        "    └── primary/bot | pass | account/policy pair valid"
+        "server              │ pass\n"
+        "Plugins             │ pass\n"
+        "├── smtp            │ pass\n"
+        "│   └── primary/bot │ pass │ account/policy pair valid\n"
+        "└── imap            │ pass\n"
+        "    └── primary/bot │ pass │ account/policy pair valid"
     )
 
 
@@ -695,10 +697,10 @@ def test_config_check_summary_calls_active_plugin_config_checker() -> None:
     )
 
     assert config_check_summary(cfg, service_plugins=[FakePlugin()]) == (
-        "server              | pass\n"
-        "Plugins             | pass\n"
-        "└── fake            | pass\n"
-        "    └── primary/bot | pass | account/policy pair valid"
+        "server              │ pass\n"
+        "Plugins             │ pass\n"
+        "└── fake            │ pass\n"
+        "    └── primary/bot │ pass │ account/policy pair valid"
     )
     assert checked["accounts"] == {"primary": {"policy": "bot"}}
     assert checked["policies"] == {"bot": {}}
@@ -729,12 +731,62 @@ def test_config_check_summary_pads_leaf_columns() -> None:
     )
 
     assert report.summary == (
-        "server         | pass\n"
-        "Plugins        | warn\n"
-        "└── smtp       | warn\n"
-        "    ├── a/p    | pass | short name\n"
-        "    └── long/p | warn | long name"
+        "server         │ pass\n"
+        "Plugins        │ warn\n"
+        "└── smtp       │ warn\n"
+        "    ├── a/p    │ pass │ short name\n"
+        "    └── long/p │ warn │ long name"
     )
+
+
+def test_config_check_tree_lines_wrap_messages_under_message_column() -> None:
+    lines = _config_check_tree_lines(
+        (
+            ConfigCheckComponentReport(
+                name="imap",
+                errors=(
+                    ConfigCheckIssue(
+                        message=(
+                            "KeyError raised while resolving interpolation: "
+                            "\"Environment variable 'IMAP_PERSONAL_ACCOUNT_HOST' "
+                            'not found"\n'
+                            "full_key: arbiter.account.imap.personal.host\n"
+                            "object_type=IMAPConfig"
+                        ),
+                        account="personal",
+                        policy="personal_policy",
+                    ),
+                ),
+            ),
+        ),
+        width=72,
+    )
+
+    assert all(len(line) <= 72 for line in lines)
+    assert lines == (
+        "Plugins                          │ fail",
+        "└── imap                         │ fail",
+        "    └── personal/personal_policy │ fail │ KeyError raised while",
+        "                                          resolving interpolation:",
+        '                                          "Environment variable',
+        "                                          'IMAP_PERSONAL_ACCOUNT_HOST'",
+        '                                          not found"',
+        "                                          full_key: arbiter.account.imap",
+        "                                          .personal.host",
+        "                                          object_type=IMAPConfig",
+    )
+
+
+def test_config_check_output_width_uses_columns_without_tty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class NonTTY:
+        def isatty(self) -> bool:
+            return False
+
+    monkeypatch.setenv("COLUMNS", "72")
+
+    assert _config_check_output_width(NonTTY()) == 72
 
 
 def test_config_check_report_marks_plugin_failures() -> None:
@@ -804,11 +856,11 @@ def test_config_check_report_marks_plugin_failures() -> None:
 
     assert report.failed is True
     assert report.summary == (
-        "server              | pass\n"
-        "Plugins             | fail\n"
-        "└── fake            | fail\n"
-        "    ├── primary/bot | pass | account/policy pair valid\n"
-        "    └── primary/bot | fail | bad fake policy"
+        "server              │ pass\n"
+        "Plugins             │ fail\n"
+        "└── fake            │ fail\n"
+        "    ├── primary/bot │ pass │ account/policy pair valid\n"
+        "    └── primary/bot │ fail │ bad fake policy"
     )
 
 
@@ -871,10 +923,10 @@ def test_config_check_report_marks_unknown_account_policy_pair() -> None:
 
     assert report.failed is True
     assert report.summary == (
-        "server                  | pass\n"
-        "Plugins                 | fail\n"
-        "└── fake                | fail\n"
-        "    └── primary/missing | fail | account references an unknown policy"
+        "server                  │ pass\n"
+        "Plugins                 │ fail\n"
+        "└── fake                │ fail\n"
+        "    └── primary/missing │ fail │ account references an unknown policy"
     )
 
 
@@ -947,10 +999,10 @@ def test_config_check_report_live_marks_failed_account_tests() -> None:
 
     assert report.failed is True
     assert report.summary == (
-        "server              | pass\n"
-        "Plugins             | fail\n"
-        "└── fake            | fail\n"
-        "    └── primary/bot | fail | authentication failed"
+        "server              │ pass\n"
+        "Plugins             │ fail\n"
+        "└── fake            │ fail\n"
+        "    └── primary/bot │ fail │ authentication failed"
     )
 
 
@@ -1022,10 +1074,10 @@ def test_config_check_report_live_decodes_byte_account_test_messages() -> None:
     report = config_check_report(cfg, service_plugins=[FakePlugin()], live=True)
 
     assert report.summary == (
-        "server              | pass\n"
-        "Plugins             | fail\n"
-        "└── fake            | fail\n"
-        "    └── primary/bot | fail | "
+        "server              │ pass\n"
+        "Plugins             │ fail\n"
+        "└── fake            │ fail\n"
+        "    └── primary/bot │ fail │ "
         "[AUTHENTICATIONFAILED] Authentication failed."
     )
 
@@ -1102,7 +1154,7 @@ def test_config_check_report_live_decodes_byte_exception_args() -> None:
 
     assert "b'" not in report.summary
     assert (
-        "    └── primary/bot | fail | "
+        "    └── primary/bot │ fail │ "
         "535: 5.7.8 Error: authentication failed: (reason unavailable)"
     ) in report.summary
 
@@ -1179,7 +1231,7 @@ def test_config_check_report_live_decodes_legacy_byte_string_messages() -> None:
 
     assert "b'" not in report.summary
     assert (
-        "    └── primary/bot | fail | "
+        "    └── primary/bot │ fail │ "
         "535: 5.7.8 Error: authentication failed: (reason unavailable)"
     ) in report.summary
 
@@ -1268,9 +1320,9 @@ def test_config_check_components_live_forwards_account_progress() -> None:
 
     assert [component.name for component in components] == ["server", "fake"]
     assert components[1].lines == (
-        "Plugins             | pass",
-        "└── fake            | pass",
-        "    └── primary/bot | pass | live account check passed",
+        "Plugins             │ pass",
+        "└── fake            │ pass",
+        "    └── primary/bot │ pass │ live account check passed",
     )
     assert progress_calls == [("server", None), ("fake", None), ("fake", "primary")]
 
@@ -9299,10 +9351,10 @@ def test_cli_config_check_prints_warnings_without_failing(
 
     captured = capsys.readouterr()
     assert captured.out == (
-        "server              | pass\n"
-        "Plugins             | warn\n"
-        "└── imap            | warn\n"
-        "    └── primary/bot | warn | "
+        "server              │ pass\n"
+        "Plugins             │ warn\n"
+        "└── imap            │ warn\n"
+        "    └── primary/bot │ warn │ "
         "IMAP account has no accessible configured folders\n"
     )
     assert captured.err == ""
@@ -9353,9 +9405,9 @@ def test_cli_config_check_prints_aligned_report_after_components_complete(
         == 0
     )
     assert stdout.text == (
-        "server   | pass\n"
-        "Plugins  | warn\n"
-        "└── imap | warn\n"
+        "server   │ pass\n"
+        "Plugins  │ warn\n"
+        "└── imap │ warn\n"
         "- warn: still checking later component\n"
     )
 
@@ -9463,7 +9515,7 @@ def test_cli_config_check_animates_active_component_on_tty(
         == 0
     )
     assert "\r\033[2Ksmtp/primary: testing |" in stdout.text
-    assert "\r\033[2KPlugins  | pass\n└── smtp | pass\n" in stdout.text
+    assert "\r\033[2KPlugins  │ pass\n└── smtp │ pass\n" in stdout.text
 
 
 def test_cli_config_check_can_color_statuses(
@@ -9505,22 +9557,28 @@ def test_cli_config_check_can_color_statuses(
     assert main(["--config-dir", "/tmp", "config", "check"]) == 1
 
     captured = capsys.readouterr()
-    assert "\033[94mserver\033[0m" in captured.out
-    assert "\033[94mimap\033[0m" in captured.out
-    assert "\033[94msmtp\033[0m" in captured.out
+    assert "\033[32mserver\033[0m" in captured.out
+    assert "\033[33mimap\033[0m" in captured.out
+    assert "\033[31msmtp\033[0m" in captured.out
     assert "\033[32mpass\033[0m" in captured.out
     assert "\033[33mwarn\033[0m" in captured.out
     assert "\033[31mfail\033[0m" in captured.out
     assert (
-        "\033[94mserver\033[0m              | \033[32mpass\033[0m\n"
-        "\033[94mPlugins\033[0m             | \033[31mfail\033[0m\n"
-        "├── \033[94mimap\033[0m            | \033[33mwarn\033[0m\n"
-        "│   └── primary/bot | \033[33mwarn\033[0m | "
+        "\033[32mserver\033[0m             \033[90m │ \033[0m"
+        "\033[32mpass\033[0m\n"
+        "\033[31mPlugins\033[0m            \033[90m │ \033[0m"
+        "\033[31mfail\033[0m\n"
+        "\033[90m├── \033[0m\033[33mimap\033[0m           "
+        "\033[90m │ \033[0m\033[33mwarn\033[0m\n"
+        "\033[90m│   └── \033[0m\033[33mprimary/bot\033[0m"
+        "\033[90m │ \033[0m\033[33mwarn\033[0m\033[90m │ \033[0m"
         "\033[33mIMAP account has no accessible configured folders\033[0m\n"
     ) in captured.out
     assert (
-        "└── \033[94msmtp\033[0m            | \033[31mfail\033[0m\n"
-        "    └── primary/bot | \033[31mfail\033[0m | "
+        "\033[90m└── \033[0m\033[31msmtp\033[0m           "
+        "\033[90m │ \033[0m\033[31mfail\033[0m\n"
+        "\033[90m    └── \033[0m\033[31mprimary/bot\033[0m"
+        "\033[90m │ \033[0m\033[31mfail\033[0m\033[90m │ \033[0m"
         "\033[31mSMTP sent-copy destination missing\033[0m\n"
     ) in captured.out
     assert captured.err == ""
@@ -9638,7 +9696,7 @@ def test_cli_bootstrap_arbiter_writes_main_config(
     assert main(["--config-dir", str(config_dir), "config", "check"]) == 1
     captured = capsys.readouterr()
     assert captured.out == (
-        "server | fail\n"
+        "server │ fail\n"
         "- fail: config must define at least one service account before Arbiter can run\n"
         "  currently installed arbiter plugins: imap, smtp\n"
         "  use `arbiter-server --config-dir DIR bootstrap plugin PLUGIN account "
@@ -9672,6 +9730,66 @@ def test_cli_bootstrap_arbiter_writes_main_config(
         "NAME` to create an account config\n"
     )
     assert served == {}
+
+
+def test_cli_bootstrap_arbiter_accepts_matching_existing_config(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_dir = tmp_path / "conf"
+
+    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+    capsys.readouterr()
+
+    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+
+    config_file = config_dir / "arbiter-server.yaml"
+    server_file = config_dir / "arbiter" / "server.yaml"
+    assert capsys.readouterr().out == (
+        f"unchanged {config_file}\n" f"unchanged {server_file}\n"
+    )
+
+
+def test_cli_bootstrap_arbiter_refuses_different_existing_config(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_dir = tmp_path / "conf"
+    config_file = config_dir / "arbiter-server.yaml"
+    config_file.parent.mkdir(parents=True)
+    config_file.write_text("local: true\n", encoding="utf-8")
+
+    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 1
+
+    assert config_file.read_text(encoding="utf-8") == "local: true\n"
+    assert capsys.readouterr().err == (
+        "Arbiter bootstrap error: refusing to overwrite changed bootstrap "
+        f"file: {config_file}\n"
+        "  file differs from the generated bootstrap template\n"
+        "  rerun with --force to overwrite it\n"
+    )
+
+
+def test_cli_bootstrap_arbiter_refusal_uses_reploy_config_display_dir(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_dir = tmp_path / "container-config"
+    config_file = config_dir / "arbiter-server.yaml"
+    config_file.parent.mkdir(parents=True)
+    config_file.write_text("local: true\n", encoding="utf-8")
+    monkeypatch.setenv("REPLOY_CONFIG_CONTAINER_DIR", str(config_dir))
+    monkeypatch.setenv("REPLOY_CONFIG_DISPLAY_DIR", "reploy-staging/conf")
+
+    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 1
+
+    assert capsys.readouterr().err == (
+        "Arbiter bootstrap error: refusing to overwrite changed bootstrap "
+        "file: reploy-staging/conf/arbiter-server.yaml\n"
+        "  file differs from the generated bootstrap template\n"
+        "  rerun with --force to overwrite it\n"
+    )
 
 
 def test_cli_bootstrap_plugin_account_writes_service_example(
@@ -9749,6 +9867,133 @@ def test_cli_bootstrap_plugin_account_writes_service_example(
     )
 
 
+def test_cli_bootstrap_plugin_defaults_to_default_account(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_dir = tmp_path / "conf"
+
+    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+    capsys.readouterr()
+    assert main(["--config-dir", str(config_dir), "bootstrap", "plugin", "smtp"]) == 0
+
+    account_file = config_dir / "arbiter" / "account" / "smtp" / "default.yaml"
+    policy_file = config_dir / "arbiter" / "policy" / "smtp" / "default_policy.yaml"
+    assert account_file.exists()
+    assert policy_file.exists()
+    assert "policy: default_policy\n" in account_file.read_text(encoding="utf-8")
+    assert capsys.readouterr().out == (
+        f"wrote {account_file}\n"
+        f"wrote {policy_file}\n"
+        "\n"
+        "Edit the generated account and policy files, then activate the account:\n"
+        f"  arbiter-server --config-dir {config_dir} "
+        "config activate account smtp default\n"
+        "\n"
+        "Then inspect the composed config with:\n"
+        f"  arbiter-server --config-dir {config_dir} config show\n"
+    )
+
+
+def test_cli_bootstrap_plugin_accepts_comma_separated_plugins(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_dir = tmp_path / "conf"
+
+    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+    capsys.readouterr()
+    assert (
+        main(
+            [
+                "--config-dir",
+                str(config_dir),
+                "bootstrap",
+                "plugin",
+                "imap,smtp",
+            ]
+        )
+        == 0
+    )
+
+    for plugin in ("imap", "smtp"):
+        account_file = config_dir / "arbiter" / "account" / plugin / "default.yaml"
+        policy_file = config_dir / "arbiter" / "policy" / plugin / "default_policy.yaml"
+        assert account_file.exists()
+        assert policy_file.exists()
+        assert "policy: default_policy\n" in account_file.read_text(encoding="utf-8")
+    stdout = capsys.readouterr().out
+    assert stdout == (
+        f"wrote {config_dir / 'arbiter' / 'account' / 'imap' / 'default.yaml'}\n"
+        f"wrote {config_dir / 'arbiter' / 'policy' / 'imap' / 'default_policy.yaml'}\n"
+        f"wrote {config_dir / 'arbiter' / 'account' / 'smtp' / 'default.yaml'}\n"
+        f"wrote {config_dir / 'arbiter' / 'policy' / 'smtp' / 'default_policy.yaml'}\n"
+        "\n"
+        "Edit the generated account and policy files, then activate the accounts:\n"
+        f"  arbiter-server --config-dir {config_dir} "
+        "config activate account imap,smtp default\n"
+        "\n"
+        "Then inspect the composed config with:\n"
+        f"  arbiter-server --config-dir {config_dir} config show\n"
+    )
+    assert "config activate account imap,smtp default\n" in stdout
+    assert stdout.count("Then inspect the composed config with:") == 1
+
+
+def test_cli_bootstrap_plugin_accepts_comma_separated_plugins_with_shared_account_name(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_dir = tmp_path / "conf"
+
+    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+    capsys.readouterr()
+    assert (
+        main(
+            [
+                "--config-dir",
+                str(config_dir),
+                "bootstrap",
+                "plugin",
+                "imap,smtp",
+                "account",
+                "bot",
+            ]
+        )
+        == 0
+    )
+
+    for plugin in ("imap", "smtp"):
+        account_file = config_dir / "arbiter" / "account" / plugin / "bot.yaml"
+        policy_file = config_dir / "arbiter" / "policy" / plugin / "bot_policy.yaml"
+        assert account_file.exists()
+        assert policy_file.exists()
+        assert "policy: bot_policy\n" in account_file.read_text(encoding="utf-8")
+    stdout = capsys.readouterr().out
+    assert "config activate account imap,smtp bot\n" in stdout
+    assert stdout.count("Then inspect the composed config with:") == 1
+
+
+def test_cli_bootstrap_plugin_uses_reploy_app_command_prefix_in_hints(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_dir = tmp_path / "conf"
+    monkeypatch.setenv("REPLOY_APP_COMMAND_PREFIX", "reploy app")
+
+    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+    capsys.readouterr()
+    assert (
+        main(["--config-dir", str(config_dir), "bootstrap", "plugin", "imap,smtp"]) == 0
+    )
+
+    stdout = capsys.readouterr().out
+    assert "  reploy app config activate account imap,smtp default\n" in stdout
+    assert "  reploy app config show\n" in stdout
+    assert "arbiter-server --config-dir" not in stdout
+
+
 def test_cli_bootstrap_plugin_account_refuses_existing_policy_without_partial_write(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -9779,8 +10024,10 @@ def test_cli_bootstrap_plugin_account_refuses_existing_policy_without_partial_wr
     assert not account_file.exists()
     assert policy_file.read_text(encoding="utf-8") == "existing: true\n"
     assert capsys.readouterr().err == (
-        "Arbiter bootstrap error: refusing to overwrite existing file: "
-        f"{policy_file}\n"
+        "Arbiter bootstrap error: refusing to overwrite changed bootstrap "
+        f"file: {policy_file}\n"
+        "  file differs from the generated bootstrap template\n"
+        "  rerun with --force to overwrite it\n"
     )
 
 
@@ -9879,6 +10126,62 @@ def test_cli_config_activate_account_activates_matching_policy(
         cfg.arbiter.policy.smtp.personal_account_policy.limits.max_recipients_per_message
         == 10
     )
+    assert capsys.readouterr().out == f"updated {config_dir / 'arbiter-server.yaml'}\n"
+
+
+def test_cli_config_activate_account_accepts_comma_separated_plugins(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_dir = tmp_path / "conf"
+    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+    assert (
+        main(["--config-dir", str(config_dir), "bootstrap", "plugin", "imap,smtp"]) == 0
+    )
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "--config-dir",
+                str(config_dir),
+                "config",
+                "activate",
+                "account",
+                "imap,smtp",
+                "default",
+            ]
+        )
+        == 0
+    )
+
+    config_yaml = (config_dir / "arbiter-server.yaml").read_text(encoding="utf-8")
+    assert "    - imap/default\n" in config_yaml
+    assert "    - smtp/default\n" in config_yaml
+    assert "    - imap/default_policy\n" in config_yaml
+    assert "    - smtp/default_policy\n" in config_yaml
+    assert capsys.readouterr().out == f"updated {config_dir / 'arbiter-server.yaml'}\n"
+
+    assert (
+        main(
+            [
+                "--config-dir",
+                str(config_dir),
+                "config",
+                "deactivate",
+                "account",
+                "imap,smtp",
+                "default",
+            ]
+        )
+        == 0
+    )
+
+    config_yaml = (config_dir / "arbiter-server.yaml").read_text(encoding="utf-8")
+    assert "    - imap/default\n" not in config_yaml
+    assert "    - smtp/default\n" not in config_yaml
+    assert "    - imap/default_policy\n" not in config_yaml
+    assert "    - smtp/default_policy\n" not in config_yaml
     assert capsys.readouterr().out == f"updated {config_dir / 'arbiter-server.yaml'}\n"
 
 

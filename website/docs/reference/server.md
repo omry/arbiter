@@ -44,8 +44,8 @@ Inspect, validate, activate, and deactivate server config.
 ```bash
 arbiter-server config show [--resolve] [override...]
 arbiter-server config check [--live] [override...]
-arbiter-server config activate account <plugin> <name>
-arbiter-server config deactivate account <plugin> <name>
+arbiter-server config activate account <plugin[,plugin...]> <name>
+arbiter-server config deactivate account <plugin[,plugin...]> <name>
 ```
 
 - `config show`: print the composed config.
@@ -55,7 +55,9 @@ arbiter-server config deactivate account <plugin> <name>
 - `config check --live`: also run configured account readiness checks using the
   current credentials.
 - `config activate account`: add an account to the root defaults list. The
-  account's referenced policy is activated as well.
+  account's referenced policy is activated as well. Use comma-separated plugin
+  names to activate the same account name for several plugins in one command,
+  for example `config activate account imap,smtp bot`.
 - `config deactivate account`: remove an account from the root defaults list.
   The policy is removed only when no other active account still references it.
 
@@ -65,13 +67,16 @@ Create editable config templates.
 
 ```bash
 arbiter-server bootstrap arbiter [--force]
-arbiter-server bootstrap plugin <plugin> account <name> [--force]
-arbiter-server bootstrap plugin <plugin> policy <name> [--force]
+arbiter-server bootstrap plugin <plugin[,plugin...]> [account [<name>]] [--force]
+arbiter-server bootstrap plugin <plugin[,plugin...]> policy <name> [--force]
 ```
 
 - `bootstrap arbiter`: create the root server config and baseline server config.
 - `bootstrap plugin ... account`: create a plugin-owned account template and,
-  for the normal case, a matching starter policy.
+  for the normal case, a matching starter policy. If `account` or `<name>` is
+  omitted, the account name defaults to `default`. Use comma-separated plugin
+  names to create the same account name for several plugins in one command, for
+  example `bootstrap plugin imap,smtp account bot`.
 - `bootstrap plugin ... policy`: create a plugin-owned policy template.
 - To protect user config, bootstrap commands refuse to rewrite an existing file.
   Add `--force` only when you intentionally want to replace the target file.

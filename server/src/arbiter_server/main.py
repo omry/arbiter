@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import textwrap
 import time
 from collections.abc import (
     AsyncGenerator,
@@ -341,6 +342,9 @@ _CONFIG_CHECK_STATUS_COLORS = {
     "fail": "31",
 }
 _CONFIG_CHECK_COMPONENT_COLOR = "94"
+_CONFIG_CHECK_STRUCTURE_COLOR = "90"
+_CONFIG_CHECK_COLUMN_SEPARATOR = " │ "
+_CONFIG_CHECK_COLUMN_SEPARATOR_PATTERN = r" [|│] "
 _CONFIG_CHECK_PROGRESS_FRAMES = ("|", "/", "-", "\\")
 
 
@@ -388,8 +392,17 @@ def _color_config_check_message(status: str, message: str) -> str:
     return f"\033[{color}m{message}\033[0m"
 
 
-def _color_config_check_component(component: str) -> str:
-    return f"\033[{_CONFIG_CHECK_COMPONENT_COLOR}m{component}\033[0m"
+def _color_config_check_structure(status: str, value: str) -> str:
+    if not value:
+        return value
+    return f"\033[{_CONFIG_CHECK_STRUCTURE_COLOR}m{value}\033[0m"
+
+
+def _color_config_check_component(component: str, status: str | None = None) -> str:
+    color = _CONFIG_CHECK_STATUS_COLORS.get(status or "")
+    if color is None:
+        color = _CONFIG_CHECK_COMPONENT_COLOR
+    return f"\033[{color}m{component}\033[0m"
 
 
 class _ConfigCheckProgress:
@@ -461,11 +474,14 @@ class _ConfigCheckProgress:
             flush()
 
 
-def _color_config_check_line(line: str) -> str:
+def _color_config_check_line(
+    line: str, *, continuation_status: str | None = None
+) -> str:
     match = re.fullmatch(r"([^:]+): (pass|warn|fail)", line)
     if match is not None:
         return (
-            f"{_color_config_check_component(match.group(1))}: "
+            f"{_color_config_check_component(match.group(1), match.group(2))}"
+            f"{_color_config_check_structure(match.group(2), ': ')}"
             f"{_color_config_check_status(match.group(2))}"
         )
     match = re.fullmatch(r"([A-Za-z0-9_.-]+)", line)
@@ -475,58 +491,101 @@ def _color_config_check_line(line: str) -> str:
     if match is not None:
         return f"{match.group(1)}{_color_config_check_component(match.group(2))}"
     match = re.fullmatch(
-        r"((?:│   |    )?[├└]── )([^|]*?)( \| )(pass|warn|fail)( *\| )(.*)",
+        rf"((?:│   |    )?[├└]── )([^|│]*?)"
+        rf"({_CONFIG_CHECK_COLUMN_SEPARATOR_PATTERN})"
+        rf"(pass|warn|fail)( *[|│] )(.*)",
         line,
     )
     if match is not None:
         return (
-            f"{match.group(1)}{match.group(2)}{match.group(3)}"
-            f"{_color_config_check_status(match.group(4))}{match.group(5)}"
+            f"{_color_config_check_structure(match.group(4), match.group(1))}"
+            f"{_color_config_check_component(match.group(2).rstrip(), match.group(4))}"
+            f"{match.group(2)[len(match.group(2).rstrip()):]}"
+            f"{_color_config_check_structure(match.group(4), match.group(3))}"
+            f"{_color_config_check_status(match.group(4))}"
+            f"{_color_config_check_structure(match.group(4), match.group(5))}"
             f"{_color_config_check_message(match.group(4), match.group(6))}"
         )
     match = re.fullmatch(
-        r"((?:│   |    )?[├└]── )([^|]*?)( \| )(pass|warn|fail)",
+        rf"((?:│   |    )?[├└]── )([^|│]*?)"
+        rf"({_CONFIG_CHECK_COLUMN_SEPARATOR_PATTERN})(pass|warn|fail)",
         line,
     )
     if match is not None:
         label = match.group(2)
         trimmed_label = label.rstrip()
         return (
-            f"{match.group(1)}{_color_config_check_component(trimmed_label)}"
-            f"{label[len(trimmed_label):]}{match.group(3)}"
+            f"{_color_config_check_structure(match.group(4), match.group(1))}"
+            f"{_color_config_check_component(trimmed_label, match.group(4))}"
+            f"{label[len(trimmed_label):]}"
+            f"{_color_config_check_structure(match.group(4), match.group(3))}"
             f"{_color_config_check_status(match.group(4))}"
         )
-    match = re.fullmatch(r"([^|]*?)( \| )(pass|warn|fail)( *\| )(.*)", line)
+    match = re.fullmatch(
+        rf"([^|│]*?)({_CONFIG_CHECK_COLUMN_SEPARATOR_PATTERN})"
+        rf"(pass|warn|fail)( *[|│] )(.*)",
+        line,
+    )
     if match is not None:
         return (
-            f"{_color_config_check_component(match.group(1).rstrip())}"
-            f"{match.group(1)[len(match.group(1).rstrip()):]}{match.group(2)}"
-            f"{_color_config_check_status(match.group(3))}{match.group(4)}"
+            f"{_color_config_check_component(match.group(1).rstrip(), match.group(3))}"
+            f"{match.group(1)[len(match.group(1).rstrip()):]}"
+            f"{_color_config_check_structure(match.group(3), match.group(2))}"
+            f"{_color_config_check_status(match.group(3))}"
+            f"{_color_config_check_structure(match.group(3), match.group(4))}"
             f"{_color_config_check_message(match.group(3), match.group(5))}"
         )
-    match = re.fullmatch(r"([^|]*?)( \| )(pass|warn|fail)", line)
+    match = re.fullmatch(
+        rf"([^|│]*?)({_CONFIG_CHECK_COLUMN_SEPARATOR_PATTERN})(pass|warn|fail)",
+        line,
+    )
     if match is not None:
         return (
-            f"{_color_config_check_component(match.group(1).rstrip())}"
-            f"{match.group(1)[len(match.group(1).rstrip()):]}{match.group(2)}"
+            f"{_color_config_check_component(match.group(1).rstrip(), match.group(3))}"
+            f"{match.group(1)[len(match.group(1).rstrip()):]}"
+            f"{_color_config_check_structure(match.group(3), match.group(2))}"
             f"{_color_config_check_status(match.group(3))}"
         )
-    match = re.fullmatch(r"(pass|warn|fail)( +\| .*\| )(.*)", line)
+    match = re.fullmatch(r"(pass|warn|fail)( +[|│] .*[|│] )(.*)", line)
     if match is not None:
         return (
-            f"{_color_config_check_status(match.group(1))}{match.group(2)}"
+            f"{_color_config_check_status(match.group(1))}"
+            f"{_color_config_check_structure(match.group(1), match.group(2))}"
             f"{_color_config_check_message(match.group(1), match.group(3))}"
         )
-    match = re.fullmatch(r"(pass|warn|fail)( +\| .*)", line)
+    match = re.fullmatch(r"(pass|warn|fail)( +[|│] .*)", line)
     if match is not None:
-        return f"{_color_config_check_status(match.group(1))}{match.group(2)}"
+        return (
+            f"{_color_config_check_status(match.group(1))}"
+            f"{_color_config_check_structure(match.group(1), match.group(2))}"
+        )
     match = re.fullmatch(r"(- )(pass|warn|fail):(.*)", line)
     if match is not None:
         return (
-            f"{match.group(1)}{_color_config_check_status(match.group(2))}:"
+            f"{_color_config_check_structure(match.group(2), match.group(1))}"
+            f"{_color_config_check_status(match.group(2))}"
+            f"{_color_config_check_structure(match.group(2), ':')}"
             f"{_color_config_check_message(match.group(2), match.group(3))}"
         )
+    if continuation_status is not None:
+        match = re.fullmatch(r"(\s+)(.*)", line)
+        if match is not None:
+            return (
+                f"{match.group(1)}"
+                f"{_color_config_check_message(continuation_status, match.group(2))}"
+            )
     return line
+
+
+def _config_check_line_status(line: str) -> Literal["pass", "warn", "fail"] | None:
+    match = re.search(
+        rf"(?:^|{_CONFIG_CHECK_COLUMN_SEPARATOR_PATTERN})"
+        rf"(pass|warn|fail)(?:$|{_CONFIG_CHECK_COLUMN_SEPARATOR_PATTERN})",
+        line,
+    )
+    if match is None:
+        return None
+    return cast(Literal["pass", "warn", "fail"], match.group(1))
 
 
 def _config_check_worst_status(
@@ -545,12 +604,14 @@ def _config_check_tree_lines(
     components: Sequence[ConfigCheckComponentReport],
     *,
     unicode_tree: bool = True,
+    width: int | None = None,
 ) -> tuple[str, ...]:
     if not components:
         return ()
     last_branch = "└──" if unicode_tree else "`--"
     mid_branch = "├──" if unicode_tree else "|--"
     mid_prefix = "│   " if unicode_tree else "|   "
+    column_separator = _CONFIG_CHECK_COLUMN_SEPARATOR if unicode_tree else " | "
 
     server_components = tuple(
         component for component in components if component.name == "server"
@@ -588,14 +649,56 @@ def _config_check_tree_lines(
             )
     label_width = max(len(label) for label, _, _ in tree_rows)
     status_width = max(len(status) for _, status, _ in tree_rows)
-    return tuple(
-        (
-            f"{label:<{label_width}} | {status:<{status_width}} | {message}"
-            if message
-            else f"{label:<{label_width}} | {status:<{status_width}}"
-        ).rstrip()
-        for label, status, message in tree_rows
-    )
+    lines: list[str] = []
+    for label, status, message in tree_rows:
+        lines.extend(
+            _format_config_check_tree_row(
+                label=label,
+                status=status,
+                message=message,
+                label_width=label_width,
+                status_width=status_width,
+                column_separator=column_separator,
+                width=width,
+            )
+        )
+    return tuple(lines)
+
+
+def _format_config_check_tree_row(
+    *,
+    label: str,
+    status: str,
+    message: str,
+    label_width: int,
+    status_width: int,
+    column_separator: str,
+    width: int | None,
+) -> tuple[str, ...]:
+    prefix = f"{label:<{label_width}}{column_separator}{status:<{status_width}}"
+    if not message:
+        return (prefix.rstrip(),)
+    message_prefix = f"{prefix}{column_separator}"
+    if width is None or width <= len(message_prefix) + 1:
+        return (f"{message_prefix}{message}".rstrip(),)
+    wrapped: list[str] = []
+    continuation_prefix = " " * len(message_prefix)
+    available = max(1, width - len(message_prefix))
+    for index, message_line in enumerate(message.splitlines() or [""]):
+        line_parts = textwrap.wrap(
+            message_line,
+            width=available,
+            break_long_words=True,
+            break_on_hyphens=False,
+        ) or [""]
+        for part_index, part in enumerate(line_parts):
+            prefix_for_part = (
+                message_prefix
+                if index == 0 and part_index == 0
+                else continuation_prefix
+            )
+            wrapped.append(f"{prefix_for_part}{part}".rstrip())
+    return tuple(wrapped)
 
 
 def _config_check_row_account_policy(row: _ConfigCheckTableRow) -> str:
@@ -631,7 +734,41 @@ def _color_config_check_lines(
 ) -> tuple[str, ...]:
     if not color:
         return tuple(lines)
-    return tuple(_color_config_check_line(line) for line in lines)
+    colored: list[str] = []
+    continuation_status: Literal["pass", "warn", "fail"] | None = None
+    for line in lines:
+        status = _config_check_line_status(line)
+        colored.append(
+            _color_config_check_line(
+                line,
+                continuation_status=continuation_status if status is None else None,
+            )
+        )
+        if status is not None:
+            continuation_status = status
+        elif not line.startswith(" "):
+            continuation_status = None
+    return tuple(colored)
+
+
+def _config_check_output_width(output: object) -> int | None:
+    columns = _config_check_columns_env()
+    if columns is not None:
+        return columns
+    isatty = getattr(output, "isatty", None)
+    if not callable(isatty) or not isatty():
+        return None
+    return shutil.get_terminal_size(fallback=(120, 24)).columns
+
+
+def _config_check_columns_env() -> int | None:
+    try:
+        columns = int(os.environ.get("COLUMNS", ""))
+    except ValueError:
+        return None
+    if columns < 20:
+        return None
+    return columns
 
 
 def _config_check_issue_message(issue: ConfigCheckIssue) -> str:
@@ -3856,7 +3993,11 @@ def _run_config_check(
             components.append(component)
             failed = failed or component.status == "fail"
         for line in _color_config_check_lines(
-            _config_check_tree_lines(components, unicode_tree=unicode_tree),
+            _config_check_tree_lines(
+                components,
+                unicode_tree=unicode_tree,
+                width=_config_check_output_width(sys.stdout),
+            ),
             color=color,
         ):
             print(line, flush=True)
@@ -3898,16 +4039,43 @@ def _ensure_config_dir(config_dir: str | None) -> Path | None:
     return Path(DEFAULT_CONFIG_DIR if config_dir is None else config_dir).expanduser()
 
 
+def _display_config_path(path: Path) -> str:
+    display_dir = os.environ.get("REPLOY_CONFIG_DISPLAY_DIR")
+    if not display_dir:
+        return str(path)
+    container_dir = os.environ.get("REPLOY_CONFIG_CONTAINER_DIR", "/config")
+    container_dir = container_dir.rstrip("/") or "/"
+    path_text = str(path)
+    if path_text == container_dir:
+        return display_dir
+    prefix = container_dir + "/"
+    if path_text.startswith(prefix):
+        return str(Path(display_dir) / path_text[len(prefix) :])
+    return path_text
+
+
+def _print_bootstrap_overwrite_error(path: Path) -> None:
+    print_cli_error(
+        "refusing to overwrite changed bootstrap file: "
+        f"{_display_config_path(path)}",
+        area="bootstrap",
+        details=[
+            "file differs from the generated bootstrap template",
+            "rerun with --force to overwrite it",
+        ],
+    )
+
+
 def _write_bootstrap_file(path: Path, content: str, *, force: bool) -> int:
     if path.exists() and not force:
-        print_cli_error(
-            f"refusing to overwrite existing file: {path}",
-            area="bootstrap",
-        )
+        if path.read_text(encoding="utf-8") == content:
+            print(f"unchanged {_display_config_path(path)}")
+            return 0
+        _print_bootstrap_overwrite_error(path)
         return 1
     path.parent.mkdir(parents=True, exist_ok=True)
     _write_text_with_mode(path, content, CONFIG_FILE_MODE)
-    print(f"wrote {path}")
+    print(f"wrote {_display_config_path(path)}")
     return 0
 
 
@@ -3916,17 +4084,17 @@ def _write_bootstrap_files(
     *,
     force: bool,
 ) -> int:
-    for path, _content in files:
-        if path.exists() and not force:
-            print_cli_error(
-                f"refusing to overwrite existing file: {path}",
-                area="bootstrap",
-            )
+    for path, content in files:
+        if path.exists() and not force and path.read_text(encoding="utf-8") != content:
+            _print_bootstrap_overwrite_error(path)
             return 1
     for path, content in files:
         path.parent.mkdir(parents=True, exist_ok=True)
-        _write_text_with_mode(path, content, CONFIG_FILE_MODE)
-        print(f"wrote {path}")
+        if path.exists() and not force and path.read_text(encoding="utf-8") == content:
+            print(f"unchanged {_display_config_path(path)}")
+        else:
+            _write_text_with_mode(path, content, CONFIG_FILE_MODE)
+            print(f"wrote {_display_config_path(path)}")
     return 0
 
 
@@ -4254,108 +4422,52 @@ def _write_main_config_lines(config_file: Path, lines: Sequence[str]) -> None:
     _write_text_with_mode(config_file, "".join(lines), CONFIG_FILE_MODE)
 
 
+def _split_cli_name_list(
+    value: str,
+    *,
+    label: str,
+    area: str,
+) -> list[str] | None:
+    values = []
+    seen_values = set()
+    for item in value.split(","):
+        name = item.strip()
+        if not name or name in seen_values:
+            continue
+        values.append(name)
+        seen_values.add(name)
+    if not values:
+        print_cli_error(f"{area} requires {label}", area=area)
+        return None
+    return values
+
+
 def _run_config_activate_account(
     *,
     config_dir: str,
     config_name: str,
-    plugin: str,
+    plugins: Sequence[str],
     name: str,
 ) -> int:
-    if not _validate_bootstrap_object_args(plugin, name):
-        return 2
     config_dir_path = Path(config_dir).expanduser()
-    if not _ensure_config_object_file(
-        config_dir=config_dir_path,
-        plugin=plugin,
-        kind="account",
-        name=name,
-    ):
-        return 1
-    policy_name = _read_account_policy(
-        config_dir=config_dir_path,
-        plugin=plugin,
-        account_name=name,
-    )
-    if policy_name is None:
-        return 1
-    policy_config_name = _resolve_policy_config_name(
-        config_dir=config_dir_path,
-        plugin=plugin,
-        account_name=name,
-        policy_name=policy_name,
-    )
-    if policy_config_name is None:
-        return 1
-    config_file = _config_file_path(config_dir_path, config_name)
-    lines = _load_main_config_lines(config_file)
-    if lines is None:
-        return 1
-    try:
-        changed_account = _add_group_item(
-            lines,
-            _config_group_for_kind("account"),
-            _config_group_item(plugin, name),
-        )
-        changed_policy = _add_group_item(
-            lines,
-            _config_group_for_kind("policy"),
-            _config_group_item(plugin, policy_config_name),
-        )
-    except ValueError as exc:
-        print_cli_error(str(exc), area="config")
-        return 1
-    if changed_account or changed_policy:
-        _write_main_config_lines(config_file, lines)
-        print(f"updated {config_file}")
-    else:
-        print(f"account already active: {plugin}/{name}")
-    return 0
-
-
-def _run_config_deactivate_account(
-    *,
-    config_dir: str,
-    config_name: str,
-    plugin: str,
-    name: str,
-) -> int:
-    if not _validate_bootstrap_object_args(plugin, name):
-        return 2
-    config_dir_path = Path(config_dir).expanduser()
-    policy_name = _read_account_policy(
-        config_dir=config_dir_path,
-        plugin=plugin,
-        account_name=name,
-    )
-    if policy_name is None:
-        return 1
-    config_file = _config_file_path(config_dir_path, config_name)
-    lines = _load_main_config_lines(config_file)
-    if lines is None:
-        return 1
-    changed = _remove_group_item(
-        lines,
-        _config_group_for_kind("account"),
-        _config_group_item(plugin, name),
-    )
-    remaining_account_names = _active_default_configs(
-        lines,
-        plugin=plugin,
-        kind="account",
-    )
-    policy_still_used = False
-    for remaining_account_name in remaining_account_names:
-        remaining_policy = _read_account_policy(
+    selections = []
+    for plugin in plugins:
+        if not _validate_bootstrap_object_args(plugin, name):
+            return 2
+        if not _ensure_config_object_file(
             config_dir=config_dir_path,
             plugin=plugin,
-            account_name=remaining_account_name,
-        )
-        if remaining_policy is None:
+            kind="account",
+            name=name,
+        ):
             return 1
-        if remaining_policy == policy_name:
-            policy_still_used = True
-            break
-    if not policy_still_used:
+        policy_name = _read_account_policy(
+            config_dir=config_dir_path,
+            plugin=plugin,
+            account_name=name,
+        )
+        if policy_name is None:
+            return 1
         policy_config_name = _resolve_policy_config_name(
             config_dir=config_dir_path,
             plugin=plugin,
@@ -4364,19 +4476,120 @@ def _run_config_deactivate_account(
         )
         if policy_config_name is None:
             return 1
+        selections.append((plugin, policy_config_name))
+    config_file = _config_file_path(config_dir_path, config_name)
+    lines = _load_main_config_lines(config_file)
+    if lines is None:
+        return 1
+    try:
+        changed = False
+        for plugin, policy_config_name in selections:
+            changed = (
+                _add_group_item(
+                    lines,
+                    _config_group_for_kind("account"),
+                    _config_group_item(plugin, name),
+                )
+                or changed
+            )
+            changed = (
+                _add_group_item(
+                    lines,
+                    _config_group_for_kind("policy"),
+                    _config_group_item(plugin, policy_config_name),
+                )
+                or changed
+            )
+    except ValueError as exc:
+        print_cli_error(str(exc), area="config")
+        return 1
+    if changed:
+        _write_main_config_lines(config_file, lines)
+        print(f"updated {_display_config_path(config_file)}")
+    elif len(plugins) == 1:
+        print(f"account already active: {plugins[0]}/{name}")
+    else:
+        accounts = ", ".join(f"{plugin}/{name}" for plugin in plugins)
+        print(f"accounts already active: {accounts}")
+    return 0
+
+
+def _run_config_deactivate_account(
+    *,
+    config_dir: str,
+    config_name: str,
+    plugins: Sequence[str],
+    name: str,
+) -> int:
+    config_dir_path = Path(config_dir).expanduser()
+    selections = []
+    for plugin in plugins:
+        if not _validate_bootstrap_object_args(plugin, name):
+            return 2
+        policy_name = _read_account_policy(
+            config_dir=config_dir_path,
+            plugin=plugin,
+            account_name=name,
+        )
+        if policy_name is None:
+            return 1
+        policy_config_name = _resolve_policy_config_name(
+            config_dir=config_dir_path,
+            plugin=plugin,
+            account_name=name,
+            policy_name=policy_name,
+        )
+        if policy_config_name is None:
+            return 1
+        selections.append((plugin, policy_name, policy_config_name))
+    config_file = _config_file_path(config_dir_path, config_name)
+    lines = _load_main_config_lines(config_file)
+    if lines is None:
+        return 1
+    changed = False
+    for plugin, policy_name, policy_config_name in selections:
         changed = (
             _remove_group_item(
                 lines,
-                _config_group_for_kind("policy"),
-                _config_group_item(plugin, policy_config_name),
+                _config_group_for_kind("account"),
+                _config_group_item(plugin, name),
             )
             or changed
         )
+        remaining_account_names = _active_default_configs(
+            lines,
+            plugin=plugin,
+            kind="account",
+        )
+        policy_still_used = False
+        for remaining_account_name in remaining_account_names:
+            remaining_policy = _read_account_policy(
+                config_dir=config_dir_path,
+                plugin=plugin,
+                account_name=remaining_account_name,
+            )
+            if remaining_policy is None:
+                return 1
+            if remaining_policy == policy_name:
+                policy_still_used = True
+                break
+        if not policy_still_used:
+            changed = (
+                _remove_group_item(
+                    lines,
+                    _config_group_for_kind("policy"),
+                    _config_group_item(plugin, policy_config_name),
+                )
+                or changed
+            )
     if changed:
         _write_main_config_lines(config_file, lines)
-        print(f"updated {config_file}")
+        print(f"updated {_display_config_path(config_file)}")
+    elif len(plugins) == 1:
+        print(f"account already inactive: {plugins[0]}/{name}")
     else:
-        print(f"account already inactive: {plugin}/{name}")
+        accounts = ", ".join(f"{plugin}/{name}" for plugin in plugins)
+        print(f"accounts already inactive: {accounts}")
     return 0
 
 
@@ -4388,50 +4601,69 @@ def _run_config_account_activation(
     plugin: str,
     name: str,
 ) -> int:
+    plugins = _split_cli_name_list(plugin, label="plugin", area="config")
+    if plugins is None:
+        return 2
     if action == "activate":
         return _run_config_activate_account(
             config_dir=config_dir,
             config_name=config_name,
-            plugin=plugin,
+            plugins=plugins,
             name=name,
         )
     if action == "deactivate":
         return _run_config_deactivate_account(
             config_dir=config_dir,
             config_name=config_name,
-            plugin=plugin,
+            plugins=plugins,
             name=name,
         )
     raise AssertionError(f"unknown activation action: {action}")
+
+
+def _display_command_prefix(*, config_dir: Path) -> str:
+    app_command_prefix = os.environ.get("REPLOY_APP_COMMAND_PREFIX", "").strip()
+    if app_command_prefix:
+        return app_command_prefix
+    return f"arbiter-server --config-dir {config_dir}"
 
 
 def _print_bootstrap_activation_hint(
     *,
     config_dir: Path,
     config_name: str,
-    plugin: str,
+    plugins: Sequence[str],
     kind: BootstrapObjectKind,
     name: str,
 ) -> None:
     config_file = config_dir / f"{config_name}.yaml"
     print("")
     if kind == "account":
-        print("Edit the generated account and policy files, then activate the account:")
-        print(
-            f"  arbiter-server --config-dir {config_dir} "
-            f"config activate account {plugin} {name}"
-        )
+        if len(plugins) == 1:
+            print(
+                "Edit the generated account and policy files, then activate the account:"
+            )
+        else:
+            print(
+                "Edit the generated account and policy files, then activate the accounts:"
+            )
+        command_prefix = _display_command_prefix(config_dir=config_dir)
+        print(f"  {command_prefix} config activate account {','.join(plugins)} {name}")
         print("")
         print("Then inspect the composed config with:")
-        print(f"  arbiter-server --config-dir {config_dir} config show")
+        print(f"  {command_prefix} config show")
         return
-    print(f"To activate the generated policy, add this to {config_file}:")
+    if len(plugins) == 1:
+        print(f"To activate the generated policy, add this to {config_file}:")
+    else:
+        print(f"To activate the generated policies, add this to {config_file}:")
     print("defaults:")
     print(f"  - {_config_group_for_kind('policy')}:")
-    print(f"    - {_config_group_item(plugin, name)}")
+    for plugin in plugins:
+        print(f"    - {_config_group_item(plugin, name)}")
     print("")
     print("Then inspect the composed config with:")
-    print(f"  arbiter-server --config-dir {config_dir} config show")
+    print(f"  {_display_command_prefix(config_dir=config_dir)} config show")
 
 
 def _run_plugin_bootstrap(
@@ -4445,23 +4677,68 @@ def _run_plugin_bootstrap(
     variant: str | None = None,
     list_variants: bool = False,
 ) -> int:
+    plugins = _split_cli_name_list(plugin, label="plugin", area="bootstrap")
+    if plugins is None:
+        return 2
+    if len(plugins) > 1 and list_variants:
+        print_cli_error(
+            "--list-variants accepts one plugin at a time",
+            area="bootstrap",
+        )
+        return 2
     if list_variants:
-        return _run_plugin_bootstrap_list_variants(plugin=plugin, kind=kind)
+        return _run_plugin_bootstrap_list_variants(plugin=plugins[0], kind=kind)
+    if kind == "account" and name is None:
+        name = "default"
+    if name is None:
+        print_cli_error(f"bootstrap plugin {kind} requires name", area="bootstrap")
+        return 2
     config_dir_path = _ensure_config_dir(config_dir)
     if config_dir_path is None:
         return 2
-    if name is None:
-        print_cli_error("bootstrap plugin requires name", area="bootstrap")
-        return 2
+    files = []
+    for plugin_name in plugins:
+        plugin_files = _plugin_bootstrap_files(
+            plugin=plugin_name,
+            kind=kind,
+            name=name,
+            config_dir=config_dir_path,
+            variant=variant,
+        )
+        if plugin_files is None:
+            return 1
+        if not plugin_files:
+            return 2
+        files.extend(plugin_files)
+    result = _write_bootstrap_files(files, force=force)
+    if result == 0:
+        _print_bootstrap_activation_hint(
+            config_dir=config_dir_path,
+            config_name=config_name,
+            plugins=plugins,
+            kind=kind,
+            name=name,
+        )
+    return result
+
+
+def _plugin_bootstrap_files(
+    *,
+    plugin: str,
+    kind: BootstrapObjectKind,
+    name: str,
+    config_dir: Path,
+    variant: str | None,
+) -> list[tuple[Path, str]] | None:
     if not _validate_bootstrap_object_args(plugin, name):
-        return 2
+        return []
     content = _load_plugin_example_yaml(plugin, kind, name, variant=variant)
     if content is None:
-        return 1
+        return None
     files = [
         (
             _bootstrap_object_path(
-                config_dir=config_dir_path,
+                config_dir=config_dir,
                 plugin=plugin,
                 kind=kind,
                 name=name,
@@ -4478,11 +4755,11 @@ def _run_plugin_bootstrap(
             variant=variant,
         )
         if policy_content is None:
-            return 1
+            return None
         files.append(
             (
                 _bootstrap_object_path(
-                    config_dir=config_dir_path,
+                    config_dir=config_dir,
                     plugin=plugin,
                     kind="policy",
                     name=policy_name,
@@ -4490,19 +4767,7 @@ def _run_plugin_bootstrap(
                 policy_content,
             )
         )
-    result = _write_bootstrap_files(
-        files,
-        force=force,
-    )
-    if result == 0:
-        _print_bootstrap_activation_hint(
-            config_dir=config_dir_path,
-            config_name=config_name,
-            plugin=plugin,
-            kind=kind,
-            name=name,
-        )
-    return result
+    return files
 
 
 def _add_override_arguments(parser: argparse.ArgumentParser, *, help_text: str) -> None:
@@ -4627,7 +4892,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="create a plugin-owned account or policy template",
     )
     bootstrap_plugin.add_argument("plugin")
-    bootstrap_plugin.add_argument("kind", choices=["account", "policy"])
+    bootstrap_plugin.add_argument(
+        "kind",
+        nargs="?",
+        choices=["account", "policy"],
+        default="account",
+    )
     bootstrap_plugin.add_argument("name", nargs="?")
     bootstrap_plugin.add_argument(
         "--variant",
