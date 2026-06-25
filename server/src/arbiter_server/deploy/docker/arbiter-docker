@@ -1829,6 +1829,12 @@ server_url_value() {
     "$(compose_env_value ARBITER_HOST_PORT 18075)"
 }
 
+local_server_url_value() {
+  printf 'http://%s:%s\n' \
+    "$(server_host_url_value)" \
+    "$(compose_env_value ARBITER_HOST_PORT 18075)"
+}
+
 print_url_value() {
   local url="$1"
 
@@ -1956,7 +1962,7 @@ test_server_url() {
 }
 
 test_server() {
-  test_server_url "$(server_url_value)"
+  test_server_url "$(local_server_url_value)"
 }
 
 print_config_check_ok() {

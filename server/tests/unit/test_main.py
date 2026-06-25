@@ -4546,7 +4546,7 @@ def test_cli_deploy_docker_generated_helper_up_prints_url(
     assert "up -d\n" in docker_call_text
 
 
-def test_cli_deploy_docker_generated_helper_test_probes_https_health(
+def test_cli_deploy_docker_generated_helper_test_probes_http_health(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -4602,10 +4602,10 @@ def test_cli_deploy_docker_generated_helper_test_probes_https_health(
     )
 
     assert result.returncode == 0
-    assert result.stdout == " ✔ Server test: https://127.0.0.1:18075\n"
+    assert result.stdout == " ✔ Server test: http://127.0.0.1:18075\n"
     assert result.stderr == ""
     assert curl_calls.read_text(encoding="utf-8") == (
-        "https://127.0.0.1:18075/_health_\n"
+        "http://127.0.0.1:18075/_health_\n"
     )
 
     result = subprocess.run(
@@ -4618,7 +4618,7 @@ def test_cli_deploy_docker_generated_helper_test_probes_https_health(
     )
 
     assert result.returncode == 0
-    assert result.stdout == " ✔ Server test: https://127.0.0.1:18075\n"
+    assert result.stdout == " ✔ Server test: http://127.0.0.1:18075\n"
     assert result.stderr == ""
     assert fake_curl_count.read_text(encoding="utf-8") == "3\n"
 
@@ -4633,7 +4633,7 @@ def test_cli_deploy_docker_generated_helper_test_probes_https_health(
     )
 
     assert result.returncode == 0
-    assert result.stdout == " ✔ Server test: https://127.0.0.1:18075\n"
+    assert result.stdout == " ✔ Server test: http://127.0.0.1:18075\n"
     assert result.stderr == ""
     assert fake_curl_count.read_text(encoding="utf-8") == "3\n"
 
@@ -4654,11 +4654,11 @@ def test_cli_deploy_docker_generated_helper_test_probes_https_health(
 
     assert result.returncode == 1
     assert result.stdout == (
-        " \033[31m✘\033[0m Server test: " "\033[94mhttps://127.0.0.1:18075\033[0m\n"
+        " \033[31m✘\033[0m Server test: " "\033[94mhttp://127.0.0.1:18075\033[0m\n"
     )
     assert result.stderr == (
         "       command: curl --fail --silent --show-error --insecure --max-time 5 "
-        "https://127.0.0.1:18075/_health_\n"
+        "http://127.0.0.1:18075/_health_\n"
         "       last client output:\n"
         "       transient server startup error\n"
     )
@@ -5143,10 +5143,10 @@ def test_cli_deploy_docker_generated_helper_test_uses_curl_before_client(
     )
 
     assert result.returncode == 0
-    assert result.stdout == " ✔ Server test: https://127.0.0.1:18075\n"
+    assert result.stdout == " ✔ Server test: http://127.0.0.1:18075\n"
     assert result.stderr == ""
     assert curl_calls.read_text(encoding="utf-8") == (
-        "https://127.0.0.1:18075/_health_\n"
+        "http://127.0.0.1:18075/_health_\n"
     )
 
 
@@ -9357,6 +9357,66 @@ def test_cli_config_check_prints_aligned_report_after_components_complete(
         "Plugins  | warn\n"
         "└── imap | warn\n"
         "- warn: still checking later component\n"
+    )
+
+
+def test_cli_config_check_uses_ascii_tree_for_limited_stream_encoding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class LimitedEncodingStdout:
+        encoding = "cp1252"
+
+        def __init__(self) -> None:
+            self.text = ""
+
+        def write(self, value: str) -> int:
+            value.encode(self.encoding)
+            self.text += value
+            return len(value)
+
+        def flush(self) -> None:
+            return None
+
+        def isatty(self) -> bool:
+            return False
+
+    stdout = LimitedEncodingStdout()
+    cfg = object()
+    monkeypatch.setattr("arbiter_server.main.compose_config", lambda **kwargs: cfg)
+    monkeypatch.setattr(sys, "stdout", stdout)
+    monkeypatch.setattr(
+        "arbiter_server.main.config_check_components",
+        lambda cfg, **kwargs: iter(
+            (
+                ConfigCheckComponentReport(name="server"),
+                ConfigCheckComponentReport(
+                    name="smtp",
+                    account_results=(
+                        ConfigCheckAccountResult(
+                            account="primary",
+                            policy="primary_policy",
+                            status="pass",
+                            message="account/policy pair valid",
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    assert (
+        _run_config_check(
+            config_dir="/tmp",
+            config_name="arbiter-server",
+            overrides=(),
+        )
+        == 0
+    )
+    assert stdout.text == (
+        "server                         | pass\n"
+        "Plugins                        | pass\n"
+        "`-- smtp                       | pass\n"
+        "    `-- primary/primary_policy | pass | account/policy pair valid\n"
     )
 
 

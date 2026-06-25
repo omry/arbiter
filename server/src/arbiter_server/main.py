@@ -361,6 +361,19 @@ def _config_check_progress_enabled(output: object) -> bool:
     return bool(callable(isatty) and isatty())
 
 
+def _config_check_unicode_tree_enabled(output: object) -> bool:
+    encoding = getattr(output, "encoding", None)
+    if not isinstance(encoding, str) or not encoding:
+        return True
+    try:
+        "├──└──│".encode(encoding)
+    except UnicodeEncodeError:
+        return False
+    except LookupError:
+        return True
+    return True
+
+
 def _color_config_check_status(status: str) -> str:
     color = _CONFIG_CHECK_STATUS_COLORS.get(status)
     if color is None:
@@ -530,9 +543,14 @@ def _config_check_worst_status(
 
 def _config_check_tree_lines(
     components: Sequence[ConfigCheckComponentReport],
+    *,
+    unicode_tree: bool = True,
 ) -> tuple[str, ...]:
     if not components:
         return ()
+    last_branch = "└──" if unicode_tree else "`--"
+    mid_branch = "├──" if unicode_tree else "|--"
+    mid_prefix = "│   " if unicode_tree else "|   "
 
     server_components = tuple(
         component for component in components if component.name == "server"
@@ -555,12 +573,12 @@ def _config_check_tree_lines(
         )
     for plugin_index, component in enumerate(plugin_components):
         plugin_is_last = plugin_index == len(plugin_components) - 1
-        plugin_branch = "└──" if plugin_is_last else "├──"
-        row_prefix = "    " if plugin_is_last else "│   "
+        plugin_branch = last_branch if plugin_is_last else mid_branch
+        row_prefix = "    " if plugin_is_last else mid_prefix
         tree_rows.append((f"{plugin_branch} {component.name}", component.status, ""))
         plugin_rows = component.table_rows
         for index, row in enumerate(plugin_rows):
-            branch = "└──" if index == len(plugin_rows) - 1 else "├──"
+            branch = last_branch if index == len(plugin_rows) - 1 else mid_branch
             tree_rows.append(
                 (
                     f"{row_prefix}{branch} {_config_check_row_account_policy(row)}",
@@ -3815,6 +3833,7 @@ def _run_config_check(
     live: bool = False,
 ) -> int:
     color = _config_check_color_enabled(sys.stdout)
+    unicode_tree = _config_check_unicode_tree_enabled(sys.stdout)
     progress = _ConfigCheckProgress(
         sys.stdout,
         color=color,
@@ -3837,7 +3856,7 @@ def _run_config_check(
             components.append(component)
             failed = failed or component.status == "fail"
         for line in _color_config_check_lines(
-            _config_check_tree_lines(components),
+            _config_check_tree_lines(components, unicode_tree=unicode_tree),
             color=color,
         ):
             print(line, flush=True)
