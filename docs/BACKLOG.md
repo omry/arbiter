@@ -87,6 +87,28 @@ This file is the day-to-day queue for design and implementation gaps.
 
 ## Post-v1
 
+- [ ] `P2` Research IMAP search bottlenecks and search performance options.
+      Current `imap:search_messages` behavior can be slow enough to hit client
+      or server operation deadlines on real mailboxes. Acceptance checks:
+      measure where search time is spent across Arbiter, plugin code, IMAP
+      server round trips, message fetching, filtering, and result shaping;
+      compare provider-side IMAP search capabilities with current client-side
+      filtering behavior; evaluate indexing options, including a server-side
+      local index or cache with clear freshness, storage, privacy, and invalidation
+      rules; identify which query shapes should be narrowed, rejected, indexed,
+      or delegated to the provider; and produce a recommended first performance
+      slice with tests or benchmarks.
+
+- [ ] `P2` Evaluate adding a date range to `imap:list_messages`.
+      Agents often need recent-message browsing without paying for a full
+      mailbox scan or using heavyweight search semantics. Acceptance checks:
+      decide whether `list_messages` should accept `since`/`before`, a single
+      relative window, or another date-range shape; define how date filtering
+      interacts with pagination, sorting, folders, provider time zones, and
+      UID stability; compare behavior against `search_messages` so the two
+      APIs do not overlap confusingly; update operation schema and docs if the
+      change is accepted; and add tests covering bounded recent-message lists.
+
 - [ ] `P2` Consider returning operation timing information to clients.
       Agents and operators should be able to tell how long Arbiter waited on
       upstream services, especially when mail providers are slow or timeouts are
@@ -237,6 +259,19 @@ This file is the day-to-day queue for design and implementation gaps.
       Arbiter operation for all account tests; return clear success, skipped,
       and failure statuses with operator-useful messages; and document how
       deployment smoke checks can call the aggregate endpoint.
+
+- [ ] `P2` Add an IMAP doctor repair option for missing configured folders.
+      Operators can configure folder metadata that is statically valid but not
+      present on the upstream IMAP server. For example, the bot account may
+      configure `Trash` as `kind: TRASH` so `delete_message` is allowed, while
+      live `imap:list_folders(account="bot")` only returns `INBOX` and `Sent`.
+      Acceptance checks: detect configured folders that are absent from the
+      live IMAP folder list; show an operator-facing doctor finding with the
+      account, configured folder name, kind, and affected operations; offer an
+      explicit opt-in repair path to create safe configured folders such as
+      `Trash`; respect account policy and provider errors; avoid creating
+      folders during read-only checks; and document when operators should
+      rename config to match a provider folder instead of creating a new one.
 
 - [ ] `P2` Add IMAP message flags APIs.
       Agents need a controlled way to inspect and update message flags such as
