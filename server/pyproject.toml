@@ -49,7 +49,11 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-"arbiter_server" = ["py.typed", "deploy/docker/*"]
+"arbiter_server" = [
+  "py.typed",
+  "deploy/docker/*",
+  "reploy/*.blueprint.yaml",
+]
 
 [tool.towncrier]
 name = "Arbiter Server"

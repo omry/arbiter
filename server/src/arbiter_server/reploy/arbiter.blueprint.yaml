@@ -1,0 +1,189 @@
+blueprint:
+  schema: 1
+  version: 0.1.0
+  requires_reploy: ">=0.1.0"
+
+app:
+  id: arbiter
+  provider:
+    type: python
+    identifier: arbiter-server
+    local_sources:
+      arbiter-client: ../../../../client
+      arbiter-imap: ../../../../plugins/imap
+      arbiter-server: ../../../../server
+      arbiter-smtp: ../../../../plugins/smtp
+      arbiter-suite: ../../../../meta/arbiter-suite
+  terminal:
+    color_env: ARBITER_COLOR
+
+bundle:
+  options:
+    arbiter-suite:
+      identifier: arbiter-suite
+      group: meta
+      description: Install the full Arbiter suite.
+    imap:
+      identifier: arbiter-imap
+      group: plugins
+      description: Receive email through IMAP.
+    smtp:
+      identifier: arbiter-smtp
+      group: plugins
+      description: Send email through SMTP.
+
+docker:
+  deployment_dirs:
+    config: conf
+    bundle: .reploy/bundle
+    data: data
+  service:
+    image: python:3.11-slim
+    container_name: arbiter-staging
+    container_host: 0.0.0.0
+    container_port: "8075"
+    host_bind: 127.0.0.1
+    host_port: "18075"
+    public_scheme: https
+    network_name: arbiter-staging
+  environment:
+    ARBITER_CONFIG_NAME: arbiter-server
+  runtime:
+    overrides:
+      - arbiter.server.bind.host=${REPLOY_CONTAINER_HOST}
+      - arbiter.server.bind.port=${REPLOY_CONTAINER_PORT}
+      - arbiter.server.public.scheme=${REPLOY_PUBLIC_SCHEME}
+      - arbiter.server.public.host=${REPLOY_PUBLIC_HOST}
+      - arbiter.server.public.port=${REPLOY_HOST_PORT}
+      - arbiter.storage.server_data_dir=/data/server
+      - arbiter.storage.plugin_data_dir=/data/plugins
+      - arbiter.deployment_scope=staged
+    optional_env_overrides:
+      REPLOY_PUBLIC_BASE_URL: arbiter.server.public.base_url
+  health:
+    scheme_env: REPLOY_PUBLIC_SCHEME
+    host_env: REPLOY_HOST_BIND
+    port_env: REPLOY_HOST_PORT
+    default_scheme: https
+    default_host: 127.0.0.1
+    default_port: "18075"
+    path: /_health_
+    tls_verify: false
+  default_command: serve
+  commands:
+    serve:
+      container:
+        argv:
+          - arbiter-server
+          - --config-dir
+          - /config
+          - --config-name
+          - ${ARBITER_CONFIG_NAME}
+          - serve
+    config_check:
+      trigger:
+        - config
+        - check
+      app_command: true
+      forward_flags:
+        - --live
+      container:
+        argv:
+          - arbiter-server
+          - --config-dir
+          - /config
+          - --config-name
+          - ${ARBITER_CONFIG_NAME}
+          - config
+          - check
+    bootstrap_server:
+      trigger:
+        - bootstrap
+        - server
+      app_command: true
+      forward_flags:
+        - --force
+      container:
+        argv:
+          - arbiter-server
+          - --config-dir
+          - /config
+          - --config-name
+          - ${ARBITER_CONFIG_NAME}
+          - bootstrap
+          - arbiter
+    bootstrap_plugin:
+      trigger:
+        - bootstrap
+        - plugin
+      app_command: true
+      forward_args: true
+      container:
+        argv:
+          - arbiter-server
+          - --config-dir
+          - /config
+          - --config-name
+          - ${ARBITER_CONFIG_NAME}
+          - bootstrap
+          - plugin
+    config_activate:
+      trigger:
+        - config
+        - activate
+      app_command: true
+      forward_args: true
+      container:
+        argv:
+          - arbiter-server
+          - --config-dir
+          - /config
+          - --config-name
+          - ${ARBITER_CONFIG_NAME}
+          - config
+          - activate
+    config_show:
+      trigger:
+        - config
+        - show
+      app_command: true
+      forward_args: true
+      container:
+        argv:
+          - arbiter-server
+          - --config-dir
+          - /config
+          - --config-name
+          - ${ARBITER_CONFIG_NAME}
+          - config
+          - show
+    env_bootstrap:
+      trigger:
+        - env
+        - bootstrap
+      app_command: true
+      forward_args: true
+      container:
+        argv:
+          - arbiter-server
+          - --config-dir
+          - /config
+          - --config-name
+          - ${ARBITER_CONFIG_NAME}
+          - env
+          - bootstrap
+    env_check:
+      trigger:
+        - env
+        - check
+      app_command: true
+      forward_args: true
+      container:
+        argv:
+          - arbiter-server
+          - --config-dir
+          - /config
+          - --config-name
+          - ${ARBITER_CONFIG_NAME}
+          - env
+          - check

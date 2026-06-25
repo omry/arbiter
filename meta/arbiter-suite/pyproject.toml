@@ -41,7 +41,15 @@ Homepage = "https://github.com/omry/arbiter"
 Repository = "https://github.com/omry/arbiter"
 
 [tool.setuptools]
-py-modules = []
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"arbiter_suite" = [
+  "reploy/*.blueprint.yaml",
+]
 
 [tool.towncrier]
 name = "Arbiter"
