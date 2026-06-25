@@ -2,13 +2,14 @@
 title: Docker Helper Reference
 ---
 
-The generated `arbiter-docker` helper lives in each deployment directory. It is
-not a global console app. Run these commands from inside the prepared staging
-directory:
+The installed `reploy` command and the generated deployment-local helper run the
+same deployment commands. Use the installed command from the parent directory,
+or run the generated helper from inside the prepared staging directory:
 
 ```bash
-cd arbiter-docker
-./arbiter-docker COMMAND
+reploy --dir reploy-staging COMMAND
+cd reploy-staging
+./reploy COMMAND
 ```
 
 For the normal deployment sequence, use
@@ -20,27 +21,31 @@ the helper.
 
 | Command | Purpose |
 | --- | --- |
-| `info` | Show generated paths, including the plugin data directory, and Docker Compose version. |
-| `doctor` | Check generated files, env syntax, package requirements, and Docker Compose availability. |
-| `doctor --agent-user USER` | Also check common permission mistakes for an agent identity. |
+| `info` | Show deployment state and generated paths. |
+| `doctor` | Check generated files and generated-file drift. |
 | `doctor --preinstall` | Check that the prepared directory is ready to promote. |
-| `config check [override...]` | Validate the deployment config in a one-shot container. |
-| `config check --live [override...]` | Validate config and account readiness in the running service container. |
+| `app config check [override...]` | Validate the app config in a one-shot container. |
+| `app config check --live [override...]` | Validate app config and account readiness in the deployment runtime. |
 
 ## Install
 
 | Command | Purpose |
 | --- | --- |
-| `install` | Promote the staging directory to an installed systemd service. First install seeds config from staging; later installs preserve installed config and env. |
-| `install --replace-config` | Promote and explicitly replace the installed config package from staging. |
+| `install --to DIR` | Promote the staging directory to an installed systemd service. |
+| `install --to DIR --dry-run` | Print the install plan without changing the host. |
+| `install --to DIR --no-start` | Install and enable the service without starting it. |
 
-## Edit
+## App
 
 | Command | Purpose |
 | --- | --- |
-| `edit-env` | Edit Arbiter runtime values and credentials in `conf/.env`. |
-| `edit-docker` | Edit Docker wrapper settings in `docker.env`. |
-| `edit-requirements` | Edit root package requirements or explicit wheel paths. Prefer the bundle commands for normal plugin selection. |
+| `app` | Show this deployment's blueprint-declared app subcommands. |
+| `app bootstrap server` | Create the app server config through the deployment runtime. |
+| `app bootstrap plugin NAME[,NAME...] [account ACCOUNT]` | Create plugin account and policy config through the deployment runtime. |
+| `app config activate account NAME[,NAME...] ACCOUNT` | Activate one account name for one or more plugins. |
+| `app config show` | Show the composed app config through the deployment runtime. |
+| `app env bootstrap` | Create or update the app env file from config references. |
+| `app env check` | Check that app config env references are satisfied. |
 
 ## Run Staging
 
@@ -60,15 +65,14 @@ Installed services are operated through systemd instead; see
 
 | Command | Purpose |
 | --- | --- |
-| `bundle list-plugins` | Show addable service plugins and descriptions. |
-| `bundle add NAME` | Add a service plugin or meta package to `requirements.txt`. |
-| `bundle add-package PACKAGE==VERSION` | Add an exact package pin for an external plugin. |
+| `bundle list-options` | Show blueprint-declared bundle options and descriptions. |
+| `bundle add --name NAME[,NAME...]` | Add blueprint-declared options such as service plugins or meta packages. |
 | `bundle add-wheel PATH` | Copy a local wheel into the wheelhouse and add it as a root. |
 | `bundle add-source DIR` | Build a local package source directory into the wheelhouse and add it as a root. |
-| `bundle remove NAME` | Remove a service plugin or meta package from `requirements.txt`. |
+| `bundle remove NAME[,NAME...]` | Remove selected runtime artifact roots. |
 | `bundle list` | Show selected root requirements. |
 | `bundle list all` | Show prepared root and transitive wheelhouse packages. |
-| `bundle prepare` | Build and validate the dependency wheelhouse. |
+| `bundle build` | Build and validate the dependency wheelhouse. |
 | `bundle check` | Validate the existing wheelhouse without downloading packages or building wheels. |
 | `bundle upgrade [TARGET]` | Upgrade selected package roots and rebuild the wheelhouse. |
 

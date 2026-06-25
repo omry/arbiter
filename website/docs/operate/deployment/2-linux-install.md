@@ -3,7 +3,7 @@ title: Linux Install
 ---
 
 Install promotes a tested staging directory to a Linux systemd service. Run
-these commands from inside the prepared `arbiter-docker` directory.
+these commands from inside the prepared `reploy-staging` directory.
 
 ## Preinstall check
 
@@ -11,15 +11,16 @@ Before the privileged install step, check that the directory is ready to
 promote:
 
 ```bash
-./arbiter-docker doctor --preinstall
+./reploy doctor --preinstall
 ```
 
 This catches common production-install mistakes before anything is copied into
-the install target. To also check access for an agent user on the same machine,
-pass that user explicitly:
+the install target.
+
+Preview the privileged work before applying it:
 
 ```bash
-./arbiter-docker doctor --preinstall --agent-user codex
+./reploy install --to /opt/arbiter --dry-run
 ```
 
 ## Install
@@ -27,40 +28,25 @@ pass that user explicitly:
 Promote the prepared directory:
 
 ```bash
-sudo ./arbiter-docker install
+sudo ./reploy install --to /opt/arbiter
 ```
 
-By default, install starts or restarts the systemd service.
-
-If Docker is not available during install, the helper still updates the
-installed files, writes the systemd unit, reloads systemd, and enables the
-service. Docker-backed config checks, wheelhouse validation, restart, server
-test, and live checks are reported as skipped. After Docker is ready, restart
-the installed service manually:
+By default, install enables and restarts the systemd service. To install without
+starting the service:
 
 ```bash
-sudo systemctl restart arbiter.service
+sudo ./reploy install --to /opt/arbiter --no-start
 ```
 
-When Docker is unavailable and the existing service is still active, install
-updates only the systemd unit and leaves installed deployment files unchanged.
-This avoids replacing Compose inputs underneath a running service that was
-started from the previous unit.
-
-On the first install, the staging `conf/` directory and env file are copied into
-the installed directory. After that, the installed config and env are
-authoritative: later installs update the bundle and service wrapper, but keep
-the installed config and env by default. This lets operators edit credentials
-only in the protected installed directory. When an existing config directory is
-preserved, install keeps a protected timestamped copy under `backup/`.
-
-To intentionally replace the installed config from staging:
+Use `--service` when the unit should have a non-default name:
 
 ```bash
-sudo ./arbiter-docker install --replace-config
+sudo ./reploy install --to /opt/arbiter --service arbiter-prod
 ```
 
-Add `--replace-env` when the installed env file should also come from staging.
+Reploy copies the prepared directory as-is. To preserve production credentials
+or config across reinstalls, edit the staging directory from the intended
+installed state before running install again.
 
 ## Verify
 
@@ -96,23 +82,16 @@ sudo systemctl restart arbiter.service
 
 `install` requires root unless `--dry-run` is used. It:
 
-- creates the configured system user/group if missing
-- checks the config that will be used after install before copying files or
-  restarting the service
+- runs preinstall doctor checks
 - copies the prepared deployment directory to the install target
-- preserves an existing installed config package unless `--replace-config` is
-  passed
-- rewrites the copied Compose command to pass
-  `arbiter.deployment_scope=installed`
-- sets ownership to the configured user/group
-- tightens file modes
+- marks the copied deployment state as `installed`
 - writes `/etc/systemd/system/arbiter.service`, including Docker service
   ordering when available and a Docker API readiness check before Compose
   starts
 - reloads and enables systemd
-- restarts the service by default when Docker is available
-- checks the running service config and configured accounts after restart when
-  Docker is available
+- restarts the service by default
+- runs `./reploy test` and `./reploy app config check --live` from the installed
+  directory after restart
 
 ## Privilege Model
 
@@ -136,11 +115,8 @@ The standard install uses these defaults. Override them only when needed:
 
 | Argument | Comment | Default |
 | --- | --- | --- |
-| `--to DIR` | Install target directory. | `/opt/arbiter` |
-| `--user USER` | Service config owner. Created if missing. | `arbiter` |
-| `--group GROUP` | Service config group. Created if missing. | Same as `--user` (`arbiter`) |
+| `--to DIR` | Install target directory. Required. | None |
 | `--service NAME` | systemd unit name. | `arbiter` |
 | `--no-start` | Install and enable the service without starting it. | Off |
-| `--replace-config` | Replace installed config from this staging directory. | Off |
-| `--replace-env` | With `--replace-config`, also replace the installed env from staging. | Off |
+| `--start` | Start after install. | On |
 | `--dry-run` | Print the install plan without changing the host. | Off |

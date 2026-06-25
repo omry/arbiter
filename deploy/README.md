@@ -3,19 +3,20 @@
 The installed deployment surface is now:
 
 ```bash
-arbiter-server deploy docker init
-./arbiter-docker/arbiter-docker doctor --preinstall
-sudo ./arbiter-docker/arbiter-docker install --to /opt/arbiter --user arbiter
+reploy init --blueprint arbiter-suite
+cd reploy-staging
+./reploy doctor --preinstall
+sudo ./reploy install --to /opt/arbiter
 ```
 
-The first command writes a deployment-local `arbiter-docker` helper into
-`./arbiter-docker`. Prepare config and env there as an unprivileged operator,
+The first command writes a deployment-local `reploy` helper into
+`./reploy-staging`. Prepare config and env there as an unprivileged operator,
 then use the helper's `install` command to promote the checked directory to
-`/opt/arbiter`. It keeps Docker wrapper settings in `docker.env`, separate
-from the Arbiter runtime/credential env file. The repository-local
+`/opt/arbiter`. It keeps Docker wrapper settings in `.reploy/docker.env`,
+separate from the Arbiter runtime/credential env file. The repository-local
 `arbiterctl` material below is retained as the original checkout-oriented
 deployment helper, but most users should use the installed
-`arbiter-server deploy docker` flow documented in
+Reploy Docker flow documented in
 `website/docs/operate/deployment.md`.
 
 This deployment path uses Docker Compose and does not require building a custom image.

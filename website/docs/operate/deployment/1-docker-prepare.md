@@ -9,17 +9,17 @@ for smoke testing, but it does not install anything under `/opt`.
 ## Create the directory
 
 ```bash
-arbiter-server deploy docker init
+reploy init --blueprint arbiter-suite
 ```
 
-By default this creates `./arbiter-docker`, including an `arbiter-docker`
-helper script for preparing and installing the Arbiter Docker container. `init`
-refuses to overwrite existing managed files.
+By default this creates `./reploy-staging`, including a deployment-local
+`reploy` helper script for preparing and installing the Arbiter Docker
+container. `init` refuses to overwrite existing managed files.
 
 For an existing staging directory, refresh the generated deployment files with:
 
 ```bash
-arbiter-server deploy docker update
+reploy update --dir reploy-staging
 ```
 
 Use `--force` to replace generated files that have local edits.
@@ -27,30 +27,24 @@ Use `--force` to replace generated files that have local edits.
 <details>
 <summary>Files created by init</summary>
 
-Most operators should use the `arbiter-docker` helper and Arbiter config
-commands instead of editing generated deployment files directly.
+Most operators should use the deployment-local `./reploy` helper and Arbiter
+config commands instead of editing generated deployment files directly.
 
 - `conf/`: deployment config directory.
-- `arbiter-docker`: local helper script for this deployment.
-- `bundle-plugins.tsv`: generated plugin package and suite metadata for bundle
-  commands.
-- `docker.env`: Docker Compose/container wrapper settings.
-- `requirements.txt`: exact package pins or explicit wheel paths installed
-  inside the container.
-- `wheels/`: prepared dependency wheelhouse.
+- `reploy`: local helper script for this deployment.
+- `.reploy/`: Reploy-managed files, including generated Compose config,
+  Docker env, bundle option metadata, runtime requirements projection, state,
+  manifest, vendored binary, runtime cache, and prepared bundle contents.
 - `data/server/`: writable server-owned runtime state, such as the generated
   self-signed TLS certificate and private key.
 - `data/plugins/`: writable server runtime state for plugins, such as
   idempotency records and temporary artifacts.
-- `compose.yaml`: generated Docker Compose service definition.
-- `compose.override.yaml`: optional generated local Compose overrides.
-- `.arbiter-deploy.json`: generated file manifest.
 
 </details>
 
 Prepared Docker directories are staged deployments. They use staging-specific
 Docker names and ports so they can run next to an installed Arbiter. During
-install, the copied directory is rewritten to the installed identity.
+install, the copied directory is marked as the installed deployment.
 
 ## Prepare the bundle
 
@@ -66,32 +60,31 @@ requirement for starting Arbiter.
 Choose the Arbiter service plugins for this deployment:
 
 ```bash
-./arbiter-docker bundle list-plugins  # show addable plugins and descriptions
-./arbiter-docker bundle add imap      # IMAP support: receive email
-./arbiter-docker bundle add smtp      # SMTP support: send email
-./arbiter-docker bundle remove smtp   # remove SMTP if it is not needed
+./reploy bundle list-options          # show addable options and descriptions
+./reploy bundle add --name imap,smtp  # IMAP receive + SMTP send support
+./reploy bundle remove smtp           # remove SMTP if it is not needed
 ```
 
-Use `bundle add arbiter-suite` or `bundle remove arbiter-suite` to add or
+Use `bundle add --name arbiter-suite` or `bundle remove arbiter-suite` to add or
 remove all plugins in the suite meta package.
 
 ### Build the wheelhouse
 
-Prepare the dependency wheelhouse from the selected package set. This locks the
+Build the dependency wheelhouse from the selected package set. This locks the
 runtime install to the versions selected during staging and lets Docker create
 or recreate the container without reaching PyPI:
 
 ```bash
-./arbiter-docker bundle prepare
+./reploy bundle build
 ```
 
-`bundle prepare` validates `requirements.txt` and builds a complete wheelhouse
-from the configured package pins or wheel paths. Running it before config work
-catches package resolution, Docker image, and wheel compatibility problems
-early. Each run prunes stale wheels that are no longer part of the resolved
-runtime install set. When the staging directory is in an Arbiter repository
-checkout, normal prepare refreshes local Arbiter wheels from that checkout
-before resolving the wheelhouse.
+`bundle build` validates the selected runtime artifact roots and builds a
+complete wheelhouse from the configured package pins or wheel paths. Running it
+before config work catches package resolution, Docker image, and wheel
+compatibility problems early. Each run prunes stale wheels that are no longer
+part of the resolved runtime install set. When the staging directory is in an
+Arbiter repository checkout, normal build refreshes local Arbiter wheels from
+that checkout before resolving the wheelhouse.
 
 ### Upgrade selected versions
 
@@ -99,44 +92,43 @@ For an existing prepared bundle, refresh selected package versions and rebuild
 the wheelhouse:
 
 ```bash
-./arbiter-docker bundle upgrade                         # upgrade selected packages
-./arbiter-docker bundle upgrade arbiter-smtp             # upgrade one package
-./arbiter-docker bundle upgrade arbiter-smtp==0.9.4      # select one version
+./reploy bundle upgrade                         # upgrade selected packages
+./reploy bundle upgrade arbiter-smtp             # upgrade one package
+./reploy bundle upgrade arbiter-smtp==0.9.4      # select one version
 ```
 
 Skip this step when you want to keep the versions already recorded in
-`requirements.txt`.
+`.reploy/requirements.txt`.
 
 ## Configure the deployment
 Configure Arbiter and the accounts and policies for the enabled plugins. You
 can bootstrap a new config and edit it, or copy in an existing config
 directory.
 
-From inside the `arbiter-docker` staging directory, bootstrap a config into
-`./conf`, the deployment config directory:
+Bootstrap the main Arbiter config through Reploy. These commands run inside the
+deployment runtime, using the Arbiter server installed in the deployment
+bundle:
 
 ```bash
-# Bootstrap the main config.
-arbiter-server --config-dir ./conf bootstrap arbiter
-# wrote conf/arbiter-server.yaml
-# wrote conf/arbiter/server.yaml
+reploy app bootstrap server
 ```
 
-Then create an SMTP account named `bot` and a corresponding policy:
+Then create IMAP and SMTP accounts named `bot` with corresponding policies:
 
 ```bash
-arbiter-server --config-dir ./conf bootstrap plugin smtp account bot
-# wrote conf/arbiter/account/smtp/bot.yaml
-# wrote conf/arbiter/policy/smtp/bot_policy.yaml
+reploy app bootstrap plugin imap,smtp account bot
+```
 
-# Edit the generated account and policy files, then activate the account.
-arbiter-server --config-dir conf config activate account smtp bot
+Edit the generated account and policy files, then activate both accounts:
+
+```bash
+reploy app config activate account imap,smtp bot
 ```
 
 Then inspect the composed config with:
 
 ```bash
-arbiter-server --config-dir conf config show
+reploy app config show
 ```
 
 Other service plugins follow the same pattern: bootstrap the plugin account,
@@ -148,7 +140,7 @@ edit the generated account and policy files, activate the account, and rerun
 After the config exists, bootstrap or update its env file:
 
 ```bash
-arbiter-server --config-dir ./conf env bootstrap
+reploy app env bootstrap
 ```
 
 Arbiter config files should reference secrets through environment variables,
@@ -171,8 +163,8 @@ After adding config and env, start the staged service and smoke test the
 Arbiter server:
 
 ```bash
-./arbiter-docker up
-./arbiter-docker test
+./reploy up
+./reploy test
 ```
 
 `up` prints the server URL for this staged directory. `test` calls the Arbiter

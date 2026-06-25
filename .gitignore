@@ -38,5 +38,6 @@ media/studio-runs/
 # credentials or host-specific settings and should not be committed.
 config.local/
 /arbiter-docker/
+/reploy-staging/
 
 .env
