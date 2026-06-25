@@ -18,7 +18,7 @@ Note: client binary is inside bin/arbiter[.exe] near this skill file.
 When the URL is known, get the server orientation summary:
 
 ```bash
-arbiter arbiter.url=http://127.0.0.1:8075 info server
+arbiter arbiter.url=https://127.0.0.1:8075 info server
 ```
 
 This answers: "Which Arbiter server is this?"
@@ -28,7 +28,7 @@ them directly. If you need to read output in a terminal, pipe it to `jq` once
 rather than changing the discovery flow:
 
 ```bash
-arbiter arbiter.url=http://127.0.0.1:8075 plugins | jq
+arbiter arbiter.url=https://127.0.0.1:8075 plugins | jq
 ```
 
 ## Discovery Sequence
