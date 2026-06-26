@@ -369,7 +369,7 @@ def _bootstrap_server_config(
         "--config-dir",
         str(config_dir),
         "bootstrap",
-        "arbiter",
+        "--server",
     )
     _assert_ok(bootstrap)
     for plugin_account in plugin_accounts:
@@ -377,9 +377,9 @@ def _bootstrap_server_config(
             "--config-dir",
             str(config_dir),
             "bootstrap",
-            "plugin",
+            "--plugin",
             plugin_account.plugin,
-            "account",
+            "--account",
             plugin_account.account,
         )
         _assert_ok(account)
@@ -388,8 +388,9 @@ def _bootstrap_server_config(
             str(config_dir),
             "config",
             "activate",
-            "account",
+            "--plugin",
             plugin_account.plugin,
+            "--account",
             plugin_account.account,
         )
         _assert_ok(activate)

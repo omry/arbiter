@@ -252,7 +252,6 @@ def _write_imap_only_config(path: Path, imap_server: Any) -> None:
         "arbiter:\n"
         "  server:\n"
         "    name: arbiter\n"
-        "    transport: http\n"
         "    bind:\n"
         "      host: 0.0.0.0\n"
         "      port: 8075\n"
@@ -516,7 +515,7 @@ def test_docker_deployment_serves_real_imap_operation(
     try:
         up = _run([helper, "up"], cwd=repo_root, timeout=240)
         _assert_ok(up)
-        url = f"http://127.0.0.1:{host_port}"
+        url = f"https://127.0.0.1:{host_port}"
         _assert_imap_deployment_operation(
             repo_root=repo_root,
             url=url,
@@ -578,7 +577,7 @@ def test_docker_deployment_serves_real_imap_operation_from_wheelhouse(
         )
         up = _run([helper, "up"], cwd=repo_root, timeout=240)
         _assert_ok(up)
-        url = f"http://127.0.0.1:{host_port}"
+        url = f"https://127.0.0.1:{host_port}"
         _assert_imap_deployment_operation(
             repo_root=repo_root,
             url=url,
