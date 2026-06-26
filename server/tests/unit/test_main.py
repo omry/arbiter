@@ -2123,6 +2123,112 @@ def test_cli_env_bootstrap_reports_reploy_display_path_for_current_env_file(
     assert capsys.readouterr().out == "env file already up to date: conf/.env\n"
 
 
+def test_cli_config_show_reports_reploy_display_path_for_unreadable_main_config(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_file = tmp_path.resolve() / "arbiter-server.yaml"
+    monkeypatch.setenv("REPLOY_CONFIG_CONTAINER_DIR", str(tmp_path.resolve()))
+    monkeypatch.setenv("REPLOY_CONFIG_DISPLAY_DIR", "conf")
+    real_exists = Path.exists
+
+    def exists(path: Path) -> bool:
+        if path == config_file:
+            raise PermissionError("permission denied")
+        return real_exists(path)
+
+    monkeypatch.setattr(Path, "exists", exists)
+
+    assert main(["--config-dir", str(tmp_path), "config", "show"]) == 1
+
+    assert capsys.readouterr().err == (
+        "Arbiter config error: cannot read config file: "
+        "conf/arbiter-server.yaml: permission denied\n"
+    )
+
+
+def test_cli_config_activate_reports_reploy_display_path_for_unreadable_main_config(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_dir = tmp_path.resolve()
+    config_file = config_dir / "arbiter-server.yaml"
+    account_file = config_dir / "arbiter" / "account" / "smtp" / "bot.yaml"
+    policy_file = config_dir / "arbiter" / "policy" / "smtp" / "bot_policy.yaml"
+    account_file.parent.mkdir(parents=True)
+    policy_file.parent.mkdir(parents=True)
+    account_file.write_text("policy: bot_policy\n", encoding="utf-8")
+    policy_file.write_text("allow: true\n", encoding="utf-8")
+    monkeypatch.setenv("REPLOY_CONFIG_CONTAINER_DIR", str(config_dir))
+    monkeypatch.setenv("REPLOY_CONFIG_DISPLAY_DIR", "conf")
+    real_exists = Path.exists
+
+    def exists(path: Path) -> bool:
+        if path == config_file:
+            raise PermissionError("permission denied")
+        return real_exists(path)
+
+    monkeypatch.setattr(Path, "exists", exists)
+
+    assert (
+        main(
+            [
+                "--config-dir",
+                str(config_dir),
+                "config",
+                "activate",
+                "--plugin",
+                "smtp",
+                "--account",
+                "bot",
+            ]
+        )
+        == 1
+    )
+
+    assert capsys.readouterr().err == (
+        "Arbiter config error: cannot read config file: "
+        "conf/arbiter-server.yaml: permission denied\n"
+    )
+
+
+def test_cli_env_bootstrap_reports_reploy_display_path_for_unreadable_env_file(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_file = tmp_path / "arbiter-server.yaml"
+    env_file = tmp_path / ".env"
+    config_file.write_text(
+        "arbiter:\n"
+        "  env_file: .env\n"
+        "  account:\n"
+        "    smtp:\n"
+        "      primary:\n"
+        "        password: ${oc.env:SMTP_PRIMARY_ACCOUNT_PASSWORD}\n",
+        encoding="utf-8",
+    )
+    env_file.write_text("", encoding="utf-8")
+    monkeypatch.setenv("REPLOY_CONFIG_CONTAINER_DIR", str(tmp_path.resolve()))
+    monkeypatch.setenv("REPLOY_CONFIG_DISPLAY_DIR", "conf")
+    real_exists = Path.exists
+
+    def exists(path: Path) -> bool:
+        if path == env_file:
+            raise PermissionError("permission denied")
+        return real_exists(path)
+
+    monkeypatch.setattr(Path, "exists", exists)
+
+    assert main(["--config-dir", str(tmp_path), "env", "bootstrap"]) == 1
+
+    assert capsys.readouterr().err == (
+        "Arbiter env error: cannot read env file: conf/.env: permission denied\n"
+    )
+
+
 def test_cli_env_bootstrap_configures_default_env_file(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -9917,6 +10023,34 @@ def test_cli_bootstrap_server_refusal_uses_reploy_config_display_dir(
         "file: reploy-staging/conf/arbiter-server.yaml\n"
         "  file differs from the generated bootstrap template\n"
         "  rerun with --force to overwrite it\n"
+    )
+
+
+def test_cli_bootstrap_server_reports_reploy_display_path_for_unreadable_config(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_dir = tmp_path.resolve() / "container-config"
+    config_file = config_dir / "arbiter-server.yaml"
+    config_file.parent.mkdir(parents=True)
+    config_file.write_text("local: true\n", encoding="utf-8")
+    monkeypatch.setenv("REPLOY_CONFIG_CONTAINER_DIR", str(config_dir))
+    monkeypatch.setenv("REPLOY_CONFIG_DISPLAY_DIR", "reploy-staging/conf")
+    real_exists = Path.exists
+
+    def exists(path: Path) -> bool:
+        if path == config_file:
+            raise PermissionError("permission denied")
+        return real_exists(path)
+
+    monkeypatch.setattr(Path, "exists", exists)
+
+    assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 1
+
+    assert capsys.readouterr().err == (
+        "Arbiter bootstrap error: cannot read bootstrap file: "
+        "reploy-staging/conf/arbiter-server.yaml: permission denied\n"
     )
 
 

@@ -2663,15 +2663,13 @@ def _read_env_file_values(
     env_file: Path, *, missing_ok: bool = False
 ) -> dict[str, str]:
     env_file_path = env_file.expanduser()
-    if not env_file_path.exists():
+    if not _display_path_exists(env_file_path, label="env file"):
         if missing_ok:
             return {}
-        raise ValueError(f"env file not found: {env_file_path}")
+        raise ValueError(f"env file not found: {_display_config_path(env_file_path)}")
     values: dict[str, str] = {}
-    for line_number, raw_line in enumerate(
-        env_file_path.read_text(encoding="utf-8").splitlines(),
-        start=1,
-    ):
+    env_text = _read_display_path_text(env_file_path, label="env file")
+    for line_number, raw_line in enumerate(env_text.splitlines(), start=1):
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
@@ -2679,15 +2677,15 @@ def _read_env_file_values(
             line = line.removeprefix("export ").lstrip()
         if "=" not in line:
             raise ValueError(
-                f"invalid env file line {line_number} in {env_file_path}: "
-                "expected KEY=VALUE"
+                f"invalid env file line {line_number} in "
+                f"{_display_config_path(env_file_path)}: expected KEY=VALUE"
             )
         key, raw_value = line.split("=", 1)
         key = key.strip()
         if not ENV_NAME_PATTERN.fullmatch(key):
             raise ValueError(
                 f"invalid env variable name on line {line_number} in "
-                f"{env_file_path}: {key}"
+                f"{_display_config_path(env_file_path)}: {key}"
             )
         values[key] = _strip_env_comment(raw_value.strip()).strip()
     return values
@@ -2729,9 +2727,9 @@ def _configured_env_file(
     config_name: str,
 ) -> Path | None:
     config_file = config_dir / f"{config_name}.yaml"
-    if not config_file.exists():
+    if not _display_path_exists(config_file, label="config file"):
         return None
-    env_file = OmegaConf.select(OmegaConf.load(config_file), ENV_FILE_CONFIG_KEY)
+    env_file = OmegaConf.select(_load_config_file(config_file), ENV_FILE_CONFIG_KEY)
     if env_file in (None, ""):
         return None
     if not isinstance(env_file, str):
@@ -2748,9 +2746,12 @@ def _configure_default_env_file(
     config_name: str,
 ) -> Path:
     config_file = config_dir / f"{config_name}.yaml"
-    if not config_file.exists():
-        raise ValueError(f"main config not found: {config_file}")
-    lines = config_file.read_text(encoding="utf-8").splitlines(keepends=True)
+    if not _display_path_exists(config_file, label="config file"):
+        raise ValueError(f"main config not found: {_display_config_path(config_file)}")
+    lines = _read_display_path_text(
+        config_file,
+        label="config file",
+    ).splitlines(keepends=True)
     env_line = f"  env_file: {DEFAULT_ENV_FILE_NAME}\n"
     for index, line in enumerate(lines):
         if line.strip() == "arbiter:":
@@ -3030,7 +3031,17 @@ def _run_env_bootstrap(
         block_values,
         commented_defaults=commented_defaults,
     )
-    if env_file.exists() and env_file.read_text(encoding="utf-8") == content:
+    try:
+        env_file_exists = _display_path_exists(env_file, label="env file")
+        existing_env_text = (
+            _read_display_path_text(env_file, label="env file")
+            if env_file_exists
+            else None
+        )
+    except ValueError as exc:
+        print_cli_error(str(exc), area="env")
+        return 1
+    if env_file_exists and existing_env_text == content:
         env_file.chmod(ENV_FILE_MODE)
         print(f"env file already up to date: {_display_config_path(env_file)}")
         return 0
@@ -4162,6 +4173,43 @@ def _display_config_path(path: Path) -> str:
     return str(path)
 
 
+def _file_access_reason(exc: OSError) -> str:
+    return exc.strerror or str(exc) or exc.__class__.__name__
+
+
+def _display_path_access_error(
+    path: Path,
+    exc: OSError,
+    *,
+    label: str,
+) -> ValueError:
+    return ValueError(
+        f"cannot read {label}: {_display_config_path(path)}: "
+        f"{_file_access_reason(exc)}"
+    )
+
+
+def _display_path_exists(path: Path, *, label: str) -> bool:
+    try:
+        return path.exists()
+    except OSError as exc:
+        raise _display_path_access_error(path, exc, label=label) from exc
+
+
+def _read_display_path_text(path: Path, *, label: str) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise _display_path_access_error(path, exc, label=label) from exc
+
+
+def _load_config_file(path: Path) -> DictConfig:
+    try:
+        return cast(DictConfig, OmegaConf.load(path))
+    except OSError as exc:
+        raise _display_path_access_error(path, exc, label="config file") from exc
+
+
 def _print_bootstrap_overwrite_error(path: Path) -> None:
     print_cli_error(
         "refusing to overwrite changed bootstrap file: "
@@ -4175,8 +4223,18 @@ def _print_bootstrap_overwrite_error(path: Path) -> None:
 
 
 def _write_bootstrap_file(path: Path, content: str, *, force: bool) -> int:
-    if path.exists() and not force:
-        if path.read_text(encoding="utf-8") == content:
+    try:
+        path_exists = _display_path_exists(path, label="bootstrap file")
+        existing_content = (
+            _read_display_path_text(path, label="bootstrap file")
+            if path_exists
+            else None
+        )
+    except ValueError as exc:
+        print_cli_error(str(exc), area="bootstrap")
+        return 1
+    if path_exists and not force:
+        if existing_content == content:
             print(f"unchanged {_display_config_path(path)}")
             return 0
         _print_bootstrap_overwrite_error(path)
@@ -4193,12 +4251,32 @@ def _write_bootstrap_files(
     force: bool,
 ) -> int:
     for path, content in files:
-        if path.exists() and not force and path.read_text(encoding="utf-8") != content:
+        try:
+            path_exists = _display_path_exists(path, label="bootstrap file")
+            existing_content = (
+                _read_display_path_text(path, label="bootstrap file")
+                if path_exists
+                else None
+            )
+        except ValueError as exc:
+            print_cli_error(str(exc), area="bootstrap")
+            return 1
+        if path_exists and not force and existing_content != content:
             _print_bootstrap_overwrite_error(path)
             return 1
     for path, content in files:
         path.parent.mkdir(parents=True, exist_ok=True)
-        if path.exists() and not force and path.read_text(encoding="utf-8") == content:
+        try:
+            path_exists = _display_path_exists(path, label="bootstrap file")
+            existing_content = (
+                _read_display_path_text(path, label="bootstrap file")
+                if path_exists
+                else None
+            )
+        except ValueError as exc:
+            print_cli_error(str(exc), area="bootstrap")
+            return 1
+        if path_exists and not force and existing_content == content:
             print(f"unchanged {_display_config_path(path)}")
         else:
             _write_text_with_mode(path, content, CONFIG_FILE_MODE)
@@ -4213,9 +4291,9 @@ def _print_bootstrap_file_plan(
 ) -> None:
     print("dry mode; no files changed")
     for path, content in files:
-        if not path.exists():
+        if not _display_path_exists(path, label="bootstrap file"):
             action = "would create"
-        elif path.read_text(encoding="utf-8") == content:
+        elif _read_display_path_text(path, label="bootstrap file") == content:
             action = "would leave unchanged"
         elif force:
             action = "would overwrite"
@@ -4350,16 +4428,30 @@ def _config_file_path(config_dir: Path, config_name: str) -> Path:
 
 
 def _load_main_config_lines(config_file: Path) -> list[str] | None:
-    if not config_file.exists():
+    try:
+        config_exists = _display_path_exists(config_file, label="config file")
+    except ValueError as exc:
+        print_cli_error(str(exc), area="config")
+        return None
+    if not config_exists:
         print_cli_error(
-            f"main config not found: {config_file}; run bootstrap --server first",
+            "main config not found: "
+            f"{_display_config_path(config_file)}; run bootstrap --server first",
             area="config",
         )
         return None
-    lines = config_file.read_text(encoding="utf-8").splitlines(keepends=True)
+    try:
+        lines = _read_display_path_text(
+            config_file,
+            label="config file",
+        ).splitlines(keepends=True)
+    except ValueError as exc:
+        print_cli_error(str(exc), area="config")
+        return None
     if "defaults:\n" not in lines:
         print_cli_error(
-            f"main config does not contain a defaults list: {config_file}",
+            "main config does not contain a defaults list: "
+            f"{_display_config_path(config_file)}",
             area="config",
         )
         return None
@@ -4470,14 +4562,27 @@ def _read_account_policy(
         kind="account",
         name=account_name,
     )
-    if not account_file.exists():
-        print_cli_error(f"account config not found: {account_file}", area="config")
+    try:
+        account_exists = _display_path_exists(account_file, label="config file")
+    except ValueError as exc:
+        print_cli_error(str(exc), area="config")
         return None
-    cfg = OmegaConf.load(account_file)
+    if not account_exists:
+        print_cli_error(
+            f"account config not found: {_display_config_path(account_file)}",
+            area="config",
+        )
+        return None
+    try:
+        cfg = _load_config_file(account_file)
+    except ValueError as exc:
+        print_cli_error(str(exc), area="config")
+        return None
     policy = OmegaConf.select(cfg, "policy")
     if not isinstance(policy, str) or not policy:
         print_cli_error(
-            f"account config must define a non-empty policy: {account_file}",
+            "account config must define a non-empty policy: "
+            f"{_display_config_path(account_file)}",
             area="config",
         )
         return None
@@ -4497,8 +4602,16 @@ def _ensure_config_object_file(
         kind=kind,
         name=name,
     )
-    if not object_file.exists():
-        print_cli_error(f"{kind} config not found: {object_file}", area="config")
+    try:
+        object_exists = _display_path_exists(object_file, label="config file")
+    except ValueError as exc:
+        print_cli_error(str(exc), area="config")
+        return False
+    if not object_exists:
+        print_cli_error(
+            f"{kind} config not found: {_display_config_path(object_file)}",
+            area="config",
+        )
         return False
     return True
 
@@ -4510,12 +4623,15 @@ def _config_object_exists(
     kind: BootstrapObjectKind,
     name: str,
 ) -> bool:
-    return _bootstrap_object_path(
-        config_dir=config_dir,
-        plugin=plugin,
-        kind=kind,
-        name=name,
-    ).exists()
+    return _display_path_exists(
+        _bootstrap_object_path(
+            config_dir=config_dir,
+            plugin=plugin,
+            kind=kind,
+            name=name,
+        ),
+        label="config file",
+    )
 
 
 def _resolve_policy_config_name(
@@ -4526,19 +4642,27 @@ def _resolve_policy_config_name(
     policy_name: str,
 ) -> str | None:
     for candidate in (policy_name, account_name):
-        if _config_object_exists(
-            config_dir=config_dir,
-            plugin=plugin,
-            kind="policy",
-            name=candidate,
-        ):
+        try:
+            config_exists = _config_object_exists(
+                config_dir=config_dir,
+                plugin=plugin,
+                kind="policy",
+                name=candidate,
+            )
+        except ValueError as exc:
+            print_cli_error(str(exc), area="config")
+            return None
+        if config_exists:
             return candidate
+    policy_path = config_dir / "arbiter" / "policy" / plugin / f"{policy_name}.yaml"
+    account_policy_path = (
+        config_dir / "arbiter" / "policy" / plugin / f"{account_name}.yaml"
+    )
     print_cli_error(
         "policy config not found for account policy "
         f"{policy_name}: expected "
-        f"{config_dir / 'arbiter' / 'policy' / plugin / f'{policy_name}.yaml'} "
-        "or "
-        f"{config_dir / 'arbiter' / 'policy' / plugin / f'{account_name}.yaml'}",
+        f"{_display_config_path(policy_path)} or "
+        f"{_display_config_path(account_policy_path)}",
         area="config",
     )
     return None
@@ -4957,7 +5081,11 @@ def _run_plugin_bootstrap(
             return 2
         files.extend(plugin_files)
     if dry_mode:
-        _print_bootstrap_file_plan(files, force=force)
+        try:
+            _print_bootstrap_file_plan(files, force=force)
+        except ValueError as exc:
+            print_cli_error(str(exc), area="bootstrap")
+            return 1
         return 0
     result = _write_bootstrap_files(files, force=force)
     if result == 0:
