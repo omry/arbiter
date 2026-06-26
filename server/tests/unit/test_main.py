@@ -2078,7 +2078,7 @@ def test_cli_env_bootstrap_comments_env_references_with_defaults(
         "      primary:\n"
         "        host: ${oc.env:IMAP_PRIMARY_ACCOUNT_HOST}\n"
         "        port: ${oc.env:IMAP_PRIMARY_ACCOUNT_PORT,993}\n"
-        "        label: ${oc.env:IMAP_PRIMARY_ACCOUNT_LABEL,\"mail, primary\"}\n",
+        '        label: ${oc.env:IMAP_PRIMARY_ACCOUNT_LABEL,"mail, primary"}\n',
         encoding="utf-8",
     )
     env_file = tmp_path / "local.env"
@@ -10212,9 +10212,7 @@ def test_cli_bootstrap_accepts_plugin_and_account_options(
 
     for plugin in ("imap", "smtp"):
         assert (config_dir / "arbiter" / "account" / plugin / "bot.yaml").exists()
-        assert (
-            config_dir / "arbiter" / "policy" / plugin / "bot_policy.yaml"
-        ).exists()
+        assert (config_dir / "arbiter" / "policy" / plugin / "bot_policy.yaml").exists()
     assert "config activate --plugins imap,smtp --account bot\n" in (
         capsys.readouterr().out
     )
@@ -10242,9 +10240,7 @@ def test_cli_bootstrap_option_form_defaults_account_name(
     )
 
     assert (config_dir / "arbiter" / "account" / "imap" / "default.yaml").exists()
-    assert (
-        config_dir / "arbiter" / "policy" / "imap" / "default_policy.yaml"
-    ).exists()
+    assert (config_dir / "arbiter" / "policy" / "imap" / "default_policy.yaml").exists()
 
 
 def test_cli_bootstrap_option_form_dry_mode_plans_without_writing(
@@ -10272,9 +10268,7 @@ def test_cli_bootstrap_option_form_dry_mode_plans_without_writing(
     )
 
     assert not (config_dir / "arbiter" / "account" / "imap" / "bot.yaml").exists()
-    assert not (
-        config_dir / "arbiter" / "policy" / "smtp" / "bot_policy.yaml"
-    ).exists()
+    assert not (config_dir / "arbiter" / "policy" / "smtp" / "bot_policy.yaml").exists()
     assert capsys.readouterr().out == (
         "dry mode; no files changed\n"
         f"would create {config_dir / 'arbiter' / 'account' / 'imap' / 'bot.yaml'}\n"
@@ -10308,8 +10302,7 @@ def test_cli_bootstrap_help_shows_option_form_and_dry_mode(
     assert "arbiter-server bootstrap --server\n" in stdout
     assert "arbiter-server bootstrap --plugin imap --account my_account\n" in stdout
     assert (
-        "arbiter-server bootstrap --plugins imap,smtp --account my_account\n"
-        in stdout
+        "arbiter-server bootstrap --plugins imap,smtp --account my_account\n" in stdout
     )
     assert (
         "arbiter-server bootstrap --plugins imap,smtp --account my_account --dry-mode\n"
@@ -10345,7 +10338,8 @@ def test_cli_bootstrap_plugin_uses_reploy_app_command_prefix_in_hints(
     assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
     capsys.readouterr()
     assert (
-        main(["--config-dir", str(config_dir), "bootstrap", "--plugins", "imap,smtp"]) == 0
+        main(["--config-dir", str(config_dir), "bootstrap", "--plugins", "imap,smtp"])
+        == 0
     )
 
     stdout = capsys.readouterr().out
@@ -10499,7 +10493,8 @@ def test_cli_config_activate_account_accepts_comma_separated_plugins(
     config_dir = tmp_path / "conf"
     assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
     assert (
-        main(["--config-dir", str(config_dir), "bootstrap", "--plugins", "imap,smtp"]) == 0
+        main(["--config-dir", str(config_dir), "bootstrap", "--plugins", "imap,smtp"])
+        == 0
     )
     capsys.readouterr()
 
@@ -10725,12 +10720,13 @@ def test_cli_config_activate_help_shows_account_target_shape(
     assert exc_info.value.code == 0
     stdout = capsys.readouterr().out
     assert (
-        "usage: arbiter-server config activate "
-        "[--plugin PLUGIN --account NAME]\n"
+        "usage: arbiter-server config activate " "[--plugin PLUGIN --account NAME]\n"
     ) in stdout
     assert "Show account activation status when no target is provided." in stdout
     assert "arbiter-server config activate\n" in stdout
-    assert "arbiter-server config activate --plugin imap --account my_account\n" in stdout
+    assert (
+        "arbiter-server config activate --plugin imap --account my_account\n" in stdout
+    )
     assert (
         "arbiter-server config activate --plugins imap,smtp --account my_account\n"
         in stdout

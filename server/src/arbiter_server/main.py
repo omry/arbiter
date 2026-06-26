@@ -414,9 +414,7 @@ def _color_config_check_component(component: str, status: str | None = None) -> 
 
 def _activation_status_icon(*, enabled: bool, color: bool) -> str:
     icon = (
-        _CONFIG_ACTIVATION_ENABLED_ICON
-        if enabled
-        else _CONFIG_ACTIVATION_DISABLED_ICON
+        _CONFIG_ACTIVATION_ENABLED_ICON if enabled else _CONFIG_ACTIVATION_DISABLED_ICON
     )
     if not color:
         return icon
@@ -2967,16 +2965,8 @@ def _format_env_file_blocks(
     commented_defaults = commented_defaults or {}
     lines: list[str] = []
     block_names = sorted(
-        {
-            block_name
-            for block_name, values in block_values.items()
-            if values
-        }
-        | {
-            block_name
-            for block_name, values in commented_defaults.items()
-            if values
-        }
+        {block_name for block_name, values in block_values.items() if values}
+        | {block_name for block_name, values in commented_defaults.items() if values}
     )
     if MISC_ENV_BLOCK in block_names:
         block_names = [
@@ -4826,8 +4816,7 @@ def _run_config_account_activation(
         )
     if option_plugin is None or option_account is None:
         print_cli_error(
-            f"config {action} requires --plugin/--plugins and "
-            "--account/--accounts",
+            f"config {action} requires --plugin/--plugins and " "--account/--accounts",
             area="config",
         )
         return 2
@@ -5369,7 +5358,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 area="bootstrap",
             )
             return 2
-        if namespace.variant is not None or namespace.list_variants or namespace.dry_mode:
+        if (
+            namespace.variant is not None
+            or namespace.list_variants
+            or namespace.dry_mode
+        ):
             print_cli_error(
                 "--server cannot be combined with plugin bootstrap options",
                 area="bootstrap",
@@ -5397,15 +5390,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             list_variants=namespace.list_variants,
             dry_mode=namespace.dry_mode,
         )
-    if (
-        namespace.command == "bootstrap"
-        and (
-            namespace.option_account is not None
-            or namespace.option_policy is not None
-            or namespace.variant is not None
-            or namespace.list_variants
-            or namespace.dry_mode
-        )
+    if namespace.command == "bootstrap" and (
+        namespace.option_account is not None
+        or namespace.option_policy is not None
+        or namespace.variant is not None
+        or namespace.list_variants
+        or namespace.dry_mode
     ):
         print_cli_error(
             "bootstrap options require --plugin/--plugins",

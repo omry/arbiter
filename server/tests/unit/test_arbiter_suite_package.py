@@ -117,9 +117,9 @@ def test_reploy_blueprints_forward_option_based_bootstrap() -> None:
         "          - ${ARBITER_CONFIG_NAME}\n"
         "          - bootstrap\n"
     )
-    assert expected in (
-        SERVER_PACK_ROOT / "arbiter.blueprint.yaml"
-    ).read_text(encoding="utf-8")
+    assert expected in (SERVER_PACK_ROOT / "arbiter.blueprint.yaml").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_reploy_blueprints_expose_activate_alias() -> None:
@@ -139,6 +139,6 @@ def test_reploy_blueprints_expose_activate_alias() -> None:
         "          - config\n"
         "          - activate\n"
     )
-    assert expected in (
-        SERVER_PACK_ROOT / "arbiter.blueprint.yaml"
-    ).read_text(encoding="utf-8")
+    assert expected in (SERVER_PACK_ROOT / "arbiter.blueprint.yaml").read_text(
+        encoding="utf-8"
+    )
