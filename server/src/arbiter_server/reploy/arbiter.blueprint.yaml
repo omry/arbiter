@@ -38,14 +38,13 @@ docker:
     bundle: .reploy/bundle
     data: data
   service:
+    install_owner: arbiter:arbiter
     image: python:3.11-slim
-    container_name: arbiter-staging
     container_host: 0.0.0.0
     container_port: "8075"
     host_bind: 127.0.0.1
     host_port: "18075"
     public_scheme: https
-    network_name: arbiter-staging
   environment:
     ARBITER_CONFIG_NAME: arbiter-server
   runtime:
