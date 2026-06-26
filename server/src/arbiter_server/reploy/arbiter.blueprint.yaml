@@ -111,11 +111,10 @@ docker:
           - --config-name
           - ${ARBITER_CONFIG_NAME}
           - bootstrap
-          - arbiter
-    bootstrap_plugin:
+          - --server
+    bootstrap:
       trigger:
         - bootstrap
-        - plugin
       app_command: true
       forward_args: true
       container:
@@ -126,10 +125,23 @@ docker:
           - --config-name
           - ${ARBITER_CONFIG_NAME}
           - bootstrap
-          - plugin
     config_activate:
       trigger:
         - config
+        - activate
+      app_command: true
+      forward_args: true
+      container:
+        argv:
+          - arbiter-server
+          - --config-dir
+          - /config
+          - --config-name
+          - ${ARBITER_CONFIG_NAME}
+          - config
+          - activate
+    activate:
+      trigger:
         - activate
       app_command: true
       forward_args: true

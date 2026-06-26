@@ -46,11 +46,6 @@ package-dir = {"" = "src"}
 [tool.setuptools.packages.find]
 where = ["src"]
 
-[tool.setuptools.package-data]
-"arbiter_suite" = [
-  "reploy/*.blueprint.yaml",
-]
-
 [tool.towncrier]
 name = "Arbiter"
 filename = "NEWS.md"

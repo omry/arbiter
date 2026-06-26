@@ -1334,7 +1334,7 @@ def test_runnable_config_requires_at_least_one_service_account() -> None:
         match=(
             "config must define at least one service account[\\s\\S]*"
             "currently installed arbiter plugins: imap, smtp[\\s\\S]*"
-            "bootstrap plugin PLUGIN account NAME"
+            "bootstrap --plugin PLUGIN --account NAME"
         ),
     ):
         ensure_runnable_config(AppConfig(), service_plugins=_test_service_plugins())
@@ -1396,7 +1396,7 @@ def test_cli_serve_unsafe_skip_runtime_permission_checks_only_skips_permission_g
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    assert main(["--config-dir", str(tmp_path), "bootstrap", "arbiter"]) == 0
+    assert main(["--config-dir", str(tmp_path), "bootstrap", "--server"]) == 0
     capsys.readouterr()
 
     def reject_permissions(**_kwargs: object) -> None:
@@ -9264,7 +9264,7 @@ def test_cli_accepts_config_args_after_subcommand(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    assert main(["bootstrap", "arbiter", "--config-dir", str(tmp_path)]) == 0
+    assert main(["bootstrap", "--server", "--config-dir", str(tmp_path)]) == 0
 
     assert (tmp_path / "arbiter-server.yaml").exists()
     assert capsys.readouterr().out == (
@@ -9620,7 +9620,7 @@ def test_cli_config_show_subcommand_passes_config_and_overrides(
     ]
 
 
-def test_cli_bootstrap_arbiter_uses_default_config_dir(
+def test_cli_bootstrap_server_uses_default_config_dir(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -9628,7 +9628,7 @@ def test_cli_bootstrap_arbiter_uses_default_config_dir(
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
 
-    assert main(["bootstrap", "arbiter"]) == 0
+    assert main(["bootstrap", "--server"]) == 0
 
     config_dir = tmp_path / ".arbiter"
     assert (config_dir / "arbiter-server.yaml").exists()
@@ -9638,14 +9638,14 @@ def test_cli_bootstrap_arbiter_uses_default_config_dir(
     )
 
 
-def test_cli_bootstrap_arbiter_writes_main_config(
+def test_cli_bootstrap_server_writes_main_config(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config_dir = tmp_path / "conf"
 
-    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+    assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
 
     config_file = config_dir / "arbiter-server.yaml"
     assert config_file.read_text(encoding="utf-8") == (
@@ -9700,8 +9700,8 @@ def test_cli_bootstrap_arbiter_writes_main_config(
         "server │ fail\n"
         "- fail: config must define at least one service account before Arbiter can run\n"
         "  currently installed arbiter plugins: imap, smtp\n"
-        "  use `arbiter-server --config-dir DIR bootstrap plugin PLUGIN account "
-        "NAME` to create an account config\n"
+        "  use `arbiter-server --config-dir DIR bootstrap --plugin PLUGIN "
+        "--account NAME` to create an account config\n"
     )
     assert captured.err == ""
 
@@ -9727,22 +9727,22 @@ def test_cli_bootstrap_arbiter_writes_main_config(
         "Arbiter config error: config must define at least one service "
         "account before Arbiter can run\n"
         "  currently installed arbiter plugins: imap, smtp\n"
-        "  use `arbiter-server --config-dir DIR bootstrap plugin PLUGIN account "
-        "NAME` to create an account config\n"
+        "  use `arbiter-server --config-dir DIR bootstrap --plugin PLUGIN "
+        "--account NAME` to create an account config\n"
     )
     assert served == {}
 
 
-def test_cli_bootstrap_arbiter_accepts_matching_existing_config(
+def test_cli_bootstrap_server_accepts_matching_existing_config(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     config_dir = tmp_path / "conf"
 
-    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+    assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
     capsys.readouterr()
 
-    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+    assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
 
     config_file = config_dir / "arbiter-server.yaml"
     server_file = config_dir / "arbiter" / "server.yaml"
@@ -9751,7 +9751,7 @@ def test_cli_bootstrap_arbiter_accepts_matching_existing_config(
     )
 
 
-def test_cli_bootstrap_arbiter_refuses_different_existing_config(
+def test_cli_bootstrap_server_refuses_different_existing_config(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -9760,7 +9760,7 @@ def test_cli_bootstrap_arbiter_refuses_different_existing_config(
     config_file.parent.mkdir(parents=True)
     config_file.write_text("local: true\n", encoding="utf-8")
 
-    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 1
+    assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 1
 
     assert config_file.read_text(encoding="utf-8") == "local: true\n"
     assert capsys.readouterr().err == (
@@ -9771,7 +9771,7 @@ def test_cli_bootstrap_arbiter_refuses_different_existing_config(
     )
 
 
-def test_cli_bootstrap_arbiter_refusal_uses_reploy_config_display_dir(
+def test_cli_bootstrap_server_refusal_uses_reploy_config_display_dir(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
@@ -9783,7 +9783,7 @@ def test_cli_bootstrap_arbiter_refusal_uses_reploy_config_display_dir(
     monkeypatch.setenv("REPLOY_CONFIG_CONTAINER_DIR", str(config_dir))
     monkeypatch.setenv("REPLOY_CONFIG_DISPLAY_DIR", "reploy-staging/conf")
 
-    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 1
+    assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 1
 
     assert capsys.readouterr().err == (
         "Arbiter bootstrap error: refusing to overwrite changed bootstrap "
@@ -9811,7 +9811,7 @@ def test_cli_bootstrap_plugin_account_writes_service_example(
 ) -> None:
     config_dir = tmp_path / "conf"
 
-    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+    assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
     capsys.readouterr()
     assert (
         main(
@@ -9819,9 +9819,9 @@ def test_cli_bootstrap_plugin_account_writes_service_example(
                 "--config-dir",
                 str(config_dir),
                 "bootstrap",
-                "plugin",
+                "--plugin",
                 "smtp",
-                "account",
+                "--account",
                 "personal_account",
             ]
         )
@@ -9871,9 +9871,14 @@ def test_cli_bootstrap_plugin_account_writes_service_example(
         f"wrote {account_file}\n"
         f"wrote {policy_file}\n"
         "\n"
-        "Edit the generated account and policy files, then activate the account:\n"
+        "Edit the generated account and policy files.\n"
+        "\n"
+        "Review activation status:\n"
+        f"  arbiter-server --config-dir {config_dir} config activate\n"
+        "\n"
+        "Activate the account when ready:\n"
         f"  arbiter-server --config-dir {config_dir} "
-        "config activate account smtp personal_account\n"
+        "config activate --plugin smtp --account personal_account\n"
         "\n"
         "Then inspect the composed config with:\n"
         f"  arbiter-server --config-dir {config_dir} config show\n"
@@ -9886,9 +9891,9 @@ def test_cli_bootstrap_plugin_defaults_to_default_account(
 ) -> None:
     config_dir = tmp_path / "conf"
 
-    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+    assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
     capsys.readouterr()
-    assert main(["--config-dir", str(config_dir), "bootstrap", "plugin", "smtp"]) == 0
+    assert main(["--config-dir", str(config_dir), "bootstrap", "--plugin", "smtp"]) == 0
 
     account_file = config_dir / "arbiter" / "account" / "smtp" / "default.yaml"
     policy_file = config_dir / "arbiter" / "policy" / "smtp" / "default_policy.yaml"
@@ -9899,9 +9904,14 @@ def test_cli_bootstrap_plugin_defaults_to_default_account(
         f"wrote {account_file}\n"
         f"wrote {policy_file}\n"
         "\n"
-        "Edit the generated account and policy files, then activate the account:\n"
+        "Edit the generated account and policy files.\n"
+        "\n"
+        "Review activation status:\n"
+        f"  arbiter-server --config-dir {config_dir} config activate\n"
+        "\n"
+        "Activate the account when ready:\n"
         f"  arbiter-server --config-dir {config_dir} "
-        "config activate account smtp default\n"
+        "config activate --plugin smtp --account default\n"
         "\n"
         "Then inspect the composed config with:\n"
         f"  arbiter-server --config-dir {config_dir} config show\n"
@@ -9914,7 +9924,7 @@ def test_cli_bootstrap_plugin_accepts_comma_separated_plugins(
 ) -> None:
     config_dir = tmp_path / "conf"
 
-    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+    assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
     capsys.readouterr()
     assert (
         main(
@@ -9922,7 +9932,7 @@ def test_cli_bootstrap_plugin_accepts_comma_separated_plugins(
                 "--config-dir",
                 str(config_dir),
                 "bootstrap",
-                "plugin",
+                "--plugins",
                 "imap,smtp",
             ]
         )
@@ -9942,14 +9952,19 @@ def test_cli_bootstrap_plugin_accepts_comma_separated_plugins(
         f"wrote {config_dir / 'arbiter' / 'account' / 'smtp' / 'default.yaml'}\n"
         f"wrote {config_dir / 'arbiter' / 'policy' / 'smtp' / 'default_policy.yaml'}\n"
         "\n"
-        "Edit the generated account and policy files, then activate the accounts:\n"
+        "Edit the generated account and policy files.\n"
+        "\n"
+        "Review activation status:\n"
+        f"  arbiter-server --config-dir {config_dir} config activate\n"
+        "\n"
+        "Activate the accounts when ready:\n"
         f"  arbiter-server --config-dir {config_dir} "
-        "config activate account imap,smtp default\n"
+        "config activate --plugins imap,smtp --account default\n"
         "\n"
         "Then inspect the composed config with:\n"
         f"  arbiter-server --config-dir {config_dir} config show\n"
     )
-    assert "config activate account imap,smtp default\n" in stdout
+    assert "config activate --plugins imap,smtp --account default\n" in stdout
     assert stdout.count("Then inspect the composed config with:") == 1
 
 
@@ -9959,7 +9974,7 @@ def test_cli_bootstrap_plugin_accepts_comma_separated_plugins_with_shared_accoun
 ) -> None:
     config_dir = tmp_path / "conf"
 
-    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+    assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
     capsys.readouterr()
     assert (
         main(
@@ -9967,9 +9982,9 @@ def test_cli_bootstrap_plugin_accepts_comma_separated_plugins_with_shared_accoun
                 "--config-dir",
                 str(config_dir),
                 "bootstrap",
-                "plugin",
+                "--plugins",
                 "imap,smtp",
-                "account",
+                "--account",
                 "bot",
             ]
         )
@@ -9983,8 +9998,155 @@ def test_cli_bootstrap_plugin_accepts_comma_separated_plugins_with_shared_accoun
         assert policy_file.exists()
         assert "policy: bot_policy\n" in account_file.read_text(encoding="utf-8")
     stdout = capsys.readouterr().out
-    assert "config activate account imap,smtp bot\n" in stdout
+    assert "config activate --plugins imap,smtp --account bot\n" in stdout
     assert stdout.count("Then inspect the composed config with:") == 1
+
+
+def test_cli_bootstrap_accepts_plugin_and_account_options(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_dir = tmp_path / "conf"
+
+    assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
+    capsys.readouterr()
+    assert (
+        main(
+            [
+                "--config-dir",
+                str(config_dir),
+                "bootstrap",
+                "--plugins",
+                "imap,smtp",
+                "--account",
+                "bot",
+            ]
+        )
+        == 0
+    )
+
+    for plugin in ("imap", "smtp"):
+        assert (config_dir / "arbiter" / "account" / plugin / "bot.yaml").exists()
+        assert (
+            config_dir / "arbiter" / "policy" / plugin / "bot_policy.yaml"
+        ).exists()
+    assert "config activate --plugins imap,smtp --account bot\n" in (
+        capsys.readouterr().out
+    )
+
+
+def test_cli_bootstrap_option_form_defaults_account_name(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_dir = tmp_path / "conf"
+
+    assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
+    capsys.readouterr()
+    assert (
+        main(
+            [
+                "--config-dir",
+                str(config_dir),
+                "bootstrap",
+                "--plugin",
+                "imap",
+            ]
+        )
+        == 0
+    )
+
+    assert (config_dir / "arbiter" / "account" / "imap" / "default.yaml").exists()
+    assert (
+        config_dir / "arbiter" / "policy" / "imap" / "default_policy.yaml"
+    ).exists()
+
+
+def test_cli_bootstrap_option_form_dry_mode_plans_without_writing(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_dir = tmp_path / "conf"
+
+    assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
+    capsys.readouterr()
+    assert (
+        main(
+            [
+                "--config-dir",
+                str(config_dir),
+                "bootstrap",
+                "--plugins",
+                "imap,smtp",
+                "--account",
+                "bot",
+                "--dry-mode",
+            ]
+        )
+        == 0
+    )
+
+    assert not (config_dir / "arbiter" / "account" / "imap" / "bot.yaml").exists()
+    assert not (
+        config_dir / "arbiter" / "policy" / "smtp" / "bot_policy.yaml"
+    ).exists()
+    assert capsys.readouterr().out == (
+        "dry mode; no files changed\n"
+        f"would create {config_dir / 'arbiter' / 'account' / 'imap' / 'bot.yaml'}\n"
+        f"would create {config_dir / 'arbiter' / 'policy' / 'imap' / 'bot_policy.yaml'}\n"
+        f"would create {config_dir / 'arbiter' / 'account' / 'smtp' / 'bot.yaml'}\n"
+        f"would create {config_dir / 'arbiter' / 'policy' / 'smtp' / 'bot_policy.yaml'}\n"
+    )
+
+
+def test_cli_bootstrap_account_option_requires_plugin(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["bootstrap", "--account", "bot"]) == 2
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert (
+        captured.err
+        == "Arbiter bootstrap error: bootstrap options require --plugin/--plugins\n"
+    )
+
+
+def test_cli_bootstrap_help_shows_option_form_and_dry_mode(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["bootstrap", "--help"])
+
+    assert exc_info.value.code == 0
+    stdout = capsys.readouterr().out
+    assert "arbiter-server bootstrap --server\n" in stdout
+    assert "arbiter-server bootstrap --plugin imap --account my_account\n" in stdout
+    assert (
+        "arbiter-server bootstrap --plugins imap,smtp --account my_account\n"
+        in stdout
+    )
+    assert (
+        "arbiter-server bootstrap --plugins imap,smtp --account my_account --dry-mode\n"
+        in stdout
+    )
+    assert (
+        "If --account/--accounts is omitted, the account name defaults to default."
+        in stdout
+    )
+
+
+def test_cli_bootstrap_rejects_positional_targets(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    for target in ("arbiter", "plugin"):
+        with pytest.raises(SystemExit) as exc_info:
+            main(["bootstrap", target])
+
+        assert exc_info.value.code == 2
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert f"unrecognized arguments: {target}" in captured.err
 
 
 def test_cli_bootstrap_plugin_uses_reploy_app_command_prefix_in_hints(
@@ -9995,14 +10157,15 @@ def test_cli_bootstrap_plugin_uses_reploy_app_command_prefix_in_hints(
     config_dir = tmp_path / "conf"
     monkeypatch.setenv("REPLOY_APP_COMMAND_PREFIX", "reploy app")
 
-    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+    assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
     capsys.readouterr()
     assert (
-        main(["--config-dir", str(config_dir), "bootstrap", "plugin", "imap,smtp"]) == 0
+        main(["--config-dir", str(config_dir), "bootstrap", "--plugins", "imap,smtp"]) == 0
     )
 
     stdout = capsys.readouterr().out
-    assert "  reploy app config activate account imap,smtp default\n" in stdout
+    assert "  reploy app config activate\n" in stdout
+    assert "  reploy app config activate --plugins imap,smtp --account default\n" in stdout
     assert "  reploy app config show\n" in stdout
     assert "arbiter-server --config-dir" not in stdout
 
@@ -10012,7 +10175,7 @@ def test_cli_bootstrap_plugin_account_refuses_existing_policy_without_partial_wr
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     config_dir = tmp_path / "conf"
-    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+    assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
     capsys.readouterr()
     policy_file = config_dir / "arbiter" / "policy" / "smtp" / "primary_policy.yaml"
     policy_file.parent.mkdir(parents=True)
@@ -10024,9 +10187,9 @@ def test_cli_bootstrap_plugin_account_refuses_existing_policy_without_partial_wr
                 "--config-dir",
                 str(config_dir),
                 "bootstrap",
-                "plugin",
+                "--plugin",
                 "smtp",
-                "account",
+                "--account",
                 "primary",
             ]
         )
@@ -10050,7 +10213,7 @@ def test_cli_bootstrap_plugin_policy_writes_service_example(
 ) -> None:
     config_dir = tmp_path / "conf"
 
-    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+    assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
     capsys.readouterr()
     assert (
         main(
@@ -10058,9 +10221,9 @@ def test_cli_bootstrap_plugin_policy_writes_service_example(
                 "--config-dir",
                 str(config_dir),
                 "bootstrap",
-                "plugin",
+                "--plugin",
                 "smtp",
-                "policy",
+                "--policy",
                 "readonly",
             ]
         )
@@ -10096,16 +10259,16 @@ def test_cli_config_activate_account_activates_matching_policy(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     config_dir = tmp_path / "conf"
-    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+    assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
     assert (
         main(
             [
                 "--config-dir",
                 str(config_dir),
                 "bootstrap",
-                "plugin",
+                "--plugin",
                 "smtp",
-                "account",
+                "--account",
                 "personal_account",
             ]
         )
@@ -10120,8 +10283,9 @@ def test_cli_config_activate_account_activates_matching_policy(
                 str(config_dir),
                 "config",
                 "activate",
-                "account",
+                "--plugin",
                 "smtp",
+                "--account",
                 "personal_account",
             ]
         )
@@ -10147,9 +10311,9 @@ def test_cli_config_activate_account_accepts_comma_separated_plugins(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     config_dir = tmp_path / "conf"
-    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+    assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
     assert (
-        main(["--config-dir", str(config_dir), "bootstrap", "plugin", "imap,smtp"]) == 0
+        main(["--config-dir", str(config_dir), "bootstrap", "--plugins", "imap,smtp"]) == 0
     )
     capsys.readouterr()
 
@@ -10160,8 +10324,9 @@ def test_cli_config_activate_account_accepts_comma_separated_plugins(
                 str(config_dir),
                 "config",
                 "activate",
-                "account",
+                "--plugins",
                 "imap,smtp",
+                "--account",
                 "default",
             ]
         )
@@ -10182,8 +10347,9 @@ def test_cli_config_activate_account_accepts_comma_separated_plugins(
                 str(config_dir),
                 "config",
                 "deactivate",
-                "account",
+                "--plugins",
                 "imap,smtp",
+                "--account",
                 "default",
             ]
         )
@@ -10198,12 +10364,224 @@ def test_cli_config_activate_account_accepts_comma_separated_plugins(
     assert capsys.readouterr().out == f"updated {config_dir / 'arbiter-server.yaml'}\n"
 
 
+def test_cli_config_activate_accepts_plugin_and_account_options(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_dir = tmp_path / "conf"
+    assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
+    assert (
+        main(["--config-dir", str(config_dir), "bootstrap", "--plugins", "imap,smtp"])
+        == 0
+    )
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "--config-dir",
+                str(config_dir),
+                "config",
+                "activate",
+                "--plugins",
+                "imap,smtp",
+                "--account",
+                "default",
+            ]
+        )
+        == 0
+    )
+
+    config_yaml = (config_dir / "arbiter-server.yaml").read_text(encoding="utf-8")
+    assert "    - imap/default\n" in config_yaml
+    assert "    - smtp/default\n" in config_yaml
+    assert "    - imap/default_policy\n" in config_yaml
+    assert "    - smtp/default_policy\n" in config_yaml
+    assert capsys.readouterr().out == f"updated {config_dir / 'arbiter-server.yaml'}\n"
+
+
+def test_cli_config_activate_lists_installed_plugin_status(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_dir = tmp_path / "conf"
+    monkeypatch.setenv("REPLOY_APP_COMMAND_PREFIX", "./reploy app")
+    assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
+    assert (
+        main(["--config-dir", str(config_dir), "bootstrap", "--plugins", "imap,smtp"])
+        == 0
+    )
+    assert (
+        main(
+            [
+                "--config-dir",
+                str(config_dir),
+                "config",
+                "activate",
+                "--plugin",
+                "imap",
+                "--account",
+                "default",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert main(["--config-dir", str(config_dir), "config", "activate"]) == 0
+
+    assert capsys.readouterr().out == (
+        "installed plugins:\n"
+        "  imap\n"
+        "  smtp\n"
+        "accounts:\n"
+        "  default: ✓ imap  ✗ smtp\n"
+        "    activate:\n"
+        "      ./reploy app config activate --plugin smtp --account default\n"
+    )
+
+    assert (
+        main(
+            [
+                "--config-dir",
+                str(config_dir),
+                "config",
+                "activate",
+                "--plugin",
+                "smtp",
+                "--account",
+                "default",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert main(["--config-dir", str(config_dir), "config", "activate"]) == 0
+
+    assert capsys.readouterr().out == (
+        "installed plugins:\n"
+        "  imap\n"
+        "  smtp\n"
+        "accounts:\n"
+        "  default: ✓ imap  ✓ smtp\n"
+    )
+
+
+def test_cli_config_activate_lists_empty_account_status_consistently(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_dir = tmp_path / "conf"
+    monkeypatch.setenv("REPLOY_APP_COMMAND_PREFIX", "reploy app")
+    assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
+    capsys.readouterr()
+
+    assert main(["--config-dir", str(config_dir), "config", "activate"]) == 0
+
+    assert capsys.readouterr().out == (
+        "installed plugins:\n"
+        "  imap\n"
+        "  smtp\n"
+        "create account configs:\n"
+        "  single plugin: reploy app bootstrap --plugin imap --account my_account\n"
+        "  batch: reploy app bootstrap --plugins imap,smtp --account my_account\n"
+        "  preview: reploy app bootstrap --plugins imap,smtp --account my_account --dry-mode\n"
+        "  account name is optional; default is used when omitted\n"
+    )
+
+
+def test_cli_config_activate_status_colors_plugin_icons(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_dir = tmp_path / "conf"
+    monkeypatch.setenv("ARBITER_COLOR", "always")
+    assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
+    assert (
+        main(["--config-dir", str(config_dir), "bootstrap", "--plugins", "imap,smtp"])
+        == 0
+    )
+    assert (
+        main(
+            [
+                "--config-dir",
+                str(config_dir),
+                "config",
+                "activate",
+                "--plugin",
+                "imap",
+                "--account",
+                "default",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert main(["--config-dir", str(config_dir), "config", "activate"]) == 0
+
+    assert (
+        "  default: \033[32m✓\033[0m imap  \033[31m✗\033[0m smtp\n"
+        in capsys.readouterr().out
+    )
+
+
+def test_cli_config_activate_help_shows_account_target_shape(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["config", "activate", "--help"])
+
+    assert exc_info.value.code == 0
+    stdout = capsys.readouterr().out
+    assert (
+        "usage: arbiter-server config activate "
+        "[--plugin PLUGIN --account NAME]\n"
+    ) in stdout
+    assert "Show account activation status when no target is provided." in stdout
+    assert "arbiter-server config activate\n" in stdout
+    assert "arbiter-server config activate --plugin imap --account my_account\n" in stdout
+    assert (
+        "arbiter-server config activate --plugins imap,smtp --account my_account\n"
+        in stdout
+    )
+
+
+def test_cli_config_activate_rejects_positional_target(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["config", "activate", "account"])
+
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "unrecognized arguments: account" in captured.err
+
+
+def test_cli_config_activate_option_form_requires_plugin_and_account(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["config", "activate", "--plugin", "imap"]) == 2
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        "Arbiter config error: config activate requires --plugin/--plugins "
+        "and --account/--accounts\n"
+    )
+
+
 def test_cli_config_activate_account_can_alias_policy_file_name(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     config_dir = tmp_path / "conf"
-    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+    assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
     account_dir = config_dir / "arbiter" / "account" / "smtp"
     policy_dir = config_dir / "arbiter" / "policy" / "smtp"
     account_dir.mkdir(parents=True)
@@ -10234,8 +10612,9 @@ def test_cli_config_activate_account_can_alias_policy_file_name(
                 str(config_dir),
                 "config",
                 "activate",
-                "account",
+                "--plugin",
                 "smtp",
+                "--account",
                 "bot",
             ]
         )
@@ -10257,16 +10636,16 @@ def test_cli_config_deactivate_account_deactivates_unused_policy(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     config_dir = tmp_path / "conf"
-    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+    assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
     assert (
         main(
             [
                 "--config-dir",
                 str(config_dir),
                 "bootstrap",
-                "plugin",
+                "--plugin",
                 "smtp",
-                "account",
+                "--account",
                 "primary",
             ]
         )
@@ -10279,8 +10658,9 @@ def test_cli_config_deactivate_account_deactivates_unused_policy(
                 str(config_dir),
                 "config",
                 "activate",
-                "account",
+                "--plugin",
                 "smtp",
+                "--account",
                 "primary",
             ]
         )
@@ -10295,8 +10675,9 @@ def test_cli_config_deactivate_account_deactivates_unused_policy(
                 str(config_dir),
                 "config",
                 "deactivate",
-                "account",
+                "--plugin",
                 "smtp",
+                "--account",
                 "primary",
             ]
         )
@@ -10314,7 +10695,7 @@ def test_cli_config_deactivate_account_keeps_shared_policy(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     config_dir = tmp_path / "conf"
-    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+    assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
     account_dir = config_dir / "arbiter" / "account" / "smtp"
     policy_dir = config_dir / "arbiter" / "policy" / "smtp"
     account_dir.mkdir(parents=True)
@@ -10345,8 +10726,9 @@ def test_cli_config_deactivate_account_keeps_shared_policy(
                     str(config_dir),
                     "config",
                     "activate",
-                    "account",
+                    "--plugin",
                     "smtp",
+                    "--account",
                     account_name,
                 ]
             )
@@ -10361,8 +10743,9 @@ def test_cli_config_deactivate_account_keeps_shared_policy(
                 str(config_dir),
                 "config",
                 "deactivate",
-                "account",
+                "--plugin",
                 "smtp",
+                "--account",
                 "primary",
             ]
         )
@@ -10380,8 +10763,9 @@ def test_cli_config_deactivate_account_keeps_shared_policy(
                 str(config_dir),
                 "config",
                 "deactivate",
-                "account",
+                "--plugin",
                 "smtp",
+                "--account",
                 "secondary",
             ]
         )
@@ -10398,7 +10782,7 @@ def test_cli_bootstrap_plugin_imap_account_writes_service_example(
 ) -> None:
     config_dir = tmp_path / "conf"
 
-    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+    assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
     capsys.readouterr()
     assert (
         main(
@@ -10406,9 +10790,9 @@ def test_cli_bootstrap_plugin_imap_account_writes_service_example(
                 "--config-dir",
                 str(config_dir),
                 "bootstrap",
-                "plugin",
+                "--plugin",
                 "imap",
-                "account",
+                "--account",
                 "bot",
             ]
         )
@@ -10477,9 +10861,14 @@ def test_cli_bootstrap_plugin_imap_account_writes_service_example(
         f"wrote {account_file}\n"
         f"wrote {policy_file}\n"
         "\n"
-        "Edit the generated account and policy files, then activate the account:\n"
+        "Edit the generated account and policy files.\n"
+        "\n"
+        "Review activation status:\n"
+        f"  arbiter-server --config-dir {config_dir} config activate\n"
+        "\n"
+        "Activate the account when ready:\n"
         f"  arbiter-server --config-dir {config_dir} "
-        "config activate account imap bot\n"
+        "config activate --plugin imap --account bot\n"
         "\n"
         "Then inspect the composed config with:\n"
         f"  arbiter-server --config-dir {config_dir} config show\n"
@@ -10496,9 +10885,9 @@ def test_cli_bootstrap_plugin_imap_policy_lists_variants(
                 "--config-dir",
                 str(tmp_path),
                 "bootstrap",
-                "plugin",
+                "--plugin",
                 "imap",
-                "policy",
+                "--policy",
                 "--list-variants",
             ]
         )
@@ -10516,7 +10905,7 @@ def test_cli_bootstrap_plugin_imap_policy_writes_selected_variant(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     config_dir = tmp_path / "conf"
-    assert main(["--config-dir", str(config_dir), "bootstrap", "arbiter"]) == 0
+    assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
     capsys.readouterr()
 
     assert (
@@ -10525,9 +10914,9 @@ def test_cli_bootstrap_plugin_imap_policy_writes_selected_variant(
                 "--config-dir",
                 str(config_dir),
                 "bootstrap",
-                "plugin",
+                "--plugin",
                 "imap",
-                "policy",
+                "--policy",
                 "locked_down",
                 "--variant",
                 "default-closed",

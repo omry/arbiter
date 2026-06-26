@@ -346,6 +346,8 @@ _CONFIG_CHECK_STRUCTURE_COLOR = "90"
 _CONFIG_CHECK_COLUMN_SEPARATOR = " │ "
 _CONFIG_CHECK_COLUMN_SEPARATOR_PATTERN = r" [|│] "
 _CONFIG_CHECK_PROGRESS_FRAMES = ("|", "/", "-", "\\")
+_CONFIG_ACTIVATION_ENABLED_ICON = "✓"
+_CONFIG_ACTIVATION_DISABLED_ICON = "✗"
 
 
 def _config_check_color_enabled(output: object) -> bool:
@@ -403,6 +405,47 @@ def _color_config_check_component(component: str, status: str | None = None) -> 
     if color is None:
         color = _CONFIG_CHECK_COMPONENT_COLOR
     return f"\033[{color}m{component}\033[0m"
+
+
+def _activation_status_icon(*, enabled: bool, color: bool) -> str:
+    icon = (
+        _CONFIG_ACTIVATION_ENABLED_ICON
+        if enabled
+        else _CONFIG_ACTIVATION_DISABLED_ICON
+    )
+    if not color:
+        return icon
+    status = "pass" if enabled else "fail"
+    color_code = _CONFIG_CHECK_STATUS_COLORS[status]
+    return f"\033[{color_code}m{icon}\033[0m"
+
+
+def _format_activation_plugin_status(
+    plugin: str,
+    *,
+    enabled: bool,
+    color: bool,
+) -> str:
+    return f"{_activation_status_icon(enabled=enabled, color=color)} {plugin}"
+
+
+def _format_activation_account_row(
+    account: str,
+    *,
+    installed_plugins: Sequence[str],
+    active_plugins: Sequence[str],
+    color: bool,
+) -> str:
+    active_plugin_set = set(active_plugins)
+    plugin_statuses = [
+        _format_activation_plugin_status(
+            plugin,
+            enabled=plugin in active_plugin_set,
+            color=color,
+        )
+        for plugin in installed_plugins
+    ]
+    return f"  {account}: {'  '.join(plugin_statuses)}"
 
 
 class _ConfigCheckProgress:
@@ -1267,8 +1310,8 @@ def ensure_runnable_config(
             "config must define at least one service account before Arbiter can run\n"
             f"currently installed arbiter plugins: "
             f"{_installed_plugin_summary(service_plugins)}\n"
-            "use `arbiter-server --config-dir DIR bootstrap plugin PLUGIN "
-            "account NAME` to create an account config"
+            "use `arbiter-server --config-dir DIR bootstrap --plugin PLUGIN "
+            "--account NAME` to create an account config"
         )
 
 
@@ -4101,7 +4144,25 @@ def _write_bootstrap_files(
     return 0
 
 
-def _run_bootstrap_arbiter(
+def _print_bootstrap_file_plan(
+    files: Sequence[tuple[Path, str]],
+    *,
+    force: bool,
+) -> None:
+    print("dry mode; no files changed")
+    for path, content in files:
+        if not path.exists():
+            action = "would create"
+        elif path.read_text(encoding="utf-8") == content:
+            action = "would leave unchanged"
+        elif force:
+            action = "would overwrite"
+        else:
+            action = "would refuse to overwrite changed"
+        print(f"{action} {_display_config_path(path)}")
+
+
+def _run_bootstrap_server(
     *,
     config_dir: str | None,
     config_name: str,
@@ -4229,7 +4290,7 @@ def _config_file_path(config_dir: Path, config_name: str) -> Path:
 def _load_main_config_lines(config_file: Path) -> list[str] | None:
     if not config_file.exists():
         print_cli_error(
-            f"main config not found: {config_file}; run bootstrap arbiter first",
+            f"main config not found: {config_file}; run bootstrap --server first",
             area="config",
         )
         return None
@@ -4596,15 +4657,109 @@ def _run_config_deactivate_account(
     return 0
 
 
+def _run_config_activation_summary(*, config_dir: str, config_name: str) -> int:
+    config_dir_path = Path(config_dir).expanduser()
+    config_file = _config_file_path(config_dir_path, config_name)
+    lines = _load_main_config_lines(config_file)
+    if lines is None:
+        return 1
+
+    installed_plugins = service_plugin_names()
+    active_plugins_by_account: dict[str, list[str]] = {}
+    for item in _active_group_items(lines, _config_group_for_kind("account")):
+        plugin, separator, account = item.partition("/")
+        if separator and plugin and account:
+            active_plugins_by_account.setdefault(account, []).append(plugin)
+
+    configured_plugins_by_account: dict[str, list[str]] = {}
+    for plugin in installed_plugins:
+        account_dir = config_dir_path / "arbiter" / "account" / plugin
+        if not account_dir.is_dir():
+            continue
+        for account_file in sorted(account_dir.glob("*.yaml")):
+            configured_plugins_by_account.setdefault(account_file.stem, []).append(
+                plugin
+            )
+
+    command_prefix = _display_command_prefix(config_dir=config_dir_path)
+    color = _config_check_color_enabled(sys.stdout)
+    print("installed plugins:")
+    for plugin in installed_plugins:
+        print(f"  {plugin}")
+
+    account_names = sorted(
+        set(configured_plugins_by_account) | set(active_plugins_by_account)
+    )
+    if not account_names:
+        print("create account configs:")
+        plugins = ",".join(installed_plugins)
+        if installed_plugins:
+            print(
+                f"  single plugin: {command_prefix} bootstrap "
+                f"--plugin {installed_plugins[0]} --account my_account"
+            )
+        if len(installed_plugins) > 1:
+            print(
+                f"  batch: {command_prefix} bootstrap "
+                f"--plugins {plugins} --account my_account"
+            )
+            print(
+                f"  preview: {command_prefix} bootstrap "
+                f"--plugins {plugins} --account my_account --dry-mode"
+            )
+        print("  account name is optional; default is used when omitted")
+        return 0
+
+    print("accounts:")
+    for account in account_names:
+        active_plugins = sorted(
+            dict.fromkeys(active_plugins_by_account.get(account, []))
+        )
+        configured_plugins = sorted(
+            dict.fromkeys(configured_plugins_by_account.get(account, []))
+        )
+        inactive_plugins = [
+            plugin for plugin in configured_plugins if plugin not in active_plugins
+        ]
+        print(
+            _format_activation_account_row(
+                account,
+                installed_plugins=installed_plugins,
+                active_plugins=active_plugins,
+                color=color,
+            )
+        )
+        if inactive_plugins:
+            print("    activate:")
+            for plugin in inactive_plugins:
+                print(
+                    f"      {command_prefix} config activate "
+                    f"--plugin {plugin} --account {account}"
+                )
+    return 0
+
+
 def _run_config_account_activation(
     *,
     action: str,
     config_dir: str,
     config_name: str,
-    plugin: str,
-    name: str,
+    option_plugin: str | None,
+    option_account: str | None,
 ) -> int:
-    plugins = _split_cli_name_list(plugin, label="plugin", area="config")
+    if option_plugin is None and option_account is None:
+        return _run_config_activation_summary(
+            config_dir=config_dir,
+            config_name=config_name,
+        )
+    if option_plugin is None or option_account is None:
+        print_cli_error(
+            f"config {action} requires --plugin/--plugins and "
+            "--account/--accounts",
+            area="config",
+        )
+        return 2
+    plugins = _split_cli_name_list(option_plugin, label="plugin", area="config")
     if plugins is None:
         return 2
     if action == "activate":
@@ -4612,14 +4767,14 @@ def _run_config_account_activation(
             config_dir=config_dir,
             config_name=config_name,
             plugins=plugins,
-            name=name,
+            name=option_account,
         )
     if action == "deactivate":
         return _run_config_deactivate_account(
             config_dir=config_dir,
             config_name=config_name,
             plugins=plugins,
-            name=name,
+            name=option_account,
         )
     raise AssertionError(f"unknown activation action: {action}")
 
@@ -4642,16 +4797,26 @@ def _print_bootstrap_activation_hint(
     config_file = config_dir / f"{config_name}.yaml"
     print("")
     if kind == "account":
-        if len(plugins) == 1:
-            print(
-                "Edit the generated account and policy files, then activate the account:"
-            )
-        else:
-            print(
-                "Edit the generated account and policy files, then activate the accounts:"
-            )
         command_prefix = _display_command_prefix(config_dir=config_dir)
-        print(f"  {command_prefix} config activate account {','.join(plugins)} {name}")
+        if len(plugins) == 1:
+            print("Edit the generated account and policy files.")
+            print("")
+            print("Review activation status:")
+            print(f"  {command_prefix} config activate")
+            print("")
+            print("Activate the account when ready:")
+        else:
+            print("Edit the generated account and policy files.")
+            print("")
+            print("Review activation status:")
+            print(f"  {command_prefix} config activate")
+            print("")
+            print("Activate the accounts when ready:")
+        plugin_flag = "--plugin" if len(plugins) == 1 else "--plugins"
+        print(
+            f"  {command_prefix} config activate "
+            f"{plugin_flag} {','.join(plugins)} --account {name}"
+        )
         print("")
         print("Then inspect the composed config with:")
         print(f"  {command_prefix} config show")
@@ -4679,6 +4844,7 @@ def _run_plugin_bootstrap(
     force: bool,
     variant: str | None = None,
     list_variants: bool = False,
+    dry_mode: bool = False,
 ) -> int:
     plugins = _split_cli_name_list(plugin, label="plugin", area="bootstrap")
     if plugins is None:
@@ -4694,7 +4860,7 @@ def _run_plugin_bootstrap(
     if kind == "account" and name is None:
         name = "default"
     if name is None:
-        print_cli_error(f"bootstrap plugin {kind} requires name", area="bootstrap")
+        print_cli_error(f"bootstrap --{kind} requires name", area="bootstrap")
         return 2
     config_dir_path = _ensure_config_dir(config_dir)
     if config_dir_path is None:
@@ -4713,6 +4879,9 @@ def _run_plugin_bootstrap(
         if not plugin_files:
             return 2
         files.extend(plugin_files)
+    if dry_mode:
+        _print_bootstrap_file_plan(files, force=force)
+        return 0
     result = _write_bootstrap_files(files, force=force)
     if result == 0:
         _print_bootstrap_activation_hint(
@@ -4868,55 +5037,111 @@ def _build_parser() -> argparse.ArgumentParser:
         help_text="Hydra-style config overrides applied before printing",
     )
     for activation_action in ("activate", "deactivate"):
+        action_description = (
+            "Show account activation status when no target is provided. "
+            f"With a target, {activation_action} an account for one or more "
+            "comma-separated plugins."
+        )
         activation = config_subcommands.add_parser(
             activation_action,
+            usage=f"%(prog)s [--plugin PLUGIN --account NAME]",
             help=f"{activation_action} a config object in the main defaults list",
+            description=action_description,
+            epilog=(
+                "Examples:\n"
+                f"  arbiter-server config {activation_action}\n"
+                f"  arbiter-server config {activation_action} --plugin imap --account my_account\n"
+                f"  arbiter-server config {activation_action} --plugins imap,smtp --account my_account"
+            ),
+            formatter_class=argparse.RawDescriptionHelpFormatter,
         )
-        activation.add_argument("kind", choices=["account"])
-        activation.add_argument("plugin")
-        activation.add_argument("name")
+        activation_plugin_group = activation.add_mutually_exclusive_group()
+        activation_plugin_group.add_argument(
+            "--plugin",
+            "--plugins",
+            dest="option_plugin",
+            metavar="PLUGIN",
+            help="plugin name or comma-separated plugin names",
+        )
+        activation_account_group = activation.add_mutually_exclusive_group()
+        activation_account_group.add_argument(
+            "--account",
+            "--accounts",
+            dest="option_account",
+            metavar="NAME",
+            help="account name to activate or deactivate for selected plugins",
+        )
 
-    bootstrap = subcommands.add_parser("bootstrap", help="create config templates")
-    bootstrap_subcommands = bootstrap.add_subparsers(
-        dest="bootstrap_command",
-        required=True,
+    bootstrap = subcommands.add_parser(
+        "bootstrap",
+        help="create config templates",
+        description=(
+            "Create Arbiter config templates. Prefer the option form for "
+            "plugin account bootstrap."
+        ),
+        epilog=(
+            "Examples:\n"
+            "  arbiter-server bootstrap --server\n"
+            "  arbiter-server bootstrap --plugin imap --account my_account\n"
+            "  arbiter-server bootstrap --plugins imap,smtp --account my_account\n"
+            "  arbiter-server bootstrap --plugin smtp --policy readonly\n"
+            "  arbiter-server bootstrap --plugin imap --policy --list-variants\n"
+            "  arbiter-server bootstrap --plugins imap,smtp --account my_account --dry-mode\n"
+            "\n"
+            "If --account/--accounts is omitted, the account name defaults to "
+            "default."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    bootstrap_arbiter = bootstrap_subcommands.add_parser(
-        "arbiter",
+    bootstrap_plugin_group = bootstrap.add_mutually_exclusive_group()
+    bootstrap_plugin_group.add_argument(
+        "--plugin",
+        "--plugins",
+        dest="option_plugin",
+        metavar="PLUGIN",
+        help="plugin name or comma-separated plugin names",
+    )
+    bootstrap_plugin_group.add_argument(
+        "--server",
+        action="store_true",
         help="create the main Arbiter config",
     )
-    bootstrap_arbiter.add_argument(
-        "--force",
-        action="store_true",
-        help="overwrite an existing config file",
+    bootstrap_kind_group = bootstrap.add_mutually_exclusive_group()
+    bootstrap_kind_group.add_argument(
+        "--account",
+        "--accounts",
+        dest="option_account",
+        metavar="NAME",
+        help="account name to create for selected plugins (default: default)",
     )
-    bootstrap_plugin = bootstrap_subcommands.add_parser(
-        "plugin",
-        help="create a plugin-owned account or policy template",
-    )
-    bootstrap_plugin.add_argument("plugin")
-    bootstrap_plugin.add_argument(
-        "kind",
+    bootstrap_kind_group.add_argument(
+        "--policy",
+        "--policies",
+        dest="option_policy",
+        metavar="NAME",
         nargs="?",
-        choices=["account", "policy"],
-        default="account",
+        const="",
+        help="policy name to create for selected plugins",
     )
-    bootstrap_plugin.add_argument("name", nargs="?")
-    bootstrap_plugin.add_argument(
+    bootstrap.add_argument(
         "--variant",
         help="bootstrap template variant when the plugin provides variants",
     )
-    bootstrap_plugin.add_argument(
+    bootstrap.add_argument(
         "--list-variants",
         action="store_true",
         help="list bootstrap variants for this plugin and kind",
     )
-    bootstrap_plugin.add_argument(
+    bootstrap.add_argument(
         "--force",
         action="store_true",
         help="overwrite an existing config object file",
     )
-
+    bootstrap.add_argument(
+        "--dry-mode",
+        action="store_true",
+        help="show which bootstrap files would be written without changing files",
+    )
     env = subcommands.add_parser("env", help="inspect and bootstrap env files")
     env_subcommands = env.add_subparsers(dest="env_command", required=True)
     env_check = env_subcommands.add_parser(
@@ -5016,8 +5241,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             action=namespace.config_command,
             config_dir=namespace.config_dir,
             config_name=namespace.config_name,
-            plugin=namespace.plugin,
-            name=namespace.name,
+            option_plugin=namespace.option_plugin,
+            option_account=namespace.option_account,
         )
     if namespace.command == "env" and namespace.env_command == "check":
         return _run_env_check(
@@ -5043,22 +5268,61 @@ def main(argv: Sequence[str] | None = None) -> int:
             for name in service_plugin_names():
                 print(name)
         return 0
-    if namespace.command == "bootstrap" and namespace.bootstrap_command == "arbiter":
-        return _run_bootstrap_arbiter(
+    if namespace.command == "bootstrap" and namespace.server:
+        if namespace.option_plugin is not None:
+            print_cli_error(
+                "--server cannot be combined with --plugin/--plugins",
+                area="bootstrap",
+            )
+            return 2
+        if namespace.option_account is not None or namespace.option_policy is not None:
+            print_cli_error(
+                "--server cannot be combined with --account/--accounts or --policy/--policies",
+                area="bootstrap",
+            )
+            return 2
+        if namespace.variant is not None or namespace.list_variants or namespace.dry_mode:
+            print_cli_error(
+                "--server cannot be combined with plugin bootstrap options",
+                area="bootstrap",
+            )
+            return 2
+        return _run_bootstrap_server(
             config_dir=namespace.config_dir,
             config_name=namespace.config_name,
             force=namespace.force,
         )
-    if namespace.command == "bootstrap" and namespace.bootstrap_command == "plugin":
+    if namespace.command == "bootstrap" and namespace.option_plugin is not None:
+        kind: BootstrapObjectKind = "account"
+        name = namespace.option_account
+        if namespace.option_policy is not None:
+            kind = "policy"
+            name = namespace.option_policy or None
         return _run_plugin_bootstrap(
-            plugin=namespace.plugin,
-            kind=cast(BootstrapObjectKind, namespace.kind),
-            name=namespace.name,
+            plugin=namespace.option_plugin,
+            kind=kind,
+            name=name,
             config_dir=namespace.config_dir,
             config_name=namespace.config_name,
             force=namespace.force,
             variant=namespace.variant,
             list_variants=namespace.list_variants,
+            dry_mode=namespace.dry_mode,
         )
+    if (
+        namespace.command == "bootstrap"
+        and (
+            namespace.option_account is not None
+            or namespace.option_policy is not None
+            or namespace.variant is not None
+            or namespace.list_variants
+            or namespace.dry_mode
+        )
+    ):
+        print_cli_error(
+            "bootstrap options require --plugin/--plugins",
+            area="bootstrap",
+        )
+        return 2
 
     parser.error("unknown command")
