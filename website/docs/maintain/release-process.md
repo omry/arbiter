@@ -111,30 +111,38 @@ CI is green and the matching PyPI trusted publisher is ready.
 
 ## Publish planning
 
-The publish workflow builds the selected distributions, then runs:
+Before dispatching a publish workflow, use the planner locally to check what
+the workflow will publish:
 
 ```bash
-tools/plan_pypi_publish --prepare-output-dir
+.venv/bin/python tools/plan_pypi_publish --packages all
 ```
 
-The planner compares local versions with PyPI and copies only packages whose
-local version is newer, or whose PyPI project does not exist yet, into
-`dist-publish/`. It rejects local versions that are older than PyPI.
+The planner compares local versions with PyPI and reports packages whose local
+version is newer, or whose PyPI project does not exist yet. It rejects local
+versions that are older than PyPI.
 
 Limit the publish set with package keys:
 
 ```bash
-tools/plan_pypi_publish --packages server --prepare-output-dir
-tools/plan_pypi_publish --packages server,imap --prepare-output-dir
-tools/plan_pypi_publish --packages smtp --prepare-output-dir
-tools/plan_pypi_publish --packages client --prepare-output-dir
-tools/plan_pypi_publish --packages skill --prepare-output-dir
+.venv/bin/python tools/plan_pypi_publish --packages server
+.venv/bin/python tools/plan_pypi_publish --packages server,imap
+.venv/bin/python tools/plan_pypi_publish --packages smtp
+.venv/bin/python tools/plan_pypi_publish --packages client
+.venv/bin/python tools/plan_pypi_publish --packages skill
 ```
 
 The planner discovers plugin package keys from `plugins/*/pyproject.toml` and
 reads each selected package's local version independently. Use
 `tools/upgrade_release_line 0.9 --check` to validate that packages remain on
 the intended compatibility line.
+
+The CI publish workflow builds the selected distributions itself. During that
+workflow it reruns the planner with `--prepare-output-dir` to copy only the
+selected publishable files into `dist-publish/`, then publishes from that CI
+artifact. Maintainers do not need to prepare `dist-publish/` locally before
+dispatching the workflow. Local `--prepare-output-dir` is only useful for a
+local publish rehearsal or for inspecting the exact staged artifact set.
 
 ## Initial PyPI bootstrap
 
@@ -165,6 +173,33 @@ Use **Publish** manual workflow dispatch for dev package releases such as
 
 Dev releases do not require release notes and do not create or update GitHub
 releases.
+
+For a full dev package publish on an already-prepared line, first inspect the
+publish plan:
+
+```bash
+.venv/bin/python tools/plan_pypi_publish --packages all
+```
+
+Then dispatch the publish workflow:
+
+```bash
+gh workflow run publish.yml \
+  --repo omry/arbiter \
+  -f release_line=0.9 \
+  -f publish_packages=all \
+  -f publish_to_pypi=true
+```
+
+For a dry run, leave PyPI publishing disabled:
+
+```bash
+gh workflow run publish.yml \
+  --repo omry/arbiter \
+  -f release_line=0.9 \
+  -f publish_packages=all \
+  -f publish_to_pypi=false
+```
 
 Use `tools/bump_release_version` before publishing when package versions need
 to move. The command updates package `version` fields and the matching
