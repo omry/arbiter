@@ -110,5 +110,7 @@ flowchart LR
 ## Where to start
 
 - New operator: start with [Quickstart](get-started/quickstart.md).
+- Docker deployment operator: install Reploy and follow
+  [Docker Deployment](operate/deployment.md).
 - Agent/tool user: start with [Arbiter CLI Reference](reference/client.md).
 - Plugin author: start with [Writing Plugins](extend/plugins.md).

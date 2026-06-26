@@ -5,6 +5,20 @@ title: Docker Deployment
 Deploy Arbiter by first preparing a local Docker staging directory, then
 promoting that tested directory to a Linux system service.
 
+Install Reploy on the operator machine before starting. The default install
+path is the `reploy` PyPI package:
+
+```bash
+python3 -m pip install reploy
+```
+
+If Python is not available on the operator machine, use the standalone
+installer instead:
+
+```bash
+curl -fsSL https://reploy.yadan.net/install.sh | sh
+```
+
 The staging directory is ordinary user-owned state: it contains the selected
 package bundle, generated Docker files, config, env placeholders, and a local
 helper script. You can start it locally, test the Arbiter server, and iterate

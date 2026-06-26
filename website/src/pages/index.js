@@ -19,6 +19,11 @@ const features = [
     title: 'Plugins own services',
     body: 'Plugins own services and control the policy surface for their service.',
   },
+  {
+    title: 'Reploy manages deployment',
+    body:
+      'Install Reploy, then stage, test, and install Arbiter Docker deployments from one directory.',
+  },
 ];
 
 const featuredPlugins = [
@@ -55,6 +60,11 @@ function HomepageHeader() {
               className="button button--outline button--secondary button--lg"
               to="/docs/media/terminal-recordings">
               Watch terminal flows
+            </Link>
+            <Link
+              className="button button--outline button--secondary button--lg"
+              to="/docs/operate/deployment/">
+              Deploy with Reploy
             </Link>
           </div>
         </div>

@@ -6,6 +6,24 @@ Prepare and test the deployment directory as an unprivileged operator. This
 phase writes files, config, and env locally; it can start the staged container
 for smoke testing, but it does not install anything under `/opt`.
 
+## Install Reploy
+
+Install Reploy in an operator-owned Python environment:
+
+```bash
+python3 -m pip install reploy
+```
+
+If Python is not available on the operator machine, use the standalone
+installer instead:
+
+```bash
+curl -fsSL https://reploy.yadan.net/install.sh | sh
+```
+
+The installed `reploy` command creates the staging directory and writes a
+deployment-local `./reploy` helper into it.
+
 ## Create the directory
 
 ```bash

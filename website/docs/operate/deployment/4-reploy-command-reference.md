@@ -2,6 +2,19 @@
 title: Reploy Command Reference
 ---
 
+Install Reploy from PyPI before creating a deployment directory:
+
+```bash
+python3 -m pip install reploy
+```
+
+If Python is not available on the operator machine, use the standalone
+installer instead:
+
+```bash
+curl -fsSL https://reploy.yadan.net/install.sh | sh
+```
+
 The installed `reploy` command and the generated deployment-local helper run the
 same deployment commands. Use the installed command from the parent directory,
 or run the generated helper from inside the prepared staging directory:
