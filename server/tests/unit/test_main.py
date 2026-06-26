@@ -39,6 +39,7 @@ from arbiter_server.main import (
     _config_check_tree_lines,
     _run_config_check,
     _run_server,
+    _live_account_test_result,
     _server_tls_files,
     _write_text_with_mode,
     build_app,
@@ -1326,6 +1327,24 @@ def test_config_check_components_live_forwards_account_progress() -> None:
         "    └── primary/bot │ pass │ live account check passed",
     )
     assert progress_calls == [("server", None), ("fake", None), ("fake", "primary")]
+
+
+def test_live_account_warning_status_renders_as_warn() -> None:
+    result = _live_account_test_result(
+        account_name="primary",
+        account_config=SimpleNamespace(policy="bot"),
+        result={
+            "status": "warning",
+            "message": "optional capability unavailable",
+        },
+    )
+
+    assert result == ConfigCheckAccountResult(
+        account="primary",
+        policy="bot",
+        status="warn",
+        message="optional capability unavailable",
+    )
 
 
 def test_runnable_config_requires_at_least_one_service_account() -> None:

@@ -306,7 +306,10 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
                     imap_config,
                     server_folders,
                 )
-                save_draft_checked = self._test_save_draft_destination(
+                (
+                    save_draft_checked,
+                    save_draft_warning,
+                ) = self._test_save_draft_destination(
                     account_name,
                     imap_config,
                     server_folders,
@@ -325,6 +328,20 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
                     "stage": "connect_auth_noop",
                     "checks": ["connect", "noop"],
                     "reason": "no accessible IMAP folders to examine read-only",
+                }
+                continue
+            if save_draft_warning is not None:
+                results[account_name] = {
+                    "status": "warning",
+                    "stage": "connect_auth_noop_examine",
+                    "checks": [
+                        "connect",
+                        "noop",
+                        "examine",
+                        *(["trash_destination"] if trash_checked else []),
+                    ],
+                    "folders": folders,
+                    "message": save_draft_warning,
                 }
                 continue
             results[account_name] = {
@@ -1079,14 +1096,14 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
         account: str,
         imap_config: IMAPConfig,
         server_folders: Sequence[str],
-    ) -> bool:
+    ) -> tuple[bool, str | None]:
         draft_folder_names = _draft_folder_names(imap_config)
         if not draft_folder_names:
-            return False
+            return False, None
         draft_folder = _preferred_draft_folder_name(draft_folder_names)
         if draft_folder not in set(server_folders):
-            raise ValueError(_save_draft_folder_required_message(account, draft_folder))
-        return True
+            return False, _save_draft_folder_required_message(account, draft_folder)
+        return True, None
 
     def _resolve_trash_destination(
         self,

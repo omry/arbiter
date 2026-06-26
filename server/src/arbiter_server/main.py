@@ -1416,7 +1416,9 @@ def _live_account_test_result(
             status="pass",
             message="live account check passed",
         )
-    severity: Literal["warn", "fail"] = "warn" if status == "skipped" else "fail"
+    severity: Literal["warn", "fail"] = (
+        "warn" if status in {"skipped", "warn", "warning"} else "fail"
+    )
     reason = result.get("message") or result.get("reason")
     if reason is None:
         reason = f"live account test {status}"

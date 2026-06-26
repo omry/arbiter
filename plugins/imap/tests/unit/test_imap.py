@@ -834,7 +834,7 @@ def test_runtime_live_check_accepts_server_trash_when_delete_allowed() -> None:
     assert clients[0].tested_folders == ["INBOX", "Trash"]
 
 
-def test_runtime_live_check_requires_configured_drafts_folder() -> None:
+def test_runtime_live_check_warns_for_missing_configured_drafts_folder() -> None:
     clients: list[LiveCheckRecordingIMAPClient] = []
 
     def client_factory(config: IMAPConfig) -> IMAPClientProtocol:
@@ -859,9 +859,10 @@ def test_runtime_live_check_requires_configured_drafts_folder() -> None:
 
     assert runtime.test_accounts() == {
         "primary": {
-            "status": "failed",
+            "status": "warning",
             "stage": "connect_auth_noop_examine",
-            "error_type": "ValueError",
+            "checks": ["connect", "noop", "examine"],
+            "folders": ["INBOX"],
             "message": (
                 "save_draft requires configured DRAFTS folder to exist for IMAP "
                 "account: primary: Drafts"

@@ -109,6 +109,15 @@ This file is the day-to-day queue for design and implementation gaps.
       APIs do not overlap confusingly; update operation schema and docs if the
       change is accepted; and add tests covering bounded recent-message lists.
 
+- [ ] `P2` Provide a simple draft-message API.
+      `save_draft` should be as straightforward for agents as `send_email`.
+      Agents should not need to compose RFC message bytes for the common draft
+      creation flow. Acceptance checks: design a high-level draft operation with
+      fields such as recipients, subject, body, attachments, and flags; reuse
+      the message-building path where appropriate; keep a low-level append path
+      for advanced callers if still needed; and add operation schema and runtime
+      tests for the common draft workflow.
+
 - [ ] `P2` Consider returning operation timing information to clients.
       Agents and operators should be able to tell how long Arbiter waited on
       upstream services, especially when mail providers are slow or timeouts are
@@ -276,14 +285,17 @@ This file is the day-to-day queue for design and implementation gaps.
       Operators can configure folder metadata that is statically valid but not
       present on the upstream IMAP server. For example, the bot account may
       configure `Trash` as `kind: TRASH` so `delete_message` is allowed, while
-      live `imap:list_folders(account="bot")` only returns `INBOX` and `Sent`.
+      live `imap:list_folders(account="bot")` only returns `INBOX` and `Sent`;
+      the same can happen with optional DRAFTS folders used by `save_draft`.
       Acceptance checks: detect configured folders that are absent from the
       live IMAP folder list; show an operator-facing doctor finding with the
       account, configured folder name, kind, and affected operations; offer an
       explicit opt-in repair path to create safe configured folders such as
-      `Trash`; respect account policy and provider errors; avoid creating
-      folders during read-only checks; and document when operators should
-      rename config to match a provider folder instead of creating a new one.
+      `Trash` or `Drafts`; classify optional versus blocking folders; respect
+      account policy and provider errors; avoid creating folders during
+      read-only checks; cover DRAFTS-folder guidance in tests; and document
+      when operators should rename config to match a provider folder instead of
+      creating a new one.
 
 - [ ] `P2` Add IMAP message flags APIs.
       Agents need a controlled way to inspect and update message flags such as
