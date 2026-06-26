@@ -51,7 +51,6 @@ where = ["src"]
 [tool.setuptools.package-data]
 "arbiter_server" = [
   "py.typed",
-  "deploy/docker/*",
   "reploy/*.blueprint.yaml",
 ]
 

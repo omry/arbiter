@@ -121,21 +121,11 @@ Run the normal release checks:
 .venv/bin/python -m nox -s compat
 ```
 
-Run the Docker deployment test before deploying, and when deployment
-scaffolding, package installation, generated helper scripts, or the current
-platform native client changed:
-
-```bash
-.venv/bin/python -m nox -s deploy-test
-```
-
 The release and publish workflows also run `server/tests/integration` across
 the six supported platform runners. That suite builds the current-platform
 `arbiter-client` wheel, installs it into a temporary Python environment, checks
 `arbiter --version`, and uses the installed command against a local Arbiter
-server. The Docker deployment test remains the pre-deploy gate for generated
-deployment scaffolding and the current-platform native client in the Docker
-flow.
+server.
 
 ### 4. Documentation pass
 

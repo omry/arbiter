@@ -110,7 +110,7 @@ deployment runtime, using the Arbiter server installed in the deployment
 bundle:
 
 ```bash
-reploy app bootstrap --server
+reploy app bootstrap server
 ```
 
 Then create IMAP and SMTP accounts named `bot` with corresponding policies:

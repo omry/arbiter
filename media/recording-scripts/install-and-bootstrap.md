@@ -12,7 +12,7 @@ recording:
     installed_port: 8075
     staging_url: "https://${.loopback_host}:${.staging_port}"
     installed_url: "https://${.loopback_host}:${.installed_port}"
-    arbiter_server: "arbiter-server --config-dir ./conf"
+    reploy_app: "reploy app"
   id: install-and-bootstrap
   title: Install Arbiter Server
   capture:
@@ -81,6 +81,8 @@ recording:
       default: latest
     arbiter_package:
       default: arbiter-suite
+    reploy_package:
+      default: reploy
     operator_venv_cache_retain:
       default: 8
   setup:
@@ -92,10 +94,10 @@ recording:
   cleanup:
   - name: Stop Docker staging deployment
     run: |
-      if [[ -f ./arbiter-docker && -x ./arbiter-docker ]]; then
-        COMPOSE_PROGRESS=quiet ./arbiter-docker down --remove-orphans 2> >(recording_filter_docker_compose_progress >&2)
-      elif [[ -f arbiter-docker/arbiter-docker && -x arbiter-docker/arbiter-docker ]]; then
-        (cd arbiter-docker && COMPOSE_PROGRESS=quiet ./arbiter-docker down --remove-orphans 2> >(recording_filter_docker_compose_progress >&2))
+      if [[ -f ./reploy && -x ./reploy ]]; then
+        COMPOSE_PROGRESS=quiet ./reploy down --remove-orphans 2> >(recording_filter_docker_compose_progress >&2)
+      elif [[ -f reploy-staging/reploy && -x reploy-staging/reploy ]]; then
+        (cd reploy-staging && COMPOSE_PROGRESS=quiet ./reploy down --remove-orphans 2> >(recording_filter_docker_compose_progress >&2))
       fi
   beats:
   - id: prepare-cli
@@ -117,20 +119,22 @@ recording:
     viewer_hold: 2.0
   - id: install-suite
     marker: install-suite
-    caption: Install the Arbiter suite packages.
+    caption: Install Reploy and the Arbiter suite packages.
     guide:
       try_command: source arbiter_venv/bin/activate && arbiter-server version
       success_hint: You should see the Arbiter server version from the local virtual environment.
     actions:
     - display: |
-        arbiter_venv/bin/python -m pip install arbiter-suite
+        arbiter_venv/bin/python -m pip install reploy arbiter-suite
         arbiter-server version
       run: |
         true
         arbiter-server version
+        reploy --version
       expect:
         file_exists:
         - ./arbiter_venv/bin/arbiter-server
+        - ./arbiter_venv/bin/reploy
         output_contains:
         - server
         - api
@@ -139,39 +143,41 @@ recording:
     marker: init-staging
     caption: Create a Docker staging deployment.
     guide:
-      try_command: cd arbiter-docker && ./arbiter-docker bundle list
+      try_command: cd reploy-staging && ./reploy bundle list
       success_hint: You should enter the staging directory and see the selected runtime bundle.
     actions:
     - display: |
-        arbiter-server deploy docker init
-        cd arbiter-docker
+        reploy init --blueprint arbiter-server
+        cd reploy-staging
       run: |
-        arbiter-server deploy docker init
+        reploy init --blueprint arbiter-server
         recording_configure_staging_subnet
-        cd arbiter-docker
+        cd reploy-staging
       expect:
         file_exists:
-        - ./arbiter-docker
-        - ./compose.yaml
-        - ./docker.env
+        - ./reploy
+        - ./.reploy/compose.yaml
+        - ./.reploy/docker.env
     viewer_hold: 3.0
   - id: prepare-bundle
     marker: prepare-bundle
     caption: Inspect the mail plugin bundle and prepare the runtime.
     guide:
-      try_command: ./arbiter-docker bundle list
-      success_hint: You should still be inside arbiter-docker and see the prepared bundle
+      try_command: ./reploy bundle list
+      success_hint: You should still be inside reploy-staging and see the prepared bundle
         selection.
     actions:
     - display: |
-        ./arbiter-docker bundle list
-        ./arbiter-docker bundle prepare
+        ./reploy bundle list-options
+        ./reploy bundle add --name imap,smtp
+        ./reploy bundle build
       run: |
-        ./arbiter-docker bundle list
+        ./reploy bundle list-options
+        ./reploy bundle add --name imap,smtp
         recording_prepare_bundle
       expect:
         file_exists:
-        - ./requirements.txt
+        - ./.reploy/requirements.txt
     viewer_hold: 3.0
   - id: bootstrap-config
     marker: bootstrap-config
@@ -182,11 +188,9 @@ recording:
       success_hint: You should see "bot accounts generated".
     actions:
     - run: |
-        ${recording.vars.arbiter_server} bootstrap arbiter
-        ${recording.vars.arbiter_server} bootstrap plugin imap account bot
-        ${recording.vars.arbiter_server} bootstrap plugin smtp account bot
-        ${recording.vars.arbiter_server} config activate account imap bot
-        ${recording.vars.arbiter_server} config activate account smtp bot
+        ${recording.vars.reploy_app} bootstrap server
+        ${recording.vars.reploy_app} bootstrap --plugins imap,smtp --account bot
+        ${recording.vars.reploy_app} config activate --plugins imap,smtp --account bot
       expect:
         file_exists:
         - ./conf/arbiter-server.yaml
@@ -246,10 +250,10 @@ recording:
       success_hint: You should see IMAP and SMTP bot username and password entries.
     actions:
     - display: |
-        arbiter-server --config-dir ./conf env bootstrap
+        reploy app env bootstrap
         sed -n '1,16p' conf/.env
       run: |
-        ${recording.vars.arbiter_server} env bootstrap
+        ${recording.vars.reploy_app} env bootstrap
         recording_apply_mail_lab_config --update-env
         sed -n '1,16p' conf/.env
       expect:
@@ -265,17 +269,17 @@ recording:
     marker: stage-server
     caption: Check config and start staging on the staging HTTPS port.
     guide:
-      try_command: ./arbiter-docker test
+      try_command: ./reploy test
       success_hint: You should see the staged server test pass on ${recording.vars.staging_url}.
     actions:
     - display: |
-        ./arbiter-docker config check
-        ./arbiter-docker up
-        ./arbiter-docker test
+        ./reploy app config check
+        ./reploy up
+        ./reploy test
       run: |
-        COMPOSE_PROGRESS=quiet ./arbiter-docker config check 2> >(recording_filter_docker_compose_progress >&2)
-        COMPOSE_PROGRESS=quiet ./arbiter-docker up 2> >(recording_filter_docker_compose_progress >&2)
-        ./arbiter-docker test
+        COMPOSE_PROGRESS=quiet ./reploy app config check 2> >(recording_filter_docker_compose_progress >&2)
+        COMPOSE_PROGRESS=quiet ./reploy up 2> >(recording_filter_docker_compose_progress >&2)
+        ./reploy test
       expect:
         output_regex:
         - server\s+\|\s+pass
@@ -283,7 +287,7 @@ recording:
         - smtp\s+\|\s+pass
         output_contains:
         - 'URL:'
-        - ${recording.vars.staging_url}
+        - "${recording.vars.staging_url}"
         - 'Server test:'
     viewer_hold: 5.0
   - id: client-discovery
@@ -367,11 +371,11 @@ recording:
     marker: preinstall-check
     caption: Run the preinstall doctor for the Codex agent user.
     guide:
-      try_command: ./arbiter-docker doctor --preinstall --agent-user codex
+      try_command: ./reploy doctor --preinstall
       success_hint: The doctor should pass before you promote the staged deployment.
     actions:
     - run: |
-        ./arbiter-docker doctor --preinstall --agent-user codex
+        ./reploy doctor --preinstall
     viewer_hold: 4.0
   - id: install-server
     marker: install-server
@@ -379,16 +383,15 @@ recording:
     actions:
     - display: |
         # Defaults install to /opt/arbiter as user arbiter.
-        sudo ./arbiter-docker install
+        sudo ./reploy install --to /opt/arbiter
       run_file: media/recording-scripts/install-and-bootstrap/install-server.sh
       expect:
         output_contains:
-        - Installed Arbiter to
+        - would copy deployment
         - /opt/arbiter
-        - 'systemd unit:'
-        - 'ExecStart='
-        - systemctl daemon-reload
-        - systemctl enable arbiter.service
+        - would write systemd unit
+        - "would run: systemctl daemon-reload"
+        - "would run: systemctl enable arbiter.service"
     viewer_hold: 5.0
 ```
 
@@ -461,24 +464,22 @@ CLI commands used to bootstrap and inspect the Docker deployment.
 - Docker: Docker Compose must be available to the operator running the staging
   checks.
 - Package source: the recorder prepares an off-camera operator virtual
-  environment before capture. In PyPI mode, it installs `arbiter-suite` from
-  PyPI, resolving the latest non-yanked release unless
+  environment before capture. In PyPI mode, it installs `reploy` and
+  `arbiter-suite` from PyPI, resolving the latest non-yanked Arbiter release unless
   `+script_params.arbiter_source=VERSION` pins an exact package version. In
-  local mode, it uses the `arbiter-server` and `arbiter` commands already on
-  `PATH`. Do not let local package versions silently choose PyPI pins for this
-  tutorial.
-- Staging directory: create a disposable `arbiter-docker/` staging directory in
+  local mode, it builds Arbiter wheels from the checkout and installs Reploy
+  into the operator virtual environment. Do not let local package versions
+  silently choose PyPI pins for this tutorial.
+- Staging directory: create a disposable `reploy-staging/` staging directory in
   the recording workspace.
 - Permanent install target: promote the staged deployment to `/opt/arbiter`.
 - Service user: use the default `arbiter` service user.
 - Network: an installed production deployment defaults the Arbiter server URL
-  to host port `8075`. The Docker helper defaults staging to host port
-  `18075` so a staged rehearsal can run beside an installed server without
-  taking its production port. The recording uses the default staging port, but
-  writes a recording-specific Docker subnet into the disposable `docker.env`
-  before the visible checks run. If the staging port or staging container name
-  is already in use, the recording should abort so the operator can clean the
-  host before regenerating release media.
+  to host port `8075`. Reploy defaults staging to host port `18075` so a
+  staged rehearsal can run beside an installed server without taking its
+  production port. If the staging port or staging container name is already in
+  use, the recording should abort so the operator can clean the host before
+  regenerating release media.
 - Local mail lab: before recording starts, the recorder launches local Python
   SMTP and IMAP servers backed by the same in-memory mailbox. The bot account
   uses the same username and password on both services. The SMTP server
@@ -547,10 +548,10 @@ beat:
   id: install-suite
   heading: Install Arbiter suite
   narration: >-
-    Install the `arbiter-suite` package set into the virtual environment. One
-    of those packages is `arbiter-server`, which we use next to create the
-    Docker staging directory. The suite also installs `arbiter`, the client we
-    use later to test the staged server.
+    Install Reploy and the `arbiter-suite` package set into the virtual
+    environment. Reploy creates and manages the Docker staging directory. The
+    suite installs `arbiter-server` and `arbiter`, the client we use later to
+    test the staged server.
 ```
 
 Install the Arbiter command line packages and verify the server command before
@@ -559,7 +560,7 @@ moving on to Docker staging.
 Action:
 
 ```bash
-arbiter_venv/bin/python -m pip install arbiter-suite
+arbiter_venv/bin/python -m pip install reploy arbiter-suite
 arbiter-server version
 ```
 
@@ -587,13 +588,13 @@ Nothing is installed as a system service yet.
 Action:
 
 ```bash
-arbiter-server deploy docker init
-cd arbiter-docker
+reploy init --blueprint arbiter-server
+cd reploy-staging
 ```
 
 Wait:
 
-Event gate: `init` exits successfully and the `arbiter-docker` helper exists in
+Event gate: `init` exits successfully and the `reploy` helper exists in
 the staging directory.
 
 Viewer hold: pause 3 seconds on the generated directory.
@@ -616,8 +617,9 @@ that the Docker container will install at startup.
 Action:
 
 ```bash
-./arbiter-docker bundle list
-./arbiter-docker bundle prepare
+./reploy bundle list-options
+./reploy bundle add --name imap,smtp
+./reploy bundle build
 ```
 
 Wait:
@@ -645,11 +647,9 @@ Create the server config and bot account files inside the staging directory.
 Action:
 
 ```bash
-arbiter-server --config-dir ./conf bootstrap arbiter
-arbiter-server --config-dir ./conf bootstrap plugin imap account bot
-arbiter-server --config-dir ./conf bootstrap plugin smtp account bot
-arbiter-server --config-dir ./conf config activate account imap bot
-arbiter-server --config-dir ./conf config activate account smtp bot
+reploy app bootstrap server
+reploy app bootstrap --plugins imap,smtp --account bot
+reploy app config activate --plugins imap,smtp --account bot
 ```
 
 Wait:
@@ -761,7 +761,7 @@ beat:
   narration: >-
     Before starting the server, run a config check. It verifies the server
     config, the plugin configuration, and the account-to-policy pairs. Then
-    start staging on port 18075 and run the helper's server test.
+    start staging on port 18075 and run Reploy's server test.
 ```
 
 Run a config check, then start the staged Docker service.
@@ -769,9 +769,9 @@ Run a config check, then start the staged Docker service.
 Action:
 
 ```bash
-./arbiter-docker config check
-./arbiter-docker up
-./arbiter-docker test
+./reploy app config check
+./reploy up
+./reploy test
 ```
 
 Wait:
@@ -904,19 +904,16 @@ beat:
   id: preinstall-check
   heading: Preinstall Doctor
   narration: >-
-    Before promotion, run the preinstall doctor. Passing `--agent-user codex`
-    also checks that the agent identity does not have inappropriate access to
-    deployment state. This catches production-install mistakes while the
-    deployment is still staged and easy to fix.
+    Before promotion, run the preinstall doctor. This catches production-install
+    mistakes while the deployment is still staged and easy to fix.
 ```
 
-Run the install readiness check from the staged directory, including the Codex
-agent identity.
+Run the install readiness check from the staged directory.
 
 Action:
 
 ```bash
-./arbiter-docker doctor --preinstall --agent-user codex
+./reploy doctor --preinstall
 ```
 
 Wait:
@@ -944,12 +941,12 @@ Action:
 
 ```bash
 # Defaults install to /opt/arbiter as user arbiter.
-sudo ./arbiter-docker install
+sudo ./reploy install --to /opt/arbiter
 ```
 
 Wait:
 
-Event gate: install exits successfully, reports `/opt/arbiter`, writes the
+Event gate: install dry-run exits successfully, reports `/opt/arbiter`, plans the
 systemd unit, and enables the service.
 
 Viewer hold: pause 5 seconds on the dry-run summary.

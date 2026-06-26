@@ -41,7 +41,7 @@ docker:
     success:
       vars:
         server_url:
-          app: [config, show, --resolve, --package, arbiter.server.public.base_url, --value]
+          server_url: true
       lines:
         - "server url: ${server_url}"
         - "client command: arbiter arbiter.url=${server_url} info server"

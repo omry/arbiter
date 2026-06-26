@@ -253,8 +253,8 @@ will publish, adds generated entries for final client and skill artifacts, then
 creates draft GitHub Release tags from each published package version, such as
 `v0.9.1`. Publish requires those releases to still be drafts and to point at the
 commit being published. Publish also reruns the full platform integration
-matrix, full platform unit matrix, and Docker deploy integration, and the PyPI
-upload job depends on those jobs completing successfully.
+matrix and full platform unit matrix, and the PyPI upload job depends on those
+jobs completing successfully.
 
 Additional meta packages, such as a future `meta:mail`, should follow the same
 non-expanding package-key model.

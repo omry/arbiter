@@ -491,31 +491,3 @@ jobs:
           ARBITER_GO_CLIENT_SMOKE_REUSE: "1"
           GOCACHE: ${{ runner.temp }}/go-build
         run: nox -s integration -- ${{ matrix.test_target }}
-
-  docker-deploy-test:
-    name: Docker deploy integration
-    needs: prepare
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Check out prepared ref
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.prepare.outputs.release_ref }}
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-          cache: pip
-
-      - name: Install nox
-        run: python -m pip install "nox[pbs]>=2024.10,<2026.0"
-
-      - name: Show Docker environment
-        run: |
-          docker info
-          docker compose version
-
-      - name: Run Docker deploy integration
-        run: nox -s deploy-test

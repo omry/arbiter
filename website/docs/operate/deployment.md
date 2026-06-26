@@ -30,7 +30,7 @@ from a staging identity to the installed service identity.
 
 - [Bundle deep-dive](./deployment/3-bundle-deep-dive.md): package roots,
   wheelhouse behavior, upgrades, and maintainer bundle refreshes.
-- [Docker Helper Reference](./deployment/4-docker-helper-reference.md):
+- [Reploy Command Reference](./deployment/4-reploy-command-reference.md):
   generated helper commands for inspection, staging, and bundle maintenance.
 - [Security Model](./security.md): deployment trust boundaries and host access
   assumptions.

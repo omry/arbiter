@@ -1190,12 +1190,12 @@ def test_timeline_progress_messages_use_setup_stage_and_command_labels() -> None
             {
                 "phase": "command_run_start",
                 "beat": "run",
-                "command": "./arbiter-docker up\n./arbiter-docker test",
+                "command": "./reploy up\n./reploy test",
             },
             beat_indexes=beat_indexes,
             beat_count=beat_count,
         )
-        == "running: ./arbiter-docker up"
+        == "running: ./reploy up"
     )
 
 

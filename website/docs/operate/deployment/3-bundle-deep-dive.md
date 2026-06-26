@@ -32,16 +32,16 @@ Unpinned names and version ranges are rejected for runtime deployment state.
 Use the bundle commands in the prepare runbook to select plugins or upgrade
 versions.
 
-By default, `reploy init --blueprint arbiter-suite` seeds the bundle with the suite
-package root. During bundle build, Reploy resolves the package root to the exact
-version selected for the deployment.
+By default, `reploy init --blueprint arbiter-server` seeds the bundle with the
+Arbiter server package root. During bundle build, Reploy resolves the package
+root to the exact version selected for the deployment.
 
 `bundle add` and `bundle remove` update `.reploy/requirements.txt`. Adding
 `arbiter-suite` selects all plugins in the suite meta package. When the suite
 must be represented as concrete runtime roots, Arbiter expands it into
 `arbiter-server` plus the selected plugin packages.
 
-Custom service plugins do not need to be known to the Docker deployment helper.
+Custom service plugins do not need to be known to Reploy's Arbiter blueprint.
 They must be Python packages that expose an Arbiter service entry point:
 
 ```toml title="pyproject.toml"

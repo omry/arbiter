@@ -197,7 +197,7 @@ still use config checks to validate the local deployment configuration before
 the server starts:
 
 ```bash
-./arbiter-docker/arbiter-docker config check
+reploy app config check
 ```
 
 Example output:
@@ -217,7 +217,7 @@ errors stay easy to scan.
 Full composed account and policy details are also available locally with:
 
 ```bash
-arbiter-server --config-dir arbiter-docker/conf --config-name arbiter-server config show
+reploy app config show
 ```
 
 Relevant paths:

@@ -10,6 +10,7 @@ unset ARBITER_PYTHON
 operator_venv=""
 arbiter_source="${recording_param_arbiter_source:-latest}"
 arbiter_package="${recording_param_arbiter_package:-arbiter-suite}"
+reploy_package="${recording_param_reploy_package:-reploy}"
 operator_venv_cache_retain="${recording_param_operator_venv_cache_retain:-8}"
 recording_operator_venv_cache_root="$recording_repo/media/cache/operator-venvs"
 recording_operator_venv_log="$recording_tmp/operator-venv.log"
@@ -129,7 +130,7 @@ recording_operator_venv_is_healthy() {
   local venv="$1"
   local script
   [[ -x "$venv/bin/python" ]] || return 1
-  for script in "$venv/bin/arbiter-server" "$venv/bin/arbiter"; do
+  for script in "$venv/bin/reploy" "$venv/bin/arbiter-server" "$venv/bin/arbiter"; do
     [[ -x "$script" ]] || return 1
   done
   script="$venv/bin/arbiter-server"
@@ -208,7 +209,7 @@ PY
 }
 
 recording_prepare_operator_venv_from_wheelhouse() {
-  local package_requirement="$1"
+  local cache_requirement="$1"
   local wheelhouse="$2"
   local install_mode="${3:-offline}"
   shift 3 || true
@@ -218,19 +219,23 @@ recording_prepare_operator_venv_from_wheelhouse() {
   local cached_venv
   local ready_file
   local lock_dir
+  local -a install_requirements=("$@")
   local -a pip_install_args=(--find-links "$wheelhouse")
 
+  if [[ ${#install_requirements[@]} -eq 0 ]]; then
+    install_requirements=("$cache_requirement")
+  fi
   if [[ "$install_mode" == offline ]]; then
-    pip_install_args=(--no-index "${pip_install_args[@]}" "$package_requirement")
+    pip_install_args=(--no-index "${pip_install_args[@]}" "${install_requirements[@]}")
   elif [[ "$install_mode" == online ]]; then
-    pip_install_args+=("$@")
+    pip_install_args+=("${install_requirements[@]}")
   else
     printf 'unknown operator venv install mode: %s\n' "$install_mode" >&2
     return 1
   fi
 
   recording_operator_wheelhouse_metadata \
-    "$package_requirement" "$wheelhouse" "$metadata_path"
+    "$cache_requirement" "$wheelhouse" "$metadata_path"
   cache_key="$("$recording_python" - "$metadata_path" <<'PY'
 import json
 import sys
@@ -303,6 +308,7 @@ PY
 recording_prepare_pypi_operator_venv() {
   local package_requirement="$1"
   local wheelhouse="$recording_tmp/operator-wheelhouse"
+  local cache_requirement="$reploy_package $package_requirement"
 
   rm -rf "$wheelhouse"
   mkdir -p "$wheelhouse"
@@ -312,9 +318,10 @@ recording_prepare_pypi_operator_venv() {
     --disable-pip-version-check \
     --no-cache-dir \
     --wheel-dir "$wheelhouse" \
+    "$reploy_package" \
     "$package_requirement"
   recording_prepare_operator_venv_from_wheelhouse \
-    "$package_requirement" "$wheelhouse" offline "$package_requirement"
+    "$cache_requirement" "$wheelhouse" offline "$reploy_package" "$package_requirement"
 }
 
 recording_prepare_local_operator_venv() {
@@ -352,13 +359,24 @@ recording_prepare_local_operator_venv() {
       --wheel-dir "$wheelhouse" \
       "$source_dir"
   done
+  recording_run_operator_venv_step \
+    "build reploy operator wheel" \
+    "$recording_python" -m pip wheel \
+    --disable-pip-version-check \
+    --no-cache-dir \
+    --wheel-dir "$wheelhouse" \
+    "$reploy_package"
 
   package_requirement="$(recording_wheel_requirement "$wheelhouse" "$arbiter_package")"
   for package_name in "${local_package_names[@]}"; do
     local_package_wheels+=("$(recording_wheel_path "$wheelhouse" "$package_name")")
   done
   recording_prepare_operator_venv_from_wheelhouse \
-    "$package_requirement" "$wheelhouse" online "${local_package_wheels[@]}"
+    "$reploy_package $package_requirement" \
+    "$wheelhouse" \
+    online \
+    "$reploy_package" \
+    "${local_package_wheels[@]}"
   export ARBITER_REPO_ROOT="$recording_repo"
   export ARBITER_PYTHON="$recording_python"
 }
@@ -416,60 +434,20 @@ recording_prepare_bundle() {
     local bundle_output
     if ! bundle_output="$(
       {
-        ./arbiter-docker bundle add-source "$recording_repo/server"
-        ./arbiter-docker bundle add-source "$recording_repo/plugins/imap"
-        ./arbiter-docker bundle add-source "$recording_repo/plugins/smtp"
-        "$recording_python" - ./requirements.txt <<'PY'
-import re
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-local_packages = {"arbiter-server", "arbiter-imap", "arbiter-smtp"}
-kept = []
-for raw_line in path.read_text(encoding="utf-8").splitlines():
-    line = raw_line.strip()
-    name = re.split(r"==", line, maxsplit=1)[0].split("[", 1)[0]
-    normalized_name = re.sub(r"[-_.]+", "-", name.lower())
-    if "==" in line and normalized_name in local_packages:
-        continue
-    kept.append(raw_line)
-path.write_text("\n".join(kept).rstrip() + "\n", encoding="utf-8")
-PY
+        ./reploy bundle add-source "$recording_repo/server"
+        ./reploy bundle add-source "$recording_repo/plugins/imap"
+        ./reploy bundle add-source "$recording_repo/plugins/smtp"
       } 2>&1
     )"; then
       printf '%s\n' "$bundle_output" >&2
       return 1
     fi
   fi
-  ./arbiter-docker bundle prepare
+  ./reploy bundle build
 }
 
 recording_configure_staging_subnet() {
-  local subnet="${ARBITER_CINEMA_STAGING_SUBNET:-}"
-  [[ -n "$subnet" ]] || return 0
-  [[ -f arbiter-docker/docker.env ]] || {
-    printf 'recording staging docker.env not found: arbiter-docker/docker.env\n' >&2
-    return 1
-  }
-  "$recording_python" - arbiter-docker/docker.env "$subnet" <<'PY'
-import sys
-from ipaddress import ip_network
-from pathlib import Path
-
-path = Path(sys.argv[1])
-subnet = str(ip_network(sys.argv[2], strict=True))
-lines = path.read_text(encoding="utf-8").splitlines()
-updated = False
-for index, line in enumerate(lines):
-    if line.startswith("ARBITER_DOCKER_SUBNET="):
-        lines[index] = f"ARBITER_DOCKER_SUBNET={subnet}"
-        updated = True
-        break
-if not updated:
-    lines.append(f"ARBITER_DOCKER_SUBNET={subnet}")
-path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
-PY
+  :
 }
 
 recording_apply_mail_lab_config() {
@@ -505,6 +483,7 @@ cd "$recording_workspace"
 recording_write_postmortem_entrypoint "$recording_workspace" "$operator_venv"
 "$operator_venv/bin/arbiter-server" version --json || return 1
 "$operator_venv/bin/arbiter" --version || return 1
+"$operator_venv/bin/reploy" --version || return 1
 }
 
 recording_setup_main

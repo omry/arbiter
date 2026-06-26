@@ -117,15 +117,6 @@ arbiter-server version [--json]
   checkout state when available, and installed service plugin versions.
 - `version --json`: print the same information as JSON.
 
-## deploy
-
-Create or update Docker deployment files from the installed `arbiter-server`
-command. See [Deployment](../operate/deployment.md) for the Docker deployment
-workflow, generated helper commands, package bundle management, and Linux
-install.
-For this release line, explicit deployment package pins use versions such as
-`arbiter-server==0.9.0.dev2`.
-
 ## plugins
 
 Inspect installed service plugins.

@@ -386,14 +386,6 @@ def _start_artifact_http_server(state: ArtifactHTTPState) -> RunningArtifactHTTP
             "usage: arbiter-server env bootstrap ",
         ),
         (
-            ("--config-dir", ".", "deploy", "--help"),
-            "usage: arbiter-server deploy ",
-        ),
-        (
-            ("--config-dir", ".", "deploy", "docker", "--help"),
-            "usage: arbiter-server deploy docker ",
-        ),
-        (
             ("--config-dir", ".", "plugins", "--help"),
             "usage: arbiter-server plugins ",
         ),
@@ -412,6 +404,14 @@ def test_arbiter_console_script_help(
     assert result.returncode == 0
     assert expected in result.stdout
     assert result.stderr == ""
+
+
+def test_arbiter_console_script_deploy_command_removed() -> None:
+    result = _run_arbiter_server("--config-dir", ".", "deploy", "--help")
+
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert "invalid choice: 'deploy'" in result.stderr
 
 
 @pytest.mark.parametrize(

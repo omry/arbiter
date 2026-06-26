@@ -42,5 +42,5 @@ plugins/smtp/   SMTP service plugin
 plugins/imap/   IMAP service plugin
 docs/   source markdown notes
 website/ Docusaurus website
-deploy/ Docker deployment material
+server/src/arbiter_server/reploy/ Reploy blueprint material
 ```

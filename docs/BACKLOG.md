@@ -33,7 +33,7 @@ This file is the day-to-day queue for design and implementation gaps.
       to keep one. Acceptance checks: decide whether HTTP is the only
       initial-release transport; remove or explicitly quarantine unsupported
       transport config, tests, docs, and generated deployment paths; confirm
-      the client, skill, Docker helper, and docs use the HTTP base URL
+      the client, skill, Reploy blueprint, and docs use the HTTP base URL
       contract; and prove the chosen transport in local release rehearsal from
       built artifacts.
 
@@ -407,10 +407,10 @@ This file is the day-to-day queue for design and implementation gaps.
       does and does not protect from the Arbiter operator.
 
 - [ ] `P2` Finish the installation security evaluator.
-      The Docker helper now has `doctor` and `install` checks for generated
-      deployment files, env files, Docker socket access, and agent identity. The
-      remaining work is to decide whether this stays Docker-specific or becomes a
-      general server/deployment check.
+      Reploy now has `doctor` and `install` checks for generated deployment
+      files, env files, Docker socket access, and install ownership. The
+      remaining work is to decide which checks belong in Arbiter-facing release
+      readiness versus the generic deployment tool.
       Acceptance checks: define the non-Docker inspected paths and platform
       limits; decide whether startup should run the evaluator by default, warn,
       or refuse to run on failure; and document intentional overrides for local
@@ -438,78 +438,6 @@ This file is the day-to-day queue for design and implementation gaps.
       update tool defaults, docs, `.gitignore`, `.dockerignore`, and
       `.watchmanconfig`; preserve release and CI behavior; and document the
       cleanup command or policy for the central scratch root.
-
-- [ ] `P2` Convert the Docker helper to a Python-backed deployment tool.
-      The generated `arbiter-docker` Bash helper has grown into a large
-      deployment application with duplicated rules for env parsing,
-      requirements, bundle metadata, wheelhouse state, generated-file manifests,
-      Docker Compose, systemd install, doctor checks, and host permissions.
-      Convert it in phases so the operator command surface remains stable while
-      deployment semantics move into testable Python owned by `arbiter-server`.
-      Keep the generated helper usable on conservative hosts: target a
-      primitive Python subset compatible with Python 3.6, avoid optional modern
-      runtime dependencies, and keep the bootstrap path clear when Python or
-      Arbiter packages are not yet installed.
-      Plan: first extract the current Docker deploy generation logic from
-      `arbiter_server.main` into a dedicated deployment module without changing
-      behavior; define the host contract for the generated helper, including
-      whether it may require `/usr/bin/env python3`, whether it may run Python
-      inside the Arbiter container, and which commands must remain pure
-      bootstrap; add characterization tests for the current Bash helper's public
-      commands and important failure messages; replace duplicated data rules
-      with generated metadata files or shared Python functions, starting with
-      compose defaults, plugin bundle metadata, meta-package expansion,
-      requirement validation, env-file parsing, path resolution, and deploy
-      manifest hashes; introduce a Python implementation for low-risk local
-      commands such as `info`, `bundle list`, requirement editing/validation,
-      and manifest inspection while the Bash wrapper delegates to it; migrate
-      wheelhouse, bundle upgrade, doctor, install, and systemd behavior only
-      after the Python implementation can run in dry-run mode and produce the
-      same plans as Bash; keep `arbiter-docker COMMAND` as the user-facing
-      entrypoint throughout; and remove the old Bash bodies only after command
-      parity is covered by tests and docs.
-      Acceptance checks: the generated deployment still contains an executable
-      `arbiter-docker` entrypoint; supported hosts with Python 3.6 can run the
-      helper without installing extra Python packages; deployments that only
-      have Docker access can still prepare, check, install, and operate without
-      requiring a globally installed Arbiter package; server-side generation and
-      helper-side execution share one source of truth for requirement syntax,
-      meta-package expansion, bundle plugin metadata, compose defaults, env-file
-      parsing, path resolution, and manifest ownership; existing Docker helper
-      tests pass with updated expectations; new tests cover dry-run install
-      plans, doctor findings, wheelhouse validation commands, local checkout
-      source handling, generated-file drift, and missing-Python error guidance;
-      docs explain the helper runtime requirements and upgrade path; and
-      follow-up Docker items such as uninstall, upgrade, and bundle locking are
-      either implemented on the Python foundation or explicitly deferred until
-      after the conversion.
-
-- [ ] `P2` Add Docker deployment uninstall support.
-      Operators who use `arbiter-docker install` need a matching cleanup path.
-      Acceptance checks: `arbiter-docker uninstall` stops and disables the
-      installed systemd service; removes the generated unit; optionally removes
-      the installed deployment directory behind an explicit confirmation or flag;
-      preserves user-owned config/secrets unless removal is explicitly requested;
-      and prints a clear summary of what was removed and what remains.
-
-- [ ] `P2` Add Docker deployment upgrade support.
-      Operators need an explicit path for updating an installed deployment
-      without guessing which source directory, wheelhouse, or systemd state is
-      authoritative. Acceptance checks: define whether upgrade is a mode of
-      `install` or a separate command; refresh requirements and the installed
-      wheelhouse before restarting; preserve config and secrets by default;
-      report the old and new package set when possible; and document rollback
-      expectations.
-
-- [ ] `P2` Add Docker bundle lock and package-management commands.
-      The Docker helper has `bundle prepare`, `bundle check`, `bundle list`,
-      wheelhouse-based `bundle list all`, and package-root `bundle upgrade`,
-      but operators also need a managed way to add/remove roots and persist
-      resolver state.
-      Acceptance checks: support `bundle add` and `bundle remove` for one or
-      more root packages; persist enough lock metadata to report resolved
-      package changes after prepare/upgrade; and detect when the wheelhouse or
-      lock is stale relative to root requirements.
 
 - [ ] `P2` Generate baseline CLI parameters from operation schemas.
       Arbiter operations already define rich input shape metadata, and that

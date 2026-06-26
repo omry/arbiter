@@ -28,7 +28,7 @@ const sidebars = {
             'operate/deployment/docker-prepare',
             'operate/deployment/linux-install',
             'operate/deployment/bundle-deep-dive',
-            'operate/deployment/docker-helper-reference',
+            'operate/deployment/reploy-command-reference',
           ],
         },
         'operate/security',

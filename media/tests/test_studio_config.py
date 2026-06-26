@@ -290,16 +290,16 @@ def test_install_recording_checks_config_before_starting_staging() -> None:
     cleanup_command = spec["cleanup"][0]["run"]
     setup_run = recording_run_file_text(spec["setup"][0]["run_file"])
 
-    assert "./arbiter-docker config check" in action_display(action)
-    assert "COMPOSE_PROGRESS=quiet ./arbiter-docker config check" in action["run"]
+    assert "./reploy app config check" in action_display(action)
+    assert "COMPOSE_PROGRESS=quiet ./reploy app config check" in action["run"]
     assert "recording_filter_docker_compose_progress()" in setup_run
     assert "grep -vE" not in action["run"]
     assert (
-        "COMPOSE_PROGRESS=quiet ./arbiter-docker up "
+        "COMPOSE_PROGRESS=quiet ./reploy up "
         "2> >(recording_filter_docker_compose_progress >&2)"
     ) in action["run"]
     assert (
-        "COMPOSE_PROGRESS=quiet ./arbiter-docker down --remove-orphans "
+        "COMPOSE_PROGRESS=quiet ./reploy down --remove-orphans "
         "2> >(recording_filter_docker_compose_progress >&2)"
     ) in cleanup_command
     assert action["expect"]["output_regex"][:3] == [
@@ -319,12 +319,10 @@ def test_install_recording_inspects_selected_bundle_before_prepare() -> None:
 
     assert "bundle list" in action["display"]
     assert "bundle list" in action["run"]
-    assert "bundle prepare" in action["display"]
+    assert "bundle build" in action["display"]
     assert "recording_prepare_bundle" in action["run"]
-    assert "bundle add imap" not in action["display"]
-    assert "bundle add smtp" not in action["display"]
-    assert "bundle add imap" not in action["run"]
-    assert "bundle add smtp" not in action["run"]
+    assert "bundle add --name imap,smtp" in action["display"]
+    assert "bundle add --name imap,smtp" in action["run"]
 
 
 def test_install_recording_prepares_visible_cli_environment() -> None:
@@ -338,7 +336,9 @@ def test_install_recording_prepares_visible_cli_environment() -> None:
     setup_run = recording_run_file_text(spec["setup"][0]["run_file"])
 
     assert prepare_cli["caption"] == "Create and activate a virtual environment."
-    assert install_suite["caption"] == "Install the Arbiter suite packages."
+    assert install_suite["caption"] == (
+        "Install Reploy and the Arbiter suite packages."
+    )
     prepare_narration = next(
         beat for beat in spec["narration"]["beats"] if beat["id"] == "prepare-cli"
     )
@@ -350,7 +350,7 @@ def test_install_recording_prepares_visible_cli_environment() -> None:
         prepare_narration["text"]
     )
     assert install_narration["heading"] == "Install Arbiter suite"
-    assert "`arbiter-server`, which we use next to create the" in (
+    assert "Install Reploy and the `arbiter-suite` package set" in (
         install_narration["text"]
     )
     assert "python3 -m venv arbiter_venv" in prepare_action["display"]
@@ -365,15 +365,17 @@ def test_install_recording_prepares_visible_cli_environment() -> None:
     ]
     assert "./arbiter_venv/bin/activate" in prepare_action["expect"]["file_exists"]
     assert (
-        "arbiter_venv/bin/python -m pip install arbiter-suite"
+        "arbiter_venv/bin/python -m pip install reploy arbiter-suite"
         in install_action["display"]
     )
     assert "arbiter-server version" in install_action["display"]
     assert "arbiter-server version" in install_action["run"]
+    assert "reploy --version" in install_action["run"]
     assert "arbiter-server version --json" not in install_action["display"]
     assert "./arbiter_venv/bin/arbiter-server" in (
         install_action["expect"]["file_exists"]
     )
+    assert "./arbiter_venv/bin/reploy" in install_action["expect"]["file_exists"]
     assert "server" in install_action["expect"]["output_contains"]
     assert "api" in install_action["expect"]["output_contains"]
     assert spec["setup"][0]["run_file"] == (
@@ -437,10 +439,8 @@ def test_install_recording_preinstall_doctor_checks_codex_agent_user() -> None:
     )
     action = preinstall["actions"][0]
 
-    assert "./arbiter-docker doctor --preinstall --agent-user codex" in action_display(
-        action
-    )
-    assert "./arbiter-docker doctor --preinstall --agent-user codex" in action["run"]
+    assert "./reploy doctor --preinstall" in action_display(action)
+    assert "./reploy doctor --preinstall" in action["run"]
 
 
 def test_install_recording_install_helper_is_aux_file() -> None:
@@ -452,12 +452,10 @@ def test_install_recording_install_helper_is_aux_file() -> None:
     assert action["run_file"] == (
         "media/recording-scripts/install-and-bootstrap/install-server.sh"
     )
-    assert "sudo ./arbiter-docker install" in action["display"]
+    assert "sudo ./reploy install --to /opt/arbiter" in action["display"]
     assert "set -euo pipefail" in install_run
-    assert "exec fakeroot sh -c" in install_run
-    assert "ARBITER_CONTAINER_USER" in install_run
-    assert 'chown -R "$container_user" data/server data/plugins' in install_run
-    assert "--skip-static-config-check" in install_run
+    assert "--dry-run" in install_run
+    assert "REPLOY_INSTALL_OWNER" in install_run
     assert "rewrite_install_output()" in install_run
 
 
@@ -477,12 +475,10 @@ def test_local_arbiter_source_exposes_repo_root_for_docker_bundle_prepare() -> N
     assert '"$recording_repo/media/tools/mail_lab.py" \\' in setup_run
     assert "--host 0.0.0.0" in setup_run
     assert "--container-host host.docker.internal" in setup_run
-    assert './arbiter-docker bundle add-source "$recording_repo/server"' in setup_run
-    assert 'local_packages = {"arbiter-server", "arbiter-imap", "arbiter-smtp"}' in (
-        setup_run
-    )
+    assert './reploy bundle add-source "$recording_repo/server"' in setup_run
     assert '"$operator_venv/bin/arbiter-server" version --json || return 1' in setup_run
     assert '"$operator_venv/bin/arbiter" --version || return 1' in setup_run
+    assert '"$operator_venv/bin/reploy" --version || return 1' in setup_run
 
 
 def test_pypi_arbiter_source_uses_artifact_keyed_operator_venv_cache() -> None:
@@ -554,10 +550,8 @@ def test_local_arbiter_source_uses_dirty_source_artifact_keyed_operator_cache() 
     )
     assert '--find-links "$wheelhouse"' in setup_run
     assert "recording_prepare_operator_venv_from_wheelhouse \\" in setup_run
-    assert (
-        '"$package_requirement" "$wheelhouse" online "${local_package_wheels[@]}"'
-        in setup_run
-    )
+    assert '"$reploy_package $package_requirement" \\' in setup_run
+    assert '"$reploy_package" \\' in setup_run
     assert 'export ARBITER_REPO_ROOT="$recording_repo"' in setup_run
     assert 'export ARBITER_PYTHON="$recording_python"' in setup_run
 

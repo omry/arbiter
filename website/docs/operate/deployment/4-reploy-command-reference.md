@@ -1,5 +1,5 @@
 ---
-title: Docker Helper Reference
+title: Reploy Command Reference
 ---
 
 The installed `reploy` command and the generated deployment-local helper run the
@@ -40,7 +40,7 @@ the helper.
 | Command | Purpose |
 | --- | --- |
 | `app` | Show this deployment's blueprint-declared app subcommands. |
-| `app bootstrap --server` | Create the app server config through the deployment runtime. |
+| `app bootstrap server` | Create the app server config through the deployment runtime. |
 | `app bootstrap --plugin NAME --account ACCOUNT` | Create plugin account and policy config through the deployment runtime. |
 | `app bootstrap --plugins NAME[,NAME...] --account ACCOUNT` | Create account and policy config for multiple plugins through the deployment runtime. |
 | `app config activate --plugin NAME --account ACCOUNT` | Activate one account for one plugin. |

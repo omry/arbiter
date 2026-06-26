@@ -33,22 +33,6 @@ environment, verifies `arbiter --version`, and uses that installed command
 against the server. Release and publish workflows run this server integration
 suite on each supported OS/architecture runner.
 
-## Docker Deployment Check
-
-The Docker deployment integration test is skipped by default during normal
-pytest runs because it builds and starts a real container. Treat it as the
-pre-deploy gate, and run it when changing deployment scaffolding:
-
-```bash
-.venv/bin/python -m nox -s deploy-test
-```
-
-The test starts a lightweight local IMAP server, generates a Docker deployment
-with `arbiter-server deploy docker`, runs generated helper preflight commands
-without a privileged install, starts the generated `arbiter-docker` helper,
-checks the server URL, verifies that the current-platform native `arbiter`
-client reports `arbiter`, and verifies an IMAP operation through that client.
-
 Run the full suite before release or before committing broad interface changes.
 
 See [Release Process](./release-process.md) for package-scoped release notes,
