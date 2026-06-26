@@ -38,6 +38,7 @@ from arbiter_server.main import (
     _display_config_path,
     _config_check_tree_lines,
     _run_config_check,
+    _run_config_show,
     _run_server,
     _live_account_test_result,
     _server_tls_files,
@@ -9837,6 +9838,9 @@ def test_cli_config_show_subcommand_passes_config_and_overrides(
                 "config",
                 "show",
                 "--resolve",
+                "--package",
+                "arbiter.server.public.base_url",
+                "--value",
                 "arbiter.server.bind.port=8075",
             ]
         )
@@ -9849,8 +9853,102 @@ def test_cli_config_show_subcommand_passes_config_and_overrides(
             "config_name": "arbiter-server",
             "overrides": ["arbiter.server.bind.port=8075"],
             "resolve": True,
+            "package": "arbiter.server.public.base_url",
+            "value": True,
         },
     ]
+
+
+def test_run_config_show_prints_package_value(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_compose_config(**_kwargs: object) -> object:
+        return OmegaConf.create(
+            {
+                "arbiter": {
+                    "server": {
+                        "public": {
+                            "scheme": "https",
+                            "host": "arbiter.example.test",
+                            "port": "443",
+                            "base_url": "${.scheme}://${.host}:${.port}",
+                        }
+                    }
+                }
+            }
+        )
+
+    monkeypatch.setattr("arbiter_server.main.compose_config", fake_compose_config)
+
+    assert (
+        _run_config_show(
+            config_dir="/tmp",
+            config_name="arbiter-server",
+            overrides=[],
+            resolve=True,
+            package="arbiter.server.public.base_url",
+            value=True,
+        )
+        == 0
+    )
+
+    captured = capsys.readouterr()
+    assert captured.out == "https://arbiter.example.test:443\n"
+    assert captured.err == ""
+
+
+def test_run_config_show_prints_scalar_package(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "arbiter_server.main.compose_config",
+        lambda **_kwargs: OmegaConf.create(
+            {"arbiter": {"server": {"public": {"host": "127.0.0.1"}}}}
+        ),
+    )
+
+    assert (
+        _run_config_show(
+            config_dir="/tmp",
+            config_name="arbiter-server",
+            overrides=[],
+            resolve=True,
+            package="arbiter.server.public.host",
+            value=False,
+        )
+        == 0
+    )
+
+    captured = capsys.readouterr()
+    assert captured.out == "127.0.0.1\n"
+    assert captured.err == ""
+
+
+def test_run_config_show_rejects_value_without_scalar_package(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "arbiter_server.main.compose_config",
+        lambda **_kwargs: OmegaConf.create({"arbiter": {"server": {"public": {}}}}),
+    )
+
+    assert (
+        _run_config_show(
+            config_dir="/tmp",
+            config_name="arbiter-server",
+            overrides=[],
+            resolve=True,
+            package="arbiter.server.public",
+            value=True,
+        )
+        == 1
+    )
+
+    captured = capsys.readouterr()
+    assert "config show --value requires a scalar package" in captured.err
 
 
 def test_cli_bootstrap_server_uses_default_config_dir(

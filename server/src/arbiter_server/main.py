@@ -4137,6 +4137,8 @@ def _run_config_show(
     config_name: str,
     overrides: Sequence[str],
     resolve: bool,
+    package: str | None,
+    value: bool,
 ) -> int:
     try:
         cfg = compose_config(
@@ -4144,7 +4146,22 @@ def _run_config_show(
             config_name=config_name,
             overrides=overrides,
         )
-        print(OmegaConf.to_yaml(cfg, resolve=resolve), end="")
+        output: object = cfg
+        if package is not None:
+            missing = object()
+            output = OmegaConf.select(cast(Any, cfg), package, default=missing)
+            if output is missing:
+                raise ValueError(f"config package not found: {package}")
+        if value:
+            if package is None:
+                raise ValueError("config show --value requires --package")
+            if OmegaConf.is_config(output):
+                raise ValueError("config show --value requires a scalar package")
+            print(output)
+        elif OmegaConf.is_config(output):
+            print(OmegaConf.to_yaml(output, resolve=resolve), end="")
+        else:
+            print(output)
     except (CompactHydraException, ValueError) as exc:
         print_cli_error(str(exc), area="config")
         return 1
@@ -5237,6 +5254,15 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="resolve OmegaConf interpolations before printing",
     )
+    show.add_argument(
+        "--package",
+        help="print only a specific config package path",
+    )
+    show.add_argument(
+        "--value",
+        action="store_true",
+        help="print the selected scalar package value without YAML",
+    )
     _add_override_arguments(
         show,
         help_text="Hydra-style config overrides applied before printing",
@@ -5437,6 +5463,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             config_name=namespace.config_name,
             overrides=namespace.overrides,
             resolve=namespace.resolve,
+            package=namespace.package,
+            value=namespace.value,
         )
     if namespace.command == "config" and namespace.config_command in {
         "activate",

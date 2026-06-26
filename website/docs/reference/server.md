@@ -42,7 +42,7 @@ arbiter-server --config-dir ./config.local serve
 Inspect, validate, activate, and deactivate server config.
 
 ```bash
-arbiter-server config show [--resolve] [override...]
+arbiter-server config show [--resolve] [--package PATH [--value]] [override...]
 arbiter-server config check [--live] [override...]
 arbiter-server config activate --plugin <plugin> --account <name>
 arbiter-server config activate --plugins <plugin[,plugin...]> --account <name>
@@ -52,6 +52,9 @@ arbiter-server config deactivate --plugins <plugin[,plugin...]> --account <name>
 
 - `config show`: print the composed config.
 - `config show --resolve`: resolve OmegaConf interpolations before printing.
+- `config show --package PATH`: print only one config subtree or scalar.
+- `config show --package PATH --value`: print the selected scalar value without
+  YAML formatting.
 - `config check`: validate config and service runtime construction without
   serving.
 - `config check --live`: also run configured account readiness checks using the

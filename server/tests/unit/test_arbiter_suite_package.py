@@ -3,6 +3,9 @@ import subprocess
 import sys
 import zipfile
 from pathlib import Path
+from typing import Any, cast
+
+from omegaconf import OmegaConf
 
 try:
     import tomllib
@@ -16,6 +19,16 @@ SERVER_ROOT = REPO_ROOT / "server"
 SUITE_PACK_PATH = "arbiter_suite/reploy"
 SERVER_PACK_ROOT = SERVER_ROOT / "src" / "arbiter_server" / "reploy"
 SERVER_PACK_PATH = "arbiter_server/reploy"
+
+
+def _load_server_blueprint() -> dict[str, Any]:
+    return cast(
+        dict[str, Any],
+        OmegaConf.to_container(
+            OmegaConf.load(SERVER_PACK_ROOT / "arbiter.blueprint.yaml"),
+            resolve=False,
+        ),
+    )
 
 
 def _build_suite_wheel(tmp_path: Path) -> Path:
@@ -142,3 +155,37 @@ def test_reploy_blueprints_expose_activate_alias() -> None:
     assert expected in (SERVER_PACK_ROOT / "arbiter.blueprint.yaml").read_text(
         encoding="utf-8"
     )
+
+
+def test_reploy_blueprint_declares_install_hooks_and_success_message() -> None:
+    blueprint = _load_server_blueprint()
+    docker = blueprint["docker"]
+    assert isinstance(docker, dict)
+
+    assert docker["install"] == {
+        "success": {
+            "vars": {
+                "server_url": {
+                    "app": [
+                        "config",
+                        "show",
+                        "--resolve",
+                        "--package",
+                        "arbiter.server.public.base_url",
+                        "--value",
+                    ]
+                }
+            },
+            "lines": [
+                "server url: ${server_url}",
+                "client command: arbiter arbiter.url=${server_url} info server",
+            ],
+        },
+        "hooks": {
+            "before_start": [{"app": ["config", "check"]}],
+            "after_start": [
+                {"health_check": {"wait": True}},
+                {"app": ["config", "check", "--live"]},
+            ],
+        },
+    }

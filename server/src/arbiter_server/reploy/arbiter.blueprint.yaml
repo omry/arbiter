@@ -37,6 +37,21 @@ docker:
     config: conf
     bundle: .reploy/bundle
     data: data
+  install:
+    success:
+      vars:
+        server_url:
+          app: [config, show, --resolve, --package, arbiter.server.public.base_url, --value]
+      lines:
+        - "server url: ${server_url}"
+        - "client command: arbiter arbiter.url=${server_url} info server"
+    hooks:
+      before_start:
+        - app: [config, check]
+      after_start:
+        - health_check:
+            wait: true
+        - app: [config, check, --live]
   service:
     install_owner: arbiter:arbiter
     image: python:3.11-slim
