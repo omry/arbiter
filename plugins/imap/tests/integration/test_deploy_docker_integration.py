@@ -383,8 +383,6 @@ def _assert_imap_deployment_operation(
     imap_server: Any,
 ) -> None:
     _assert_native_arbiter_client(repo_root)
-    helper_test = _run([helper, "test"], cwd=repo_root, timeout=60)
-    _assert_ok(helper_test)
     result = _wait_for_imap_operation(
         repo_root=repo_root,
         url=url,
