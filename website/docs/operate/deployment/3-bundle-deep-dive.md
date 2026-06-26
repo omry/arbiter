@@ -23,9 +23,9 @@ runtime container without reaching PyPI.
 package roots are exact pins:
 
 ```text title=".reploy/requirements.txt"
-arbiter-server==0.9.0.dev2
-arbiter-imap==0.9.0.dev2
-arbiter-smtp==0.9.0.dev2
+arbiter-server==<version>
+arbiter-imap==<version>
+arbiter-smtp==<version>
 ```
 
 Unpinned names and version ranges are rejected for runtime deployment state.
@@ -137,37 +137,37 @@ Skip upgrade when you want to keep the versions already recorded in
 <summary>Explicit package roots</summary>
 
 Most deployments should use the bundle menu. To seed exact package roots during
-init, pass repeated `--requirement` values:
+init, pass repeated `--requirement` values with the Arbiter server blueprint:
 
 ```bash
-reploy init --blueprint arbiter-suite \
-  --requirement arbiter-server==0.9.0.dev2 \
-  --requirement arbiter-smtp==0.9.0.dev2
+reploy init --blueprint arbiter-server \
+  --requirement arbiter-server==<version> \
+  --requirement arbiter-smtp==<version>
 ```
 
 The same mechanism can express a curated suite plus an override:
 
 ```bash
-reploy init --blueprint arbiter-suite \
-  --requirement arbiter-suite==0.9.0 \
-  --requirement arbiter-smtp==0.9.1
+reploy init --blueprint arbiter-server \
+  --requirement arbiter-suite==<version> \
+  --requirement arbiter-smtp==<version>
 ```
 
 Arbiter expands that selection to concrete package pins so pip does not see
 conflicting meta-package dependencies:
 
 ```text title=".reploy/requirements.txt"
-arbiter-server==0.9.0
-arbiter-smtp==0.9.1
-arbiter-imap==0.9.0
+arbiter-server==<version>
+arbiter-smtp==<version>
+arbiter-imap==<version>
 ```
 
 For explicit local artifact bundles, `.reploy/requirements.txt` can also name
 container wheel paths directly:
 
 ```text title=".reploy/requirements.txt"
-/bundle/arbiter_server-0.9.0.dev2-py3-none-any.whl
-/bundle/arbiter_smtp-0.9.0.dev2-py3-none-any.whl
+/bundle/arbiter_server-<version>-py3-none-any.whl
+/bundle/arbiter_smtp-<version>-py3-none-any.whl
 ```
 
 </details>

@@ -208,9 +208,9 @@ recording:
         sed -n '1,30p' conf/arbiter/policy/smtp/bot_policy.yaml
       expect:
         output_contains:
-        - 'host: imap.example.com'
+        - IMAP_BOT_ACCOUNT_HOST
         - 'folder_access:'
-        - 'host: smtp.example.com'
+        - SMTP_BOT_ACCOUNT_HOST
         - 'recipient_policy:'
     viewer_hold: 4.0
   - id: edit-bot-access
@@ -741,7 +741,7 @@ with demo credentials.
 Action:
 
 ```bash
-arbiter-server --config-dir ./conf env bootstrap
+reploy app env bootstrap
 sed -n '1,16p' conf/.env
 ```
 

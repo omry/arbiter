@@ -16,14 +16,18 @@ The account file contains deployment-owned connection settings and credentials:
 
 ```yaml title="arbiter/account/imap/bot.yaml"
 policy: bot_policy
-host: imap.example.com
-port: 993
+host: ${oc.env:IMAP_BOT_ACCOUNT_HOST}
+port: ${oc.env:IMAP_BOT_ACCOUNT_PORT,993}
 username: ${oc.env:IMAP_BOT_ACCOUNT_USERNAME}
 password: ${oc.env:IMAP_BOT_ACCOUNT_PASSWORD}
 tls: implicit
 verify_peer: true
 default_folder: INBOX
 ```
+
+Generated config uses environment variables for deployment-specific connection
+details. It is still your config: edit the YAML directly when a fixed value is
+clearer for your deployment.
 
 ## Folders
 

@@ -9,7 +9,7 @@ for smoke testing, but it does not install anything under `/opt`.
 ## Create the directory
 
 ```bash
-reploy init --blueprint arbiter-suite
+reploy init --blueprint arbiter-server
 ```
 
 By default this creates `./reploy-staging`, including a deployment-local
@@ -66,7 +66,8 @@ Choose the Arbiter service plugins for this deployment:
 ```
 
 Use `bundle add --name arbiter-suite` or `bundle remove arbiter-suite` to add or
-remove all plugins in the suite meta package.
+remove all plugins in the suite meta package. `arbiter-server` is the Reploy
+blueprint; `arbiter-suite` is an Arbiter package bundle option.
 
 ### Build the wheelhouse
 

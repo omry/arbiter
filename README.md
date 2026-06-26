@@ -22,7 +22,7 @@ Current implementation status:
 - `arbiter.account.<service>` and reusable `arbiter.policy.<service>` objects
   for per-service account policy
 - native `arbiter` client CLI and `arbiter-server` server/operator CLI
-- Docker deployment tooling for staged and installed Arbiter services
+- Reploy blueprint material for staged and installed Docker deployments
 
 Known open gaps:
 
@@ -121,8 +121,8 @@ development.
 Plugin-owned object templates are created by the plugin command surface:
 
 ```bash
-arbiter-server bootstrap arbiter
-arbiter-server bootstrap plugin smtp account primary
+arbiter-server bootstrap --server
+arbiter-server bootstrap --plugin smtp --account primary
 ```
 
 `${oc.env:...}` reads the process environment that your shell, supervisor,
@@ -136,10 +136,14 @@ For local development, a shell-owned env file can be useful:
 
 ```bash
 # ~/.arbiter/local.env
+SMTP_PRIMARY_ACCOUNT_HOST=smtp.example.com
+# SMTP_PRIMARY_ACCOUNT_PORT=587
 SMTP_PRIMARY_ACCOUNT_USERNAME=agent@example.com
 SMTP_PRIMARY_ACCOUNT_PASSWORD=change-me
-ARBITER_IMAP_USERNAME=agent@example.com
-ARBITER_IMAP_PASSWORD=change-me
+IMAP_PRIMARY_ACCOUNT_HOST=imap.example.com
+# IMAP_PRIMARY_ACCOUNT_PORT=993
+IMAP_PRIMARY_ACCOUNT_USERNAME=agent@example.com
+IMAP_PRIMARY_ACCOUNT_PASSWORD=change-me
 ```
 
 Point the root config at the env file:

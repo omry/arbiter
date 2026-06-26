@@ -16,8 +16,8 @@ The account file contains deployment-owned connection settings and credentials:
 
 ```yaml title="arbiter/account/smtp/bot.yaml"
 policy: bot_policy
-host: smtp.example.com
-port: 587
+host: ${oc.env:SMTP_BOT_ACCOUNT_HOST}
+port: ${oc.env:SMTP_BOT_ACCOUNT_PORT,587}
 authenticate: true
 username: ${oc.env:SMTP_BOT_ACCOUNT_USERNAME}
 password: ${oc.env:SMTP_BOT_ACCOUNT_PASSWORD}
@@ -26,6 +26,10 @@ from_name: Arbiter
 tls: starttls
 verify_peer: true
 ```
+
+Generated config uses environment variables for deployment-specific connection
+details. It is still your config: edit the YAML directly when a fixed value is
+clearer for your deployment.
 
 The policy file contains the sending guardrails:
 

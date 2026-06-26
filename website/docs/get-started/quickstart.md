@@ -104,8 +104,8 @@ defaults:
   - _self_
 
 policy: bot_policy
-host: smtp.example.com
-port: 587
+host: ${oc.env:SMTP_BOT_ACCOUNT_HOST}
+port: ${oc.env:SMTP_BOT_ACCOUNT_PORT,587}
 authenticate: true
 username: ${oc.env:SMTP_BOT_ACCOUNT_USERNAME}
 password: ${oc.env:SMTP_BOT_ACCOUNT_PASSWORD}
@@ -115,6 +115,10 @@ tls: starttls
 verify_peer: true
 timeout_seconds: 30
 ```
+
+The generated file keeps deployment-specific connection values in the env file
+by default. You can edit the YAML directly when a fixed value is clearer for
+your local setup.
 
 </details>
 
@@ -149,7 +153,8 @@ arbiter:
     smtp:
       bot:
         policy: bot_policy
-        host: smtp.example.com
+        host: ${oc.env:SMTP_BOT_ACCOUNT_HOST}
+        port: ${oc.env:SMTP_BOT_ACCOUNT_PORT,587}
         username: ${oc.env:SMTP_BOT_ACCOUNT_USERNAME}
         password: ${oc.env:SMTP_BOT_ACCOUNT_PASSWORD}
   policy:

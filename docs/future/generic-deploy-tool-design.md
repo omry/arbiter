@@ -173,7 +173,7 @@ preservation blocks an update, the result is `skipped`, not success disguised as
 
 Error reporting should use stable layers:
 
-- usage errors: invalid command line, missing required flags, unsupported pack
+- usage errors: invalid command line, missing required flags, unsupported blueprint
   reference forms; exit 2
 - configuration errors: invalid blueprint manifests, invalid deployment state, local
   drift that needs operator action; exit 1
@@ -265,10 +265,6 @@ blueprint: file:./server/src/arbiter_server/reploy
 blueprint: git:https://github.com/omry/arbiter.git//server/src/arbiter_server/reploy?ref=v1.2.3
 blueprint: git:ssh://git@github.com/omry/arbiter.git//server/src/arbiter_server/reploy?ref=v1.2.3
 blueprint: sl:https://github.com/omry/arbiter.git//server/src/arbiter_server/reploy?rev=v1.2.3
-blueprint: arbiter-suite
-blueprint: arbiter-suite==0.1.0
-blueprint: pypi:arbiter-suite//arbiter_suite/reploy
-blueprint: pypi:arbiter-suite==0.1.0//arbiter_suite/reploy
 blueprint: arbiter-server
 blueprint: arbiter-server==0.1.0
 blueprint: pypi:arbiter-server//arbiter_server/reploy
@@ -286,17 +282,16 @@ not be required for blueprint discovery. The deploy tool should not depend on `p
 or a Python environment for package-backed blueprint lookup; the first
 implementation should use Go-native HTTP/archive handling for wheel artifacts.
 
-Blueprint shorthands such as `arbiter-suite` and `arbiter-server` should come from a
+Blueprint shorthands such as `arbiter-server` should come from a
 downloadable Reploy blueprint index, not from hardcoded deploy-binary knowledge.
 The Arbiter repository can publish the first index file and Reploy can download
 and cache it from the repository until a more formal distribution path exists.
 The index should be fetched lazily on first shorthand use, with an explicit
 command such as `reploy blueprint-index refresh` available to validate and pre-cache
 it for demos, offline preparation, or troubleshooting.
-`arbiter-suite==VERSION` and `arbiter-server==VERSION` pin the package version;
+`arbiter-server==VERSION` pins the package version;
 plain shorthands request the latest available package. Explicit package-backed
 refs may also omit an exact version, for example
-`pypi:arbiter-suite//arbiter_suite/reploy` or
 `pypi:arbiter-server//arbiter_server/reploy`. These are operator
 conveniences for bootstrap. Once resolved, the deployment state must record the
 exact package version, artifact filename, and artifact hash so the deployment is
@@ -327,15 +322,15 @@ artifact. A minimal shape could be:
 
 ```json
 {
-  "pack": {
-    "requested": "arbiter-suite",
+  "blueprint": {
+    "requested": "arbiter-server",
     "resolved": {
       "scheme": "pypi",
-      "package": "arbiter-suite",
+      "package": "arbiter-server",
       "version": "0.1.0",
-      "filename": "arbiter_suite-0.1.0-py3-none-any.whl",
+      "filename": "arbiter_server-0.1.0-py3-none-any.whl",
       "sha256": "...",
-      "subdir": "arbiter_suite/reploy",
+      "subdir": "arbiter_server/reploy",
       "cache_path": "..."
     }
   }
@@ -345,7 +340,7 @@ artifact. A minimal shape could be:
 Initial package lookup convention:
 
 - single-blueprint packages put the blueprint at a shallow package-namespaced path, such
-  as `//arbiter_suite/reploy`
+  as `//arbiter_server/reploy`
 - packages that intentionally ship multiple blueprints put named blueprint files
   under the same package path
 
@@ -356,7 +351,7 @@ blueprint data package-namespaced, but do not force the common single-blueprint 
 through extra path depth. Prefer:
 
 ```text
-arbiter_suite/reploy/
+arbiter_server/reploy/
   arbiter.blueprint.yaml
 ```
 
@@ -596,7 +591,7 @@ Implementation fix for the current Reploy Docker target:
 1. Move staged/installed defaults out of scattered `docker.env`, Compose, and
    systemd code into a phase profile model loaded from the app blueprint plus local
    deployment overrides.
-2. Generate installation artifacts from `(target, phase, pack, local overrides)`,
+2. Generate installation artifacts from `(target, phase, blueprint, local overrides)`,
    so `init`, `update`, `install`, and future `plan` all calculate the same
    desired files/resources before applying them.
 3. Record the active phase and source profile in `state.json`, including the
@@ -969,11 +964,11 @@ cleanup complete !>
    - target-specific state only
    - support external state later
 
-5. App-pack packaging:
+5. Blueprint packaging:
    - local file/directory references
    - local or remote Git references
    - local or remote Sapling references
-   - package references, such as a PyPI package containing the pack, using an
+   - package references, such as a PyPI package containing the blueprint, using an
      explicit package-internal path first
    - local or remote archive references later, if needed
 
@@ -998,7 +993,7 @@ Milestone 1 should be intentionally narrow:
   `reploy init --blueprint git:https://github.com/omry/arbiter.git//server/src/arbiter_server/reploy?ref=v0.1.0`
 - provide a standalone init path from a package that contains the blueprint, for
   example through the blueprint index:
-  `reploy init --blueprint arbiter-suite`
+  `reploy init --blueprint arbiter-server`
 - generate the same Docker deployment directory as today
 - vendor or generate a tiny deployment-local wrapper
 - keep the app blueprint external to the binary; a repo-local wrapper may supply the
