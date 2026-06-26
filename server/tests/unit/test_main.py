@@ -35,6 +35,7 @@ from arbiter_server.main import (
     _config_check_output_width,
     _default_container_user,
     _docker_bundle_plugin,
+    _display_config_path,
     _config_check_tree_lines,
     _run_config_check,
     _run_server,
@@ -9789,6 +9790,18 @@ def test_cli_bootstrap_arbiter_refusal_uses_reploy_config_display_dir(
         "file: reploy-staging/conf/arbiter-server.yaml\n"
         "  file differs from the generated bootstrap template\n"
         "  rerun with --force to overwrite it\n"
+    )
+
+
+def test_reploy_config_display_dir_handles_windows_separators(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REPLOY_CONFIG_CONTAINER_DIR", r"C:\reploy\conf")
+    monkeypatch.setenv("REPLOY_CONFIG_DISPLAY_DIR", "reploy-staging/conf")
+
+    assert (
+        _display_config_path(Path(r"C:\reploy\conf\arbiter-server.yaml"))
+        == "reploy-staging/conf/arbiter-server.yaml"
     )
 
 

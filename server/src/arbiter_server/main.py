@@ -4044,14 +4044,17 @@ def _display_config_path(path: Path) -> str:
     if not display_dir:
         return str(path)
     container_dir = os.environ.get("REPLOY_CONFIG_CONTAINER_DIR", "/config")
-    container_dir = container_dir.rstrip("/") or "/"
-    path_text = str(path)
+    container_dir = container_dir.replace("\\", "/").rstrip("/") or "/"
+    path_text = str(path).replace("\\", "/")
     if path_text == container_dir:
         return display_dir
     prefix = container_dir + "/"
     if path_text.startswith(prefix):
-        return str(Path(display_dir) / path_text[len(prefix) :])
-    return path_text
+        display_dir = display_dir.rstrip("/\\")
+        if not display_dir:
+            return path_text[len(prefix) :]
+        return display_dir + "/" + path_text[len(prefix) :]
+    return str(path)
 
 
 def _print_bootstrap_overwrite_error(path: Path) -> None:
