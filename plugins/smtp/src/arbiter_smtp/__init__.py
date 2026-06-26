@@ -1060,8 +1060,8 @@ guidance: ""
 policy: {policy_name}
 
 # SMTP submission endpoint.
-host: smtp.example.com
-port: 587
+host: ${{oc.env:SMTP_{env_suffix}_HOST}}
+port: ${{oc.env:SMTP_{env_suffix}_PORT,587}}
 
 # Set to false for unauthenticated local relays.
 authenticate: true

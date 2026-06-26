@@ -1328,8 +1328,8 @@ guidance: ""
 policy: {policy_name}
 
 # IMAP mailbox endpoint.
-host: imap.example.com
-port: 993
+host: ${{oc.env:IMAP_{env_suffix}_HOST}}
+port: ${{oc.env:IMAP_{env_suffix}_PORT,993}}
 
 # Credentials are read from the Arbiter process environment.
 username: ${{oc.env:IMAP_{env_suffix}_USERNAME}}

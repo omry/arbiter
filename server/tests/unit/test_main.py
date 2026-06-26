@@ -1937,6 +1937,28 @@ def test_cli_env_check_reports_missing_env(
     )
 
 
+def test_cli_env_check_treats_env_references_with_defaults_as_optional(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("IMAP_PRIMARY_ACCOUNT_PORT", raising=False)
+    (tmp_path / "arbiter-server.yaml").write_text(
+        "arbiter:\n"
+        "  env_file: local.env\n"
+        "  account:\n"
+        "    imap:\n"
+        "      primary:\n"
+        "        port: ${oc.env:IMAP_PRIMARY_ACCOUNT_PORT,993}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "local.env").write_text("", encoding="utf-8")
+
+    assert main(["--config-dir", str(tmp_path), "env", "check"]) == 0
+
+    assert capsys.readouterr().out == "env ok: 0 variables satisfied\n"
+
+
 def test_cli_env_bootstrap_rebuilds_configured_env_file(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -1959,6 +1981,7 @@ def test_cli_env_bootstrap_rebuilds_configured_env_file(
         "        password: ${oc.env:IMAP_PRIMARY_ACCOUNT_PASSWORD}\n"
         "    smtp:\n"
         "      primary:\n"
+        "        port: ${oc.env:SMTP_PRIMARY_ACCOUNT_PORT,587}\n"
         "        username: ${oc.env:SMTP_PRIMARY_ACCOUNT_USERNAME}\n"
         "        password: ${oc.env:SMTP_PRIMARY_ACCOUNT_PASSWORD}\n"
         "  etc:\n"
@@ -1969,6 +1992,7 @@ def test_cli_env_bootstrap_rebuilds_configured_env_file(
     env_file.write_text(
         "SMTP_PRIMARY_ACCOUNT_PASSWORD=keep-me\n"
         "IMAP_PRIMARY_ACCOUNT_USERNAME=imap-user\n"
+        "SMTP_PRIMARY_ACCOUNT_PORT=2525\n"
         "UNRELATED=value\n",
         encoding="utf-8",
     )
@@ -1982,6 +2006,7 @@ def test_cli_env_bootstrap_rebuilds_configured_env_file(
         "\n"
         "# arbiter-smtp\n"
         "SMTP_PRIMARY_ACCOUNT_PASSWORD=keep-me\n"
+        "SMTP_PRIMARY_ACCOUNT_PORT=2525\n"
         "SMTP_PRIMARY_ACCOUNT_USERNAME=\n"
         "\n"
         "# miscellaneous\n"
@@ -2016,6 +2041,67 @@ def test_cli_env_bootstrap_reports_noop_when_env_file_is_current(
 
     _assert_posix_mode(env_file, 0o600)
     assert capsys.readouterr().out == f"env file already up to date: {env_file}\n"
+
+
+def test_cli_env_bootstrap_comments_env_references_with_defaults(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("IMAP_PRIMARY_ACCOUNT_HOST", raising=False)
+    monkeypatch.delenv("IMAP_PRIMARY_ACCOUNT_PORT", raising=False)
+    monkeypatch.delenv("IMAP_PRIMARY_ACCOUNT_LABEL", raising=False)
+    (tmp_path / "arbiter-server.yaml").write_text(
+        "arbiter:\n"
+        "  env_file: local.env\n"
+        "  account:\n"
+        "    imap:\n"
+        "      primary:\n"
+        "        host: ${oc.env:IMAP_PRIMARY_ACCOUNT_HOST}\n"
+        "        port: ${oc.env:IMAP_PRIMARY_ACCOUNT_PORT,993}\n"
+        "        label: ${oc.env:IMAP_PRIMARY_ACCOUNT_LABEL,\"mail, primary\"}\n",
+        encoding="utf-8",
+    )
+    env_file = tmp_path / "local.env"
+    env_file.write_text("", encoding="utf-8")
+
+    assert main(["--config-dir", str(tmp_path), "env", "bootstrap"]) == 0
+
+    assert env_file.read_text(encoding="utf-8") == (
+        "# arbiter-imap\n"
+        "IMAP_PRIMARY_ACCOUNT_HOST=\n"
+        "# IMAP_PRIMARY_ACCOUNT_PORT=993\n"
+        "# IMAP_PRIMARY_ACCOUNT_LABEL=mail, primary\n"
+    )
+    assert capsys.readouterr().out == f"wrote {env_file}\n"
+
+
+def test_cli_env_bootstrap_reports_reploy_display_path_for_current_env_file(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("SMTP_PRIMARY_ACCOUNT_PASSWORD", raising=False)
+    monkeypatch.setenv("REPLOY_CONFIG_CONTAINER_DIR", str(tmp_path))
+    monkeypatch.setenv("REPLOY_CONFIG_DISPLAY_DIR", "conf")
+    (tmp_path / "arbiter-server.yaml").write_text(
+        "arbiter:\n"
+        "  env_file: .env\n"
+        "  account:\n"
+        "    smtp:\n"
+        "      primary:\n"
+        "        password: ${oc.env:SMTP_PRIMARY_ACCOUNT_PASSWORD}\n",
+        encoding="utf-8",
+    )
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "# arbiter-smtp\n" "SMTP_PRIMARY_ACCOUNT_PASSWORD=\n",
+        encoding="utf-8",
+    )
+
+    assert main(["--config-dir", str(tmp_path), "env", "bootstrap"]) == 0
+
+    assert capsys.readouterr().out == "env file already up to date: conf/.env\n"
 
 
 def test_cli_env_bootstrap_configures_default_env_file(
@@ -2053,6 +2139,28 @@ def test_cli_env_bootstrap_configures_default_env_file(
     _assert_posix_mode(tmp_path / "arbiter-server.yaml", 0o640)
     _assert_posix_mode(tmp_path / ".env", 0o600)
     assert capsys.readouterr().out == f"wrote {tmp_path / '.env'}\n"
+
+
+def test_cli_env_bootstrap_reports_reploy_display_path_for_written_env_file(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("SMTP_PRIMARY_ACCOUNT_PASSWORD", raising=False)
+    monkeypatch.setenv("REPLOY_CONFIG_CONTAINER_DIR", str(tmp_path))
+    monkeypatch.setenv("REPLOY_CONFIG_DISPLAY_DIR", "conf")
+    (tmp_path / "arbiter-server.yaml").write_text(
+        "arbiter:\n"
+        "  account:\n"
+        "    smtp:\n"
+        "      primary:\n"
+        "        password: ${oc.env:SMTP_PRIMARY_ACCOUNT_PASSWORD}\n",
+        encoding="utf-8",
+    )
+
+    assert main(["--config-dir", str(tmp_path), "env", "bootstrap"]) == 0
+
+    assert capsys.readouterr().out == "wrote conf/.env\n"
 
 
 def test_cli_deploy_docker_init_writes_local_deploy_dir(
@@ -9842,8 +9950,8 @@ def test_cli_bootstrap_plugin_account_writes_service_example(
     assert 'guidance: ""\n' in account_yaml
     assert "# Matching policy generated alongside this account.\n" in account_yaml
     assert "policy: personal_account_policy\n" in account_yaml
-    assert "host: smtp.example.com\n" in account_yaml
-    assert "port: 587\n" in account_yaml
+    assert "host: ${oc.env:SMTP_PERSONAL_ACCOUNT_HOST}\n" in account_yaml
+    assert "port: ${oc.env:SMTP_PERSONAL_ACCOUNT_PORT,587}\n" in account_yaml
     assert "# Credentials are read from the Arbiter process environment.\n" in (
         account_yaml
     )
@@ -9872,6 +9980,9 @@ def test_cli_bootstrap_plugin_account_writes_service_example(
         f"wrote {policy_file}\n"
         "\n"
         "Edit the generated account and policy files.\n"
+        "\n"
+        "Rebuild the env file after edits:\n"
+        f"  arbiter-server --config-dir {config_dir} env bootstrap\n"
         "\n"
         "Review activation status:\n"
         f"  arbiter-server --config-dir {config_dir} config activate\n"
@@ -9905,6 +10016,9 @@ def test_cli_bootstrap_plugin_defaults_to_default_account(
         f"wrote {policy_file}\n"
         "\n"
         "Edit the generated account and policy files.\n"
+        "\n"
+        "Rebuild the env file after edits:\n"
+        f"  arbiter-server --config-dir {config_dir} env bootstrap\n"
         "\n"
         "Review activation status:\n"
         f"  arbiter-server --config-dir {config_dir} config activate\n"
@@ -9954,6 +10068,9 @@ def test_cli_bootstrap_plugin_accepts_comma_separated_plugins(
         "\n"
         "Edit the generated account and policy files.\n"
         "\n"
+        "Rebuild the env file after edits:\n"
+        f"  arbiter-server --config-dir {config_dir} env bootstrap\n"
+        "\n"
         "Review activation status:\n"
         f"  arbiter-server --config-dir {config_dir} config activate\n"
         "\n"
@@ -10000,6 +10117,55 @@ def test_cli_bootstrap_plugin_accepts_comma_separated_plugins_with_shared_accoun
     stdout = capsys.readouterr().out
     assert "config activate --plugins imap,smtp --account bot\n" in stdout
     assert stdout.count("Then inspect the composed config with:") == 1
+
+
+def test_cli_env_bootstrap_includes_bootstrapped_account_hosts(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_dir = tmp_path / "conf"
+
+    assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
+    assert (
+        main(
+            [
+                "--config-dir",
+                str(config_dir),
+                "bootstrap",
+                "--plugins",
+                "imap,smtp",
+                "--account",
+                "bot",
+            ]
+        )
+        == 0
+    )
+    assert (
+        main(
+            [
+                "--config-dir",
+                str(config_dir),
+                "config",
+                "activate",
+                "--plugins",
+                "imap,smtp",
+                "--account",
+                "bot",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert main(["--config-dir", str(config_dir), "env", "bootstrap"]) == 0
+
+    env_text = (config_dir / ".env").read_text(encoding="utf-8")
+    assert "IMAP_BOT_ACCOUNT_HOST=\n" in env_text
+    assert "IMAP_BOT_ACCOUNT_USERNAME=\n" in env_text
+    assert "IMAP_BOT_ACCOUNT_PASSWORD=\n" in env_text
+    assert "SMTP_BOT_ACCOUNT_HOST=\n" in env_text
+    assert "SMTP_BOT_ACCOUNT_USERNAME=\n" in env_text
+    assert "SMTP_BOT_ACCOUNT_PASSWORD=\n" in env_text
 
 
 def test_cli_bootstrap_accepts_plugin_and_account_options(
@@ -10164,8 +10330,9 @@ def test_cli_bootstrap_plugin_uses_reploy_app_command_prefix_in_hints(
     )
 
     stdout = capsys.readouterr().out
-    assert "  reploy app config activate\n" in stdout
-    assert "  reploy app config activate --plugins imap,smtp --account default\n" in stdout
+    assert "  reploy app env bootstrap\n" in stdout
+    assert "  reploy app activate\n" in stdout
+    assert "  reploy app activate --plugins imap,smtp --account default\n" in stdout
     assert "  reploy app config show\n" in stdout
     assert "arbiter-server --config-dir" not in stdout
 
@@ -10811,8 +10978,8 @@ def test_cli_bootstrap_plugin_imap_account_writes_service_example(
     assert 'guidance: ""\n' in account_yaml
     assert "# Matching policy generated alongside this account.\n" in account_yaml
     assert "policy: bot_policy\n" in account_yaml
-    assert "host: imap.example.com\n" in account_yaml
-    assert "port: 993\n" in account_yaml
+    assert "host: ${oc.env:IMAP_BOT_ACCOUNT_HOST}\n" in account_yaml
+    assert "port: ${oc.env:IMAP_BOT_ACCOUNT_PORT,993}\n" in account_yaml
     assert "# Credentials are read from the Arbiter process environment.\n" in (
         account_yaml
     )
@@ -10862,6 +11029,9 @@ def test_cli_bootstrap_plugin_imap_account_writes_service_example(
         f"wrote {policy_file}\n"
         "\n"
         "Edit the generated account and policy files.\n"
+        "\n"
+        "Rebuild the env file after edits:\n"
+        f"  arbiter-server --config-dir {config_dir} env bootstrap\n"
         "\n"
         "Review activation status:\n"
         f"  arbiter-server --config-dir {config_dir} config activate\n"

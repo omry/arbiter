@@ -37,6 +37,7 @@ from urllib.request import url2pathname
 from hydra import compose, initialize_config_dir
 from hydra.errors import CompactHydraException
 from omegaconf import DictConfig, OmegaConf
+from omegaconf.errors import InterpolationResolutionError
 
 from .app import ArbiterApp
 from .artifacts import (
@@ -87,6 +88,9 @@ BOOTSTRAP_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 ENV_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 ENV_FILE_CONFIG_KEY = "arbiter.env_file"
 ENV_REFERENCE_PATTERN = re.compile(r"\$\{oc\.env:(?P<name>[^,}\s]+)(?:,[^}]*)?\}")
+ENV_REFERENCE_FULL_VALUE_PATTERN = re.compile(
+    r"^\$\{oc\.env:(?P<name>[^,}\s]+)(?:,[^}]*)?\}$"
+)
 DEPLOY_PINNED_REQUIREMENT_PATTERN = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9_.-]*"
     r"(?:\[[A-Za-z0-9_.-]+(?:,[A-Za-z0-9_.-]+)*\])?"
@@ -188,6 +192,7 @@ discovery:
 class EnvReference:
     name: str
     block: str
+    default: str | None = None
 
 
 @dataclass(frozen=True)
@@ -2806,6 +2811,31 @@ def _env_block_for_path(path: Sequence[str]) -> str:
     return MISC_ENV_BLOCK
 
 
+def _env_reference_default_from_omegaconf(value: str, *, name: str) -> str | None:
+    full_match = ENV_REFERENCE_FULL_VALUE_PATTERN.fullmatch(value)
+    if full_match is None or full_match.group("name") != name:
+        return None
+    missing = object()
+    previous = os.environ.pop(name, missing)
+    try:
+        resolved_container = cast(
+            dict[str, object],
+            OmegaConf.to_container(
+                OmegaConf.create({"value": value}),
+                resolve=True,
+            ),
+        )
+        resolved = resolved_container["value"]
+    except InterpolationResolutionError:
+        return None
+    finally:
+        if previous is missing:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = cast(str, previous)
+    return str(resolved)
+
+
 def _collect_env_references_from_value(
     value: object,
     *,
@@ -2835,9 +2865,18 @@ def _collect_env_references_from_value(
         if not ENV_NAME_PATTERN.fullmatch(name):
             raise ValueError(f"invalid env variable reference: {name}")
         block = _env_block_for_path(path)
+        default = _env_reference_default_from_omegaconf(value, name=name)
         existing = references.get(name)
-        if existing is None or existing.block == MISC_ENV_BLOCK:
-            references[name] = EnvReference(name=name, block=block)
+        if existing is None:
+            references[name] = EnvReference(name=name, block=block, default=default)
+        elif existing.block == MISC_ENV_BLOCK and block != MISC_ENV_BLOCK:
+            references[name] = EnvReference(name=name, block=block, default=default)
+        elif existing.default is None and default is not None:
+            references[name] = EnvReference(
+                name=name,
+                block=existing.block,
+                default=default,
+            )
 
 
 def collect_env_references(cfg: DictConfig) -> dict[str, EnvReference]:
@@ -2894,7 +2933,7 @@ def _run_env_check(
         missing = [
             reference
             for reference in references.values()
-            if reference.name not in satisfied
+            if reference.default is None and reference.name not in satisfied
         ]
     except ValueError as exc:
         print_cli_error(str(exc), area="env")
@@ -2911,14 +2950,31 @@ def _run_env_check(
             ],
         )
         return 1
-    print(f"env ok: {len(references)} variables satisfied")
+    required_reference_count = sum(
+        1 for reference in references.values() if reference.default is None
+    )
+    print(f"env ok: {required_reference_count} variables satisfied")
     return 0
 
 
-def _format_env_file_blocks(block_values: Mapping[str, Mapping[str, str]]) -> str:
+def _format_env_file_blocks(
+    block_values: Mapping[str, Mapping[str, str]],
+    *,
+    commented_defaults: Mapping[str, Mapping[str, str]] | None = None,
+) -> str:
+    commented_defaults = commented_defaults or {}
     lines: list[str] = []
     block_names = sorted(
-        block_name for block_name, values in block_values.items() if values
+        {
+            block_name
+            for block_name, values in block_values.items()
+            if values
+        }
+        | {
+            block_name
+            for block_name, values in commented_defaults.items()
+            if values
+        }
     )
     if MISC_ENV_BLOCK in block_names:
         block_names = [
@@ -2929,8 +2985,12 @@ def _format_env_file_blocks(block_values: Mapping[str, Mapping[str, str]]) -> st
         if block_index:
             lines.append("")
         lines.append(f"# {block_name}")
-        for name, value in block_values[block_name].items():
+        values = block_values.get(block_name, {})
+        for name, value in values.items():
             lines.append(f"{name}={value}")
+        for name, value in commented_defaults.get(block_name, {}).items():
+            if name not in values:
+                lines.append(f"# {name}={value}")
     return "\n".join(lines) + ("\n" if lines else "")
 
 
@@ -2964,17 +3024,27 @@ def _run_env_bootstrap(
 
     satisfied = set(existing_values) | set(os.environ)
     for reference in references.values():
-        if reference.name not in satisfied:
+        if reference.default is None and reference.name not in satisfied:
             block_values.setdefault(reference.block, {})[reference.name] = ""
 
-    content = _format_env_file_blocks(block_values)
+    commented_defaults: dict[str, dict[str, str]] = {}
+    for reference in references.values():
+        if reference.default is not None and reference.name not in satisfied:
+            commented_defaults.setdefault(reference.block, {})[
+                reference.name
+            ] = reference.default
+
+    content = _format_env_file_blocks(
+        block_values,
+        commented_defaults=commented_defaults,
+    )
     if env_file.exists() and env_file.read_text(encoding="utf-8") == content:
         env_file.chmod(ENV_FILE_MODE)
-        print(f"env file already up to date: {env_file}")
+        print(f"env file already up to date: {_display_config_path(env_file)}")
         return 0
     env_file.parent.mkdir(parents=True, exist_ok=True)
     _write_text_with_mode(env_file, content, ENV_FILE_MODE)
-    print(f"wrote {env_file}")
+    print(f"wrote {_display_config_path(env_file)}")
     return 0
 
 
@@ -4786,6 +4856,13 @@ def _display_command_prefix(*, config_dir: Path) -> str:
     return f"arbiter-server --config-dir {config_dir}"
 
 
+def _display_activation_command_prefix(*, config_dir: Path) -> str:
+    app_command_prefix = os.environ.get("REPLOY_APP_COMMAND_PREFIX", "").strip()
+    if app_command_prefix:
+        return f"{app_command_prefix} activate"
+    return f"{_display_command_prefix(config_dir=config_dir)} config activate"
+
+
 def _print_bootstrap_activation_hint(
     *,
     config_dir: Path,
@@ -4798,23 +4875,32 @@ def _print_bootstrap_activation_hint(
     print("")
     if kind == "account":
         command_prefix = _display_command_prefix(config_dir=config_dir)
+        activation_command_prefix = _display_activation_command_prefix(
+            config_dir=config_dir
+        )
         if len(plugins) == 1:
             print("Edit the generated account and policy files.")
             print("")
+            print("Rebuild the env file after edits:")
+            print(f"  {command_prefix} env bootstrap")
+            print("")
             print("Review activation status:")
-            print(f"  {command_prefix} config activate")
+            print(f"  {activation_command_prefix}")
             print("")
             print("Activate the account when ready:")
         else:
             print("Edit the generated account and policy files.")
             print("")
+            print("Rebuild the env file after edits:")
+            print(f"  {command_prefix} env bootstrap")
+            print("")
             print("Review activation status:")
-            print(f"  {command_prefix} config activate")
+            print(f"  {activation_command_prefix}")
             print("")
             print("Activate the accounts when ready:")
         plugin_flag = "--plugin" if len(plugins) == 1 else "--plugins"
         print(
-            f"  {command_prefix} config activate "
+            f"  {activation_command_prefix} "
             f"{plugin_flag} {','.join(plugins)} --account {name}"
         )
         print("")

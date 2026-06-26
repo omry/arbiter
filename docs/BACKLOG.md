@@ -166,6 +166,18 @@ This file is the day-to-day queue for design and implementation gaps.
       to generate; remove or justify `etc`; compare policy-shape alternatives;
       and document the chosen operator model.
 
+- [ ] `P2` Standardize external bootstrap template files for accounts and
+      policies.
+      Plugin bootstrap templates are currently embedded in Python code, which
+      makes large YAML examples hard to read, review, lint, and evolve. Define
+      a standard file format and loading convention for plugin-owned account
+      and policy bootstrap templates. Acceptance checks: choose the template
+      file format and naming/location convention; move IMAP, SMTP, and example
+      plugin account/policy templates out of code; keep variable substitution
+      explicit and test-covered; add validation or linting for shipped
+      templates; document the plugin author contract; and update bootstrap
+      tests to prove generated files still match the external templates.
+
 - [ ] `P2` Document third-party service plugin naming standards.
       Plugin authors need consistent conventions for distribution package
       names, Python module names, entry point names, capability names, and
