@@ -9,7 +9,7 @@ and which recipients are permitted.
 Bootstrap an account and starter policy:
 
 ```bash
-arbiter-server bootstrap plugin smtp account bot
+arbiter-server bootstrap --plugin smtp --account bot
 ```
 
 The account file contains deployment-owned connection settings and credentials:
@@ -61,7 +61,7 @@ Agents do not provide or override these fields when sending mail.
 After editing account and policy files, activate the account:
 
 ```bash
-arbiter-server config activate account smtp bot
+arbiter-server config activate --plugin smtp --account bot
 ```
 
 If the account uses new environment variables, update the env file:

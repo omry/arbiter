@@ -60,7 +60,7 @@ policy config is bootstrapped separately when you configure that plugin for the
 first time.
 
 ```bash
-arbiter-server bootstrap arbiter
+arbiter-server bootstrap --server
 # wrote ~/.arbiter/arbiter-server.yaml
 # wrote ~/.arbiter/arbiter/server.yaml
 ```
@@ -68,7 +68,7 @@ arbiter-server bootstrap arbiter
 Add an SMTP account template and its matching policy:
 
 ```bash
-arbiter-server bootstrap plugin smtp account bot
+arbiter-server bootstrap --plugin smtp --account bot
 # wrote ~/.arbiter/arbiter/account/smtp/bot.yaml
 # wrote ~/.arbiter/arbiter/policy/smtp/bot_policy.yaml
 ```
@@ -121,7 +121,7 @@ timeout_seconds: 30
 After editing, include the account in the composed config:
 
 ```bash
-arbiter-server config activate account smtp bot
+arbiter-server config activate --plugin smtp --account bot
 # updated ~/.arbiter/arbiter-server.yaml
 ```
 

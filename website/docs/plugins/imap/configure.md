@@ -9,7 +9,7 @@ folders are visible and which message actions are allowed.
 Bootstrap an account and starter policy:
 
 ```bash
-arbiter-server bootstrap plugin imap account bot
+arbiter-server bootstrap --plugin imap --account bot
 ```
 
 The account file contains deployment-owned connection settings and credentials:
@@ -97,7 +97,7 @@ folders:
 After editing account and policy files, activate the account:
 
 ```bash
-arbiter-server config activate account imap bot
+arbiter-server config activate --plugin imap --account bot
 ```
 
 If the account uses new environment variables, update the env file:

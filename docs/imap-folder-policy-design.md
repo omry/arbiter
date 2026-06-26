@@ -757,9 +757,9 @@ one of the explicit access baselines.
 Suggested CLI shape:
 
 ```bash
-arbiter-server bootstrap plugin imap policy --list-variants
-arbiter-server bootstrap plugin imap policy personal_policy --variant default-open
-arbiter-server bootstrap plugin imap policy personal_policy --variant default-closed
+arbiter-server bootstrap --plugin imap --policy --list-variants
+arbiter-server bootstrap --plugin imap --policy personal_policy --variant default-open
+arbiter-server bootstrap --plugin imap --policy personal_policy --variant default-closed
 ```
 
 Variant listing should include a short description, for example:

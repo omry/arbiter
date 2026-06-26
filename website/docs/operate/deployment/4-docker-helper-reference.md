@@ -40,9 +40,11 @@ the helper.
 | Command | Purpose |
 | --- | --- |
 | `app` | Show this deployment's blueprint-declared app subcommands. |
-| `app bootstrap server` | Create the app server config through the deployment runtime. |
-| `app bootstrap plugin NAME[,NAME...] [account ACCOUNT]` | Create plugin account and policy config through the deployment runtime. |
-| `app config activate account NAME[,NAME...] ACCOUNT` | Activate one account name for one or more plugins. |
+| `app bootstrap --server` | Create the app server config through the deployment runtime. |
+| `app bootstrap --plugin NAME --account ACCOUNT` | Create plugin account and policy config through the deployment runtime. |
+| `app bootstrap --plugins NAME[,NAME...] --account ACCOUNT` | Create account and policy config for multiple plugins through the deployment runtime. |
+| `app config activate --plugin NAME --account ACCOUNT` | Activate one account for one plugin. |
+| `app config activate --plugins NAME[,NAME...] --account ACCOUNT` | Activate one account name for multiple plugins. |
 | `app config show` | Show the composed app config through the deployment runtime. |
 | `app env bootstrap` | Create or update the app env file from config references. |
 | `app env check` | Check that app config env references are satisfied. |

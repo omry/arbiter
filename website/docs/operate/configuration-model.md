@@ -166,13 +166,13 @@ Server config commands use `~/.arbiter` by default. Pass `--config-dir <dir>`
 when you want to target a different config directory:
 
 ```bash
-arbiter-server --config-dir ./config.local bootstrap arbiter
+arbiter-server --config-dir ./config.local bootstrap --server
 ```
 
 For a normal deployment, start by bootstrapping the root server scaffold once:
 
 ```bash
-arbiter-server bootstrap arbiter
+arbiter-server bootstrap --server
 ```
 
 To protect user config, all bootstrap commands refuse to rewrite an existing
@@ -181,16 +181,16 @@ file unless `--force` is added.
 After the root scaffold exists, bootstrap plugin-owned objects as needed:
 
 ```bash
-arbiter-server bootstrap plugin smtp account bot
-arbiter-server bootstrap plugin imap account personal
+arbiter-server bootstrap --plugin smtp --account bot
+arbiter-server bootstrap --plugin imap --account personal
 ```
 
 Creating a config file does not make it active. Activate accounts after editing
 the generated templates:
 
 ```bash
-arbiter-server config activate account smtp bot
-arbiter-server config activate account imap personal
+arbiter-server config activate --plugin smtp --account bot
+arbiter-server config activate --plugin imap --account personal
 ```
 
 Use `arbiter-server config show` to inspect the composed result and

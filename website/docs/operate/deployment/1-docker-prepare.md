@@ -110,19 +110,19 @@ deployment runtime, using the Arbiter server installed in the deployment
 bundle:
 
 ```bash
-reploy app bootstrap server
+reploy app bootstrap --server
 ```
 
 Then create IMAP and SMTP accounts named `bot` with corresponding policies:
 
 ```bash
-reploy app bootstrap plugin imap,smtp account bot
+reploy app bootstrap --plugins imap,smtp --account bot
 ```
 
 Edit the generated account and policy files, then activate both accounts:
 
 ```bash
-reploy app config activate account imap,smtp bot
+reploy app config activate --plugins imap,smtp --account bot
 ```
 
 Then inspect the composed config with:
