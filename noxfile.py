@@ -82,7 +82,9 @@ def install_project(session: nox.Session) -> None:
         "nox>=2024.10,<2026.0",
         "pyrefly>=0.39,<0.40",
         "pytest>=7.4,<9.0",
+        "setuptools>=68",
         "tomli>=2.0,<3.0",
+        "wheel",
     )
     session.install("-e", "server")
     session.install("-e", "plugins/smtp")
