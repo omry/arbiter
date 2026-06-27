@@ -10,6 +10,7 @@ import signal
 import socket
 import sys
 import threading
+import warnings
 from dataclasses import dataclass, field
 from email.message import EmailMessage
 from pathlib import Path
@@ -122,6 +123,18 @@ class DeliveringSMTPHandler:
             content = content.encode("utf-8")
         self.store.append("INBOX", bytes(content))
         return "250 Message accepted for delivery"
+
+
+class MailLabSMTPController(Controller):
+    def factory(self) -> Any:
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="Requiring AUTH while not requiring TLS can lead to security vulnerabilities!",
+                category=UserWarning,
+                module="aiosmtpd.smtp",
+            )
+            return super().factory()
 
 
 class LocalIMAPServer:
@@ -376,7 +389,7 @@ class MailLab:
     def start(self) -> None:
         smtp_port = self.smtp_port or free_port(self.host)
         handler = DeliveringSMTPHandler(store=self.store, recipient=self.username)
-        self._smtp_controller = Controller(
+        self._smtp_controller = MailLabSMTPController(
             handler,
             hostname=self.host,
             port=smtp_port,

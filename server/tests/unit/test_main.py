@@ -3577,6 +3577,10 @@ def test_cli_config_activate_lists_installed_plugin_status(
 ) -> None:
     config_dir = tmp_path / "conf"
     monkeypatch.setenv("REPLOY_APP_COMMAND_PREFIX", "./reploy app")
+    monkeypatch.setattr(
+        "arbiter_server.main.discover_service_plugins",
+        lambda: _test_service_plugins(),
+    )
     assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
     assert (
         main(["--config-dir", str(config_dir), "bootstrap", "--plugins", "imap,smtp"])
@@ -3646,6 +3650,10 @@ def test_cli_config_activate_lists_empty_account_status_consistently(
 ) -> None:
     config_dir = tmp_path / "conf"
     monkeypatch.setenv("REPLOY_APP_COMMAND_PREFIX", "reploy app")
+    monkeypatch.setattr(
+        "arbiter_server.main.discover_service_plugins",
+        lambda: _test_service_plugins(),
+    )
     assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
     capsys.readouterr()
 
@@ -3670,6 +3678,10 @@ def test_cli_config_activate_status_colors_plugin_icons(
 ) -> None:
     config_dir = tmp_path / "conf"
     monkeypatch.setenv("ARBITER_COLOR", "always")
+    monkeypatch.setattr(
+        "arbiter_server.main.discover_service_plugins",
+        lambda: _test_service_plugins(),
+    )
     assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
     assert (
         main(["--config-dir", str(config_dir), "bootstrap", "--plugins", "imap,smtp"])

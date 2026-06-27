@@ -166,14 +166,7 @@ def test_reploy_blueprint_declares_install_hooks_and_success_message() -> None:
         "success": {
             "vars": {
                 "server_url": {
-                    "app": [
-                        "config",
-                        "show",
-                        "--resolve",
-                        "--package",
-                        "arbiter.server.public.base_url",
-                        "--value",
-                    ]
+                    "server_url": True,
                 }
             },
             "lines": [
