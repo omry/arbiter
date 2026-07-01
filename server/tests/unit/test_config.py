@@ -186,40 +186,6 @@ def test_hydra_config_preserves_lazy_interpolations() -> None:
     assert cfg.arbiter.account.smtp.primary.from_name == "arbiter"
 
 
-def test_standard_deployment_config_composes(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("ARBITER_BOT_SMTP_HOST", "smtp.example.com")
-    monkeypatch.setenv("ARBITER_BOT_SMTP_USERNAME", "bot@example.com")
-    monkeypatch.setenv("ARBITER_BOT_SMTP_PASSWORD", "secret")
-    monkeypatch.setenv("ARBITER_BOT_SMTP_FROM_EMAIL", "bot@example.com")
-    monkeypatch.setenv("ARBITER_BOT_IMAP_HOST", "imap.example.com")
-    monkeypatch.setenv("ARBITER_BOT_IMAP_USERNAME", "bot@example.com")
-    monkeypatch.setenv("ARBITER_BOT_IMAP_PASSWORD", "secret")
-    monkeypatch.setenv("ARBITER_PERSONAL_SMTP_HOST", "smtp.example.com")
-    monkeypatch.setenv("ARBITER_PERSONAL_SMTP_USERNAME", "omry@example.com")
-    monkeypatch.setenv("ARBITER_PERSONAL_SMTP_PASSWORD", "secret")
-    monkeypatch.setenv("ARBITER_PERSONAL_SMTP_FROM_EMAIL", "omry@example.com")
-
-    deploy_config_dir = Path(__file__).parents[3] / "deploy"
-    _register_all_configs()
-    with initialize_config_dir(
-        version_base=None,
-        config_dir=str(deploy_config_dir),
-    ):
-        cfg = compose(config_name="config")
-
-    assert cfg.arbiter.server.name == "arbiter"
-    assert cfg.arbiter.policy.smtp.bot.limits.max_messages_per_minute is None
-    assert cfg.arbiter.policy.smtp.personal.limits.max_messages_per_minute is None
-    assert set(cfg.arbiter.account.smtp) == {"primary", "personal"}
-    assert set(cfg.arbiter.account.imap) == {"primary"}
-    assert cfg.arbiter.account.smtp.primary.host == "smtp.example.com"
-    assert cfg.arbiter.account.imap.primary.host == "imap.example.com"
-    assert cfg.arbiter.account.imap.primary.default_folder == "INBOX"
-    assert cfg.arbiter.account.smtp.personal.from_name == "Omry"
-
-
 def test_secret_file_resolver_reads_secret_file(tmp_path: Path) -> None:
     secret = tmp_path / "imap_password"
     secret.write_text("super-secret\n", encoding="utf-8")

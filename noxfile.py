@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import platform
 from pathlib import Path
 
 import nox
@@ -91,6 +92,11 @@ def install_project(session: nox.Session) -> None:
     session.install("-e", "plugins/imap")
 
 
+def install_reploy_if_supported(session: nox.Session) -> None:
+    if platform.system() == "Linux":
+        session.install("reploy")
+
+
 @nox.session
 def unit(session: nox.Session) -> None:
     install_project(session)
@@ -100,12 +106,14 @@ def unit(session: nox.Session) -> None:
 @nox.session
 def integration(session: nox.Session) -> None:
     install_project(session)
+    install_reploy_if_supported(session)
     session.run("pytest", *(session.posargs or INTEGRATION_TEST_TARGETS))
 
 
 @nox.session(name="server-integration")
 def server_integration(session: nox.Session) -> None:
     install_project(session)
+    install_reploy_if_supported(session)
     session.run("pytest", *(session.posargs or SERVER_INTEGRATION_TEST_TARGETS))
 
 
