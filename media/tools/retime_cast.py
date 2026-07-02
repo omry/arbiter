@@ -136,6 +136,22 @@ class TimingRules:
     minimum_section_spacing: float = 0.0
 
 
+@dataclass(frozen=True)
+class SourceTimestampWord:
+    raw: str
+    normalized: str
+    start: int
+    end: int
+
+
+@dataclass(frozen=True)
+class TranscriptTimestampWord:
+    raw: str
+    normalized: str
+    start_seconds: float
+    index: int
+
+
 def load_manifest(
     recording_id: str, overrides: list[str] | tuple[str, ...] = ()
 ) -> dict[str, Any]:
@@ -298,22 +314,44 @@ def normalized_timestamp_word(word: str) -> str:
 
 
 def timestamp_words_are_close(left: str, right: str) -> bool:
-    if len(left) < 5 or len(right) < 5:
+    if len(left) < 3 or len(right) < 3:
         return False
     if left[0] != right[0] or abs(len(left) - len(right)) > 2:
         return False
-    return SequenceMatcher(None, left, right).ratio() >= 0.70
+    ratio = SequenceMatcher(None, left, right).ratio()
+    if len(left) < 5 or len(right) < 5:
+        return ratio >= 0.66
+    return ratio >= 0.70
 
 
-def timestamp_word_spans(
-    *, text: str, words: list[dict[str, Any]], timestamp_path: Path
-) -> list[tuple[int, int, float]]:
-    spans: list[tuple[int, int, float]] = []
-    cursor = 0
-    source_word_index = 0
-    searchable = text.lower()
-    source_words = list(re.finditer(r"\S+", text))
-    can_trust_source_word_positions = len(source_words) == len(words)
+def source_timestamp_words(text: str) -> list[SourceTimestampWord]:
+    words: list[SourceTimestampWord] = []
+    for match in re.finditer(r"\S+", text):
+        raw = match.group(0)
+        normalized = normalized_timestamp_word(raw)
+        if not normalized:
+            continue
+        stripped_start = match.start()
+        while (
+            stripped_start < match.end()
+            and not normalized_timestamp_word(text[stripped_start])
+        ):
+            stripped_start += 1
+        words.append(
+            SourceTimestampWord(
+                raw=raw,
+                normalized=normalized,
+                start=stripped_start,
+                end=stripped_start + len(normalized),
+            )
+        )
+    return words
+
+
+def transcript_timestamp_words(
+    words: list[dict[str, Any]],
+) -> list[TranscriptTimestampWord]:
+    timestamp_words: list[TranscriptTimestampWord] = []
     for index, word in enumerate(words):
         raw_word = word.get("word")
         start = word.get("start")
@@ -323,50 +361,133 @@ def timestamp_word_spans(
             or not isinstance(start, (int, float))
         ):
             continue
-        # TTS word timestamps occasionally contain a near transcription misspelling.
-        # Use the script text as the word source and the timestamp word as timing.
-        if can_trust_source_word_positions:
-            source_match = source_words[index]
-            source_word = source_match.group(0)
-            needle = source_word.strip(".,;:!?\"'()[]{}")
-            text_index = source_match.start()
-            spans.append((text_index, text_index + len(needle), float(start)))
-            cursor = source_match.end()
+        normalized = normalized_timestamp_word(raw_word)
+        if not normalized:
             continue
-        needle = raw_word.strip().lower()
-        text_index = searchable.find(needle, cursor)
-        if text_index < 0:
-            stripped = normalized_timestamp_word(needle)
-            text_index = searchable.find(stripped, cursor) if stripped else -1
-            needle = stripped
-        if text_index < 0:
-            while (
-                source_word_index < len(source_words)
-                and source_words[source_word_index].end() <= cursor
-            ):
-                source_word_index += 1
-            if source_word_index < len(source_words):
-                source_match = source_words[source_word_index]
-                source_word = normalized_timestamp_word(source_match.group(0))
-                if timestamp_words_are_close(needle, source_word):
-                    text_index = source_match.start()
-                    needle = source_word
-                    cursor = source_match.end()
-                    source_word_index += 1
-                    spans.append((text_index, text_index + len(needle), float(start)))
-                    continue
-        if text_index < 0:
-            raise RetimeError(
-                f"could not align audio timestamp word {index} "
-                f"({raw_word!r}) in {timestamp_path}"
+        timestamp_words.append(
+            TranscriptTimestampWord(
+                raw=raw_word,
+                normalized=normalized,
+                start_seconds=float(start),
+                index=index,
             )
-        spans.append((text_index, text_index + len(needle), float(start)))
-        cursor = text_index + len(needle)
-        while (
-            source_word_index < len(source_words)
-            and source_words[source_word_index].end() <= cursor
+        )
+    return timestamp_words
+
+
+def timestamp_alignment_score(source: str, transcript: str) -> int:
+    if source == transcript:
+        return 6
+    if timestamp_words_are_close(source, transcript):
+        return 3
+    return -2
+
+
+def align_timestamp_words(
+    source_words: list[SourceTimestampWord],
+    transcript_words: list[TranscriptTimestampWord],
+) -> list[tuple[SourceTimestampWord, TranscriptTimestampWord]]:
+    if not source_words or not transcript_words:
+        return []
+    gap_penalty = -3
+    rows = len(source_words) + 1
+    cols = len(transcript_words) + 1
+    scores = [[0] * cols for _ in range(rows)]
+    moves = [[""] * cols for _ in range(rows)]
+    for row in range(1, rows):
+        scores[row][0] = scores[row - 1][0] + gap_penalty
+        moves[row][0] = "up"
+    for col in range(1, cols):
+        scores[0][col] = scores[0][col - 1] + gap_penalty
+        moves[0][col] = "left"
+
+    for row in range(1, rows):
+        source_word = source_words[row - 1]
+        for col in range(1, cols):
+            transcript_word = transcript_words[col - 1]
+            diagonal = scores[row - 1][col - 1] + timestamp_alignment_score(
+                source_word.normalized,
+                transcript_word.normalized,
+            )
+            up = scores[row - 1][col] + gap_penalty
+            left = scores[row][col - 1] + gap_penalty
+            best = max(diagonal, up, left)
+            scores[row][col] = best
+            if best == diagonal:
+                moves[row][col] = "diagonal"
+            elif best == up:
+                moves[row][col] = "up"
+            else:
+                moves[row][col] = "left"
+
+    aligned: list[tuple[SourceTimestampWord, TranscriptTimestampWord]] = []
+    row = len(source_words)
+    col = len(transcript_words)
+    while row > 0 or col > 0:
+        move = moves[row][col]
+        if move == "diagonal":
+            source_word = source_words[row - 1]
+            transcript_word = transcript_words[col - 1]
+            aligned.append((source_word, transcript_word))
+            row -= 1
+            col -= 1
+        elif move == "up":
+            row -= 1
+        elif move == "left":
+            col -= 1
+        else:
+            break
+    aligned.reverse()
+    return aligned
+
+
+def timestamp_alignment_is_reliable(
+    aligned: list[tuple[SourceTimestampWord, TranscriptTimestampWord]],
+    *,
+    source_word_count: int,
+    transcript_word_count: int,
+) -> bool:
+    if not aligned:
+        return False
+    strong_matches = 0
+    for source_word, transcript_word in aligned:
+        if (
+            timestamp_alignment_score(
+                source_word.normalized,
+                transcript_word.normalized,
+            )
+            > 0
         ):
-            source_word_index += 1
+            strong_matches += 1
+    denominator = max(source_word_count, transcript_word_count)
+    return denominator > 0 and strong_matches / denominator >= 0.6
+
+
+def timestamp_word_spans(
+    *, text: str, words: list[dict[str, Any]], timestamp_path: Path
+) -> list[tuple[int, int, float]]:
+    source_words = source_timestamp_words(text)
+    transcript_words = transcript_timestamp_words(words)
+    aligned = align_timestamp_words(source_words, transcript_words)
+    if not timestamp_alignment_is_reliable(
+        aligned,
+        source_word_count=len(source_words),
+        transcript_word_count=len(transcript_words),
+    ):
+        raise RetimeError(f"could not align audio timestamps in {timestamp_path}")
+    spans: list[tuple[int, int, float]] = []
+    for source_word, transcript_word in aligned:
+        if (
+            timestamp_alignment_score(
+                source_word.normalized,
+                transcript_word.normalized,
+            )
+            <= 0
+        ):
+            continue
+        spans.append(
+            (source_word.start, source_word.end, transcript_word.start_seconds)
+        )
     return spans
 
 

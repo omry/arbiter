@@ -2483,6 +2483,164 @@ def test_read_audio_segment_timings_tolerates_tts_word_misspelling(
     assert timings["bundle"].anchor_seconds == {"@list@": 1.25}
 
 
+def test_timestamp_word_spans_aligns_transcript_substitution_to_script(
+    tmp_path: Path,
+) -> None:
+    timestamp_path = tmp_path / "audio.bootstrap.timestamps.json"
+    text = (
+        "This file is the Hydra entry point: it selects the server schema, "
+        "plugin list, and the env file used at startup. Next, bootstrap SMTP."
+    )
+
+    spans = retime_cast.timestamp_word_spans(
+        text=text,
+        words=[
+            {"word": "This", "start": 0.0},
+            {"word": "file", "start": 0.2},
+            {"word": "is", "start": 0.4},
+            {"word": "the", "start": 0.6},
+            {"word": "Hydra", "start": 0.8},
+            {"word": "entry", "start": 1.0},
+            {"word": "point", "start": 1.2},
+            {"word": "it", "start": 1.4},
+            {"word": "selects", "start": 1.6},
+            {"word": "the", "start": 1.8},
+            {"word": "server", "start": 2.0},
+            {"word": "schema", "start": 2.2},
+            {"word": "plugin", "start": 2.4},
+            {"word": "list", "start": 2.6},
+            {"word": "and", "start": 2.8},
+            {"word": "the", "start": 3.0},
+            {"word": "end", "start": 3.2},
+            {"word": "file", "start": 3.4},
+            {"word": "used", "start": 3.6},
+        ],
+        timestamp_path=timestamp_path,
+    )
+
+    source_by_time = {seconds: text[start:end] for start, end, seconds in spans}
+    assert source_by_time[3.2] == "env"
+    assert source_by_time[3.6] == "used"
+
+
+def test_timestamp_word_spans_rejects_low_confidence_alignment(
+    tmp_path: Path,
+) -> None:
+    timestamp_path = tmp_path / "audio.bootstrap.timestamps.json"
+
+    with pytest.raises(
+        retime_cast.RetimeError,
+        match="could not align audio timestamps",
+    ):
+        retime_cast.timestamp_word_spans(
+            text="Create the config and check it.",
+            words=[
+                {"word": "completely", "start": 0.0},
+                {"word": "different", "start": 0.2},
+                {"word": "speech", "start": 0.4},
+            ],
+            timestamp_path=timestamp_path,
+        )
+
+
+def test_timestamp_word_spans_omits_weak_pairs_from_anchor_spans(
+    tmp_path: Path,
+) -> None:
+    timestamp_path = tmp_path / "audio.bootstrap.timestamps.json"
+    text = "Alpha beta target next omega."
+
+    spans = retime_cast.timestamp_word_spans(
+        text=text,
+        words=[
+            {"word": "Alpha", "start": 0.0},
+            {"word": "beta", "start": 0.4},
+            {"word": "wrong", "start": 0.8},
+            {"word": "next", "start": 1.2},
+            {"word": "omega", "start": 1.6},
+        ],
+        timestamp_path=timestamp_path,
+    )
+
+    source_by_time = {seconds: text[start:end] for start, end, seconds in spans}
+    assert source_by_time == {
+        0.0: "Alpha",
+        0.4: "beta",
+        1.2: "next",
+        1.6: "omega",
+    }
+
+
+def test_read_audio_segment_timings_uses_aligned_script_word_for_anchor(
+    tmp_path: Path,
+) -> None:
+    source_text = (
+        "This file is the Hydra entry point: it selects the server schema, "
+        "plugin list, and the env file used at startup. Next, bootstrap SMTP."
+    )
+    timestamps = tmp_path / "audio.bootstrap.timestamps.json"
+    timestamps.write_text(
+        json.dumps(
+            {
+                "source_text": source_text,
+                "words": [
+                    {"word": "This", "start": 0.0},
+                    {"word": "file", "start": 0.2},
+                    {"word": "is", "start": 0.4},
+                    {"word": "the", "start": 0.6},
+                    {"word": "Hydra", "start": 0.8},
+                    {"word": "entry", "start": 1.0},
+                    {"word": "point", "start": 1.2},
+                    {"word": "it", "start": 1.4},
+                    {"word": "selects", "start": 1.6},
+                    {"word": "the", "start": 1.8},
+                    {"word": "server", "start": 2.0},
+                    {"word": "schema", "start": 2.2},
+                    {"word": "plugin", "start": 2.4},
+                    {"word": "list", "start": 2.6},
+                    {"word": "and", "start": 2.8},
+                    {"word": "the", "start": 3.0},
+                    {"word": "end", "start": 3.2},
+                    {"word": "file", "start": 3.4},
+                    {"word": "used", "start": 3.6},
+                    {"word": "at", "start": 3.8},
+                    {"word": "startup", "start": 4.0},
+                    {"word": "Next", "start": 4.5},
+                    {"word": "bootstrap", "start": 4.8},
+                    {"word": "SMTP", "start": 5.0},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    metadata = tmp_path / "audio.json"
+    metadata.write_text(
+        json.dumps(
+            {
+                "segments": [
+                    {
+                        "id": "bootstrap",
+                        "duration": 5.5,
+                        "text": source_text,
+                        "anchors": [
+                            {
+                                "id": "next",
+                                "marker": "@next@",
+                                "text_offset": source_text.index("Next"),
+                            }
+                        ],
+                        "timestamps": str(timestamps),
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    timings = retime_cast.read_audio_segment_timings(metadata)
+
+    assert timings["bootstrap"].anchor_seconds == {"@next@": 4.5}
+
+
 def test_read_audio_segment_timings_rejects_stale_timestamp_source_text(
     tmp_path: Path,
 ) -> None:
