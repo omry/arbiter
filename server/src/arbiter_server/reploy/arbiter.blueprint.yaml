@@ -168,6 +168,7 @@ docker:
         - config
         - activate
       app_command: true
+      deployed_command: true
       forward_args: true
       container:
         argv:
@@ -178,10 +179,27 @@ docker:
           - ${ARBITER_CONFIG_NAME}
           - config
           - activate
+    config_deactivate:
+      trigger:
+        - config
+        - deactivate
+      app_command: true
+      deployed_command: true
+      forward_args: true
+      container:
+        argv:
+          - arbiter-server
+          - --config-dir
+          - /config
+          - --config-name
+          - ${ARBITER_CONFIG_NAME}
+          - config
+          - deactivate
     activate:
       trigger:
         - activate
       app_command: true
+      deployed_command: true
       forward_args: true
       container:
         argv:
@@ -197,6 +215,7 @@ docker:
         - config
         - show
       app_command: true
+      deployed_command: true
       forward_args: true
       container:
         argv:
@@ -212,6 +231,7 @@ docker:
         - env
         - bootstrap
       app_command: true
+      deployed_command: true
       forward_args: true
       container:
         argv:
@@ -227,6 +247,7 @@ docker:
         - env
         - check
       app_command: true
+      deployed_command: true
       forward_args: true
       container:
         argv:
@@ -237,3 +258,35 @@ docker:
           - ${ARBITER_CONFIG_NAME}
           - env
           - check
+    version:
+      trigger:
+        - version
+      app_command: true
+      deployed_command: true
+      forward_flags:
+        - --json
+      container:
+        argv:
+          - arbiter-server
+          - --config-dir
+          - /config
+          - --config-name
+          - ${ARBITER_CONFIG_NAME}
+          - version
+    plugins_list:
+      trigger:
+        - plugins
+        - list
+      app_command: true
+      deployed_command: true
+      forward_flags:
+        - --json
+      container:
+        argv:
+          - arbiter-server
+          - --config-dir
+          - /config
+          - --config-name
+          - ${ARBITER_CONFIG_NAME}
+          - plugins
+          - list

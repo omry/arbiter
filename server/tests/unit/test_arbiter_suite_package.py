@@ -136,25 +136,15 @@ def test_reploy_blueprints_forward_option_based_bootstrap() -> None:
 
 
 def test_reploy_blueprints_expose_activate_alias() -> None:
-    expected = (
-        "    activate:\n"
-        "      trigger:\n"
-        "        - activate\n"
-        "      app_command: true\n"
-        "      forward_args: true\n"
-        "      container:\n"
-        "        argv:\n"
-        "          - arbiter-server\n"
-        "          - --config-dir\n"
-        "          - /config\n"
-        "          - --config-name\n"
-        "          - ${ARBITER_CONFIG_NAME}\n"
-        "          - config\n"
-        "          - activate\n"
-    )
-    assert expected in (SERVER_PACK_ROOT / "arbiter.blueprint.yaml").read_text(
-        encoding="utf-8"
-    )
+    blueprint = _load_server_blueprint()
+    docker = blueprint["docker"]
+    assert isinstance(docker, dict)
+
+    activate = docker["commands"]["activate"]
+    assert activate["trigger"] == ["activate"]
+    assert activate["app_command"] is True
+    assert activate["forward_args"] is True
+    assert activate["container"]["argv"][-2:] == ["config", "activate"]
 
 
 def test_reploy_blueprint_declares_install_hooks_and_success_message() -> None:
@@ -226,11 +216,33 @@ def test_reploy_blueprint_uses_current_docker_service_shape() -> None:
     }
 
 
-def test_reploy_blueprint_exposes_deployed_config_check() -> None:
+def test_reploy_blueprint_exposes_deployed_operator_commands() -> None:
     blueprint = _load_server_blueprint()
     docker = blueprint["docker"]
     assert isinstance(docker, dict)
 
-    config_check = docker["commands"]["config_check"]
-    assert config_check["app_command"] is True
-    assert config_check["deployed_command"] is True
+    commands = docker["commands"]
+    deployed = {
+        name
+        for name, command in commands.items()
+        if command.get("deployed_command") is True
+    }
+    assert {
+        "activate",
+        "config_activate",
+        "config_check",
+        "config_deactivate",
+        "config_show",
+        "env_bootstrap",
+        "env_check",
+        "plugins_list",
+        "version",
+    }.issubset(deployed)
+
+    for command_name in deployed:
+        assert commands[command_name]["app_command"] is True
+
+    assert commands["config_show"]["trigger"] == ["config", "show"]
+    assert commands["env_check"]["trigger"] == ["env", "check"]
+    assert commands["plugins_list"]["trigger"] == ["plugins", "list"]
+    assert commands["version"]["trigger"] == ["version"]
