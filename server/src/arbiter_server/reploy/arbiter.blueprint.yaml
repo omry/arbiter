@@ -17,6 +17,34 @@ app:
   terminal:
     color_env: ARBITER_COLOR
 
+install:
+  target:
+    default_path: /opt/{{ app.id }}
+  owner:
+    user: arbiter
+    group: arbiter
+  ports:
+    deployed:
+      https:
+        host_bind: 127.0.0.1
+        host_port: 8075
+        container_port: 8075
+    staging:
+      https:
+        host_bind: 127.0.0.1
+        host_port: 18075
+        container_port: 8075
+  upgrade:
+    artifacts:
+      config:
+        default: preserve
+        paths:
+          - conf/
+      data:
+        default: preserve
+        paths:
+          - data/
+
 bundle:
   options:
     arbiter-suite:
@@ -53,13 +81,8 @@ docker:
             wait: true
         - app: [config, check, --live]
   service:
-    install_owner: arbiter:arbiter
     image: python:3.11-slim
     container_host: 0.0.0.0
-    container_port: "8075"
-    host_bind: 127.0.0.1
-    host_port: "18075"
-    public_scheme: https
   environment:
     ARBITER_CONFIG_NAME: arbiter-server
   runtime:
@@ -99,6 +122,7 @@ docker:
         - config
         - check
       app_command: true
+      deployed_command: true
       forward_flags:
         - --live
       container:

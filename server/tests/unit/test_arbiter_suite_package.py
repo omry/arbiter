@@ -182,3 +182,55 @@ def test_reploy_blueprint_declares_install_hooks_and_success_message() -> None:
             ],
         },
     }
+
+
+def test_reploy_blueprint_declares_install_defaults() -> None:
+    blueprint = _load_server_blueprint()
+
+    assert blueprint["install"] == {
+        "target": {"default_path": "/opt/{{ app.id }}"},
+        "owner": {"user": "arbiter", "group": "arbiter"},
+        "ports": {
+            "deployed": {
+                "https": {
+                    "host_bind": "127.0.0.1",
+                    "host_port": 8075,
+                    "container_port": 8075,
+                }
+            },
+            "staging": {
+                "https": {
+                    "host_bind": "127.0.0.1",
+                    "host_port": 18075,
+                    "container_port": 8075,
+                }
+            },
+        },
+        "upgrade": {
+            "artifacts": {
+                "config": {"default": "preserve", "paths": ["conf/"]},
+                "data": {"default": "preserve", "paths": ["data/"]},
+            }
+        },
+    }
+
+
+def test_reploy_blueprint_uses_current_docker_service_shape() -> None:
+    blueprint = _load_server_blueprint()
+    docker = blueprint["docker"]
+    assert isinstance(docker, dict)
+
+    assert docker["service"] == {
+        "image": "python:3.11-slim",
+        "container_host": "0.0.0.0",
+    }
+
+
+def test_reploy_blueprint_exposes_deployed_config_check() -> None:
+    blueprint = _load_server_blueprint()
+    docker = blueprint["docker"]
+    assert isinstance(docker, dict)
+
+    config_check = docker["commands"]["config_check"]
+    assert config_check["app_command"] is True
+    assert config_check["deployed_command"] is True
