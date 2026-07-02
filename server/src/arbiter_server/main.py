@@ -101,14 +101,7 @@ GROUP_SELECTION_PATTERN = re.compile(
 )
 MISC_ENV_BLOCK = "miscellaneous"
 MAIN_CONFIG_TEMPLATE = """defaults:
-# Arbiter composes this config at startup from the defaults below.
-# Inspect the composed config with:
-#   arbiter-server --config-dir <dir> --config-name arbiter-server config show
-# Override composed values with Hydra overrides, for example:
-#   arbiter-server --config-dir <dir> serve arbiter.server.bind.port=8075
-# Optionally load a config-dir-relative dotenv file before composition:
-#   arbiter:
-#     env_file: local.env
+# Arbiter composes runtime config from these defaults.
   - arbiter_app_config_schema
   - plugins
   - _self_
