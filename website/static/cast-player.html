@@ -555,6 +555,7 @@
       </div>
     </main>
 
+    <script src="cast-player-core.js"></script>
     <script>
       const params = new URLSearchParams(window.location.search);
       const castUrl = params.get('cast');
@@ -668,6 +669,10 @@
         96: 'ansi-bright-cyan',
         97: 'ansi-bright-white',
       };
+
+      function audioTimeline() {
+        return CastPlayerCore.createCastAudioTimeline(audioPlaybackSegments);
+      }
 
       function escapeHtml(text) {
         return text
@@ -1816,7 +1821,8 @@
           audioTimer = null;
         }
 
-        const segment = audioSegmentForPresentation(currentSeconds);
+        const timeline = audioTimeline();
+        const segment = timeline.segmentForPresentation(currentSeconds);
         if (!audioPlaybackSegments.length || segment) {
           const targetTime = segment
             ? segment.audioStart + (currentSeconds - segment.presentationStart)
@@ -1830,14 +1836,17 @@
           audio.muted = muted;
           audio.play()
             .then(() => {
+              if (playing) {
+                currentSeconds = (performance.now() - startedAt) / 1000;
+              }
               if (!playing || pausedAtGuidedPoint) {
                 audio.pause();
                 setVoiceStatus('', audioReady ? 'ready' : 'unavailable', audioReady ? 'voiceover ready' : 'voiceover unavailable');
                 return;
               }
-              if (audioPlaybackSegments.length && !audioSegmentForPresentation(currentSeconds)) {
+              if (audioPlaybackSegments.length && !timeline.segmentForPresentation(currentSeconds)) {
                 audio.pause();
-                const next = nextAudioSegmentAfter(currentSeconds);
+                const next = timeline.nextSegmentAfter(currentSeconds);
                 setVoiceStatus(
                   '',
                   next ? 'waiting' : 'ready',
@@ -1848,7 +1857,7 @@
               setVoiceStatus('', 'playing', 'voiceover playing');
               if (segment) {
                 audioTimer = setTimeout(
-                  startAudio,
+                  () => advanceAudioBoundary(segment),
                   Math.max(0, (segment.presentationEnd - currentSeconds) * 1000),
                 );
               }
@@ -1861,7 +1870,7 @@
 
         audio.pause();
         audio.currentTime = audioTimeForPresentation(currentSeconds);
-        const next = nextAudioSegmentAfter(currentSeconds);
+        const next = audioTimeline().nextSegmentAfter(currentSeconds);
         if (next && playing) {
           setVoiceStatus('voiceover waiting', 'waiting');
           audioTimer = setTimeout(
@@ -1871,6 +1880,19 @@
         } else {
           setVoiceStatus('', 'ready', 'voiceover ready');
         }
+      }
+
+      function advanceAudioBoundary(segment) {
+        if (!playing || pausedAtGuidedPoint) {
+          return;
+        }
+        currentSeconds = (performance.now() - startedAt) / 1000;
+        const advancedSeconds = audioTimeline().advanceBoundary(currentSeconds, segment);
+        if (advancedSeconds !== currentSeconds) {
+          currentSeconds = advancedSeconds;
+          startedAt = performance.now() - currentSeconds * 1000;
+        }
+        startAudio();
       }
 
       function updateMuteButton() {
@@ -2117,40 +2139,15 @@
       }
 
       function audioSegmentForPresentation(seconds) {
-        return audioPlaybackSegments.find((segment) => (
-          seconds >= segment.presentationStart &&
-          seconds < segment.presentationEnd
-        )) || null;
+        return audioTimeline().segmentForPresentation(seconds);
       }
 
       function nextAudioSegmentAfter(seconds) {
-        return audioPlaybackSegments.find(
-          (segment) => segment.presentationStart > seconds,
-        ) || null;
+        return audioTimeline().nextSegmentAfter(seconds);
       }
 
       function audioTimeForPresentation(seconds) {
-        const segment = audioSegmentForPresentation(seconds);
-        if (segment) {
-          return Math.max(
-            0,
-            Math.min(
-              segment.audioEnd,
-              segment.audioStart + (seconds - segment.presentationStart),
-            ),
-          );
-        }
-        const next = nextAudioSegmentAfter(seconds);
-        if (next) {
-          return next.audioStart;
-        }
-        const previous = [...audioPlaybackSegments]
-          .reverse()
-          .find((candidate) => seconds >= candidate.presentationEnd);
-        if (previous) {
-          return previous.audioEnd;
-        }
-        return Math.min(seconds, audio?.duration || seconds);
+        return audioTimeline().audioTimeForPresentation(seconds, audio?.duration || seconds);
       }
 
       function play(options = {}) {

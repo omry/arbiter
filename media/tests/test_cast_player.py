@@ -24,8 +24,9 @@ def run_cast_player_script(
         r"""
 const fs = require('fs');
 const vm = require('vm');
+const path = require('path');
 const html = fs.readFileSync('website/static/cast-player.html', 'utf8');
-const playerScript = html.match(/<script>([\s\S]*)<\/script>/)[1];
+const scripts = [...html.matchAll(/<script(?:\s+src="([^"]+)")?\s*>([\s\S]*?)<\/script>/g)];
 const elements = new Map();
 const timeoutCalls = [];
 
@@ -124,7 +125,7 @@ const context = {
     return {
       addEventListener() {},
       pause() {},
-      play() {},
+      play() { return Promise.resolve(); },
       currentTime: 0,
       duration: 0,
       muted: false,
@@ -149,7 +150,12 @@ if (__PARENT_SEARCH_JSON__ !== null) {
 context.window.document = context.document;
 
 vm.createContext(context);
-vm.runInContext(playerScript, context);
+for (const script of scripts) {
+  const source = script[1]
+    ? fs.readFileSync(path.join('website/static', script[1]), 'utf8')
+    : script[2];
+  vm.runInContext(source, context);
+}
 """.replace(
             "__SEARCH_JSON__", repr(search)
         ).replace(
@@ -167,6 +173,181 @@ vm.runInContext(playerScript, context);
         capture_output=True,
         check=False,
     )
+
+
+def test_cast_player_core_advances_audio_boundary_when_timer_fires_early() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not available")
+
+    script = r"""
+const {createCastAudioTimeline} = require('./website/static/cast-player-core.js');
+const timeline = createCastAudioTimeline([
+  {
+    presentationStart: 0,
+    presentationEnd: 10,
+    audioStart: 0,
+    audioEnd: 10,
+  },
+  {
+    presentationStart: 10,
+    presentationEnd: 20,
+    audioStart: 10,
+    audioEnd: 20,
+  },
+]);
+
+const first = timeline.segmentForPresentation(9.999);
+const advanced = timeline.advanceBoundary(9.999, first);
+const next = timeline.segmentForPresentation(advanced);
+if (
+  advanced !== 10 ||
+  next?.presentationStart !== 10 ||
+  timeline.audioTimeForPresentation(advanced) !== 10
+) {
+  console.error(JSON.stringify({advanced, next}));
+  process.exit(1);
+}
+"""
+    result = subprocess.run(
+        [node, "-"],
+        cwd=REPO_ROOT,
+        input=script,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_cast_player_embed_builds_shared_player_url() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not available")
+
+    script = r"""
+const {buildCastPlayerUrl} = require('./website/static/cast-player-embed.js');
+const url = buildCastPlayerUrl({
+  player: '/cast-player.html',
+  src: '/casts/demo.retimed.cast',
+  title: 'Demo Build',
+  audio: '/audio/casts/demo.mp3',
+  audioMeta: '/audio/casts/demo.json',
+  intro: 'Intro text from narration.',
+  introSegment: 'overview',
+});
+if (
+  url !== '/cast-player.html?cast=%2Fcasts%2Fdemo.retimed.cast&title=Demo+Build&audio=%2Faudio%2Fcasts%2Fdemo.mp3&audioMeta=%2Faudio%2Fcasts%2Fdemo.json&intro=Intro+text+from+narration.&introSegment=overview'
+) {
+  console.error(url);
+  process.exit(1);
+}
+"""
+    result = subprocess.run(
+        [node, "-"],
+        cwd=REPO_ROOT,
+        input=script,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_cast_player_embed_custom_element_renders_iframe() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not available")
+
+    script = r"""
+const fs = require('fs');
+const vm = require('vm');
+
+class FakeHTMLElement {
+  constructor() {
+    this.attributes = new Map();
+    this.children = [];
+    this.textContent = '';
+    this.isConnected = true;
+  }
+
+  getAttribute(name) {
+    return this.attributes.has(name) ? this.attributes.get(name) : null;
+  }
+
+  setAttribute(name, value) {
+    this.attributes.set(name, String(value));
+  }
+
+  appendChild(child) {
+    this.children.push(child);
+    return child;
+  }
+}
+
+const defined = new Map();
+const context = {
+  URLSearchParams,
+  HTMLElement: FakeHTMLElement,
+  customElements: {
+    define(name, klass) {
+      defined.set(name, klass);
+    },
+    get(name) {
+      return defined.get(name);
+    },
+  },
+  document: {
+    createElement(tagName) {
+      return {
+        tagName,
+        allow: '',
+        allowFullscreen: false,
+        loading: '',
+        src: '',
+        title: '',
+      };
+    },
+  },
+};
+context.globalThis = context;
+vm.createContext(context);
+vm.runInContext(fs.readFileSync('website/static/cast-player-embed.js', 'utf8'), context);
+const Element = context.customElements.get('cast-player-embed');
+const element = new Element();
+element.setAttribute('title', 'Demo Build');
+element.setAttribute('src', '/casts/demo.retimed.cast');
+element.setAttribute('audio', '/audio/casts/demo.mp3');
+element.setAttribute('audio-meta', '/audio/casts/demo.json');
+element.setAttribute('intro-segment', 'overview');
+element.setAttribute('player', '/cast-player.html');
+element.connectedCallback();
+const iframe = element.children[0];
+if (
+  element.children.length !== 1 ||
+  iframe.tagName !== 'iframe' ||
+  iframe.title !== 'Demo Build' ||
+  iframe.loading !== 'lazy' ||
+  iframe.allow !== 'autoplay' ||
+  iframe.allowFullscreen !== true ||
+  iframe.src !== '/cast-player.html?cast=%2Fcasts%2Fdemo.retimed.cast&title=Demo+Build&audio=%2Faudio%2Fcasts%2Fdemo.mp3&audioMeta=%2Faudio%2Fcasts%2Fdemo.json&introSegment=overview'
+) {
+  console.error(JSON.stringify({children: element.children.length, iframe}));
+  process.exit(1);
+}
+"""
+    result = subprocess.run(
+        [node, "-"],
+        cwd=REPO_ROOT,
+        input=script,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_cast_player_carriage_return_overwrites_spinner_frames() -> None:
@@ -772,6 +953,76 @@ Promise.resolve().then(() => {
     }));
     process.exit(1);
   }
+});
+""",
+        search="?cast=/casts/demo.cast&audio=/audio/demo.mp3&title=Demo",
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_cast_player_audio_boundary_advances_to_next_segment_when_timer_fires_early() -> None:
+    result = run_cast_player_script(
+        r"""
+vm.runInContext(`
+now = 0;
+performance.now = () => now;
+audioReady = true;
+playing = true;
+pausedAtGuidedPoint = false;
+currentSeconds = 0;
+startedAt = 0;
+audioPlaybackSegments = [
+  {
+    presentationStart: 0,
+    presentationEnd: 10,
+    audioStart: 0,
+    audioEnd: 10,
+  },
+  {
+    presentationStart: 10,
+    presentationEnd: 20,
+    audioStart: 10,
+    audioEnd: 20,
+  },
+];
+audio = {
+  currentTime: 0,
+  duration: 20,
+  muted: false,
+  pause() {},
+  play() { return Promise.resolve(); },
+};
+startAudio();
+`, context);
+
+Promise.resolve().then(() => {
+  const firstTimer = vm.runInContext('__timeoutCalls.at(-1)', context);
+  if (!firstTimer || firstTimer.ms !== 10000) {
+    console.error(JSON.stringify({firstTimer}));
+    process.exit(1);
+  }
+  vm.runInContext(`
+now = 9999;
+__timeoutCalls.at(-1).callback();
+`, context);
+  Promise.resolve().then(() => {
+    const state = vm.runInContext(`({
+      currentSeconds,
+      currentTime: audio.currentTime,
+      voiceState: document.getElementById('voice').dataset.state,
+      lastDelay: __timeoutCalls.at(-1).ms,
+    })`, context);
+    if (
+      state.currentSeconds !== 10 ||
+      state.currentTime !== 10 ||
+      state.voiceState !== 'playing' ||
+      state.lastDelay !== 10000
+    ) {
+      console.error(JSON.stringify(state));
+      process.exit(1);
+    }
+  });
 });
 """,
         search="?cast=/casts/demo.cast&audio=/audio/demo.mp3&title=Demo",

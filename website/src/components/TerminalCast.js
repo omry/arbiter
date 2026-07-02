@@ -1,4 +1,4 @@
-import React from 'react';
+import React, {useEffect} from 'react';
 import useBaseUrl from '@docusaurus/useBaseUrl';
 
 export default function TerminalCast({
@@ -14,34 +14,29 @@ export default function TerminalCast({
   const audioSrc = audio ? useBaseUrl(audio) : null;
   const audioMetaSrc = audioMeta ? useBaseUrl(audioMeta) : null;
   const playerSrc = useBaseUrl('/cast-player.html');
-  const params = new URLSearchParams({
-    cast: castSrc,
-    title,
-  });
-  if (audioSrc) {
-    params.set('audio', audioSrc);
-  }
-  if (audioMetaSrc) {
-    params.set('audioMeta', audioMetaSrc);
-  }
-  if (intro) {
-    params.set('intro', intro);
-  }
-  if (introSegment) {
-    params.set('introSegment', introSegment);
-  }
-  if (introSeconds != null) {
-    params.set('introSeconds', String(introSeconds));
-  }
+  const embedScriptSrc = useBaseUrl('/cast-player-embed.js');
+
+  useEffect(() => {
+    if (document.querySelector(`script[src="${embedScriptSrc}"]`)) {
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = embedScriptSrc;
+    script.async = true;
+    document.head.appendChild(script);
+  }, [embedScriptSrc]);
 
   return (
     <div className="aa-terminal">
-      <iframe
+      <cast-player-embed
         title={title}
-        src={`${playerSrc}?${params.toString()}`}
-        loading="lazy"
-        allowFullScreen
-        allow="autoplay"
+        src={castSrc}
+        audio={audioSrc || undefined}
+        audio-meta={audioMetaSrc || undefined}
+        intro={intro || undefined}
+        intro-segment={introSegment || undefined}
+        intro-seconds={introSeconds != null ? String(introSeconds) : undefined}
+        player={playerSrc}
       />
     </div>
   );
