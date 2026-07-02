@@ -1550,7 +1550,7 @@ def test_check_operation_reports_imap_save_draft_denial() -> None:
     assert "read_write access" in result["why_not"]
 
 
-def test_check_operation_requires_configured_trash_for_soft_delete() -> None:
+def test_check_operation_reports_permanent_delete_fallback_without_trash() -> None:
     imap_config = _imap_config()
     del imap_config.folders["Trash"]
     runtime = _imap_runtime(
@@ -1570,10 +1570,12 @@ def test_check_operation_requires_configured_trash_for_soft_delete() -> None:
     )
 
     assert result["operation"] == "imap:delete_message"
-    assert result["allowed"] is False
-    assert result["failed_gate"] == "trash_folder"
-    assert result["why_not"] == (
-        "delete_message requires an accessible TRASH folder for account: personal"
+    assert result["allowed"] is True
+    assert result["permanent"] is True
+    assert result["evidence"]["delete_mode"] == "permanent"
+    assert result["evidence"]["warning"] == (
+        "delete_message operations will permanently delete messages for "
+        "account: personal because no accessible TRASH folder exists"
     )
 
 
@@ -1652,6 +1654,28 @@ def test_delete_message_soft_deletes_to_accessible_trash_folder() -> None:
     assert factory.clients[1].move_calls == [
         {"source_folder": "INBOX", "uid": "42", "destination_folder": "Trash"}
     ]
+
+
+def test_delete_message_falls_back_to_permanent_without_accessible_trash() -> None:
+    imap_config = _imap_config()
+    del imap_config.folders["Trash"]
+    factory = RecordingIMAPClientFactory()
+    runtime = _imap_runtime(
+        accounts={"personal": imap_config},
+        policies={"personal": _imap_policy(delete=IMAPOperationDecision.allow)},
+        imap_client_factory=factory,
+    )
+
+    assert runtime.delete_message(account="personal", message_id="42") == {
+        "ok": True,
+        "account": "personal",
+        "folder": "INBOX",
+        "message_id": "42",
+        "permanent": True,
+        "destination_folder": None,
+    }
+    assert factory.clients[0].delete_calls == [{"folder": "INBOX", "uid": "42"}]
+    assert factory.clients[0].move_calls == []
 
 
 def test_append_sent_message_uses_configured_folder() -> None:

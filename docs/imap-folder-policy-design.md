@@ -479,10 +479,9 @@ Delete handling:
 
 - `delete_message` defaults to soft delete: move the message to an accessible
   folder whose effective metadata is `kind: TRASH`.
-- A policy that allows soft delete must leave at least one trash folder
-  accessible through `folder_access`. If no folder is designated `kind: TRASH`,
-  or if all trash folders are inaccessible, non-permanent `delete_message` should
-  fail with a clear policy/configuration error.
+- If no folder is designated `kind: TRASH`, or if all trash folders are
+  inaccessible, non-permanent `delete_message` falls back to permanent deletion.
+  Config checks should warn clearly that deletes for that account are permanent.
 - `delete_message` with explicit `permanent: true` performs a hard delete, such
   as IMAP `\Deleted` plus `EXPUNGE`, and does not require a trash destination.
 - Neither soft delete nor permanent delete requires `folder_append`; APPEND is

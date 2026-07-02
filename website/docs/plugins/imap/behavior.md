@@ -101,4 +101,5 @@ when delete is allowed. Moving a message into a folder marked `kind: TRASH` is
 also treated as a delete policy decision for the source folder.
 
 If delete is allowed but no accessible TRASH folder can be resolved, config
-checks and live checks report that delete requires an accessible TRASH folder.
+checks and live checks warn that `imap:delete_message` will permanently delete
+messages for that account.

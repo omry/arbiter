@@ -369,9 +369,16 @@ class _IMAPRuntimePolicyMixin:
                     {"trash_folder": self._folder_check_evidence(folder)}
                 )
         return DenyDecision(
-            "delete_message requires an accessible TRASH folder for account: "
-            f"{account}",
+            "no accessible TRASH folder exists for account: " f"{account}",
             failed_gate="trash_folder",
+        )
+
+    def _permanent_delete_fallback_decision(self, *, account: str) -> Decision:
+        return AllowDecision(
+            {
+                "delete_mode": "permanent",
+                "warning": permanent_delete_fallback_warning(account),
+            }
         )
 
     def _prepare_move_message(
@@ -473,18 +480,24 @@ class _IMAPRuntimePolicyMixin:
                 folder_resolution.policy.delete,
             )
         ]
+        effective_permanent = permanent
         if not permanent:
-            decisions.append(
-                self._configured_trash_decision(
-                    account=account,
-                    imap_config=imap_config,
-                )
+            trash_decision = self._configured_trash_decision(
+                account=account,
+                imap_config=imap_config,
             )
+            if trash_decision.evaluate().allowed:
+                decisions.append(trash_decision)
+            else:
+                effective_permanent = True
+                decisions.append(
+                    self._permanent_delete_fallback_decision(account=account)
+                )
         return _PreparedDelete(
             imap_config=imap_config,
             folder=folder_resolution,
             uid=uid,
-            permanent=permanent,
+            permanent=effective_permanent,
             decision=AndDecision(*decisions).evaluate(),
         )
 
@@ -625,3 +638,10 @@ class _IMAPRuntimePolicyMixin:
             system_flag = resolve_system_flag(flag)
             visible_flags.append(system_flag.name if system_flag is not None else flag)
         return visible_flags
+
+
+def permanent_delete_fallback_warning(account: str) -> str:
+    return (
+        "delete_message operations will permanently delete messages for account: "
+        f"{account} because no accessible TRASH folder exists"
+    )

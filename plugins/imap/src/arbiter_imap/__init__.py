@@ -38,7 +38,11 @@ from .policy import (
     folder_metadata_matches,
     validate_imap_policy,
 )
-from .runtime_policy import _IMAPRuntimePolicyMixin, _PreparedAppend
+from .runtime_policy import (
+    _IMAPRuntimePolicyMixin,
+    _PreparedAppend,
+    permanent_delete_fallback_warning,
+)
 
 from .client import FetchedIMAPMessage, IMAPAttachmentContent
 from .operations import IMAP_OPERATION_DESCRIPTORS
@@ -165,12 +169,6 @@ def _delete_may_require_trash(
     ):
         return True
     return bool(_delete_allowed_folders(resolver, folder_names))
-
-
-def _trash_required_message(account: str) -> str:
-    return (
-        "delete_message requires an accessible TRASH folder for account: " f"{account}"
-    )
 
 
 def _draft_folder_names(imap_config: IMAPConfig) -> list[str]:
@@ -301,7 +299,10 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
                 server_folders = client.list_folders()
                 folders = self._test_folders(account_name, imap_config, server_folders)
                 client.test_connection(folders=folders)
-                trash_checked = self._test_delete_trash_destination(
+                (
+                    trash_checked,
+                    delete_warning,
+                ) = self._test_delete_trash_destination(
                     account_name,
                     imap_config,
                     server_folders,
@@ -330,7 +331,12 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
                     "reason": "no accessible IMAP folders to examine read-only",
                 }
                 continue
-            if save_draft_warning is not None:
+            warning_messages = [
+                warning
+                for warning in (delete_warning, save_draft_warning)
+                if warning is not None
+            ]
+            if warning_messages:
                 results[account_name] = {
                     "status": "warning",
                     "stage": "connect_auth_noop_examine",
@@ -339,9 +345,10 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
                         "noop",
                         "examine",
                         *(["trash_destination"] if trash_checked else []),
+                        *(["save_draft_destination"] if save_draft_checked else []),
                     ],
                     "folders": folders,
-                    "message": save_draft_warning,
+                    "message": "; ".join(warning_messages),
                 }
                 continue
             results[account_name] = {
@@ -750,7 +757,9 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
                     folder=cast(str | None, arguments.get("folder")),
                     permanent=cast(bool, arguments.get("permanent", False)),
                 )
-                return self._decision_check_result(operation_id, prepared.decision)
+                result = self._decision_check_result(operation_id, prepared.decision)
+                result["permanent"] = prepared.permanent
+                return result
             if operation == "update_message_flags":
                 return self._check_update_message_flags(
                     operation_id, account, arguments
@@ -800,7 +809,8 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
             permanent=permanent,
         )
         prepared.decision.require_allowed()
-        if prepared.permanent:
+        permanent_delete = prepared.permanent
+        if permanent_delete:
             self._make_client(prepared.imap_config).delete_message(
                 folder=prepared.folder.name,
                 uid=prepared.uid,
@@ -808,18 +818,26 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
             destination_folder = None
         else:
             destination = self._resolve_trash_destination(account, prepared.imap_config)
-            self._make_client(prepared.imap_config).move_message(
-                source_folder=prepared.folder.name,
-                uid=prepared.uid,
-                destination_folder=destination.name,
-            )
-            destination_folder = destination.name
+            if destination is None:
+                self._make_client(prepared.imap_config).delete_message(
+                    folder=prepared.folder.name,
+                    uid=prepared.uid,
+                )
+                permanent_delete = True
+                destination_folder = None
+            else:
+                self._make_client(prepared.imap_config).move_message(
+                    source_folder=prepared.folder.name,
+                    uid=prepared.uid,
+                    destination_folder=destination.name,
+                )
+                destination_folder = destination.name
         return {
             "ok": True,
             "account": account,
             "folder": prepared.folder.name,
             "message_id": prepared.uid,
-            "permanent": prepared.permanent,
+            "permanent": permanent_delete,
             "destination_folder": destination_folder,
         }
 
@@ -1082,14 +1100,14 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
         account: str,
         imap_config: IMAPConfig,
         server_folders: Sequence[str],
-    ) -> bool:
+    ) -> tuple[bool, str | None]:
         resolver = self._resolver(imap_config)
         delete_folders = _delete_allowed_folders(resolver, server_folders)
         if not delete_folders:
-            return False
+            return False, None
         if not _accessible_trash_folders(resolver, server_folders):
-            raise ValueError(_trash_required_message(account))
-        return True
+            return True, permanent_delete_fallback_warning(account)
+        return True, None
 
     def _test_save_draft_destination(
         self,
@@ -1109,14 +1127,14 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
         self,
         account: str,
         imap_config: IMAPConfig,
-    ) -> IMAPFolderResolution:
+    ) -> IMAPFolderResolution | None:
         resolver = self._resolver(imap_config)
         trash_folders = _accessible_trash_folders(
             resolver,
             self._make_client(imap_config).list_folders(),
         )
         if not trash_folders:
-            raise ValueError(_trash_required_message(account))
+            return None
         return sorted(trash_folders, key=lambda folder: folder.name)[0]
 
     def _message_summary(
@@ -1570,9 +1588,9 @@ class IMAPServicePlugin:
                 imap_policy,
             ):
                 if not _accessible_trash_folders(resolver, configured_folder_names):
-                    errors.append(
-                        ConfigCheckIssue(
-                            message=_trash_required_message(account_name),
+                    warnings.append(
+                        ConfigCheckWarning(
+                            message=permanent_delete_fallback_warning(account_name),
                             account=account_name,
                             policy=imap_config.policy,
                         )

@@ -273,109 +273,109 @@ def test_plugin_config_check_reports_invalid_drafts_metadata_as_issue() -> None:
     ]
 
 
-def test_plugin_config_check_rejects_delete_without_accessible_trash() -> None:
+def test_plugin_config_check_warns_delete_without_accessible_trash() -> None:
     policy = _allow_all_policy()
     policy.operation_defaults.delete = IMAPOperationDecision.allow
 
-    with pytest.raises(ConfigCheckError) as exc_info:
-        IMAPServicePlugin().check_config(
-            accounts={
-                "primary": IMAPConfig(
-                    folders={"INBOX": IMAPFolderConfig(description="Inbox")}
-                )
-            },
-            policies={"bot": policy},
-        )
+    warnings = IMAPServicePlugin().check_config(
+        accounts={
+            "primary": IMAPConfig(
+                folders={"INBOX": IMAPFolderConfig(description="Inbox")}
+            )
+        },
+        policies={"bot": policy},
+    )
 
     assert [
-        (issue.account, issue.policy, issue.message) for issue in exc_info.value.issues
+        (warning.account, warning.policy, warning.message) for warning in warnings
     ] == [
         (
             "primary",
             "bot",
-            "delete_message requires an accessible TRASH folder for account: primary",
+            "delete_message operations will permanently delete messages for "
+            "account: primary because no accessible TRASH folder exists",
         )
     ]
 
 
-def test_plugin_config_check_rejects_default_delete_without_configured_trash() -> None:
+def test_plugin_config_check_warns_default_delete_without_configured_trash() -> None:
     policy = _allow_all_policy()
     policy.operation_defaults.delete = IMAPOperationDecision.allow
 
-    with pytest.raises(ConfigCheckError) as exc_info:
-        IMAPServicePlugin().check_config(
-            accounts={"primary": IMAPConfig()},
-            policies={"bot": policy},
-        )
+    warnings = IMAPServicePlugin().check_config(
+        accounts={"primary": IMAPConfig()},
+        policies={"bot": policy},
+    )
 
     assert [
-        (issue.account, issue.policy, issue.message) for issue in exc_info.value.issues
+        (warning.account, warning.policy, warning.message) for warning in warnings
     ] == [
         (
             "primary",
             "bot",
-            "delete_message requires an accessible TRASH folder for account: primary",
+            "delete_message operations will permanently delete messages for "
+            "account: primary because no accessible TRASH folder exists",
         )
     ]
 
 
-def test_plugin_config_check_rejects_pattern_delete_without_configured_trash() -> None:
+def test_plugin_config_check_warns_pattern_delete_without_configured_trash() -> None:
     policy = _allow_all_policy()
     policy.folders["Archives.{[0-9][0-9]*:year}"] = IMAPFolderOperationPolicyConfig(
         delete=IMAPOperationDecision.allow
     )
 
-    with pytest.raises(ConfigCheckError) as exc_info:
-        IMAPServicePlugin().check_config(
-            accounts={
-                "primary": IMAPConfig(
-                    folders={"INBOX": IMAPFolderConfig(description="Inbox")}
-                )
-            },
-            policies={"bot": policy},
-        )
+    warnings = IMAPServicePlugin().check_config(
+        accounts={
+            "primary": IMAPConfig(
+                folders={"INBOX": IMAPFolderConfig(description="Inbox")}
+            )
+        },
+        policies={"bot": policy},
+    )
 
     assert [
-        (issue.account, issue.policy, issue.message) for issue in exc_info.value.issues
+        (warning.account, warning.policy, warning.message) for warning in warnings
     ] == [
         (
             "primary",
             "bot",
-            "delete_message requires an accessible TRASH folder for account: primary",
+            "delete_message operations will permanently delete messages for "
+            "account: primary because no accessible TRASH folder exists",
         )
     ]
 
 
-def test_plugin_config_check_rejects_delete_with_denied_trash() -> None:
+def test_plugin_config_check_warns_delete_with_denied_trash() -> None:
     policy = _allow_all_policy()
     policy.operation_defaults.delete = IMAPOperationDecision.allow
     policy.folder_access.rules.append(
         IMAPFolderAccessRuleConfig(deny_kind=IMAPFolderKind.TRASH)
     )
 
-    with pytest.raises(ConfigCheckError) as exc_info:
-        IMAPServicePlugin().check_config(
-            accounts={
-                "primary": IMAPConfig(
-                    folders={
-                        "INBOX": IMAPFolderConfig(description="Inbox"),
-                        "Trash": IMAPFolderConfig(
-                            description="Trash",
-                            kind=IMAPFolderKind.TRASH,
-                        ),
-                    }
-                )
-            },
-            policies={"bot": policy},
-        )
+    warnings = IMAPServicePlugin().check_config(
+        accounts={
+            "primary": IMAPConfig(
+                folders={
+                    "INBOX": IMAPFolderConfig(description="Inbox"),
+                    "Trash": IMAPFolderConfig(
+                        description="Trash",
+                        kind=IMAPFolderKind.TRASH,
+                    ),
+                }
+            )
+        },
+        policies={"bot": policy},
+    )
 
     assert [
-        (issue.account, issue.policy, issue.message) for issue in exc_info.value.issues
+        (warning.account, warning.policy, warning.message) for warning in warnings
     ] == [
         (
             "primary",
             "bot",
-            "delete_message requires an accessible TRASH folder for account: primary",
+            "delete_message operations will permanently delete messages for "
+            "account: primary because no accessible TRASH folder exists",
         )
     ]
 
@@ -759,7 +759,7 @@ def test_runtime_live_check_requires_password_before_connecting() -> None:
     }
 
 
-def test_runtime_live_check_requires_server_trash_when_delete_allowed() -> None:
+def test_runtime_live_check_warns_for_permanent_delete_without_server_trash() -> None:
     policy = _allow_all_policy()
     policy.operation_defaults.delete = IMAPOperationDecision.allow
     clients: list[LiveCheckRecordingIMAPClient] = []
@@ -786,12 +786,13 @@ def test_runtime_live_check_requires_server_trash_when_delete_allowed() -> None:
 
     assert runtime.test_accounts() == {
         "primary": {
-            "status": "failed",
+            "status": "warning",
             "stage": "connect_auth_noop_examine",
-            "error_type": "ValueError",
+            "checks": ["connect", "noop", "examine", "trash_destination"],
+            "folders": ["INBOX"],
             "message": (
-                "delete_message requires an accessible TRASH folder for account: "
-                "primary"
+                "delete_message operations will permanently delete messages for "
+                "account: primary because no accessible TRASH folder exists"
             ),
         }
     }

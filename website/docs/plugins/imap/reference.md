@@ -136,7 +136,7 @@ Static IMAP checks:
 | `default_folder` resolves through account metadata and policy | config check issue |
 | configured folder keys resolve through metadata and policy | config check issue |
 | all configured folders are denied | warning |
-| delete is allowed but no accessible configured TRASH folder exists | config check issue |
+| delete is allowed but no accessible configured TRASH folder exists | warning; `delete_message` falls back to permanent deletion |
 | literal `Drafts` folder exists but is not marked `kind: DRAFTS` | warning |
 | multiple configured `DRAFTS` folders exist | warning |
 | selected configured `DRAFTS` folder is denied, cannot append, or cannot set `DRAFT`/`SEEN` flags | warning |
@@ -148,7 +148,7 @@ Live IMAP checks:
 | `connect` | Opens the configured IMAP connection. |
 | `noop` | Verifies the authenticated session can issue a read-only command. |
 | `examine` | Verifies accessible test folders can be selected read-only. |
-| `trash_destination` | Runs when delete is allowed for an accessible live folder; verifies an accessible live TRASH folder exists. |
+| `trash_destination` | Runs when delete is allowed for an accessible live folder; warns when no accessible live TRASH folder exists and deletes will be permanent. |
 | `save_draft_destination` | Runs when an account has a configured `DRAFTS` folder; verifies the selected configured Drafts folder exists. |
 
 The live check is read-only for message contents and mailbox state. It lists
