@@ -196,3 +196,63 @@ def test_apply_mail_lab_config_updates_staged_account_files(
     assert "on_failure: warn\n" in smtp_policy_text
     assert "IMAP_BOT_ACCOUNT_PASSWORD=secret\n" in env_text
     assert "SMTP_BOT_ACCOUNT_PASSWORD=secret\n" in env_text
+
+
+def test_apply_mail_lab_config_supports_mail_demo_account(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_dir = tmp_path / "conf"
+    account = "mail-demo"
+    imap_account = config_dir / "arbiter" / "account" / "imap" / f"{account}.yaml"
+    smtp_account = config_dir / "arbiter" / "account" / "smtp" / f"{account}.yaml"
+    imap_policy = config_dir / "arbiter" / "policy" / "imap" / f"{account}_policy.yaml"
+    smtp_policy = config_dir / "arbiter" / "policy" / "smtp" / f"{account}_policy.yaml"
+    imap_account.parent.mkdir(parents=True)
+    smtp_account.parent.mkdir(parents=True)
+    imap_policy.parent.mkdir(parents=True)
+    smtp_policy.parent.mkdir(parents=True)
+    imap_account.write_text("policy: mail-demo_policy\n", encoding="utf-8")
+    smtp_account.write_text("policy: mail-demo_policy\n", encoding="utf-8")
+    imap_policy.write_text("folder_access:\n  rules: []\n", encoding="utf-8")
+    smtp_policy.write_text("recipient_policy: {}\n", encoding="utf-8")
+
+    monkeypatch.setenv("MAIL_LAB_IMAP_HOST", "host.docker.internal")
+    monkeypatch.setenv("MAIL_LAB_IMAP_PORT", "2143")
+    monkeypatch.setenv("MAIL_LAB_SMTP_HOST", "host.docker.internal")
+    monkeypatch.setenv("MAIL_LAB_SMTP_PORT", "2525")
+    monkeypatch.setenv("BOT_EMAIL", "bot@example.test")
+    monkeypatch.setenv("IMAP_BOT_ACCOUNT_USERNAME", "bot@example.test")
+    monkeypatch.setenv("IMAP_BOT_ACCOUNT_PASSWORD", "secret")
+    monkeypatch.setenv("SMTP_BOT_ACCOUNT_USERNAME", "bot@example.test")
+    monkeypatch.setenv("SMTP_BOT_ACCOUNT_PASSWORD", "secret")
+
+    apply_mail_lab_config.apply_mail_lab_config(
+        config_dir,
+        account=account,
+        plugins={"smtp"},
+        update_env=True,
+    )
+
+    smtp_text = smtp_account.read_text(encoding="utf-8")
+    env_text = (config_dir / ".env").read_text(encoding="utf-8")
+    assert "# @package arbiter.account.smtp.mail-demo\n" in smtp_text
+    assert "username: ${oc.env:SMTP_MAIL_DEMO_ACCOUNT_USERNAME}\n" in smtp_text
+    assert "password: ${oc.env:SMTP_MAIL_DEMO_ACCOUNT_PASSWORD}\n" in smtp_text
+    assert "SMTP_MAIL_DEMO_ACCOUNT_USERNAME=bot@example.test\n" in env_text
+    assert "SMTP_MAIL_DEMO_ACCOUNT_PASSWORD=secret\n" in env_text
+    assert "IMAP_MAIL_DEMO_ACCOUNT_USERNAME" not in env_text
+
+    apply_mail_lab_config.apply_mail_lab_config(
+        config_dir,
+        account=account,
+        plugins={"imap"},
+        update_env=True,
+    )
+
+    imap_text = imap_account.read_text(encoding="utf-8")
+    env_text = (config_dir / ".env").read_text(encoding="utf-8")
+    assert "# @package arbiter.account.imap.mail-demo\n" in imap_text
+    assert "username: ${oc.env:IMAP_MAIL_DEMO_ACCOUNT_USERNAME}\n" in imap_text
+    assert "password: ${oc.env:IMAP_MAIL_DEMO_ACCOUNT_PASSWORD}\n" in imap_text
+    assert "IMAP_MAIL_DEMO_ACCOUNT_USERNAME=bot@example.test\n" in env_text
+    assert "SMTP_MAIL_DEMO_ACCOUNT_USERNAME=bot@example.test\n" in env_text

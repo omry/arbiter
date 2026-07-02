@@ -5,6 +5,10 @@ unset IMAP_BOT_ACCOUNT_USERNAME
 unset IMAP_BOT_ACCOUNT_PASSWORD
 unset SMTP_BOT_ACCOUNT_USERNAME
 unset SMTP_BOT_ACCOUNT_PASSWORD
+unset IMAP_MAIL_DEMO_ACCOUNT_USERNAME
+unset IMAP_MAIL_DEMO_ACCOUNT_PASSWORD
+unset SMTP_MAIL_DEMO_ACCOUNT_USERNAME
+unset SMTP_MAIL_DEMO_ACCOUNT_PASSWORD
 unset ARBITER_REPO_ROOT
 unset ARBITER_PYTHON
 operator_venv=""
@@ -497,6 +501,32 @@ recording_apply_mail_lab_config() {
   set +a
   "$recording_python" "$recording_repo/media/tools/apply_mail_lab_config.py" \
     --config-dir ./conf "$@"
+}
+
+recording_show_yaml() {
+  local path="$1"
+  local start="${2:-1}"
+  local end="${3:-160}"
+  "$recording_python" - "$path" "$start" "$end" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+start = int(sys.argv[2])
+end = int(sys.argv[3])
+lines = path.read_text(encoding="utf-8").splitlines()
+text = "\n".join(lines[start - 1:end]) + "\n"
+try:
+    from pygments import highlight
+    from pygments.formatters import Terminal256Formatter
+    from pygments.lexers import YamlLexer
+except Exception:
+    sys.stdout.write(text)
+else:
+    sys.stdout.write(
+        highlight(text, YamlLexer(), Terminal256Formatter(style="native"))
+    )
+PY
 }
 
 recording_wait_for_container_mail_lab() {

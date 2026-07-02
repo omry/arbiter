@@ -160,9 +160,9 @@ def test_default_config_composes_install_recording() -> None:
     assert spec["narration"]["scene"]["title"] == "Install Arbiter Server"
     assert spec["narration"]["beats"][0]["id"] == "overview"
     assert spec["narration"]["beats"][0]["text"] == (
-        "In this tutorial, we will install Arbiter the standard way: stage it "
-        "locally with Reploy, configure and test it, then install it as a "
-        "permanent Docker service on the system."
+        "In this tutorial, we will install Arbiter using the standard "
+        "workflow: stage it locally with Reploy, configure and test it, then "
+        "install it as a permanent Docker service on the system."
     )
     assert spec["narration"]["source_script"] == (
         "media/recording-scripts/install-and-bootstrap.md"
@@ -480,19 +480,39 @@ def test_install_recording_bootstraps_editable_arbiter_config() -> None:
 
     assert action_display(action).splitlines() == [
         "reploy app bootstrap server",
-        "reploy app bootstrap --plugins imap,smtp --account bot",
-        "find conf -maxdepth 5 -type f | sort",
+        "recording_show_yaml conf/arbiter-server.yaml 1 80",
+        "reploy app bootstrap --plugin smtp --account mail-demo",
+        "recording_show_yaml conf/arbiter/account/smtp/mail-demo.yaml 1 80",
+        "recording_show_yaml conf/arbiter/policy/smtp/mail-demo_policy.yaml 1 80",
+        "$EDITOR conf/arbiter/account/smtp/mail-demo.yaml conf/arbiter/policy/smtp/mail-demo_policy.yaml",
+        "reploy app config activate --plugin smtp --account mail-demo",
+        "reploy app env bootstrap",
+        "$EDITOR conf/.env",
+        "reploy app bootstrap --plugin imap --account mail-demo --variant default-open",
+        "recording_show_yaml conf/arbiter/account/imap/mail-demo.yaml 1 90",
+        "recording_show_yaml conf/arbiter/policy/imap/mail-demo_policy.yaml 1 120",
+        "$EDITOR conf/arbiter/account/imap/mail-demo.yaml conf/arbiter/policy/imap/mail-demo_policy.yaml",
+        "reploy app config activate --plugin imap --account mail-demo",
+        "reploy app env bootstrap",
+        "$EDITOR conf/.env",
+        "reploy app config check",
+        "reploy app config check --live",
     ]
     assert action["commands"][0]["after"] == "@server@"
-    assert action["commands"][1]["after"] == "@account@"
-    assert action["commands"][2]["after"] == "@inspect@"
+    assert action["commands"][1]["after"] == "@server_show@"
+    assert action["commands"][2]["after"] == "@smtp_account@"
+    assert action["commands"][9]["after"] == "@imap_account@"
+    assert action["commands"][17]["after"] == "@live_check@"
+    assert action["commands"][17]["retime"] == "realtime"
+    assert action["commands"][17]["post_command_pause"] == 0.0
     assert action["expect"]["file_exists"] == [
         "./conf/arbiter-server.yaml",
         "./conf/plugins.yaml",
-        "./conf/arbiter/account/imap/bot.yaml",
-        "./conf/arbiter/policy/imap/bot_policy.yaml",
-        "./conf/arbiter/account/smtp/bot.yaml",
-        "./conf/arbiter/policy/smtp/bot_policy.yaml",
+        "./conf/.env",
+        "./conf/arbiter/account/imap/mail-demo.yaml",
+        "./conf/arbiter/policy/imap/mail-demo_policy.yaml",
+        "./conf/arbiter/account/smtp/mail-demo.yaml",
+        "./conf/arbiter/policy/smtp/mail-demo_policy.yaml",
     ]
 
 
