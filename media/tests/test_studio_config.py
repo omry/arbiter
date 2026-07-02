@@ -813,8 +813,8 @@ def test_action_override_is_public_enum_validated() -> None:
         assert "failed to compose media config" in message
         assert "action" in message
         assert (
-            "expected one of [build, check, clean, play, inspect, output, runs, list]"
-            in message
+            "expected one of [build, check, clean, play, watch, inspect, output, "
+            "runs, list]" in message
         )
         assert "audio_generate" not in message
     else:
@@ -938,6 +938,7 @@ def test_studio_public_actions_are_composed() -> None:
         "build",
         "check",
         "play",
+        "watch",
         "inspect",
         "output",
         "runs",

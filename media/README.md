@@ -294,6 +294,14 @@ run cast for that scene:
 media/tools/studio recording=install-and-bootstrap action=play
 ```
 
+Use the watch action to open the built, retimed recording with synchronized
+audio in a local browser player. This previews the recording artifacts directly
+and does not depend on the configured publish surface:
+
+```bash
+media/tools/studio recording=install-and-bootstrap action=watch
+```
+
 Use the output action to review the captured failure output. It opens a pager in
 an interactive terminal and streams the output otherwise:
 

@@ -74,6 +74,7 @@ class StudioAction(str, Enum):
     check = "check"
     clean = "clean"
     play = "play"
+    watch = "watch"
     inspect = "inspect"
     output = "output"
     runs = "runs"

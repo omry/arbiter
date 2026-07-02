@@ -5,18 +5,21 @@ from __future__ import annotations
 
 import hashlib
 import html
+import http.server
 import io
 import json
 import os
+import shutil
 import shlex
 import subprocess
 import sys
 import time
+import webbrowser
 from contextlib import redirect_stdout
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode, unquote, urlparse
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -173,6 +176,15 @@ RETIME_ACTIONS = {
 ALIGN_ACTIONS = {
     "align": "align",
     "align_check": "check",
+}
+WATCH_ARTIFACT_PREFIX = "/__studio_artifacts__/"
+WATCH_HOST = "127.0.0.1"
+TEXT_BROWSER_COMMANDS = {
+    "elinks",
+    "links",
+    "links2",
+    "lynx",
+    "w3m",
 }
 
 
@@ -1006,6 +1018,30 @@ def render_standalone_html(spec: dict[str, Any], surface: dict[str, Any]) -> str
     )
 
 
+class StudioWatchRequestHandler(http.server.SimpleHTTPRequestHandler):
+    def __init__(
+        self,
+        *args: Any,
+        artifacts: dict[str, Path],
+        directory: str,
+        **kwargs: Any,
+    ) -> None:
+        self.artifacts = artifacts
+        super().__init__(*args, directory=directory, **kwargs)
+
+    def translate_path(self, path: str) -> str:
+        request_path = urlparse(path).path
+        if request_path.startswith(WATCH_ARTIFACT_PREFIX):
+            artifact_name = Path(unquote(request_path)).stem
+            artifact = self.artifacts.get(artifact_name)
+            if artifact is not None:
+                return str(artifact)
+        return super().translate_path(path)
+
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+
 def replace_placeholder(text: str, placeholder: str, replacement: str) -> str:
     start = f"<!-- studio:{placeholder}:start -->"
     end = f"<!-- studio:{placeholder}:end -->"
@@ -1128,6 +1164,171 @@ def run_play(cfg: DictConfig, config: dict[str, Any]) -> int:
     ).returncode
 
 
+def watch_artifact_url(path: Path, key: str, artifacts: dict[str, Path]) -> str:
+    static_root = (retime_cast.REPO_ROOT / "website" / "static").resolve()
+    resolved = path.resolve()
+    try:
+        return "/" + quote(resolved.relative_to(static_root).as_posix(), safe="/")
+    except ValueError:
+        artifacts[key] = resolved
+        suffix = quote(resolved.suffix)
+        return f"{WATCH_ARTIFACT_PREFIX}{quote(key)}{suffix}"
+
+
+def watch_player_url_path(spec: dict[str, Any]) -> tuple[str, dict[str, Path]]:
+    paths = artifact_paths(spec)
+    required = {
+        "cast": paths["retimed_cast"],
+        "audio": paths["audio"],
+        "audioMeta": paths["audio_metadata"],
+    }
+    missing = [display_path(path) for path in required.values() if not path.exists()]
+    if missing:
+        formatted = ", ".join(path for path in missing if path is not None)
+        raise StudioError(
+            f"watch artifacts not found: {formatted}; "
+            "run media/tools/studio action=build first"
+        )
+
+    artifacts: dict[str, Path] = {}
+    params = {
+        "title": optional_string(spec.get("title")) or str(spec["_recording_id"]),
+        "cast": watch_artifact_url(paths["retimed_cast"], "cast", artifacts),
+        "audio": watch_artifact_url(paths["audio"], "audio", artifacts),
+        "audioMeta": watch_artifact_url(
+            paths["audio_metadata"],
+            "audioMeta",
+            artifacts,
+        ),
+    }
+    return "/cast-player.html?" + urlencode(params), artifacts
+
+
+def configured_browser_command_name() -> str | None:
+    browser = os.environ.get("BROWSER")
+    if not browser:
+        return None
+    first_entry = browser.split(os.pathsep, 1)[0].strip()
+    if not first_entry:
+        return None
+    try:
+        command = shlex.split(first_entry)[0]
+    except ValueError:
+        return None
+    return Path(command).name.lower()
+
+
+def should_auto_open_browser() -> bool:
+    browser_command = configured_browser_command_name()
+    if browser_command in TEXT_BROWSER_COMMANDS:
+        return False
+    if browser_command is not None:
+        return True
+    if sys.platform == "darwin" or sys.platform.startswith("win"):
+        return True
+    return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
+
+def running_under_wsl() -> bool:
+    if not sys.platform.startswith("linux"):
+        return False
+    if os.environ.get("WSL_DISTRO_NAME") or os.environ.get("WSL_INTEROP"):
+        return True
+    try:
+        release = Path("/proc/sys/kernel/osrelease").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    release = release.lower()
+    return "microsoft" in release or "wsl" in release
+
+
+def quote_powershell_string(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def open_wsl_host_browser(url: str) -> bool:
+    wslview = shutil.which("wslview")
+    if wslview is not None:
+        subprocess.Popen(
+            [wslview, url],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return True
+    powershell = shutil.which("powershell.exe")
+    if powershell is not None:
+        subprocess.Popen(
+            [
+                powershell,
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                f"Start-Process {quote_powershell_string(url)}",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return True
+    return False
+
+
+def open_watch_url(url: str) -> bool:
+    if running_under_wsl():
+        return open_wsl_host_browser(url)
+    if not should_auto_open_browser():
+        return False
+    return webbrowser.open(url)
+
+
+def run_watch_server(
+    cfg: DictConfig,
+    url_path: str,
+    artifacts: dict[str, Path],
+) -> int:
+    static_root = retime_cast.REPO_ROOT / "website" / "static"
+
+    def handler_factory(*args: Any, **kwargs: Any) -> StudioWatchRequestHandler:
+        return StudioWatchRequestHandler(
+            *args,
+            artifacts=artifacts,
+            directory=str(static_root),
+            **kwargs,
+        )
+
+    with http.server.ThreadingHTTPServer((WATCH_HOST, 0), handler_factory) as server:
+        url = f"http://{WATCH_HOST}:{server.server_port}{url_path}"
+        if text_output_enabled(cfg):
+            step_line("watch recording")
+            pass_line(f"serving local player: {url}")
+        opened = open_watch_url(url)
+        if text_output_enabled(cfg):
+            if opened:
+                info_line("opened browser; press Ctrl-C to stop")
+            else:
+                info_line("open the URL in a browser; press Ctrl-C to stop")
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            if text_output_enabled(cfg):
+                info_line("stopped local player")
+    return 0
+
+
+def run_watch(cfg: DictConfig, config: dict[str, Any]) -> int:
+    cast_override = config.get("cast")
+    run_id = config.get("run_id")
+    recording_id = recording_id_from_value(config.get("recording"))
+    if cast_override is not None or run_id is not None or recording_id is None:
+        raise StudioError(
+            "watch requires a recording id and built recording artifacts; "
+            "use action=play for preserved run casts"
+        )
+
+    spec = recording_spec_from_config(config, recording_id=None, overrides=())
+    url_path, artifacts = watch_player_url_path(spec)
+    return run_watch_server(cfg, url_path, artifacts)
+
+
 def studio_tool_command(recording_id: str, *overrides: str) -> str:
     parts = ["media/tools/studio", f"recording={recording_id}", *overrides]
     return " ".join(shlex.quote(part) for part in parts)
@@ -1149,6 +1350,12 @@ def print_success_followups(cfg: DictConfig) -> None:
         + color_text("play   ", ANSI_GREEN_BOLD)
         + " "
         + studio_tool_command(recording_id, "action=play")
+    )
+    print(
+        "  "
+        + color_text("watch  ", ANSI_GREEN_BOLD)
+        + " "
+        + studio_tool_command(recording_id, "action=watch")
     )
     print(
         "  "
@@ -1274,7 +1481,12 @@ def run_tool_from_hydra_cfg(cfg: DictConfig) -> int:
     if step is None and action == "list":
         return print_available_recording_scripts(selected_required=False)
 
-    recording_required = step is not None or action in {"build", "check", "clean"}
+    recording_required = step is not None or action in {
+        "build",
+        "check",
+        "clean",
+        "watch",
+    }
     if recording_required and recording_id_from_value(config.get("recording")) is None:
         return print_available_recording_scripts(selected_required=True)
 
@@ -1298,6 +1510,8 @@ def run_tool_from_hydra_cfg(cfg: DictConfig) -> int:
         return run_check(cfg)
     if action == "play":
         return run_play(cfg, config)
+    if action == "watch":
+        return run_watch(cfg, config)
 
     if action in RECORD_ACTIONS:
         run_record_action(cfg, RECORD_ACTIONS[action], str(action).replace("_", " "))

@@ -6,6 +6,7 @@ import os
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 from omegaconf import OmegaConf
 
@@ -169,6 +170,7 @@ def test_build_runs_full_media_pipeline(
     assert "pass  build completed after " in output
     assert "\n\nnext follow-up commands\n" in output
     assert "play    media/tools/studio recording=demo action=play\n" in output
+    assert "watch   media/tools/studio recording=demo action=watch\n" in output
     assert "inspect media/tools/studio recording=demo action=inspect\n" in output
     assert "media/tools/studio recording=demo step=align\n" not in output
     assert studio.recording_skip_reason(spec) is None
@@ -361,6 +363,151 @@ def test_play_defaults_to_published_retimed_cast(
     assert studio.run_tool_from_hydra_cfg(cfg("play")) == 0
 
     assert commands == [["asciinema", "play", str(retimed)]]
+
+
+def test_watch_uses_built_artifacts_without_publish_surface(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    spec = minimal_build_spec(tmp_path)
+    paths = studio.artifact_paths(spec)
+    paths["retimed_cast"].write_text("retimed cast\n", encoding="utf-8")
+    paths["audio"].write_bytes(b"audio")
+    paths["audio_metadata"].write_text('{"segments": []}\n', encoding="utf-8")
+    captured: dict[str, Any] = {}
+
+    def fail_if_called(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("watch should not use publish surfaces")
+
+    def fake_run_watch_server(
+        cfg: Any,
+        url_path: str,
+        artifacts: dict[str, Path],
+    ) -> int:
+        captured["url_path"] = url_path
+        captured["artifacts"] = artifacts
+        return 0
+
+    monkeypatch.setattr(
+        studio,
+        "recording_spec_from_config",
+        lambda *_args, **_kwargs: spec,
+    )
+    monkeypatch.setattr(studio, "selected_surface", fail_if_called)
+    monkeypatch.setattr(studio, "publish_surface", fail_if_called)
+    monkeypatch.setattr(studio, "run_watch_server", fake_run_watch_server)
+
+    assert studio.run_tool_from_hydra_cfg(cfg("watch")) == 0
+
+    parsed = urlparse(captured["url_path"])
+    params = parse_qs(parsed.query)
+    assert parsed.path == "/cast-player.html"
+    assert params["title"] == ["Demo Build"]
+    assert params["cast"] == ["/__studio_artifacts__/cast.cast"]
+    assert params["audio"] == ["/__studio_artifacts__/audio.mp3"]
+    assert params["audioMeta"] == ["/__studio_artifacts__/audioMeta.json"]
+    assert captured["artifacts"] == {
+        "cast": paths["retimed_cast"].resolve(),
+        "audio": paths["audio"].resolve(),
+        "audioMeta": paths["audio_metadata"].resolve(),
+    }
+
+
+def test_watch_does_not_auto_open_terminal_browser(monkeypatch: Any) -> None:
+    monkeypatch.setenv("BROWSER", "links")
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+
+    assert studio.configured_browser_command_name() == "links"
+    assert studio.should_auto_open_browser() is False
+
+
+def test_watch_does_not_auto_open_without_browser_or_display(
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.delenv("BROWSER", raising=False)
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.setattr(studio.sys, "platform", "linux")
+
+    assert studio.should_auto_open_browser() is False
+
+
+def test_watch_auto_opens_gui_browser_from_environment(monkeypatch: Any) -> None:
+    monkeypatch.setenv("BROWSER", "firefox --new-tab")
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.setattr(studio.sys, "platform", "linux")
+
+    assert studio.configured_browser_command_name() == "firefox"
+    assert studio.should_auto_open_browser() is True
+
+
+def test_watch_opens_wsl_host_browser_with_wslview(monkeypatch: Any) -> None:
+    commands: list[list[str]] = []
+
+    def fake_which(command: str) -> str | None:
+        return "/usr/bin/wslview" if command == "wslview" else None
+
+    def fake_popen(command: list[str], **_kwargs: object) -> object:
+        commands.append(command)
+        return object()
+
+    monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu")
+    monkeypatch.setattr(studio.shutil, "which", fake_which)
+    monkeypatch.setattr(studio.subprocess, "Popen", fake_popen)
+
+    assert studio.open_watch_url("http://127.0.0.1:1234/cast-player.html") is True
+
+    assert commands == [["/usr/bin/wslview", "http://127.0.0.1:1234/cast-player.html"]]
+
+
+def test_watch_opens_wsl_host_browser_with_powershell_fallback(
+    monkeypatch: Any,
+) -> None:
+    commands: list[list[str]] = []
+
+    def fake_which(command: str) -> str | None:
+        if command == "powershell.exe":
+            return "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+        return None
+
+    def fake_popen(command: list[str], **_kwargs: object) -> object:
+        commands.append(command)
+        return object()
+
+    monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu")
+    monkeypatch.setattr(studio.shutil, "which", fake_which)
+    monkeypatch.setattr(studio.subprocess, "Popen", fake_popen)
+
+    url = (
+        "http://127.0.0.1:1234/cast-player.html?"
+        "title=Install+Arbiter+Server&cast=/casts/demo.cast"
+    )
+    assert studio.open_watch_url(url) is True
+
+    assert commands == [
+        [
+            "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            f"Start-Process '{url}'",
+        ]
+    ]
+
+
+def test_watch_does_not_fall_back_to_terminal_browser_in_wsl(
+    monkeypatch: Any,
+) -> None:
+    calls: list[str] = []
+
+    monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu")
+    monkeypatch.setenv("BROWSER", "links")
+    monkeypatch.setattr(studio.shutil, "which", lambda _command: None)
+    monkeypatch.setattr(studio.webbrowser, "open", lambda url: calls.append(url))
+
+    assert studio.open_watch_url("http://127.0.0.1:1234/cast-player.html") is False
+    assert calls == []
 
 
 def test_build_skips_fresh_recording(
@@ -576,6 +723,10 @@ def test_followup_commands_color_command_labels_when_forced(
     assert "\033[36;1mnext\033[0m follow-up commands\n" in output
     assert (
         "\033[32;1mplay   \033[0m media/tools/studio recording=demo action=play\n"
+        in output
+    )
+    assert (
+        "\033[32;1mwatch  \033[0m media/tools/studio recording=demo action=watch\n"
         in output
     )
     assert (
@@ -1066,8 +1217,8 @@ def test_empty_action_has_short_public_error() -> None:
 
     assert "action cannot be empty" in message
     assert (
-        "user-facing actions: build, check, clean, play, inspect, output, runs, list"
-        in message
+        "user-facing actions: build, check, clean, play, watch, inspect, output, "
+        "runs, list" in message
     )
     assert "audio_generate" not in message
 
