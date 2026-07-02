@@ -297,6 +297,18 @@ def _config_check_progress_enabled(output: object) -> bool:
     return bool(callable(isatty) and isatty())
 
 
+def _config_check_progress_mode(
+    output: object,
+    *,
+    live: bool,
+) -> Literal["off", "line", "spinner"]:
+    if _config_check_progress_enabled(output):
+        return "spinner"
+    if live:
+        return "line"
+    return "off"
+
+
 def _config_check_unicode_tree_enabled(output: object) -> bool:
     encoding = getattr(output, "encoding", None)
     if not isinstance(encoding, str) or not encoding:
@@ -382,12 +394,12 @@ class _ConfigCheckProgress:
         output: object,
         *,
         color: bool,
-        enabled: bool,
+        mode: Literal["off", "line", "spinner"],
         interval: float = 0.1,
     ) -> None:
         self._output = output
         self._color = color
-        self._enabled = enabled
+        self._mode = mode
         self._interval = interval
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -395,17 +407,23 @@ class _ConfigCheckProgress:
         self._lock = threading.Lock()
 
     def start(self, component: str, account: str | None = None) -> None:
-        if not self._enabled:
+        if self._mode == "off":
             return
         self.finish()
         self._label = f"{component}/{account}" if account is not None else component
+        if self._mode == "line":
+            self._write_line()
+            return
         self._stop.clear()
         self._write_frame(_CONFIG_CHECK_PROGRESS_FRAMES[0])
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
     def finish(self) -> None:
-        if not self._enabled:
+        if self._mode == "off":
+            return
+        if self._mode == "line":
+            self._label = None
             return
         thread = self._thread
         if thread is not None:
@@ -435,6 +453,14 @@ class _ConfigCheckProgress:
             label = _color_config_check_component(label)
         with self._lock:
             self._write(f"\r\033[2K{label}: testing {frame}")
+
+    def _write_line(self) -> None:
+        label = self._label
+        if label is None:
+            return
+        if self._color:
+            label = _color_config_check_component(label)
+        self._write(f"{label}: testing\n")
 
     def _write(self, value: str) -> None:
         write = getattr(self._output, "write", None)
@@ -3015,7 +3041,7 @@ def _run_config_check(
     progress = _ConfigCheckProgress(
         sys.stdout,
         color=color,
-        enabled=_config_check_progress_enabled(sys.stdout),
+        mode=_config_check_progress_mode(sys.stdout, live=live),
     )
     try:
         cfg = compose_config(

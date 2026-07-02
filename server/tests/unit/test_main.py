@@ -2406,6 +2406,58 @@ def test_cli_config_check_prints_aligned_report_after_components_complete(
     )
 
 
+def test_cli_live_config_check_prints_line_progress_when_not_tty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RecordingStdout:
+        def __init__(self) -> None:
+            self.text = ""
+
+        def write(self, value: str) -> int:
+            self.text += value
+            return len(value)
+
+        def flush(self) -> None:
+            return None
+
+        def isatty(self) -> bool:
+            return False
+
+    stdout = RecordingStdout()
+    cfg = object()
+    monkeypatch.setenv("ARBITER_COLOR", "never")
+    monkeypatch.setattr("arbiter_server.main.compose_config", lambda **kwargs: cfg)
+    monkeypatch.setattr(sys, "stdout", stdout)
+
+    def fake_components(cfg: object, **kwargs: object):
+        progress = cast(Callable[[str, str | None], None], kwargs["progress"])
+        progress("smtp", "primary")
+        assert stdout.text == "smtp/primary: testing\n"
+        yield ConfigCheckComponentReport(name="server")
+        yield ConfigCheckComponentReport(name="smtp")
+
+    monkeypatch.setattr(
+        "arbiter_server.main.config_check_components",
+        fake_components,
+    )
+
+    assert (
+        _run_config_check(
+            config_dir="/tmp",
+            config_name="arbiter-server",
+            overrides=(),
+            live=True,
+        )
+        == 0
+    )
+    assert stdout.text == (
+        "smtp/primary: testing\n"
+        "server   │ pass\n"
+        "Plugins  │ pass\n"
+        "└── smtp │ pass\n"
+    )
+
+
 def test_cli_config_check_uses_ascii_tree_for_limited_stream_encoding(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
