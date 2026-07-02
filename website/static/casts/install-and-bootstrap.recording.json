@@ -6,19 +6,19 @@
     },
     {
       "path": "media/tools/record.py",
-      "sha256": "7da359e37487b154150f95232f11ccc15e7bc03ad7d686e71b1bc42b9101adc7"
+      "sha256": "bbcac3c2c88cb62f257a01b14d86e75ec88b31c94b18356f688b80f6926d5b23"
     },
     {
       "path": "media/tools/studio.py",
-      "sha256": "4991966dcd85338465409911461af3079d2acac7ef11c4a0a78f18120f588d2b"
+      "sha256": "91593b1ba195e47c4d4613aecd83bbb6b2fb1a8548759ebdcae06e2a2eaf60da"
     },
     {
       "path": "media/tools/studio_config.py",
       "sha256": "56e449e07fe65a134f8a3c01eafd154aa8f188c735fd7677a20dc05b8c6a42c9"
     }
   ],
-  "fingerprint": "87345b9239706c9cebc12add4f3b8499bbf3a1ddcf69e5c7e920adcc3eb01253",
+  "fingerprint": "7633936cc2c1f38a8c73bc6469081f175e5b1e2981e8ad8598bce612f711adf1",
   "recording": "install-and-bootstrap",
-  "spec_sha256": "3ce8fb1992220397b905f0c8d0bf288429fa8fc59aa49f4a70bc65854e20d197",
+  "spec_sha256": "ce1d0736f881e1b7f68c0210b2866e2b810fb67a6b25e90e330a159ca9cf54f4",
   "version": 2
 }
