@@ -8,48 +8,53 @@ for smoke testing, but it does not install anything under `/opt`.
 
 ## Install Reploy
 
-Install Reploy in an operator-owned Python environment:
+Reploy is the deployment tool used by this flow. It creates the staging
+directory, manages generated Docker files, runs deployment-scoped app commands,
+and installs the checked staging deployment later.
 
-```bash
-python3 -m pip install reploy
-```
-
-If Python is not available on the operator machine, use the standalone
-installer instead:
+Install Reploy before running Arbiter deployment commands:
 
 ```bash
 curl -fsSL https://reploy.yadan.net/install.sh | sh
 ```
 
+If you prefer to install through Python packaging, Reploy is also available on
+PyPI:
+
+```bash
+python3 -m pip install reploy
+```
+
 The installed `reploy` command creates the staging directory and writes a
-deployment-local `./reploy` helper into it.
+deployment-local `./arbiterctl` app control script into it.
 
 ## Create the directory
 
 ```bash
-reploy init --blueprint arbiter-server
+reploy stage arbiter-server
 ```
 
 By default this creates `./reploy-staging`, including a deployment-local
-`reploy` helper script for preparing and installing the Arbiter Docker
-container. `init` refuses to overwrite existing managed files.
+`arbiterctl` script for controlling the staged Arbiter Docker service. `stage`
+refuses to overwrite existing managed files.
 
 For an existing staging directory, refresh the generated deployment files with:
 
 ```bash
-reploy update --dir reploy-staging
+reploy stage --update --dir reploy-staging
 ```
 
 Use `--force` to replace generated files that have local edits.
 
 <details>
-<summary>Files created by init</summary>
+<summary>Files created by stage</summary>
 
-Most operators should use the deployment-local `./reploy` helper and Arbiter
-config commands instead of editing generated deployment files directly.
+Most operators should use `reploy` for deployment management and the
+deployment-local `./arbiterctl` script for staged app control instead of
+editing generated deployment files directly.
 
 - `conf/`: deployment config directory.
-- `reploy`: local helper script for this deployment.
+- `arbiterctl`: local app control script for this deployment.
 - `.reploy/`: Reploy-managed files, including generated Compose config,
   Docker env, bundle option metadata, runtime requirements projection, state,
   manifest, vendored binary, runtime cache, and prepared bundle contents.
@@ -64,56 +69,49 @@ Prepared Docker directories are staged deployments. They use staging-specific
 Docker names and ports so they can run next to an installed Arbiter. During
 install, the copied directory is marked as the installed deployment.
 
-## Prepare the bundle
+## Select the bundle
 
 The bundle is the container runtime install set: selected Arbiter packages plus
-a local wheelhouse with their exact dependencies. Prepare it before configuring
-accounts so package resolution, local wheel builds, and Docker compatibility
-fail early. Later container starts install from the wheelhouse, isolating the
-deployment from PyPI package changes and eliminating the Internet connection
-requirement for starting Arbiter.
+a local wheelhouse with their exact dependencies. Select the packages during
+staging; Reploy builds or refreshes the installation bundle automatically when a
+staging or app command needs it. Container starts then install from the
+wheelhouse, isolating the deployment from PyPI package changes and eliminating
+the Internet connection requirement for starting Arbiter.
 
 ### Select plugins
 
 Choose the Arbiter service plugins for this deployment:
 
 ```bash
-./reploy bundle list-options          # show addable options and descriptions
-./reploy bundle add --name imap,smtp  # IMAP receive + SMTP send support
-./reploy bundle remove smtp           # remove SMTP if it is not needed
+reploy bundle list-options          # show addable options and descriptions
+reploy bundle add --name imap,smtp  # IMAP receive + SMTP send support
+reploy bundle remove smtp           # remove SMTP if it is not needed
 ```
 
 Use `bundle add --name arbiter-suite` or `bundle remove arbiter-suite` to add or
 remove all plugins in the suite meta package. `arbiter-server` is the Reploy
 blueprint; `arbiter-suite` is an Arbiter package bundle option.
 
-### Build the wheelhouse
+### Automatic bundle preparation
 
-Build the dependency wheelhouse from the selected package set. This locks the
-runtime install to the versions selected during staging and lets Docker create
-or recreate the container without reaching PyPI:
+Most operators do not need an explicit build step: `./arbiterctl up`,
+`reploy test`, and `reploy app ...` prepare the installation bundle
+automatically when the selected package set is missing or out of date.
 
-```bash
-./reploy bundle build
-```
-
-`bundle build` validates the selected runtime artifact roots and builds a
-complete wheelhouse from the configured package pins or wheel paths. Running it
-before config work catches package resolution, Docker image, and wheel
-compatibility problems early. Each run prunes stale wheels that are no longer
-part of the resolved runtime install set. When the staging directory is in an
-Arbiter repository checkout, normal build refreshes local Arbiter wheels from
+Each automatic preparation prunes stale wheels that are no longer part of the
+resolved runtime install set. When the staging directory is in an Arbiter
+repository checkout, normal preparation refreshes local Arbiter wheels from
 that checkout before resolving the wheelhouse.
 
 ### Upgrade selected versions
 
-For an existing prepared bundle, refresh selected package versions and rebuild
-the wheelhouse:
+For an existing deployment, refresh selected package versions and mark the
+installation bundle for refresh:
 
 ```bash
-./reploy bundle upgrade                         # upgrade selected packages
-./reploy bundle upgrade arbiter-smtp             # upgrade one package
-./reploy bundle upgrade arbiter-smtp==0.9.4      # select one version
+reploy bundle upgrade                         # upgrade selected packages
+reploy bundle upgrade arbiter-smtp             # upgrade one package
+reploy bundle upgrade arbiter-smtp==0.9.4      # select one version
 ```
 
 Skip this step when you want to keep the versions already recorded in
@@ -182,15 +180,16 @@ After adding config and env, start the staged service and smoke test the
 Arbiter server:
 
 ```bash
-./reploy up
-./reploy test
+./arbiterctl up
+reploy test
 ```
 
-`up` prints the server URL for this staged directory. `test` calls the Arbiter
-client through that URL and waits through transient startup connection failures.
+`up` starts or updates the staged Docker service. `reploy test` calls the
+staged Arbiter health endpoint through the configured staging URL and retries
+through transient startup failures.
 
 You can also verify plugin discovery and plugin versions through the normal
-Arbiter client. Use the server URL printed by `up`:
+Arbiter client. Use the staging URL:
 
 ```bash
 arbiter arbiter.url=https://127.0.0.1:18075 info --yaml plugins
@@ -202,5 +201,5 @@ arbiter arbiter.url=https://127.0.0.1:18075 info --yaml plugins
 # - id: smtp
 ```
 
-Once the staged service works locally, promote it to a host service with the
+Once the staged service works locally, install it as a host service with the
 [Linux install](./2-linux-install.md) runbook.

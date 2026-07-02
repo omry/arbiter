@@ -13,9 +13,9 @@ The bundle has two deployment-owned pieces:
   deployment.
 - `.reploy/bundle/`: the complete wheelhouse used by the container at startup.
 
-The goal is reproducible container creation. Staging resolves package versions
-and prepares wheels before install, so Docker can create or recreate the
-runtime container without reaching PyPI.
+The goal is reproducible container creation. Reploy resolves package versions
+and prepares wheels during staging before the runtime container needs them, so
+Docker can create or recreate the runtime container without reaching PyPI.
 
 ## Package roots
 
@@ -32,9 +32,9 @@ Unpinned names and version ranges are rejected for runtime deployment state.
 Use the bundle commands in the prepare runbook to select plugins or upgrade
 versions.
 
-By default, `reploy init --blueprint arbiter-server` seeds the bundle with the
-Arbiter server package root. During bundle build, Reploy resolves the package
-root to the exact version selected for the deployment.
+By default, `reploy stage arbiter-server` seeds the bundle with the
+Arbiter server package root. When the installation bundle is prepared, Reploy
+resolves the package root to the exact version selected for the deployment.
 
 `bundle add` and `bundle remove` update `.reploy/requirements.txt`. Adding
 `arbiter-suite` selects all plugins in the suite meta package. When the suite
@@ -52,27 +52,13 @@ my_plugin = "my_package:plugin"
 For a plugin available from a package index, add an exact package pin:
 
 ```bash
-./reploy bundle add my-arbiter-plugin==1.0.0
+reploy bundle add my-arbiter-plugin==1.0.0
 ```
 
-For a private wheel, copy it into the deployment wheelhouse and add it as a
-root:
-
-```bash
-./reploy bundle add-wheel ./dist/my_arbiter_plugin-1.0.0-py3-none-any.whl
-```
-
-For a local source checkout outside the Arbiter repository, build a wheel into
-the deployment wheelhouse and add that wheel as a root:
-
-```bash
-./reploy bundle add-source ../my-arbiter-plugin
-```
-
-After adding custom package roots, run `bundle build`. Published package pins
-may still need package-index access during build; wheel and source workflows
-keep the selected plugin artifact local, but any missing transitive dependency
-wheels still have to be resolved during build.
+After adding custom package roots, the next staging or app command prepares the
+installation bundle automatically. Published package pins may still need
+package-index access during preparation, and any missing transitive dependency
+wheels still have to be resolved during preparation.
 
 The package named `arbiter` on PyPI is unrelated to this project. Use
 `arbiter-suite` or concrete packages such as `arbiter-server`, `arbiter-smtp`,
@@ -80,13 +66,14 @@ and `arbiter-imap`.
 
 ## Wheelhouse
 
-`bundle build` validates `.reploy/requirements.txt`, resolves the full runtime
-install set with the configured runtime image, and writes all required wheels
-to `.reploy/bundle/`. Each run expands the wheelhouse fully and prunes stale
-wheels that are no longer part of the resolved install set.
+Reploy automatically validates `.reploy/requirements.txt`, resolves the full
+runtime install set with the configured runtime image, and writes all required
+wheels to `.reploy/bundle/` when the bundle is missing or out of date. Each
+preparation expands the wheelhouse fully and prunes stale wheels that are no
+longer part of the resolved install set.
 
 When the staging directory is in an Arbiter repository checkout, normal
-`bundle build` first rebuilds local Arbiter wheels from that checkout. Use
+preparation first rebuilds local Arbiter wheels from that checkout. Use
 `bundle build --pypi-only` only when the selected Arbiter package names should
 come from the package index instead of the checkout.
 
@@ -94,10 +81,11 @@ The generated Compose file mounts `.reploy/bundle` at `/bundle`. During
 container startup, the install command uses `/bundle`, so startup does not
 depend on package-index access.
 
-Use `bundle check` to validate an already-prepared wheelhouse without
-downloading packages or building wheels. Use `bundle list all` after
-preparation to show every wheelhouse package, marked as `root` or
-`transitive`.
+Staging and app commands prepare the wheelhouse automatically when it is missing
+or out of date. Use `bundle build` only when you want to force that preparation
+early. Use `bundle check` to validate an already-prepared wheelhouse without
+downloading packages or building wheels. Use `bundle list all` after preparation
+to show every wheelhouse package, marked as `root` or `transitive`.
 
 The default Docker env keeps the wheelhouse inside the deployment directory:
 `REPLOY_BUNDLE_DIR=./.reploy/bundle`. Keep runtime paths relative to the
@@ -117,9 +105,9 @@ Plugin writable state is separate:
 
 ## Upgrades
 
-`bundle upgrade` upgrades root package requirements and rebuilds the
-wheelhouse. It reports changed root packages first, followed by changed
-transitive packages.
+`bundle upgrade` upgrades root package requirements and marks the installation
+bundle for refresh. It reports changed root packages first, followed by
+changed transitive packages after the refreshed bundle is prepared.
 
 For an installed Linux systemd deployment, prepare and test the staging
 directory first, then run `install` again.
@@ -137,10 +125,11 @@ Skip upgrade when you want to keep the versions already recorded in
 <summary>Explicit package roots</summary>
 
 Most deployments should use the bundle menu. To seed exact package roots during
-init, pass repeated `--requirement` values with the Arbiter server blueprint:
+staging, pass repeated `--requirement` values with the Arbiter server app
+reference:
 
 ```bash
-reploy init --blueprint arbiter-server \
+reploy stage arbiter-server \
   --requirement arbiter-server==<version> \
   --requirement arbiter-smtp==<version>
 ```
@@ -148,7 +137,7 @@ reploy init --blueprint arbiter-server \
 The same mechanism can express a curated suite plus an override:
 
 ```bash
-reploy init --blueprint arbiter-server \
+reploy stage arbiter-server \
   --requirement arbiter-suite==<version> \
   --requirement arbiter-smtp==<version>
 ```
@@ -175,16 +164,17 @@ container wheel paths directly:
 <details>
 <summary>Local checkout testing</summary>
 
-Use `bundle add-source` for local checkout testing. Reploy builds the source
-directory inside the configured runtime container, copies the resulting wheel
-into `.reploy/bundle/`, and records a `/bundle/*.whl` container root:
+Arbiter's blueprint declares local source mappings for the packages in this
+repository. When you stage from the local blueprint file, Reploy uses those
+`local_sources` entries to build the selected Arbiter packages from the
+checkout during bundle preparation:
 
 ```bash
-./reploy bundle add-source ../my-arbiter-plugin
+reploy stage file:server/src/arbiter_server/reploy/arbiter.blueprint.yaml
 ```
 
-Persistent `/source/...` roots are not installable. `doctor --preinstall`
-rejects them and points you back to `bundle add-source`, so the installed
+Use package pins for third-party plugins. Persistent `/source/...` roots are
+not installable, and `doctor --preinstall` rejects them so the installed
 deployment never depends on a host checkout mount.
 
 </details>

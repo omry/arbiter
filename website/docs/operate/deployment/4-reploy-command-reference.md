@@ -2,33 +2,35 @@
 title: Reploy Command Reference
 ---
 
-Install Reploy from PyPI before creating a deployment directory:
-
-```bash
-python3 -m pip install reploy
-```
-
-If Python is not available on the operator machine, use the standalone
-installer instead:
+Reploy is the deployment tool used by Arbiter's Docker install path. Install it
+before creating a deployment directory:
 
 ```bash
 curl -fsSL https://reploy.yadan.net/install.sh | sh
 ```
 
-The installed `reploy` command and the generated deployment-local helper run the
-same deployment commands. Use the installed command from the parent directory,
-or run the generated helper from inside the prepared staging directory:
+If you prefer to install through Python packaging, Reploy is also available on
+PyPI:
+
+```bash
+python3 -m pip install reploy
+```
+
+Use the installed `reploy` command for deployment management commands such as
+bundle selection, app bootstrap, doctor, and install. Inside the prepared
+staging directory, use the generated `./arbiterctl` app control script for the
+staged Arbiter lifecycle and health commands:
 
 ```bash
 reploy --dir reploy-staging COMMAND
 cd reploy-staging
-./reploy COMMAND
+./arbiterctl COMMAND
 ```
 
 For the normal deployment sequence, use
 [Prepare Docker Deployment](./1-docker-prepare.md), then
-[Linux Install](./2-linux-install.md). This page is only a command reference for
-the helper.
+[Linux Install](./2-linux-install.md). This page lists the Arbiter-facing
+commands split between those two surfaces.
 
 ## Inspect
 
@@ -36,7 +38,7 @@ the helper.
 | --- | --- |
 | `info` | Show deployment state and generated paths. |
 | `doctor` | Check generated files and generated-file drift. |
-| `doctor --preinstall` | Check that the prepared directory is ready to promote. |
+| `doctor --preinstall` | Check that the prepared directory is ready to install. |
 | `app config check [override...]` | Validate the app config in a one-shot container. |
 | `app config check --live [override...]` | Validate app config and account readiness in the deployment runtime. |
 
@@ -44,7 +46,7 @@ the helper.
 
 | Command | Purpose |
 | --- | --- |
-| `install --to DIR` | Promote the staging directory to an installed systemd service. |
+| `install --to DIR` | Install the staging directory as a systemd service. |
 | `install --to DIR --dry-run` | Print the install plan without changing the host. |
 | `install --to DIR --no-start` | Install and enable the service without starting it. |
 
@@ -66,12 +68,14 @@ the helper.
 
 | Command | Purpose |
 | --- | --- |
-| `up` | Start or update the staged Compose service, then print the server URL. |
-| `test` | Call the Arbiter client through the computed server URL, retrying through transient startup failures. |
-| `ps` | Show Docker Compose service status. |
-| `logs` | Follow Docker Compose logs with Docker timestamps. |
-| `restart` | Recreate the container, reinstalling the configured requirements, then print the server URL. |
-| `down` | Stop and remove the staged Compose service. |
+| `./arbiterctl up` | Start or update the staged Compose service. |
+| `./arbiterctl health` | Call the staged Arbiter health endpoint. |
+| `reploy test` | Probe the staged Arbiter health endpoint with startup retries. |
+| `./arbiterctl status` | Show Docker Compose service status. |
+| `./arbiterctl logs` | Follow Docker Compose logs with Docker timestamps. |
+| `./arbiterctl restart` | Recreate the container. |
+| `./arbiterctl down` | Stop and remove the staged Compose service. |
+| `./arbiterctl config check [--live]` | Run the blueprint-exposed Arbiter config check command. |
 
 Installed services are operated through systemd instead; see
 [Linux Install](./2-linux-install.md#verify).
@@ -82,14 +86,12 @@ Installed services are operated through systemd instead; see
 | --- | --- |
 | `bundle list-options` | Show blueprint-declared bundle options and descriptions. |
 | `bundle add --name NAME[,NAME...]` | Add blueprint-declared options such as service plugins or meta packages. |
-| `bundle add-wheel PATH` | Copy a local wheel into the wheelhouse and add it as a root. |
-| `bundle add-source DIR` | Build a local package source directory into the wheelhouse and add it as a root. |
 | `bundle remove NAME[,NAME...]` | Remove selected runtime artifact roots. |
 | `bundle list` | Show selected root requirements. |
 | `bundle list all` | Show prepared root and transitive wheelhouse packages. |
-| `bundle build` | Build and validate the dependency wheelhouse. |
+| `bundle build` | Force immediate preparation and validation of the dependency wheelhouse. Normal staging and app commands prepare it automatically. |
 | `bundle check` | Validate the existing wheelhouse without downloading packages or building wheels. |
-| `bundle upgrade [TARGET]` | Upgrade selected package roots and rebuild the wheelhouse. |
+| `bundle upgrade [TARGET]` | Upgrade selected package roots and mark the installation bundle for refresh. |
 
 For package and wheelhouse behavior, see
 [Bundle deep-dive](./3-bundle-deep-dive.md).

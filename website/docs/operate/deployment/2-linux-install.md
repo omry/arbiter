@@ -2,16 +2,17 @@
 title: Linux Install
 ---
 
-Install promotes a tested staging directory to a Linux systemd service. Run
-these commands from inside the prepared `reploy-staging` directory.
+Install copies a checked staging directory into place as a Linux systemd
+service. Run these commands from inside the prepared `reploy-staging`
+directory.
 
 ## Preinstall check
 
 Before the privileged install step, check that the directory is ready to
-promote:
+install:
 
 ```bash
-./reploy doctor --preinstall
+reploy doctor --preinstall
 ```
 
 This catches common production-install mistakes before anything is copied into
@@ -20,28 +21,28 @@ the install target.
 Preview the privileged work before applying it:
 
 ```bash
-./reploy install --to /opt/arbiter --dry-run
+reploy install --to /opt/arbiter --dry-run
 ```
 
 ## Install
 
-Promote the prepared directory:
+Install the prepared directory:
 
 ```bash
-sudo ./reploy install --to /opt/arbiter
+sudo reploy install --to /opt/arbiter
 ```
 
 By default, install enables and restarts the systemd service. To install without
 starting the service:
 
 ```bash
-sudo ./reploy install --to /opt/arbiter --no-start
+sudo reploy install --to /opt/arbiter --no-start
 ```
 
 Use `--service` when the unit should have a non-default name:
 
 ```bash
-sudo ./reploy install --to /opt/arbiter --service arbiter-prod
+sudo reploy install --to /opt/arbiter --service arbiter-prod
 ```
 
 Reploy copies the prepared directory as-is. To preserve production credentials
@@ -90,8 +91,7 @@ sudo systemctl restart arbiter.service
   starts
 - reloads and enables systemd
 - restarts the service by default
-- runs `./reploy test` and `./reploy app config check --live` from the installed
-  directory after restart
+- runs health and live config checks from the installed directory after restart
 
 ## Privilege Model
 
