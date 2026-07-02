@@ -6,23 +6,19 @@ import styles from './index.module.css';
 
 const features = [
   {
-    title: 'Discover before acting',
+    title: 'Credentials stay hidden',
     body:
-      'Agents start with capabilities, then drill into operations and account context only when needed.',
+      'Agents can use sensitive service accounts without seeing the underlying credentials.',
   },
   {
-    title: 'Config is the authority',
+    title: 'Policies define access',
     body:
-      'Hydra/OmegaConf composes and validates deployment-owned config before services run.',
+      'Arbiter operators configure precise policies for what agents can do with each account.',
   },
   {
-    title: 'Plugins own services',
-    body: 'Plugins own services and control the policy surface for their service.',
-  },
-  {
-    title: 'Reploy manages deployment',
+    title: 'Capabilities are discoverable',
     body:
-      'Install Reploy, then stage, test, and install Arbiter Docker deployments from one directory.',
+      'Agents get a structured capability API instead of ad hoc service access.',
   },
 ];
 
@@ -55,16 +51,6 @@ function HomepageHeader() {
               className="button button--secondary button--lg"
               to="/docs/">
               Read the docs
-            </Link>
-            <Link
-              className="button button--outline button--secondary button--lg"
-              to="/docs/media/terminal-recordings">
-              Watch terminal flows
-            </Link>
-            <Link
-              className="button button--outline button--secondary button--lg"
-              to="/docs/operate/deployment/">
-              Deploy with Reploy
             </Link>
           </div>
         </div>

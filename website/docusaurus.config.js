@@ -115,23 +115,6 @@ const config = {
         style: 'dark',
         links: [
           {
-            title: 'Docs',
-            items: [
-              {
-                label: 'Quickstart',
-                to: '/docs/get-started/quickstart',
-              },
-              {
-                label: 'Configuration Model',
-                to: '/docs/operate/configuration-model',
-              },
-              {
-                label: 'Plugin authors',
-                to: '/docs/extend/plugins',
-              },
-            ],
-          },
-          {
             title: 'Project',
             items: [
               {
