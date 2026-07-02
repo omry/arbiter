@@ -395,6 +395,81 @@
 
       #voice {
         flex: 0 0 auto;
+        position: relative;
+        width: 1rem;
+        min-height: 1em;
+        background:
+          linear-gradient(currentColor, currentColor) center / 2px 0.64rem
+            no-repeat;
+        color: rgba(139, 233, 253, 0.42);
+        opacity: 0;
+        transition: color 180ms ease;
+      }
+
+      #voice::after,
+      #voice::before {
+        position: absolute;
+        top: 50%;
+        width: 2px;
+        border-radius: 999px;
+        background: currentColor;
+        content: "";
+        opacity: 1;
+        transform: translateY(-50%);
+        transform-origin: 50% 50%;
+        transition: background-color 180ms ease, opacity 180ms ease;
+      }
+
+      #voice::before {
+        left: 0.16rem;
+        height: 0.38rem;
+      }
+
+      #voice::after {
+        right: 0.16rem;
+        height: 0.48rem;
+      }
+
+      #voice[data-state="ready"],
+      #voice[data-state="playing"] {
+        color: var(--cyan);
+        opacity: 1;
+      }
+
+      #voice[data-state="playing"] {
+        animation: voiceover-wave-center 1.2s ease-in-out infinite;
+      }
+
+      #voice[data-state="playing"]::before {
+        animation: voiceover-wave-side 1.2s ease-in-out infinite;
+      }
+
+      #voice[data-state="playing"]::after {
+        animation: voiceover-wave-side 1.2s ease-in-out 180ms infinite;
+      }
+
+      @keyframes voiceover-wave-center {
+        0%,
+        100% {
+          background-size: 2px 0.5rem;
+          opacity: 0.6;
+        }
+        50% {
+          background-size: 2px 0.9rem;
+          opacity: 1;
+        }
+      }
+
+      @keyframes voiceover-wave-side {
+        0%,
+        100% {
+          opacity: 0.45;
+          transform: translateY(-50%) scaleY(0.7);
+        }
+        50% {
+          opacity: 0.9;
+          transform: translateY(-50%) scaleY(1.25);
+        }
       }
 
       .ansi-black { color: #21222c; }
@@ -476,7 +551,7 @@
           <div class="section-tooltip" id="section-tooltip" role="tooltip" hidden></div>
         </div>
         <button class="icon-button" id="mute" type="button" aria-label="Mute" title="Mute" disabled></button>
-        <span id="voice">voiceover loading</span>
+        <span id="voice"></span>
       </div>
     </main>
 
@@ -1312,6 +1387,22 @@
         muteButton.disabled = !audioReady;
       }
 
+      function setVoiceStatus(text, state = '', label = text) {
+        voice.textContent = '';
+        if (label) {
+          voice.setAttribute('aria-label', label);
+          voice.title = label;
+        } else {
+          voice.removeAttribute('aria-label');
+          voice.removeAttribute('title');
+        }
+        if (state) {
+          voice.dataset.state = state;
+        } else {
+          delete voice.dataset.state;
+        }
+      }
+
       function resetGuidePosition() {
         guideCard.style.left = '50%';
         guideCard.style.top = '28%';
@@ -1585,6 +1676,7 @@
         if (audio) {
           audio.pause();
         }
+        setVoiceStatus('', audioReady ? 'ready' : 'unavailable', audioReady ? 'voiceover ready' : 'voiceover unavailable');
         pausedAtGuidedPoint = false;
         hideGuideModal();
         updateProgress();
@@ -1599,7 +1691,10 @@
         if (audio) {
           audio.pause();
         }
-        voice.textContent = audioReady ? 'waiting for continue' : 'voiceover unavailable';
+        setVoiceStatus(
+          audioReady ? 'waiting for continue' : 'voiceover unavailable',
+          audioReady ? 'waiting' : 'unavailable',
+        );
         showGuideModal(point);
         updateProgress();
       }
@@ -1671,7 +1766,11 @@
         pausedAtGuidedPoint = false;
         hideGuideModal();
         renderAt(0);
-        voice.textContent = audioReady ? 'voiceover ready' : 'voiceover unavailable';
+        setVoiceStatus(
+          audioReady ? '' : 'voiceover unavailable',
+          audioReady ? 'ready' : 'unavailable',
+          audioReady ? 'voiceover ready' : 'voiceover unavailable',
+        );
         updateProgress();
       }
 
@@ -1682,6 +1781,7 @@
         if (audio) {
           audio.pause();
         }
+        setVoiceStatus('', audioReady ? 'ready' : 'unavailable', audioReady ? 'voiceover ready' : 'voiceover unavailable');
         pausedAtGuidedPoint = false;
         hideGuideModal();
         renderAt(seconds);
@@ -1705,6 +1805,7 @@
         }
         if (!playing || pausedAtGuidedPoint) {
           audio.pause();
+          setVoiceStatus('', audioReady ? 'ready' : 'unavailable', audioReady ? 'voiceover ready' : 'voiceover unavailable');
           return;
         }
         if (playing) {
@@ -1731,9 +1832,20 @@
             .then(() => {
               if (!playing || pausedAtGuidedPoint) {
                 audio.pause();
+                setVoiceStatus('', audioReady ? 'ready' : 'unavailable', audioReady ? 'voiceover ready' : 'voiceover unavailable');
                 return;
               }
-              voice.textContent = 'voiceover playing';
+              if (audioPlaybackSegments.length && !audioSegmentForPresentation(currentSeconds)) {
+                audio.pause();
+                const next = nextAudioSegmentAfter(currentSeconds);
+                setVoiceStatus(
+                  '',
+                  next ? 'waiting' : 'ready',
+                  next ? 'voiceover waiting' : 'voiceover ready',
+                );
+                return;
+              }
+              setVoiceStatus('', 'playing', 'voiceover playing');
               if (segment) {
                 audioTimer = setTimeout(
                   startAudio,
@@ -1742,7 +1854,7 @@
               }
             })
             .catch(() => {
-              voice.textContent = 'voiceover unavailable';
+              setVoiceStatus('voiceover unavailable', 'unavailable');
             });
           return;
         }
@@ -1751,13 +1863,13 @@
         audio.currentTime = audioTimeForPresentation(currentSeconds);
         const next = nextAudioSegmentAfter(currentSeconds);
         if (next && playing) {
-          voice.textContent = 'voiceover waiting';
+          setVoiceStatus('voiceover waiting', 'waiting');
           audioTimer = setTimeout(
             startAudio,
             Math.max(0, (next.presentationStart - currentSeconds) * 1000),
           );
         } else {
-          voice.textContent = 'voiceover ready';
+          setVoiceStatus('', 'ready', 'voiceover ready');
         }
       }
 
@@ -2069,6 +2181,7 @@
         if (audio) {
           audio.pause();
         }
+        setVoiceStatus('', audioReady ? 'ready' : 'unavailable', audioReady ? 'voiceover ready' : 'voiceover unavailable');
         pausedAtGuidedPoint = false;
         hideGuideModal();
         updateProgress();
@@ -2128,7 +2241,7 @@
 
       async function loadAudio() {
         if (!audioUrl) {
-          voice.textContent = 'voiceover unavailable';
+          setVoiceStatus('voiceover unavailable', 'unavailable');
           updateMuteButton();
           return;
         }
@@ -2142,14 +2255,14 @@
         await new Promise((resolve) => {
           audio.addEventListener('loadedmetadata', () => {
             audioReady = true;
-            voice.textContent = 'voiceover ready';
+            setVoiceStatus('', 'ready', 'voiceover ready');
             updateMuteButton();
             updateTotalSeconds();
             resolve();
           }, {once: true});
           audio.addEventListener('error', () => {
             audioReady = false;
-            voice.textContent = 'voiceover unavailable';
+            setVoiceStatus('voiceover unavailable', 'unavailable');
             updateMuteButton();
             updateTotalSeconds();
             resolve();
@@ -2231,7 +2344,7 @@
           nextSectionButton.disabled = true;
           guidedButton.disabled = true;
           muteButton.disabled = true;
-          voice.textContent = 'recording unavailable';
+          setVoiceStatus('recording unavailable', 'unavailable');
         });
     </script>
   </body>

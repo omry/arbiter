@@ -690,6 +690,96 @@ if (currentSeconds !== 50 || prevented !== 2) {
     assert result.returncode == 0, result.stderr
 
 
+def test_cast_player_voiceover_playing_keeps_ready_label() -> None:
+    result = run_cast_player_script(
+        r"""
+vm.runInContext(`
+audioReady = true;
+playing = true;
+pausedAtGuidedPoint = false;
+currentSeconds = 2;
+startedAt = -2000;
+audioPlaybackSegments = [
+  {
+    presentationStart: 0,
+    presentationEnd: 10,
+    audioStart: 0,
+    audioEnd: 10,
+  },
+];
+audio = {
+  currentTime: 0,
+  duration: 10,
+  muted: false,
+  pause() {},
+  play() { return Promise.resolve(); },
+};
+startAudio();
+`, context);
+
+Promise.resolve().then(() => {
+  const voice = element('voice');
+  if (voice.textContent !== '' || voice.dataset.state !== 'playing' || voice.title !== 'voiceover playing') {
+    console.error(JSON.stringify({
+      textContent: voice.textContent,
+      state: voice.dataset.state,
+      title: voice.title,
+    }));
+    process.exit(1);
+  }
+});
+""",
+        search="?cast=/casts/demo.cast&audio=/audio/demo.mp3&title=Demo",
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_cast_player_voiceover_waiting_does_not_show_playing_state() -> None:
+    result = run_cast_player_script(
+        r"""
+vm.runInContext(`
+audioReady = true;
+playing = true;
+pausedAtGuidedPoint = false;
+currentSeconds = 2;
+startedAt = -2000;
+audioPlaybackSegments = [
+  {
+    presentationStart: 5,
+    presentationEnd: 10,
+    audioStart: 0,
+    audioEnd: 5,
+  },
+];
+audio = {
+  currentTime: 0,
+  duration: 10,
+  muted: false,
+  pause() {},
+  play() { return Promise.resolve(); },
+};
+startAudio();
+`, context);
+
+Promise.resolve().then(() => {
+  const voice = element('voice');
+  if (voice.textContent !== '' || voice.dataset.state !== 'waiting' || voice.title !== 'voiceover waiting') {
+    console.error(JSON.stringify({
+      textContent: voice.textContent,
+      state: voice.dataset.state,
+      title: voice.title,
+    }));
+    process.exit(1);
+  }
+});
+""",
+        search="?cast=/casts/demo.cast&audio=/audio/demo.mp3&title=Demo",
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_cast_player_arrow_keys_snap_to_hidden_stage_markers() -> None:
     result = run_cast_player_script(
         r"""
