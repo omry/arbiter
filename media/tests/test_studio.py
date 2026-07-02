@@ -1380,12 +1380,13 @@ def test_publish_plain_html_replaces_holder(tmp_path: Path, monkeypatch: Any) ->
 
     output = page.read_text(encoding="utf-8")
     assert "old iframe" not in output
-    assert '<iframe title="Demo Build"' in output
-    assert "cast=%2Fcasts%2Fdemo.retimed.cast" in output
-    assert "audio=%2Faudio%2Fcasts%2Fdemo.mp3" in output
-    assert "audioMeta=%2Faudio%2Fcasts%2Fdemo.json" in output
-    assert "intro=Intro+text+from+narration." in output
-    assert "introSegment=overview" in output
+    assert '<script src="/cast-player-embed.js"></script>' in output
+    assert '<cast-player-embed title="Demo Build"' in output
+    assert 'src="/casts/demo.retimed.cast"' in output
+    assert 'audio="/audio/casts/demo.mp3"' in output
+    assert 'audio-meta="/audio/casts/demo.json"' in output
+    assert 'intro="Intro text from narration."' in output
+    assert 'intro-segment="overview"' in output
 
 
 def test_check_runs_non_artifact_checks(monkeypatch: Any) -> None:

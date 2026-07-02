@@ -1162,28 +1162,32 @@ def ensure_mdx_component_import(
     return import_line + "\n\n" + text
 
 
-def render_html_iframe(spec: dict[str, Any], surface: dict[str, Any]) -> str:
+def render_html_embed(spec: dict[str, Any], surface: dict[str, Any]) -> str:
     params = player_params(spec, surface, artifact_paths(spec))
-    iframe_params = {
-        "cast": params["src"],
+    attributes = {
         "title": params["title"],
+        "src": params["src"],
         "audio": params["audio"],
-        "audioMeta": params["audioMeta"],
+        "audio-meta": params["audioMeta"],
+        "player": "/cast-player.html",
     }
-    for key in ["intro", "introSegment"]:
-        if key in params:
-            iframe_params[key] = params[key]
-    src = "/cast-player.html?" + urlencode(iframe_params)
-    title = html.escape(params["title"], quote=True)
+    if "intro" in params:
+        attributes["intro"] = params["intro"]
+    if "introSegment" in params:
+        attributes["intro-segment"] = params["introSegment"]
+    rendered_attributes = " ".join(
+        f'{key}="{html.escape(value, quote=True)}"'
+        for key, value in attributes.items()
+    )
     return (
-        f'<iframe title="{title}" src="{html.escape(src, quote=True)}" '
-        'loading="lazy" allow="autoplay" allowfullscreen></iframe>'
+        '<script src="/cast-player-embed.js"></script>\n'
+        f"<cast-player-embed {rendered_attributes}></cast-player-embed>"
     )
 
 
 def render_standalone_html(spec: dict[str, Any], surface: dict[str, Any]) -> str:
     title = optional_string(spec.get("title")) or str(spec["_recording_id"])
-    iframe = render_html_iframe(spec, surface)
+    embed = render_html_embed(spec, surface)
     return (
         "<!doctype html>\n"
         '<html lang="en">\n'
@@ -1197,7 +1201,7 @@ def render_standalone_html(spec: dict[str, Any], surface: dict[str, Any]) -> str
         "    </style>\n"
         "  </head>\n"
         "  <body>\n"
-        f"    {iframe}\n"
+        f"    {embed}\n"
         "  </body>\n"
         "</html>\n"
     )
@@ -1296,7 +1300,7 @@ def publish_surface(
         if not placeholder:
             raise StudioError("plain_html surfaces require a placeholder")
         original = path.read_text(encoding="utf-8")
-        rendered = render_html_iframe(spec, surface)
+        rendered = render_html_embed(spec, surface)
         updated = replace_placeholder(original, placeholder, rendered)
         if updated == original:
             return None
