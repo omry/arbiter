@@ -12,7 +12,6 @@ import signal
 import stat
 import subprocess
 import sys
-import threading
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -34,6 +33,21 @@ from studio_config import (
     load_recording_spec,
     load_recording_spec_from_hydra_cfg,
 )
+from terminal_style import (
+    ANSI_CYAN_BOLD,
+    ANSI_GREEN_BOLD,
+    ANSI_RED_BOLD,
+    ANSI_BLUE_BOLD,
+    ANSI_YELLOW_BOLD,
+    color_text,
+    color_enabled as terminal_color_enabled,
+    formatted_status,
+)
+from tool_progress import (
+    ProgressBarRenderer,
+    ProgressPipeReporter,
+    PROGRESS_PIPE_ENV,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -54,6 +68,28 @@ class RecordingInterrupted(RuntimeError):
     pass
 
 
+class RecordingSuspendGuard:
+    def __init__(self) -> None:
+        self.signal_number = getattr(signal, "SIGTSTP", None)
+        self.previous_handler: Any = None
+        self.enabled = False
+
+    def __enter__(self) -> None:
+        if self.signal_number is None:
+            return
+        try:
+            self.previous_handler = signal.getsignal(self.signal_number)
+            signal.signal(self.signal_number, signal.SIG_IGN)
+        except (OSError, RuntimeError, ValueError):
+            return
+        self.enabled = True
+
+    def __exit__(self, _exc_type: Any, _exc: Any, _tb: Any) -> None:
+        if not self.enabled or self.signal_number is None:
+            return
+        signal.signal(self.signal_number, self.previous_handler)
+
+
 INTERRUPT_RETURNCODES = {
     128 + signal.SIGINT,
     128 + signal.SIGTERM,
@@ -61,28 +97,43 @@ INTERRUPT_RETURNCODES = {
     -signal.SIGTERM,
 }
 
-ANSI_RESET = "\033[0m"
-ANSI_RED_BOLD = "\033[31;1m"
-ANSI_GREEN_BOLD = "\033[32;1m"
-ANSI_YELLOW_BOLD = "\033[33;1m"
-ANSI_CYAN_BOLD = "\033[36;1m"
 HIDDEN_INTERVAL_JITTER_TOLERANCE_SECONDS = 0.25
 
 
 def host_color_enabled(stream: Any = sys.stderr) -> bool:
-    if os.environ.get("NO_COLOR") is not None:
-        return False
-    color = os.environ.get("FORCE_COLOR") or os.environ.get("ARBITER_CINEMA_COLOR")
-    if color and color.lower() not in {"0", "false", "no", "never"}:
-        return True
-    isatty = getattr(stream, "isatty", None)
-    return bool(isatty and isatty())
+    return terminal_color_enabled(stream)
 
 
-def color_text(text: str, color: str, *, enabled: bool) -> str:
-    if not enabled:
-        return text
-    return f"{color}{text}{ANSI_RESET}"
+def status_line(
+    status: str,
+    message: str,
+    *,
+    color: str,
+    enabled: bool,
+) -> str:
+    return formatted_status(status, message, color=color, enabled=enabled)
+
+
+def progress_status_line(message: str, *, color: bool) -> str:
+    if message.startswith("setup: "):
+        return status_line("step", message, color=ANSI_CYAN_BOLD, enabled=color)
+    if message.startswith("stage "):
+        return status_line("step", message, color=ANSI_CYAN_BOLD, enabled=color)
+    if message.startswith("running: "):
+        return status_line(
+            "cmd",
+            message.removeprefix("running: "),
+            color=ANSI_GREEN_BOLD,
+            enabled=color,
+        )
+    if message.startswith("check: "):
+        return status_line(
+            "check",
+            message.removeprefix("check: "),
+            color=ANSI_BLUE_BOLD,
+            enabled=color,
+        )
+    return status_line("info", message, color=ANSI_CYAN_BOLD, enabled=color)
 
 
 def load_manifest(
@@ -123,11 +174,26 @@ def shell_quote(value: object) -> str:
     return shlex.quote(str(value))
 
 
+def optional_non_negative_number(value: object, *, field: str) -> float | None:
+    if value is None:
+        return None
+    if not isinstance(value, (int, float)) or value < 0:
+        raise RecordingError(f"{field} must be a non-negative number")
+    return float(value)
+
+
 def relative_path(path: str) -> Path:
     candidate = Path(path)
     if candidate.is_absolute():
         return candidate
     return REPO_ROOT / candidate
+
+
+def display_path(path: Path) -> str:
+    try:
+        return str(path.relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
 
 
 def step_command_text(step: dict[str, Any], index: int, *, field: str) -> str:
@@ -157,6 +223,154 @@ def step_command_text(step: dict[str, Any], index: int, *, field: str) -> str:
     if not command.strip():
         raise RecordingError(f"{field}.{index}.run_file is empty: {path}")
     return command
+
+
+def command_output_config(
+    command: dict[str, Any],
+    *,
+    field: str,
+) -> dict[str, str]:
+    raw_output = command.get("output")
+    if raw_output is None:
+        mode = "real"
+        text = None
+    elif isinstance(raw_output, str):
+        if raw_output not in {"real", "suppress", "fake"}:
+            raise RecordingError(
+                f"{field}.output must be one of: real, suppress, fake"
+            )
+        mode = raw_output
+        text = None
+    elif isinstance(raw_output, dict):
+        mode_value = raw_output.get("mode", "real")
+        if not isinstance(mode_value, str) or mode_value not in {
+            "real",
+            "suppress",
+            "fake",
+        }:
+            raise RecordingError(
+                f"{field}.output.mode must be one of: real, suppress, fake"
+            )
+        mode = mode_value
+        text = raw_output.get("text")
+    else:
+        raise RecordingError(f"{field}.output must be a string or mapping")
+    if mode == "fake":
+        if not isinstance(text, str):
+            raise RecordingError(f"{field}.output.text must be a string for fake output")
+    elif text is not None and not isinstance(text, str):
+        raise RecordingError(f"{field}.output.text must be a string")
+    return {"mode": mode, "text": text or ""}
+
+
+def command_retime_mode(command: dict[str, Any], *, field: str) -> str:
+    raw_retime = command.get("retime", "normal")
+    if not isinstance(raw_retime, str) or raw_retime not in {"normal", "realtime"}:
+        raise RecordingError(f"{field}.retime must be one of: normal, realtime")
+    return raw_retime
+
+
+def action_command_entries(
+    action: dict[str, Any],
+    index: int,
+    *,
+    field: str,
+) -> list[dict[str, Any]] | None:
+    raw_commands = action.get("commands")
+    if raw_commands is None:
+        return None
+    if "run" in action or "run_file" in action or "display" in action:
+        raise RecordingError(
+            f"{field}.{index} must use commands or run/run_file/display, not both"
+        )
+    commands = as_list(raw_commands, field=f"{field}.{index}.commands")
+    if not commands:
+        raise RecordingError(f"{field}.{index}.commands must not be empty")
+    entries: list[dict[str, Any]] = []
+    for command_index, raw_command in enumerate(commands, start=1):
+        if not isinstance(raw_command, dict):
+            raise RecordingError(
+                f"{field}.{index}.commands.{command_index} must be a mapping"
+            )
+        command_id = raw_command.get("id", "")
+        if command_id is None:
+            command_id = ""
+        if not isinstance(command_id, str):
+            raise RecordingError(
+                f"{field}.{index}.commands.{command_index}.id must be a string"
+            )
+        if command_id and not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", command_id):
+            raise RecordingError(
+                f"{field}.{index}.commands.{command_index}.id must be identifier-like"
+            )
+        run = require_string(raw_command, "run")
+        display = raw_command.get("display", run)
+        if not isinstance(display, str) or not display:
+            raise RecordingError(
+                f"{field}.{index}.commands.{command_index}.display must be a non-empty string"
+            )
+        after = raw_command.get("after", "")
+        if after is None:
+            after = ""
+        if not isinstance(after, str):
+            raise RecordingError(
+                f"{field}.{index}.commands.{command_index}.after must be a string"
+            )
+        if after and not re.fullmatch(r"@[A-Za-z][A-Za-z0-9_-]*@", after):
+            raise RecordingError(
+                f"{field}.{index}.commands.{command_index}.after must use @anchor@ syntax"
+            )
+        follow_along = raw_command.get("follow_along", False)
+        if not isinstance(follow_along, bool):
+            raise RecordingError(
+                f"{field}.{index}.commands.{command_index}.follow_along must be a boolean"
+            )
+        show_prompt_after = raw_command.get("show_prompt_after", True)
+        if not isinstance(show_prompt_after, bool):
+            raise RecordingError(
+                f"{field}.{index}.commands.{command_index}.show_prompt_after must be a boolean"
+            )
+        output = command_output_config(
+            raw_command,
+            field=f"{field}.{index}.commands.{command_index}",
+        )
+        retime = command_retime_mode(
+            raw_command,
+            field=f"{field}.{index}.commands.{command_index}",
+        )
+        post_enter_pause = optional_non_negative_number(
+            raw_command.get("post_enter_pause"),
+            field=f"{field}.{index}.commands.{command_index}.post_enter_pause",
+        )
+        post_command_pause = optional_non_negative_number(
+            raw_command.get("post_command_pause"),
+            field=f"{field}.{index}.commands.{command_index}.post_command_pause",
+        )
+        pre_command_pause = optional_non_negative_number(
+            raw_command.get("pre_command_pause"),
+            field=f"{field}.{index}.commands.{command_index}.pre_command_pause",
+        )
+        pre_enter_pause = optional_non_negative_number(
+            raw_command.get("pre_enter_pause"),
+            field=f"{field}.{index}.commands.{command_index}.pre_enter_pause",
+        )
+        entries.append(
+            {
+                "id": command_id,
+                "run": run,
+                "display": display,
+                "after": after,
+                "follow_along": follow_along,
+                "show_prompt_after": show_prompt_after,
+                "output": output,
+                "retime": retime,
+                "pre_command_pause": pre_command_pause,
+                "pre_enter_pause": pre_enter_pause,
+                "post_enter_pause": post_enter_pause,
+                "post_command_pause": post_command_pause,
+            }
+        )
+    return entries
 
 
 def setup_command_text(step: dict[str, Any], index: int) -> str:
@@ -286,7 +500,13 @@ def validate_manifest(spec: dict[str, Any]) -> None:
         for index, action in enumerate(actions, start=1):
             if not isinstance(action, dict):
                 raise RecordingError(f"beat {beat['id']} action must be a mapping")
-            step_command_text(action, index, field=f"beats.{beat['id']}.actions")
+            entries = action_command_entries(
+                action,
+                index,
+                field=f"beats.{beat['id']}.actions",
+            )
+            if entries is None:
+                step_command_text(action, index, field=f"beats.{beat['id']}.actions")
         checks = as_list(beat.get("checks"), field=f"beats.{beat['id']}.checks")
         for index, check in enumerate(checks, start=1):
             if not isinstance(check, dict):
@@ -535,6 +755,11 @@ def progress_message_for_event(
         label = event.get("progress")
         if isinstance(label, str) and label:
             return f"running: {label}"
+        display = event.get("display")
+        if isinstance(display, str) and display:
+            first_line = display.strip().splitlines()[0] if display.strip() else ""
+            if first_line:
+                return f"running: {first_line}"
         command = event.get("command")
         if not isinstance(command, str) or not command:
             return None
@@ -548,63 +773,64 @@ def progress_message_for_event(
     return None
 
 
-class TimelineProgressReporter:
-    def __init__(self, path: Path, spec: dict[str, Any], *, enabled: bool) -> None:
-        self.path = path
-        self.enabled = enabled
+class ProgressEventPrinter:
+    def __init__(self, spec: dict[str, Any], *, color: bool) -> None:
+        self.color = color
         self.beat_indexes, self.beat_count = beat_progress_index(spec)
-        self._line_count = 0
-        self._seen: set[str] = set()
-        self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
 
-    def start(self) -> None:
-        if not self.enabled:
+    def emit(self, event: dict[str, Any]) -> None:
+        message = progress_message_for_event(
+            event,
+            beat_indexes=self.beat_indexes,
+            beat_count=self.beat_count,
+        )
+        if message is None:
             return
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
+        print(
+            progress_status_line(message, color=self.color),
+            file=sys.stderr,
+            flush=True,
+        )
 
-    def stop(self) -> None:
-        if self._thread is None:
+
+class RecordProgressBar:
+    def __init__(self, spec: dict[str, Any], *, color: bool) -> None:
+        self.beat_indexes, self.beat_count = beat_progress_index(spec)
+        self.renderer = ProgressBarRenderer(stream=sys.stderr, enabled=color)
+        self.current = 0
+
+    def emit(self, event: dict[str, Any]) -> None:
+        message = progress_message_for_event(
+            event,
+            beat_indexes=self.beat_indexes,
+            beat_count=self.beat_count,
+        )
+        if message is None:
             return
-        self._stop.set()
-        self._thread.join(timeout=1.0)
-        self._emit_new_events()
+        status = "step"
+        phase = event.get("phase")
+        beat = event.get("beat")
+        if phase == "caption_start" and isinstance(beat, str):
+            self.current = self.beat_indexes.get(beat, self.current)
+            message = message.removeprefix(f"stage {self.current}/{self.beat_count}: ")
+        elif phase == "command_run_start":
+            status = "cmd"
+            message = message.removeprefix("running: ")
+        elif phase == "check_start" and beat != "__setup__":
+            status = "check"
+            message = message.removeprefix("check: ")
+        self.renderer.emit(
+            {
+                "current": self.current,
+                "message": message,
+                "phase": "status",
+                "status": status,
+                "total": self.beat_count,
+            }
+        )
 
-    def _run(self) -> None:
-        while not self._stop.wait(0.25):
-            self._emit_new_events()
-
-    def _emit_new_events(self) -> None:
-        try:
-            lines = self.path.read_text(encoding="utf-8").splitlines()
-        except OSError:
-            return
-        if self._line_count > len(lines):
-            self._line_count = 0
-            self._seen.clear()
-        parsed = 0
-        for line in lines[self._line_count :]:
-            if not line:
-                parsed += 1
-                continue
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                break
-            parsed += 1
-            if not isinstance(event, dict):
-                continue
-            message = progress_message_for_event(
-                event,
-                beat_indexes=self.beat_indexes,
-                beat_count=self.beat_count,
-            )
-            if message is None or message in self._seen:
-                continue
-            self._seen.add(message)
-            print(f"::: {message}", file=sys.stderr, flush=True)
-        self._line_count += parsed
+    def finish(self) -> None:
+        self.renderer.finish()
 
 
 def read_timeline_events(path: Path) -> list[dict[str, Any]]:
@@ -1145,14 +1371,12 @@ def render_session_script(spec: dict[str, Any]) -> str:
             f"recording_typing_newline_delay={shell_quote(typing_newline_delay)}",
             f"recording_typing_seed={shell_quote(typing_seed)}",
             'if [[ "$recording_color" == 1 ]]; then',
-            "  export ARBITER_COLOR=always",
             "  export CLICOLOR_FORCE=1",
             "  export FORCE_COLOR=1",
             "  export PY_COLORS=1",
             "  export TERM=xterm-256color",
             "  unset NO_COLOR",
             "else",
-            "  export ARBITER_COLOR=never",
             "  export NO_COLOR=1",
             "fi",
             "export recording_typing_min_delay",
@@ -1162,6 +1386,7 @@ def render_session_script(spec: dict[str, Any]) -> str:
             "export recording_typing_newline_delay",
             "export recording_typing_seed",
             'recording_timeline_path="${ARBITER_CINEMA_TIMELINE:-}"',
+            f'recording_progress_pipe_path="${{{PROGRESS_PIPE_ENV}:-}}"',
             'recording_failure_path="${ARBITER_CINEMA_FAILURE:-}"',
             'recording_start_epoch="$("$recording_python" - <<\'PY\'',
             "import time",
@@ -1453,16 +1678,17 @@ def render_session_script(spec: dict[str, Any]) -> str:
             '  local check_id="$3"',
             '  local check_name="$4"',
             "  shift 4",
-            '  [[ -z "$recording_timeline_path" ]] && return',
-            '  "$recording_python" - "$recording_timeline_path" "$recording_start_epoch" "$phase" "$beat_id" "$check_id" "$check_name" "$@" <<\'PY\'',
+            '  [[ -z "$recording_timeline_path" && -z "$recording_progress_pipe_path" ]] && return',
+            '  "$recording_python" - "$recording_timeline_path" "$recording_progress_pipe_path" "$recording_start_epoch" "$phase" "$beat_id" "$check_id" "$check_name" "$@" <<\'PY\'',
             "import json",
+            "import os",
             "import re",
             "import sys",
             "import time",
             "",
-            "path, start, phase, beat_id, check_id, check_name, *pairs = sys.argv[1:]",
+            "timeline_path, progress_pipe_path, start, phase, beat_id, check_id, check_name, *pairs = sys.argv[1:]",
             "event = {",
-            "    'time': time.time() - float(start),",
+            "    'time': round(time.time() - float(start), 3),",
             "    'phase': phase,",
             "}",
             "if beat_id:",
@@ -1483,8 +1709,20 @@ def render_session_script(spec: dict[str, Any]) -> str:
             "            event[key] = value",
             "    else:",
             "        event[key] = value",
-            "with open(path, 'a', encoding='utf-8') as handle:",
-            "    handle.write(json.dumps(event, sort_keys=True) + '\\n')",
+            "line = json.dumps(event, sort_keys=True) + '\\n'",
+            "if timeline_path:",
+            "    with open(timeline_path, 'a', encoding='utf-8') as handle:",
+            "        handle.write(line)",
+            "if progress_pipe_path:",
+            "    try:",
+            "        fd = os.open(progress_pipe_path, os.O_WRONLY | os.O_NONBLOCK)",
+            "    except OSError:",
+            "        pass",
+            "    else:",
+            "        try:",
+            "            os.write(fd, line.encode('utf-8'))",
+            "        finally:",
+            "            os.close(fd)",
             "PY",
             "}",
             "",
@@ -1655,21 +1893,67 @@ def render_session_script(spec: dict[str, Any]) -> str:
             "  )",
             "}",
             "",
+            "command_json_count() {",
+            '  local commands_json="$1"',
+            '  "$recording_python" - "$commands_json" <<\'PY\'',
+            "import json",
+            "import sys",
+            "",
+            "print(len(json.loads(sys.argv[1])))",
+            "PY",
+            "}",
+            "",
+            "command_json_field() {",
+            '  local commands_json="$1"',
+            '  local command_index="$2"',
+            '  local field="$3"',
+            '  "$recording_python" - "$commands_json" "$command_index" "$field" <<\'PY\'',
+            "import json",
+            "import sys",
+            "",
+            "commands = json.loads(sys.argv[1])",
+            "index = int(sys.argv[2])",
+            "field = sys.argv[3]",
+            "value = commands[index]",
+            "for part in field.split('.'):",
+            "    value = value.get(part, '') if isinstance(value, dict) else ''",
+            "if isinstance(value, bool):",
+            "    print('true' if value else 'false')",
+            "elif value is None:",
+            "    print('')",
+            "else:",
+            "    print(str(value), end='')",
+            "PY",
+            "}",
+            "",
             "run_visible_command_chunk() {",
             '  local action_id="$1"',
             '  local marker="$2"',
             '  local command_chunk="$3"',
             '  local chunk_id="$4"',
+            '  local output_mode="${5:-real}"',
+            '  local fake_output="${6:-}"',
+            '  local retime="${7:-normal}"',
+            "  if [[ \"$output_mode\" == suppress || \"$output_mode\" == fake ]]; then",
+            '    eval "$command_chunk" >>"$recording_stdout_path" 2>>"$recording_stderr_path" </dev/null',
+            "    local status=$?",
+            '    if [[ "$output_mode" == fake && -n "$fake_output" ]]; then',
+            '      printf "%s" "$fake_output"',
+            '      [[ "$fake_output" == *$\'\\n\' ]] || printf "\\n"',
+            "    fi",
+            '    return "$status"',
+            "  fi",
             '  local stdout_pipe="$recording_tmp/${action_id}.${chunk_id}.stdout.pipe"',
             '  local stderr_pipe="$recording_tmp/${action_id}.${chunk_id}.stderr.pipe"',
             '  rm -f "$stdout_pipe" "$stderr_pipe"',
             '  mkfifo "$stdout_pipe" "$stderr_pipe"',
-            '  "$recording_python" - "$stdout_pipe" "$stderr_pipe" "$recording_stdout_path" "$recording_stderr_path" <<\'PY\' &',
+            '  "$recording_python" - "$stdout_pipe" "$stderr_pipe" "$recording_stdout_path" "$recording_stderr_path" "$retime" <<\'PY\' &',
+            "import os",
             "import re",
             "import sys",
             "import threading",
             "",
-            "stdout_pipe, stderr_pipe, stdout_path, stderr_path = sys.argv[1:]",
+            "stdout_pipe, stderr_pipe, stdout_path, stderr_path, retime = sys.argv[1:]",
             "skip_patterns = (",
             "    re.compile(rb'^Installing collected packages:'),",
             "    re.compile(rb'^Successfully installed '),",
@@ -1679,7 +1963,21 @@ def render_session_script(spec: dict[str, Any]) -> str:
             "    clean = re.sub(rb'\\x1b\\[[0-9;]*m', b'', line)",
             "    return not any(pattern.match(clean) for pattern in skip_patterns)",
             "",
-            "def pump(pipe_path, log_path, display):",
+            "def pump_stream(pipe_path, log_path, display):",
+            "    fd = os.open(pipe_path, os.O_RDONLY)",
+            "    try:",
+            "        with open(log_path, 'ab', buffering=0) as output:",
+            "            while True:",
+            "                chunk = os.read(fd, 4096)",
+            "                if not chunk:",
+            "                    break",
+            "                output.write(chunk)",
+            "                display.buffer.write(chunk)",
+            "                display.buffer.flush()",
+            "    finally:",
+            "        os.close(fd)",
+            "",
+            "def pump_lines(pipe_path, log_path, display):",
             "    with open(pipe_path, 'rb') as pipe, open(log_path, 'ab') as output:",
             "        for line in iter(pipe.readline, b''):",
             "            output.write(line)",
@@ -1688,6 +1986,7 @@ def render_session_script(spec: dict[str, Any]) -> str:
             "                display.buffer.write(line)",
             "                display.buffer.flush()",
             "",
+            "pump = pump_stream if retime == 'realtime' else pump_lines",
             "threads = [",
             "    threading.Thread(target=pump, args=(stdout_pipe, stdout_path, sys.stdout)),",
             "    threading.Thread(target=pump, args=(stderr_pipe, stderr_path, sys.stderr)),",
@@ -1813,7 +2112,8 @@ def render_session_script(spec: dict[str, Any]) -> str:
             '  local display_command="$3"',
             '  local command="$4"',
             '  local progress_json="$5"',
-            "  shift 5",
+            '  local after_anchor="$6"',
+            "  shift 6",
             '  local marker="::: action ${action_id}"',
             '  printf "%s start beat=%s\\n" "$marker" "$beat_id" >>"$recording_progress_path"',
             "  local stdout_start",
@@ -1832,23 +2132,21 @@ def render_session_script(spec: dict[str, Any]) -> str:
             "  if [[ ${#display_chunks[@]} -gt 0 && ${#display_chunks[@]} -eq ${#command_chunks[@]} ]]; then",
             "    local index",
             '    for index in "${!command_chunks[@]}"; do',
-            '      timeline_event command_prompt_start "$beat_id" "" "" action_id "$action_id" chunk_index "$index" command "${display_chunks[$index]}"',
-            '      print_command "${display_chunks[$index]}"',
-            '      timeline_event command_prompt_end "$beat_id" "" "" action_id "$action_id" chunk_index "$index" command "${display_chunks[$index]}"',
-            '      timeline_event command_run_start "$beat_id" "" "" action_id "$action_id" chunk_index "$index" command "${command_chunks[$index]}" progress "${progress_labels[$index]:-}"',
+            '      timeline_event command_prompt_start "$beat_id" "" "" action_id "$action_id" chunk_index "$index" command "${display_chunks[$index]}" prompt "$(recording_prompt_text)" color "$recording_color" after "$after_anchor"',
+            '      timeline_event command_prompt_end "$beat_id" "" "" action_id "$action_id" chunk_index "$index" command "${display_chunks[$index]}" prompt "$(recording_prompt_text)" color "$recording_color" after "$after_anchor"',
+            '      timeline_event command_run_start "$beat_id" "" "" action_id "$action_id" chunk_index "$index" command "${command_chunks[$index]}" display "${display_chunks[$index]}" progress "${progress_labels[$index]:-}" after "$after_anchor"',
             '      run_visible_command_chunk "$action_id" "$marker" "${command_chunks[$index]}" "$index"',
             "      status=$?",
-            '      timeline_event command_run_end "$beat_id" "" "" action_id "$action_id" chunk_index "$index" status "$status"',
+            '      timeline_event command_run_end "$beat_id" "" "" action_id "$action_id" chunk_index "$index" status "$status" after "$after_anchor"',
             '      [[ "$status" -eq 0 ]] || break',
             "    done",
             "  else",
-            '    timeline_event command_prompt_start "$beat_id" "" "" action_id "$action_id" chunk_index fallback command "$display_command"',
-            '    print_command "$display_command"',
-            '    timeline_event command_prompt_end "$beat_id" "" "" action_id "$action_id" chunk_index fallback command "$display_command"',
-            '    timeline_event command_run_start "$beat_id" "" "" action_id "$action_id" chunk_index fallback command "$command" progress "${progress_labels[0]:-}"',
+            '    timeline_event command_prompt_start "$beat_id" "" "" action_id "$action_id" chunk_index fallback command "$display_command" prompt "$(recording_prompt_text)" color "$recording_color" after "$after_anchor"',
+            '    timeline_event command_prompt_end "$beat_id" "" "" action_id "$action_id" chunk_index fallback command "$display_command" prompt "$(recording_prompt_text)" color "$recording_color" after "$after_anchor"',
+            '    timeline_event command_run_start "$beat_id" "" "" action_id "$action_id" chunk_index fallback command "$command" display "$display_command" progress "${progress_labels[0]:-}" after "$after_anchor"',
             '    run_visible_command_chunk "$action_id" "$marker" "$command" fallback',
             "    status=$?",
-            '    timeline_event command_run_end "$beat_id" "" "" action_id "$action_id" chunk_index fallback status "$status"',
+            '    timeline_event command_run_end "$beat_id" "" "" action_id "$action_id" chunk_index fallback status "$status" after "$after_anchor"',
             "  fi",
             "  set -e",
             "  local expected_exit=0",
@@ -1884,7 +2182,100 @@ def render_session_script(spec: dict[str, Any]) -> str:
             "        ;;",
             "    esac",
             "  done",
-            "  print_idle_prompt",
+            '  printf "%s end status=%s\\n" "$marker" "$status" >>"$recording_progress_path"',
+            '  timeline_event action_end "$beat_id" "" "" action_id "$action_id" status "$status"',
+            "  printf '\\n'",
+            "}",
+            "",
+            "run_action_commands() {",
+            '  local beat_id="$1"',
+            '  local action_id="$2"',
+            '  local commands_json="$3"',
+            '  local progress_json="$4"',
+            "  shift 4",
+            '  local marker="::: action ${action_id}"',
+            '  printf "%s start beat=%s\\n" "$marker" "$beat_id" >>"$recording_progress_path"',
+            "  local stdout_start",
+            "  local stderr_start",
+            '  stdout_start="$(wc -c <"$recording_stdout_path")"',
+            '  stderr_start="$(wc -c <"$recording_stderr_path")"',
+            "  local progress_labels=()",
+            '  load_progress_labels "$progress_json" progress_labels',
+            '  timeline_event action_start "$beat_id" "" "" action_id "$action_id"',
+            "  set +e",
+            "  local status=0",
+            "  local command_count",
+            '  command_count="$(command_json_count "$commands_json")"',
+            "  local index",
+            "  for ((index = 0; index < command_count; index += 1)); do",
+            "    local display_command",
+            "    local command",
+            "    local follow_along",
+            "    local show_prompt_after",
+            "    local after_anchor",
+            "    local command_id",
+            "    local output_mode",
+            "    local fake_output",
+            "    local retime",
+            "    local pre_command_pause",
+            "    local pre_enter_pause",
+            "    local post_enter_pause",
+            "    local post_command_pause",
+            '    display_command="$(command_json_field "$commands_json" "$index" display)"',
+            '    command="$(command_json_field "$commands_json" "$index" run)"',
+            '    command_id="$(command_json_field "$commands_json" "$index" id)"',
+            '    after_anchor="$(command_json_field "$commands_json" "$index" after)"',
+            '    follow_along="$(command_json_field "$commands_json" "$index" follow_along)"',
+            '    show_prompt_after="$(command_json_field "$commands_json" "$index" show_prompt_after)"',
+            '    output_mode="$(command_json_field "$commands_json" "$index" output.mode)"',
+            '    fake_output="$(command_json_field "$commands_json" "$index" output.text)"',
+            '    retime="$(command_json_field "$commands_json" "$index" retime)"',
+            '    pre_command_pause="$(command_json_field "$commands_json" "$index" pre_command_pause)"',
+            '    pre_enter_pause="$(command_json_field "$commands_json" "$index" pre_enter_pause)"',
+            '    post_enter_pause="$(command_json_field "$commands_json" "$index" post_enter_pause)"',
+            '    post_command_pause="$(command_json_field "$commands_json" "$index" post_command_pause)"',
+            '    timeline_event command_prompt_start "$beat_id" "" "" action_id "$action_id" command_id "$command_id" chunk_index "$index" command "$display_command" prompt "$(recording_prompt_text)" color "$recording_color" follow_along "$follow_along" show_prompt_after "$show_prompt_after" after "$after_anchor" retime "$retime" pre_command_pause "$pre_command_pause" pre_enter_pause "$pre_enter_pause" post_enter_pause "$post_enter_pause" post_command_pause "$post_command_pause"',
+            '    timeline_event command_prompt_end "$beat_id" "" "" action_id "$action_id" command_id "$command_id" chunk_index "$index" command "$display_command" prompt "$(recording_prompt_text)" color "$recording_color" follow_along "$follow_along" show_prompt_after "$show_prompt_after" after "$after_anchor" pre_command_pause "$pre_command_pause" pre_enter_pause "$pre_enter_pause" post_enter_pause "$post_enter_pause" post_command_pause "$post_command_pause"',
+            '    timeline_event command_run_start "$beat_id" "" "" action_id "$action_id" command_id "$command_id" chunk_index "$index" command "$command" display "$display_command" progress "${progress_labels[$index]:-}" follow_along "$follow_along" output_mode "$output_mode" fake_output "$fake_output" after "$after_anchor" retime "$retime" pre_command_pause "$pre_command_pause" pre_enter_pause "$pre_enter_pause" post_enter_pause "$post_enter_pause" post_command_pause "$post_command_pause"',
+            '    run_visible_command_chunk "$action_id" "$marker" "$command" "$index" "$output_mode" "$fake_output" "$retime"',
+            "    status=$?",
+            '    timeline_event command_run_end "$beat_id" "" "" action_id "$action_id" command_id "$command_id" chunk_index "$index" status "$status" follow_along "$follow_along" after "$after_anchor"',
+            '    [[ "$status" -eq 0 ]] || break',
+            "  done",
+            "  set -e",
+            "  local expected_exit=0",
+            '  local gate_args=("$@")',
+            "  local gate",
+            "  local value",
+            "  local gate_index",
+            "  for ((gate_index = 0; gate_index < ${#gate_args[@]}; gate_index += 2)); do",
+            '    gate="${gate_args[$gate_index]}"',
+            '    value="${gate_args[$((gate_index + 1))]}"',
+            '    [[ "$gate" == exit ]] && expected_exit="$value"',
+            "  done",
+            '  [[ "$status" -eq "$expected_exit" ]] || fail_gate "$action_id" "exited $status, expected $expected_exit"',
+            "  for ((gate_index = 0; gate_index < ${#gate_args[@]}; gate_index += 2)); do",
+            '    gate="${gate_args[$gate_index]}"',
+            '    value="${gate_args[$((gate_index + 1))]}"',
+            '    case "$gate" in',
+            "      exit)",
+            "        ;;",
+            "      contains)",
+            '        output_contains_text_from_offsets "$recording_stdout_path" "$recording_stderr_path" "$stdout_start" "$stderr_start" "$value" || fail_gate "$action_id" "missing text: $value"',
+            "        ;;",
+            "      regex)",
+            '        output_matches_regex_from_offsets "$recording_stdout_path" "$recording_stderr_path" "$stdout_start" "$stderr_start" "$value" || fail_gate "$action_id" "missing regex: $value"',
+            "        ;;",
+            "      file)",
+            "        local expanded",
+            '        expanded="$(expand_path "$value")"',
+            '        [[ -e "$expanded" ]] || fail_gate "$action_id" "missing file: $expanded"',
+            "        ;;",
+            "      *)",
+            '        fail_gate "$action_id" "unknown gate: $gate"',
+            "        ;;",
+            "    esac",
+            "  done",
             '  printf "%s end status=%s\\n" "$marker" "$status" >>"$recording_progress_path"',
             '  timeline_event action_end "$beat_id" "" "" action_id "$action_id" status "$status"',
             "  printf '\\n'",
@@ -2005,16 +2396,11 @@ def render_session_script(spec: dict[str, Any]) -> str:
             )
         actions = as_list(beat.get("actions"), field=f"beats.{beat_id}.actions")
         for index, action in enumerate(actions, start=1):
-            command = step_command_text(
+            command_entries = action_command_entries(
                 action,
                 index,
                 field=f"beats.{beat_id}.actions",
             )
-            display_command = action.get("display", command)
-            if not isinstance(display_command, str) or not display_command:
-                raise RecordingError(
-                    f"beats.{beat_id}.actions.{index}.display must be a non-empty string"
-                )
             expect = as_mapping(
                 action.get("expect"), field=f"beats.{beat_id}.actions.{index}.expect"
             )
@@ -2024,14 +2410,48 @@ def render_session_script(spec: dict[str, Any]) -> str:
             )
             progress_json = json.dumps(progress_labels)
             action_id = f"{safe_beat_id}_{index}"
-            lines.append(
-                "run_action "
-                f"{shell_quote(beat_id)} "
-                f"{shell_quote(action_id)} "
-                f"{shell_quote(display_command)} "
-                f"{shell_quote(command)} "
-                f"{shell_quote(progress_json)} " + " ".join(gate_args)
-            )
+            if command_entries is not None:
+                lines.append(
+                    "run_action_commands "
+                    f"{shell_quote(beat_id)} "
+                    f"{shell_quote(action_id)} "
+                    f"{shell_quote(json.dumps(command_entries))} "
+                    f"{shell_quote(progress_json)} " + " ".join(gate_args)
+                )
+            else:
+                command = step_command_text(
+                    action,
+                    index,
+                    field=f"beats.{beat_id}.actions",
+                )
+                display_command = action.get("display", command)
+                if not isinstance(display_command, str) or not display_command:
+                    raise RecordingError(
+                        f"beats.{beat_id}.actions.{index}.display must be a non-empty string"
+                    )
+                after_anchor = action.get("after", "")
+                if after_anchor is None:
+                    after_anchor = ""
+                if not isinstance(after_anchor, str):
+                    raise RecordingError(
+                        f"beats.{beat_id}.actions.{index}.after must be a string"
+                    )
+                if after_anchor and not re.fullmatch(
+                    r"@[A-Za-z][A-Za-z0-9_-]*@", after_anchor
+                ):
+                    raise RecordingError(
+                        f"beats.{beat_id}.actions.{index}.after must use @anchor@ syntax"
+                    )
+                lines.append(
+                    "run_action "
+                    f"{shell_quote(beat_id)} "
+                    f"{shell_quote(action_id)} "
+                    f"{shell_quote(display_command)} "
+                    f"{shell_quote(command)} "
+                    f"{shell_quote(progress_json)} "
+                    f"{shell_quote(after_anchor)} "
+                    + " ".join(gate_args)
+                )
         checks = as_list(beat.get("checks"), field=f"beats.{beat_id}.checks")
         for index, check in enumerate(checks, start=1):
             command = step_command_text(
@@ -2080,6 +2500,7 @@ def record(
     check_only: bool,
     output_override: str | None,
     headed: bool = False,
+    verbose: bool = False,
 ) -> int:
     use_color = host_color_enabled(sys.stderr)
     validate_manifest(spec)
@@ -2113,7 +2534,13 @@ def record(
     staged_cast_path = staged_cast_path_for(cast_path)
     staged_timeline_path = timeline_path_for_cast(staged_cast_path)
     staged_failure_path = failure_path_for_cast(staged_cast_path)
-    staged_paths = [staged_cast_path, staged_timeline_path, staged_failure_path]
+    staged_progress_pipe_path = staged_timeline_path.with_suffix(".progress.pipe")
+    staged_paths = [
+        staged_cast_path,
+        staged_timeline_path,
+        staged_failure_path,
+        staged_progress_pipe_path,
+    ]
 
     capture = as_mapping(spec.get("capture"), field="capture")
     window_size = str(capture.get("window_size", "100x28"))
@@ -2130,6 +2557,7 @@ def record(
         [
             "env",
             "ARBITER_CINEMA_TIMELINE=" + shlex.quote(str(staged_timeline_path)),
+            f"{PROGRESS_PIPE_ENV}=" + shlex.quote(str(staged_progress_pipe_path)),
             "ARBITER_CINEMA_FAILURE=" + shlex.quote(str(staged_failure_path)),
             *session_args,
         ]
@@ -2137,6 +2565,7 @@ def record(
     command = [
         "asciinema",
         "record",
+        "--quiet",
         "--overwrite",
         "--return",
         "--window-size",
@@ -2149,10 +2578,21 @@ def record(
     if headless:
         command.append("--headless")
     command.extend(["--command", runner_command, str(staged_cast_path)])
-    progress = TimelineProgressReporter(staged_timeline_path, spec, enabled=headless)
+    progress_printer = (
+        ProgressEventPrinter(spec, color=use_color)
+        if verbose
+        else RecordProgressBar(spec, color=use_color)
+    )
+    progress = ProgressPipeReporter(
+        staged_progress_pipe_path,
+        enabled=headless,
+        on_event=progress_printer.emit,
+    )
+    record_started = time.monotonic()
     try:
         progress.start()
-        result = subprocess.run(command, cwd=REPO_ROOT, check=False)
+        with RecordingSuspendGuard():
+            result = subprocess.run(command, cwd=REPO_ROOT, check=False)
     except KeyboardInterrupt as exc:
         removed = remove_recording_artifacts(staged_paths)
         raise RecordingInterrupted(
@@ -2160,6 +2600,8 @@ def record(
         ) from exc
     finally:
         progress.stop()
+        if isinstance(progress_printer, RecordProgressBar):
+            progress_printer.finish()
     if recording_was_interrupted(result.returncode):
         removed = remove_recording_artifacts(staged_paths)
         raise RecordingInterrupted(format_interrupted_recording(cast_path, removed))
@@ -2208,12 +2650,36 @@ def record(
         )
         remove_recording_artifacts(staged_paths)
         raise
-    print(color_text(f"wrote {cast_path}", ANSI_GREEN_BOLD, enabled=use_color))
+    print(
+        status_line(
+            "pass",
+            (
+                f"recorded baseline cast: {display_path(cast_path)} "
+                f"({format_elapsed(time.monotonic() - record_started)})"
+            ),
+            color=ANSI_GREEN_BOLD,
+            enabled=use_color,
+        )
+    )
     postmortem_path = run_artifact_dir(spec) / "enter"
-    if postmortem_path.exists():
+    if verbose and postmortem_path.exists():
         run_id = postmortem_path.parent.name
-        print(color_text(f"run_id: {run_id}", ANSI_CYAN_BOLD, enabled=use_color))
-        print(color_text("Inspect run with:", ANSI_CYAN_BOLD, enabled=use_color))
+        print(
+            status_line(
+                "info",
+                f"run id: {run_id}",
+                color=ANSI_CYAN_BOLD,
+                enabled=use_color,
+            )
+        )
+        print(
+            status_line(
+                "next",
+                "inspect run",
+                color=ANSI_CYAN_BOLD,
+                enabled=use_color,
+            )
+        )
         print(
             "  "
             + recording_tool_command(
@@ -2222,7 +2688,14 @@ def record(
                 run_id=run_id,
             )
         )
-        print(color_text("Play run with:", ANSI_CYAN_BOLD, enabled=use_color))
+        print(
+            status_line(
+                "next",
+                "play run",
+                color=ANSI_CYAN_BOLD,
+                enabled=use_color,
+            )
+        )
         print("  " + recording_tool_command(action="play", run_id=run_id))
     return 0
 
@@ -2388,6 +2861,17 @@ def format_duration(seconds: float | None) -> str:
     rounded = int(round(seconds))
     minutes, remainder = divmod(rounded, 60)
     return f"{minutes}:{remainder:02d}"
+
+
+def format_elapsed(seconds: float) -> str:
+    seconds = max(0.0, seconds)
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes, remainder = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{int(minutes)}m {remainder:.1f}s"
+    hours, minute_remainder = divmod(minutes, 60)
+    return f"{int(hours)}h {int(minute_remainder)}m {remainder:.1f}s"
 
 
 def parse_run_id_timestamp(run_id: str) -> datetime | None:
@@ -2737,12 +3221,16 @@ def run_tool_from_hydra_cfg(cfg: Any) -> int:
     headed = config.get("headed", False)
     if not isinstance(headed, bool):
         raise RecordingError("headed must be a boolean")
+    verbose = config.get("verbose", False)
+    if not isinstance(verbose, bool):
+        raise RecordingError("verbose must be a boolean")
     return record(
         spec,
         dry_run=action == "dry_run",
         check_only=action == "check",
         output_override=output,
         headed=headed,
+        verbose=verbose,
     )
 
 

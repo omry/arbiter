@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import sys
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -40,11 +43,25 @@ def recording_run_file_text(path: str) -> str:
     return (REPO_ROOT / path).read_text(encoding="utf-8")
 
 
+def spec_to_text(spec: Any) -> str:
+    return json.dumps(spec, sort_keys=True)
+
+
 def action_display(action: dict[str, Any]) -> str:
+    if "commands" in action:
+        return "\n".join(
+            command.get("display", command["run"]) for command in action["commands"]
+        )
     return action.get("display", action["run"])
 
 
-def test_record_action_invalidates_retimed_cast_before_record(
+def action_run(action: dict[str, Any]) -> str:
+    if "commands" in action:
+        return "\n".join(command["run"] for command in action["commands"])
+    return action["run"]
+
+
+def test_record_action_preserves_retimed_cast_before_record(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
@@ -67,16 +84,10 @@ def test_record_action_invalidates_retimed_cast_before_record(
         lambda *_args, **_kwargs: spec,
     )
 
-    def fake_invalidate(recording_spec: dict[str, Any]) -> Path:
-        assert recording_spec is spec
-        retimed.unlink()
-        return retimed
-
     def fake_record(cfg: Any) -> int:
         saw_retimed_exists.append(retimed.exists())
         return 0
 
-    monkeypatch.setattr(studio, "invalidate_retimed_cast_for_spec", fake_invalidate)
     monkeypatch.setattr(studio.record, "run_tool_from_hydra_cfg", fake_record)
 
     studio.run_record_action(
@@ -85,10 +96,11 @@ def test_record_action_invalidates_retimed_cast_before_record(
         "record baseline cast",
     )
 
-    assert saw_retimed_exists == [False]
+    assert saw_retimed_exists == [True]
+    assert retimed.read_text(encoding="utf-8") == "old retime\n"
 
 
-def test_studio_check_includes_retime_freshness_check(monkeypatch: Any) -> None:
+def test_studio_check_includes_retime_and_alignment_checks(monkeypatch: Any) -> None:
     calls: list[tuple[str, str]] = []
 
     monkeypatch.setattr(
@@ -106,18 +118,28 @@ def test_studio_check_includes_retime_freshness_check(monkeypatch: Any) -> None:
         "run_retime_action",
         lambda cfg, action, label=None: calls.append(("retime", action)),
     )
+    monkeypatch.setattr(
+        studio,
+        "run_align_action",
+        lambda cfg, action, label=None: calls.append(("align", action)),
+    )
 
     result = studio.run_check(studio.OmegaConf.create({}))
 
     assert result == 0
-    assert calls == [("record", "check"), ("audio", "check"), ("retime", "check")]
+    assert calls == [
+        ("record", "check"),
+        ("audio", "check"),
+        ("retime", "check"),
+        ("align", "check"),
+    ]
 
 
 def test_default_config_composes_install_recording() -> None:
     spec = studio_config.load_recording_spec("install-and-bootstrap")
 
     assert spec["id"] == "install-and-bootstrap"
-    assert spec["parameters"]["arbiter_source"] == "latest"
+    assert spec["parameters"]["arbiter_source"] == "local"
     assert spec["parameters"]["arbiter_package"] == "arbiter-suite"
     assert spec["parameters"]["operator_venv_cache_retain"] == 8
     assert spec["vars"]["loopback_host"] == "127.0.0.1"
@@ -138,9 +160,9 @@ def test_default_config_composes_install_recording() -> None:
     assert spec["narration"]["scene"]["title"] == "Install Arbiter Server"
     assert spec["narration"]["beats"][0]["id"] == "overview"
     assert spec["narration"]["beats"][0]["text"] == (
-        "In this tutorial, we will prepare Arbiter in a staging directory, "
-        "configure the server, test it with the Arbiter client, and then "
-        "install it as a permanent Docker service."
+        "In this tutorial, we will install Arbiter the standard way: stage it "
+        "locally with Reploy, configure and test it, then install it as a "
+        "permanent Docker service on the system."
     )
     assert spec["narration"]["source_script"] == (
         "media/recording-scripts/install-and-bootstrap.md"
@@ -170,6 +192,50 @@ recording:
             }
         }
     ]
+
+
+def test_narration_anchors_are_stripped_and_preserved() -> None:
+    text, anchors, waits = studio_config.narration_text_and_anchors(
+        "Prepare first. @install@ Install now."
+    )
+
+    assert text == "Prepare first. Install now."
+    assert anchors == [
+        {
+            "id": "install",
+            "marker": "@install@",
+            "text_offset": len("Prepare first."),
+        }
+    ]
+    assert waits == []
+
+
+def test_narration_wait_markers_are_stripped_and_preserved() -> None:
+    text, anchors, waits = studio_config.narration_text_and_anchors(
+        "Run @list@ list options. @wait:list-options+250ms@ @add@ Add plugins."
+    )
+
+    assert text == "Run list options. Add plugins."
+    assert [anchor["marker"] for anchor in anchors] == ["@list@", "@add@"]
+    assert waits == [
+        {
+            "target": "list-options",
+            "marker": "@wait:list-options+250ms@",
+            "text_offset": len("Run list options."),
+            "gap_seconds": 0.25,
+        }
+    ]
+
+
+def test_narration_anchors_reject_mid_word_positions() -> None:
+    for text in [
+        "In@install@stall now.",
+        "Install@install@ now.",
+        "@install@Install now.",
+        "Install @install@now.",
+    ]:
+        with pytest.raises(studio_config.StudioConfigError, match="separated"):
+            studio_config.narration_text_and_anchors(text)
 
 
 def test_recording_script_accepts_inline_run_at_line_limit(
@@ -216,6 +282,50 @@ beat:
     assert spec["beats"][0]["actions"][0]["run"] == "echo action"
 
 
+def test_recording_script_accepts_executable_beat_directive(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    script = tmp_path / "demo.md"
+    script.write_text(
+        """# Demo
+
+```yaml studio-directive
+scene: Demo
+```
+
+```yaml studio-directive
+recording:
+  id: demo
+  title: Demo
+```
+
+```yaml studio-directive
+beat:
+  id: one
+  heading: One
+  narration: One.
+  caption: Show one.
+  actions:
+  - run: echo action
+```
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(studio_config, "RECORDING_SCRIPT_DIR", tmp_path)
+
+    spec = studio_config.recording_from_script("demo")
+
+    assert spec["narration"]["beats"][0]["text"] == "One."
+    assert spec["beats"] == [
+        {
+            "id": "one",
+            "caption": "Show one.",
+            "actions": [{"run": "echo action"}],
+        }
+    ]
+
+
 def test_recording_script_rejects_long_inline_run(
     tmp_path: Path,
     monkeypatch: Any,
@@ -260,229 +370,263 @@ beat:
         raise AssertionError("long inline run should fail")
 
 
-def test_install_recording_uses_current_client_discovery_command() -> None:
-    spec = studio_config.load_recording_spec("install-and-bootstrap")
-    client_discovery = next(
-        beat for beat in spec["beats"] if beat["id"] == "client-discovery"
+def test_recording_script_rejects_long_structured_command_run(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    script = tmp_path / "demo.md"
+    inline_run = "\n".join(f"          echo {index}" for index in range(11))
+    script.write_text(
+        f"""# Demo
+
+```yaml studio-directive
+scene: Demo
+```
+
+```yaml studio-directive
+recording:
+  id: demo
+  title: Demo
+  beats:
+  - id: one
+    actions:
+    - commands:
+      - run: |
+{inline_run}
+```
+
+```yaml studio-directive
+beat:
+  id: one
+  heading: One
+  narration: One.
+```
+""",
+        encoding="utf-8",
     )
-    action = client_discovery["actions"][0]
+    monkeypatch.setattr(studio_config, "RECORDING_SCRIPT_DIR", tmp_path)
 
-    plugin_command = "arbiter arbiter.url=https://127.0.0.1:18075 plugins | jq ."
-    account_command = (
-        "arbiter arbiter.url=https://127.0.0.1:18075 " "plugins smtp account bot | jq ."
-    )
-
-    assert plugin_command in action_display(action)
-    assert plugin_command in action["run"]
-    assert account_command in action_display(action)
-    assert account_command in action["run"]
-    assert action_display(action).count("arbiter.url=") == 4
-    assert action["run"].count("arbiter.url=") == 4
-    assert "info plugins" not in action_display(action)
-    assert "info account" not in action_display(action)
-    assert "smtp:send_email" in action["expect"]["output_contains"]
+    try:
+        studio_config.recording_from_script("demo")
+    except studio_config.StudioConfigError as exc:
+        message = str(exc)
+        assert (
+            "recording.beats.one.actions.1.commands.1.run has 11 non-empty lines"
+            in message
+        )
+        assert "Move longer shell into an organized run_file" in message
+    else:
+        raise AssertionError("long structured command run should fail")
 
 
-def test_install_recording_checks_config_before_starting_staging() -> None:
+def test_install_recording_docker_progress_filter_preserves_stdin() -> None:
     spec = studio_config.load_recording_spec("install-and-bootstrap")
-    stage_server = next(beat for beat in spec["beats"] if beat["id"] == "stage-server")
-    action = stage_server["actions"][0]
-    cleanup_command = spec["cleanup"][0]["run"]
     setup_run = recording_run_file_text(spec["setup"][0]["run_file"])
 
-    assert "./reploy app config check" in action_display(action)
-    assert "COMPOSE_PROGRESS=quiet ./reploy app config check" in action["run"]
-    assert "recording_filter_docker_compose_progress()" in setup_run
-    assert "grep -vE" not in action["run"]
     assert (
-        "COMPOSE_PROGRESS=quiet ./reploy up "
-        "2> >(recording_filter_docker_compose_progress >&2)"
-    ) in action["run"]
-    assert (
-        "COMPOSE_PROGRESS=quiet ./reploy down --remove-orphans "
-        "2> >(recording_filter_docker_compose_progress >&2)"
-    ) in cleanup_command
-    assert action["expect"]["output_regex"][:3] == [
-        r"server\s+\|\s+pass",
-        r"imap\s+\|\s+pass",
-        r"smtp\s+\|\s+pass",
-    ]
-    assert "https://127.0.0.1:18075" in action["expect"]["output_contains"]
+        'recording_filter_docker_compose_progress() {\n  "$recording_python" -c'
+        in setup_run
+    )
+    assert '"$recording_python" - <<' not in setup_run
 
 
-def test_install_recording_inspects_selected_bundle_before_prepare() -> None:
+def test_install_recording_selects_and_builds_bundle() -> None:
     spec = studio_config.load_recording_spec("install-and-bootstrap")
     prepare_bundle = next(
         beat for beat in spec["beats"] if beat["id"] == "prepare-bundle"
     )
+    prepare_bundle_narration = next(
+        beat for beat in spec["narration"]["beats"] if beat["id"] == "prepare-bundle"
+    )
     action = prepare_bundle["actions"][0]
 
-    assert "bundle list" in action["display"]
-    assert "bundle list" in action["run"]
-    assert "bundle build" in action["display"]
-    assert "recording_prepare_bundle" in action["run"]
-    assert "bundle add --name imap,smtp" in action["display"]
-    assert "bundle add --name imap,smtp" in action["run"]
+    assert "bundle list" in action_display(action)
+    assert "bundle list" in action_run(action)
+    assert "bundle add --name imap,smtp" in action_display(action)
+    assert "bundle add --name imap,smtp" in action_run(action)
+    assert "bundle build" in action_display(action)
+    assert "bundle build" in action_run(action)
+    assert action["commands"][0]["id"] == "list-options"
+    assert action["commands"][0]["after"] == "@list@"
+    assert action["commands"][1]["after"] == "@add@"
+    assert action["commands"][2]["after"] == "@build@"
+    assert action["commands"][2]["retime"] == "realtime"
+    assert action["commands"][2]["post_command_pause"] == 0.0
+    assert action["commands"][3]["run"] == "clear"
+    assert action["commands"][3]["pre_command_pause"] == 2.0
+    assert "display" not in action["commands"][3]
+    assert action["commands"][3]["show_prompt_after"] is False
+    assert "clear" not in prepare_bundle["guide"]["commands"]
+    assert prepare_bundle_narration["waits"] == [
+        {
+            "target": "list-options",
+            "marker": "@wait:list-options@",
+            "text_offset": len(
+                "Arbiter has a pluggable architecture. For this demo, we add "
+                "the IMAP and SMTP plugins. "
+                "First, list the available bundle options."
+            ),
+            "gap_seconds": 0.0,
+        }
+    ]
+
+
+def test_install_recording_bootstraps_editable_arbiter_config() -> None:
+    spec = studio_config.load_recording_spec("install-and-bootstrap")
+    bootstrap_config = next(
+        beat for beat in spec["beats"] if beat["id"] == "bootstrap-config"
+    )
+    action = bootstrap_config["actions"][0]
+
+    assert action_display(action).splitlines() == [
+        "reploy app bootstrap server",
+        "reploy app bootstrap --plugins imap,smtp --account bot",
+        "find conf -maxdepth 5 -type f | sort",
+    ]
+    assert action["commands"][0]["after"] == "@server@"
+    assert action["commands"][1]["after"] == "@account@"
+    assert action["commands"][2]["after"] == "@inspect@"
+    assert action["expect"]["file_exists"] == [
+        "./conf/arbiter-server.yaml",
+        "./conf/plugins.yaml",
+        "./conf/arbiter/account/imap/bot.yaml",
+        "./conf/arbiter/policy/imap/bot_policy.yaml",
+        "./conf/arbiter/account/smtp/bot.yaml",
+        "./conf/arbiter/policy/smtp/bot_policy.yaml",
+    ]
 
 
 def test_install_recording_prepares_visible_cli_environment() -> None:
     spec = studio_config.load_recording_spec("install-and-bootstrap")
-    prepare_cli = next(beat for beat in spec["beats"] if beat["id"] == "prepare-cli")
-    install_suite = next(
-        beat for beat in spec["beats"] if beat["id"] == "install-suite"
+    install_reploy = next(
+        beat for beat in spec["beats"] if beat["id"] == "install-reploy"
     )
-    prepare_action = prepare_cli["actions"][0]
-    install_action = install_suite["actions"][0]
+    init_staging = next(beat for beat in spec["beats"] if beat["id"] == "init-staging")
+    install_reploy_action = install_reploy["actions"][0]
+    init_staging_action = init_staging["actions"][0]
     setup_run = recording_run_file_text(spec["setup"][0]["run_file"])
 
-    assert prepare_cli["caption"] == "Create and activate a virtual environment."
-    assert install_suite["caption"] == (
-        "Install Reploy and the Arbiter suite packages."
-    )
-    prepare_narration = next(
-        beat for beat in spec["narration"]["beats"] if beat["id"] == "prepare-cli"
-    )
-    install_narration = next(
-        beat for beat in spec["narration"]["beats"] if beat["id"] == "install-suite"
-    )
-    assert prepare_narration["heading"] == ("Create and activate a virtual environment")
-    assert "Create a small Python virtual environment and activate it" in (
-        prepare_narration["text"]
-    )
-    assert install_narration["heading"] == "Install Arbiter suite"
-    assert "Install Reploy and the `arbiter-suite` package set" in (
-        install_narration["text"]
-    )
-    assert "python3 -m venv arbiter_venv" in prepare_action["display"]
-    assert "source arbiter_venv/bin/activate" in prepare_action["display"]
-    assert "arbiter_venv/bin/python -m pip install arbiter-suite" not in (
-        prepare_action["display"]
-    )
-    assert "recording_prepare_cli_env" in prepare_action["run"]
-    assert prepare_action["run"].strip().splitlines() == [
-        "recording_prepare_cli_env",
-        "source arbiter_venv/bin/activate",
+    assert spec["retime"]["post_enter_pause"] == 0.35
+    assert [beat["id"] for beat in spec["beats"][:3]] == [
+        "install-reploy",
+        "init-staging",
+        "prepare-bundle",
     ]
-    assert "./arbiter_venv/bin/activate" in prepare_action["expect"]["file_exists"]
-    assert (
-        "arbiter_venv/bin/python -m pip install reploy arbiter-suite"
-        in install_action["display"]
+    assert install_reploy["caption"] == "Install Reploy with the script installer."
+    assert install_reploy["guide"] == {
+        "commands": [
+            "curl -fsSL https://reploy.yadan.net/install.sh | sh",
+        ],
+        "success_hint": "The installer should report that Reploy is ready.",
+    }
+    assert "reploy_version" not in spec["parameters"]
+    install_reploy_narration = next(
+        beat for beat in spec["narration"]["beats"] if beat["id"] == "install-reploy"
     )
-    assert "arbiter-server version" in install_action["display"]
-    assert "arbiter-server version" in install_action["run"]
-    assert "reploy --version" in install_action["run"]
-    assert "arbiter-server version --json" not in install_action["display"]
-    assert "./arbiter_venv/bin/arbiter-server" in (
-        install_action["expect"]["file_exists"]
+    overview_narration = next(
+        beat for beat in spec["narration"]["beats"] if beat["id"] == "overview"
     )
-    assert "./arbiter_venv/bin/reploy" in install_action["expect"]["file_exists"]
-    assert "server" in install_action["expect"]["output_contains"]
-    assert "api" in install_action["expect"]["output_contains"]
+    assert overview_narration["viewer_hold"] == 1.0
+    assert install_reploy_narration["heading"] == "Install Reploy"
+    assert install_reploy_narration["text"] == "First, install Reploy."
+    assert "@install@" not in install_reploy_narration["text"]
+    assert install_reploy_narration["anchors"] == [
+        {
+            "id": "install",
+            "marker": "@install@",
+            "text_offset": len("First,"),
+        }
+    ]
+    assert "curl -fsSL https://reploy.yadan.net/install.sh | sh" in (
+        action_display(install_reploy_action)
+    )
+    assert "| sh -s -- --version 0.4.0.dev1" not in (
+        action_display(install_reploy_action)
+    )
+    assert action_run(install_reploy_action).strip().splitlines() == [
+        "recording_install_reploy",
+    ]
+    assert install_reploy_action["commands"][0]["after"] == "@install@"
+    assert install_reploy_action["commands"][0]["output"] == "suppress"
+    assert install_reploy_action["commands"][0]["follow_along"] is True
+    assert "expect" not in install_reploy_action
+    assert action_display(init_staging_action).splitlines() == [
+        "reploy stage arbiter-server",
+        "cd reploy-staging",
+    ]
+    assert init_staging_action["commands"][0]["after"] == "@create@"
+    assert "pre_enter_pause" not in init_staging_action["commands"][0]
+    assert init_staging_action["commands"][0]["post_enter_pause"] == 1.5
+    assert "post_enter_pause" not in init_staging_action["commands"][1]
     assert spec["setup"][0]["run_file"] == (
         "media/recording-scripts/install-and-bootstrap/setup-main.sh"
     )
-    assert "recording_prepare_cli_env()" in setup_run
-    assert 'ln -sfn "$operator_venv" arbiter_venv' in setup_run
+    assert "recording_prepare_cli_env()" not in setup_run
+    assert "recording_install_reploy()" in setup_run
+    assert 'arbiter_source="${recording_param_arbiter_source:-local}"' in setup_run
+    assert 'reploy_source="${recording_param_reploy_source:-local}"' in setup_run
+    assert 'reploy_venv="${recording_param_reploy_venv:-../reploy/.venv}"' in setup_run
+    assert "recording_param_reploy_version" not in setup_run
+    assert "sh -s -- --version" not in setup_run
+    assert 'curl -fsSL https://reploy.yadan.net/install.sh | sh' in setup_run
+    assert "local Reploy binary not found; using script installer" in setup_run
+    assert '"$HOME/.local/bin/reploy" --help' in setup_run
+    assert 'export HOME="$recording_workspace"' in setup_run
+    assert 'export PATH="$HOME/.local/bin:$PATH"' in setup_run
+    assert '--to "$operator_venv/bin"' not in setup_run
+    assert "arbiter_venv" not in setup_run
+    assert "python3 -m venv arbiter_venv" not in spec_to_text(spec)
+    assert "pip install arbiter-suite" not in spec_to_text(spec)
 
 
-def test_install_recording_edits_bot_access_and_shows_demo_credentials() -> None:
+def test_install_recording_stages_with_current_reploy_command() -> None:
     spec = studio_config.load_recording_spec("install-and-bootstrap")
-    edit_access = next(
-        beat for beat in spec["beats"] if beat["id"] == "edit-bot-access"
-    )
-    edit_action = edit_access["actions"][0]
-    bootstrap_env = next(
-        beat for beat in spec["beats"] if beat["id"] == "bootstrap-env"
-    )
-    env_action = bootstrap_env["actions"][0]
+    init = next(beat for beat in spec["beats"] if beat["id"] == "init-staging")
+    action = init["actions"][0]
+    setup_run = recording_run_file_text(spec["setup"][0]["run_file"])
 
-    assert "$EDITOR conf/arbiter/account/imap/bot.yaml" in edit_action["display"]
-    assert "recording_apply_mail_lab_config" in edit_action["run"]
-    assert "delete: allow" in edit_action["expect"]["output_contains"]
-    assert "folder_append: allow" in edit_action["expect"]["output_contains"]
-    assert "recording_apply_mail_lab_config --update-env" in env_action["run"]
-    assert (
-        "IMAP_BOT_ACCOUNT_PASSWORD=bot-password"
-        in env_action["expect"]["output_contains"]
-    )
-
-
-def test_install_recording_sends_and_fetches_a_self_addressed_message() -> None:
-    spec = studio_config.load_recording_spec("install-and-bootstrap")
-    send = next(beat for beat in spec["beats"] if beat["id"] == "send-test-message")
-    fetch = next(beat for beat in spec["beats"] if beat["id"] == "fetch-test-message")
-
-    send_action = send["actions"][0]
-    send_check = send["checks"][0]
-    fetch_action = fetch["actions"][0]
-
-    assert "smtp:send_email" in action_display(send_action)
-    assert "bot@example.test" in action_display(send_action)
-    assert "install-smoke-1" in action_display(send_action)
-    assert send_check["run_file"] == (
-        "media/recording-scripts/install-and-bootstrap/" "wait-for-delivered-message.sh"
-    )
-    assert "imap:search_messages" in action_display(fetch_action)
-    assert "imap:get_message" in action_display(fetch_action)
-    assert fetch_action["progress"] == [
-        "search delivered message",
-        "fetch delivered message",
+    assert action_display(action).splitlines() == [
+        "reploy stage arbiter-server",
+        "cd reploy-staging",
     ]
-    assert "printf 'message_uid=%s\\n' \"$message_uid\" && \\" in fetch_action["run"]
-    assert "Hello from Arbiter staging." in fetch_action["expect"]["output_contains"]
-
-
-def test_install_recording_preinstall_doctor_checks_codex_agent_user() -> None:
-    spec = studio_config.load_recording_spec("install-and-bootstrap")
-    preinstall = next(
-        beat for beat in spec["beats"] if beat["id"] == "preinstall-check"
+    assert "reploy init" not in action_display(action)
+    assert "recording_stage_arbiter" not in action_run(action)
+    assert "recording_stage_arbiter()" not in setup_run
+    assert 'if [[ "$arbiter_source" == local ]]; then' in action["commands"][0]["run"]
+    assert (
+        'reploy stage "file:$recording_repo/server/src/arbiter_server/reploy/arbiter.blueprint.yaml"'
+        in action["commands"][0]["run"]
     )
-    action = preinstall["actions"][0]
-
-    assert "./reploy doctor --preinstall" in action_display(action)
-    assert "./reploy doctor --preinstall" in action["run"]
-
-
-def test_install_recording_install_helper_is_aux_file() -> None:
-    spec = studio_config.load_recording_spec("install-and-bootstrap")
-    install = next(beat for beat in spec["beats"] if beat["id"] == "install-server")
-    action = install["actions"][0]
-    install_run = recording_run_file_text(action["run_file"])
-
-    assert action["run_file"] == (
-        "media/recording-scripts/install-and-bootstrap/install-server.sh"
-    )
-    assert "sudo ./reploy install --to /opt/arbiter" in action["display"]
-    assert "set -euo pipefail" in install_run
-    assert "--dry-run" in install_run
-    assert "REPLOY_INSTALL_OWNER" in install_run
-    assert "rewrite_install_output()" in install_run
+    assert "reploy stage arbiter-server" in action["commands"][0]["run"]
+    assert action["commands"][1]["run"] == "cd reploy-staging"
+    assert "recording_configure_staging_subnet" not in action_run(action)
+    assert "recording_configure_staging_subnet()" not in setup_run
 
 
 def test_local_arbiter_source_exposes_repo_root_for_docker_bundle_prepare() -> None:
-    spec = studio_config.load_recording_spec(
-        "install-and-bootstrap",
-        ["+script_params.arbiter_source=local"],
-    )
+    spec = studio_config.load_recording_spec("install-and-bootstrap")
     setup_run = recording_run_file_text(spec["setup"][0]["run_file"])
 
     assert "unset ARBITER_REPO_ROOT" in setup_run
     assert "unset ARBITER_PYTHON" in setup_run
     assert 'export ARBITER_REPO_ROOT="$recording_repo"' in setup_run
     assert 'export ARBITER_PYTHON="$recording_python"' in setup_run
-    assert "recording_prepare_bundle()" in setup_run
+    assert "recording_prepare_bundle()" not in setup_run
     assert "recording_apply_mail_lab_config()" in setup_run
     assert '"$recording_repo/media/tools/mail_lab.py" \\' in setup_run
     assert "--host 0.0.0.0" in setup_run
     assert "--container-host host.docker.internal" in setup_run
-    assert './reploy bundle add-source "$recording_repo/server"' in setup_run
+    assert "bundle add-source" not in setup_run
     assert '"$operator_venv/bin/arbiter-server" version --json || return 1' in setup_run
     assert '"$operator_venv/bin/arbiter" --version || return 1' in setup_run
-    assert '"$operator_venv/bin/reploy" --version || return 1' in setup_run
+    assert '"$operator_venv/bin/reploy" --version || return 1' not in setup_run
 
 
 def test_pypi_arbiter_source_uses_artifact_keyed_operator_venv_cache() -> None:
-    spec = studio_config.load_recording_spec("install-and-bootstrap")
+    spec = studio_config.load_recording_spec(
+        "install-and-bootstrap",
+        ["+script_params.arbiter_source=latest"],
+    )
     setup_run = recording_run_file_text(spec["setup"][0]["run_file"])
 
     assert "recording_operator_wheelhouse_metadata()" in setup_run
@@ -494,7 +638,6 @@ def test_pypi_arbiter_source_uses_artifact_keyed_operator_venv_cache() -> None:
     )
     assert "recording_operator_venv_is_healthy()" in setup_run
     assert '"$venv/bin/arbiter-server" "$venv/bin/arbiter"' in setup_run
-    assert 'recording_operator_venv_is_healthy "$operator_venv"' in setup_run
     assert 'recording_prepare_pypi_operator_venv "$package_requirement"' in setup_run
     assert 'operator_venv="$recording_tmp/operator-venv"' in setup_run
     assert 'wheelhouse="$recording_tmp/operator-wheelhouse"' in setup_run
@@ -520,6 +663,7 @@ def test_pypi_arbiter_source_uses_artifact_keyed_operator_venv_cache() -> None:
     assert 'recording_prune_operator_venv_cache "$cache_key"' in setup_run
     assert 'rmdir "$lock_dir" 2>/dev/null || true\n        return 1' in setup_run
     assert "keep.add(current_cache_key)" in setup_run
+    assert "reploy_package" not in setup_run
 
 
 def test_local_arbiter_source_uses_dirty_source_artifact_keyed_operator_cache() -> None:
@@ -550,8 +694,8 @@ def test_local_arbiter_source_uses_dirty_source_artifact_keyed_operator_cache() 
     )
     assert '--find-links "$wheelhouse"' in setup_run
     assert "recording_prepare_operator_venv_from_wheelhouse \\" in setup_run
-    assert '"$reploy_package $package_requirement" \\' in setup_run
-    assert '"$reploy_package" \\' in setup_run
+    assert '"$package_requirement" \\' in setup_run
+    assert "reploy_package" not in setup_run
     assert 'export ARBITER_REPO_ROOT="$recording_repo"' in setup_run
     assert 'export ARBITER_PYTHON="$recording_python"' in setup_run
 
@@ -694,6 +838,17 @@ def test_output_format_override_is_composed() -> None:
 
     assert config["step"] == "audio_dry_run"
     assert config["output_format"] == "json"
+
+
+def test_verbose_defaults_and_overrides_are_composed() -> None:
+    default_config = studio_config.compose_studio_config("install-and-bootstrap")
+    override_config = studio_config.compose_studio_config(
+        "install-and-bootstrap",
+        ["verbose=true"],
+    )
+
+    assert default_config["verbose"] is False
+    assert override_config["verbose"] is True
 
 
 def test_runs_limit_defaults_and_overrides_are_composed() -> None:

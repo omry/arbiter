@@ -484,8 +484,42 @@ def test_openai_tts_billing_summary_prints_total_cost(capsys: Any) -> None:
     )
 
     assert capsys.readouterr().out == (
-        "OpenAI TTS estimated cost this run: $0.001500\n"
+        "info  OpenAI TTS estimated cost this run: $0.001500\n"
     )
+
+
+def test_print_paths_or_summary_is_concise_by_default(
+    tmp_path: Path,
+    capsys: Any,
+) -> None:
+    audio.print_paths_or_summary(
+        verbose=False,
+        path_label="audio",
+        summary_label="audio segments ready",
+        paths=[tmp_path / "one.mp3", tmp_path / "two.mp3"],
+    )
+
+    assert capsys.readouterr().out == "pass  audio segments ready: 2\n"
+
+
+def test_print_paths_or_summary_lists_paths_when_verbose(
+    tmp_path: Path,
+    capsys: Any,
+) -> None:
+    first = tmp_path / "one.mp3"
+    second = tmp_path / "two.mp3"
+
+    audio.print_paths_or_summary(
+        verbose=True,
+        path_label="audio",
+        summary_label="audio segments ready",
+        paths=[first, second],
+    )
+
+    output = capsys.readouterr().out
+    assert f"pass  audio: {first}\n" in output
+    assert f"pass  audio: {second}\n" in output
+    assert "audio segments ready" not in output
 
 
 def test_audio_dry_run_prints_human_summary_by_default(
@@ -612,7 +646,8 @@ def test_install_bootstrap_manifest_has_audio_plan() -> None:
     assert settings.enabled is True
     assert settings.env == "OPENAI_ARBITER_CINEMA_AUDIO_API_KEY"
     assert segments[0].segment_id == "overview"
-    assert any(segment.segment_id == "install-server" for segment in segments)
+    assert "prepare-bundle" in {segment.segment_id for segment in segments}
+    assert segments[-1].segment_id == "bootstrap-config"
     assert len(plan) >= 1
     assert all(item.output_path.suffix == ".mp3" for item in plan)
     assert (
@@ -746,6 +781,227 @@ def test_publish_audio_metadata_writes_segment_durations(tmp_path: Path) -> None
         assert first_ordered.read_bytes() == b"audio"
 
 
+def test_publish_audio_metadata_can_reference_timestamps_and_anchors(
+    tmp_path: Path,
+) -> None:
+    settings = audio.AudioSettings(
+        enabled=True,
+        provider="openai",
+        env="OPENAI_TEST_KEY",
+        model="gpt-4o-mini-tts",
+        voice="marin",
+        format="mp3",
+        instructions=None,
+        cache_dir=tmp_path / "cache",
+    )
+    segments = [audio.NarrationSegment("intro", "Intro", "Install now.")]
+    plan = audio.plan_audio("demo", segments, settings)
+    plan[0].output_path.parent.mkdir(parents=True, exist_ok=True)
+    plan[0].output_path.write_bytes(b"audio")
+    source_timestamps = audio.timeline_path_for(plan[0])
+    source_timestamps.write_text(
+        json.dumps(
+            {
+                "audio": "cache/audio.mp3",
+                "cache_key": "abcdef",
+                "duration": 1.23456,
+                "language": "english",
+                "recording": "demo",
+                "segment": "intro",
+                "segments": [{"id": 0, "tokens": [1, 2, 3]}],
+                "source_text": "Install now.",
+                "timestamp_granularities": ["word", "segment"],
+                "transcript": "Install now.",
+                "transcription_model": "whisper-1",
+                "words": [
+                    {"word": "Install", "start": 0.12345, "end": 0.45678},
+                    {"word": "now", "start": 0.5, "end": 0.8, "extra": "drop"},
+                ],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "published.mp3"
+    output.write_bytes(b"published")
+    metadata = tmp_path / "published.json"
+    published_timestamps = audio.publish_timestamp_sidecars(plan, metadata)
+
+    def fake_run(command: list[str], *, capture_output: bool, text: bool) -> Any:
+        return subprocess.CompletedProcess(command, 0, "1.000\n", "")
+
+    path = audio.publish_audio_metadata(
+        "demo",
+        plan,
+        output,
+        metadata,
+        anchors_by_segment_id={
+            "intro": [{"id": "install", "marker": "@install@", "text_offset": 0}]
+        },
+        waits_by_segment_id={
+            "intro": [
+                {
+                    "target": "install-command",
+                    "marker": "@wait:install-command+250ms@",
+                    "text_offset": len("Install"),
+                    "gap_seconds": 0.25,
+                }
+            ]
+        },
+        timestamps_by_segment_id=published_timestamps,
+        ffprobe="ffprobe-test",
+        run=fake_run,
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    assert published_timestamps == {
+        "intro": tmp_path / "published.intro.timestamps.json"
+    }
+    published_timestamp_payload = json.loads(
+        published_timestamps["intro"].read_text(encoding="utf-8")
+    )
+    assert published_timestamp_payload == {
+        "duration": 1.235,
+        "recording": "demo",
+        "segment": "intro",
+        "source_text": "Install now.",
+        "transcript": "Install now.",
+        "words": [
+            {"end": 0.457, "start": 0.123, "word": "Install"},
+            {"end": 0.8, "start": 0.5, "word": "now"},
+        ],
+    }
+    assert payload["segments"][0]["anchors"] == [
+        {"id": "install", "marker": "@install@", "text_offset": 0}
+    ]
+    assert payload["segments"][0]["waits"] == [
+        {
+            "target": "install-command",
+            "marker": "@wait:install-command+250ms@",
+            "text_offset": len("Install"),
+            "gap_seconds": 0.25,
+        }
+    ]
+    assert payload["segments"][0]["timestamps"] == str(published_timestamps["intro"])
+
+
+def test_timeline_payload_keeps_only_studio_timestamp_fields(tmp_path: Path) -> None:
+    settings = audio.AudioSettings(
+        enabled=True,
+        provider="openai",
+        env="OPENAI_TEST_KEY",
+        model="gpt-4o-mini-tts",
+        voice="marin",
+        format="mp3",
+        instructions=None,
+        cache_dir=tmp_path / "cache",
+    )
+    segment = audio.NarrationSegment("intro", "Intro", "Install now.")
+    item = audio.plan_audio("demo", [segment], settings)[0]
+    transcription = audio.TranscriptionSettings(
+        model="whisper-1",
+        timestamp_granularities=("word", "segment"),
+    )
+
+    payload = audio.timeline_payload(
+        "demo",
+        item,
+        transcription,
+        {
+            "duration": 2.34567,
+            "language": "english",
+            "segments": [{"id": 0, "tokens": [1, 2, 3]}],
+            "text": "Install now.",
+            "usage": {"seconds": 2.34567},
+            "words": [
+                {"word": "Install", "start": 0.01234, "end": 0.45678},
+                {"word": "now", "start": 0.6, "end": 1.0, "probability": 0.98},
+                {"word": "skip-missing-end", "start": 1.1},
+            ],
+        },
+    )
+
+    assert payload == {
+        "duration": 2.346,
+        "recording": "demo",
+        "segment": "intro",
+        "source_text": "Install now.",
+        "transcript": "Install now.",
+        "words": [
+            {"end": 0.457, "start": 0.012, "word": "Install"},
+            {"end": 1.0, "start": 0.6, "word": "now"},
+        ],
+    }
+
+
+def test_generate_timestamps_regenerates_stale_source_text(
+    tmp_path: Path,
+) -> None:
+    settings = audio.AudioSettings(
+        enabled=True,
+        provider="openai",
+        env="OPENAI_TEST_KEY",
+        model="gpt-4o-mini-tts",
+        voice="marin",
+        format="mp3",
+        instructions=None,
+        cache_dir=tmp_path / "cache",
+    )
+    segment = audio.NarrationSegment("intro", "Intro", "New narration.")
+    item = audio.plan_audio("demo", [segment], settings)[0]
+    transcription = audio.TranscriptionSettings(
+        model="whisper-1",
+        timestamp_granularities=("word", "segment"),
+    )
+    timestamp_path = audio.timeline_path_for(item)
+    timestamp_path.parent.mkdir(parents=True, exist_ok=True)
+    timestamp_path.write_text(
+        json.dumps(
+            {
+                "recording": "demo",
+                "segment": "intro",
+                "source_text": "Old narration.",
+                "words": [{"word": "Old", "start": 0.0, "end": 0.3}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls = 0
+
+    def fake_transcribe(
+        plan_item: audio.AudioPlanItem,
+        _settings: audio.AudioSettings,
+        _transcription: audio.TranscriptionSettings,
+    ) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        assert plan_item is item
+        return {
+            "duration": 1.0,
+            "text": "New narration.",
+            "words": [
+                {"word": "New", "start": 0.0, "end": 0.3},
+                {"word": "narration.", "start": 0.3, "end": 0.8},
+            ],
+        }
+
+    written = audio.generate_timestamps(
+        "demo",
+        [item],
+        settings,
+        transcription,
+        transcribe=fake_transcribe,
+    )
+
+    assert written == [timestamp_path]
+    assert calls == 1
+    payload = json.loads(timestamp_path.read_text(encoding="utf-8"))
+    assert payload["source_text"] == "New narration."
+    assert payload["words"][0]["word"] == "New"
+
+
 def test_validate_published_audio_metadata_accepts_current_plan(tmp_path: Path) -> None:
     settings = audio.AudioSettings(
         enabled=True,
@@ -875,7 +1131,7 @@ def test_audio_metadata_includes_guide_for_matching_beat_segment(
                 {
                     "id": "init-staging",
                     "guide": {
-                        "try_command": "test -f compose.yaml",
+                        "commands": ["test -f compose.yaml"],
                         "success_hint": "The compose file should exist.",
                     },
                 }
@@ -894,9 +1150,66 @@ def test_audio_metadata_includes_guide_for_matching_beat_segment(
 
     assert "guide" not in payload["segments"][0]
     assert payload["segments"][1]["guide"] == {
-        "try_command": "test -f compose.yaml",
+        "commands": ["test -f compose.yaml"],
         "success_hint": "The compose file should exist.",
     }
+
+
+def test_audio_metadata_includes_script_owned_pause_after(
+    tmp_path: Path,
+) -> None:
+    settings = audio.AudioSettings(
+        enabled=True,
+        provider="openai",
+        env="OPENAI_TEST_KEY",
+        model="gpt-4o-mini-tts",
+        voice="marin",
+        format="mp3",
+        instructions=None,
+        cache_dir=tmp_path,
+    )
+    segments = [
+        audio.NarrationSegment("overview", "Overview", "Intro."),
+        audio.NarrationSegment("install-reploy", "Install Reploy", "Install."),
+    ]
+    plan = audio.plan_audio("demo", segments, settings)
+    for item in plan:
+        item.output_path.parent.mkdir(parents=True, exist_ok=True)
+        item.output_path.write_bytes(b"audio")
+    output = tmp_path / "published.mp3"
+    output.write_bytes(b"published")
+    durations = {
+        plan[0].output_path: "1.000\n",
+        plan[1].output_path: "2.000\n",
+        output: "3.000\n",
+    }
+
+    def fake_run(command: list[str], *, capture_output: bool, text: bool) -> Any:
+        path = Path(command[-1])
+        return subprocess.CompletedProcess(command, 0, durations[path], "")
+
+    pauses = audio.pause_after_by_segment_id_from_spec(
+        {
+            "narration": {
+                "beats": [
+                    {"id": "overview", "viewer_hold": 1.25},
+                    {"id": "install-reploy", "viewer_hold": 0},
+                ]
+            }
+        },
+        plan,
+    )
+    payload = audio.audio_metadata_payload(
+        "demo",
+        plan,
+        output,
+        pause_after_by_segment_id=pauses,
+        ffprobe="ffprobe-test",
+        run=fake_run,
+    )
+
+    assert payload["segments"][0]["pause_after"] == 1.25
+    assert "pause_after" not in payload["segments"][1]
 
 
 def test_openai_speech_request_uses_expected_payload() -> None:

@@ -4,9 +4,11 @@ import importlib.util
 import json
 import os
 import pytest
+import select
 import shlex
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -104,6 +106,36 @@ def run_rendered_session(
     )
 
 
+def test_rendered_session_rounds_timeline_times(tmp_path: Path) -> None:
+    timeline = tmp_path / "recording.timeline.jsonl"
+    spec = minimal_spec(
+        beats=[
+            {
+                "id": "one",
+                "caption": "One",
+                "actions": [{"run": "true"}],
+            }
+        ]
+    )
+
+    result = run_rendered_session(
+        spec,
+        env={"ARBITER_CINEMA_TIMELINE": str(timeline)},
+    )
+
+    assert result.returncode == 0
+    events = [
+        json.loads(line)
+        for line in timeline.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert events
+    for event in events:
+        timestamp = str(event["time"])
+        if "." in timestamp:
+            assert len(timestamp.rsplit(".", 1)[1]) <= 3
+
+
 def test_session_path_uses_invoking_python_bin_without_resolving_symlink() -> None:
     spec = minimal_spec(beats=[{"id": "one", "actions": [{"run": "true"}]}])
 
@@ -177,6 +209,38 @@ def test_record_omits_idle_limit_by_default_and_sanitizes_header(
     )
     assert "env" not in header
     assert "idle_time_limit" not in header
+
+
+def test_record_ignores_suspend_signal_while_recording(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    signal_number = getattr(record.signal, "SIGTSTP", None)
+    if signal_number is None:
+        pytest.skip("SIGTSTP is not available on this platform")
+    cast = tmp_path / "recording.cast"
+    spec = minimal_spec(beats=[{"id": "one", "actions": [{"run": "true"}]}])
+    previous_handler = record.signal.getsignal(signal_number)
+    saw_ignored = False
+
+    monkeypatch.setattr(record, "check_asciinema", lambda: "asciinema 3.2.0")
+
+    def fake_run(
+        command: list[str], *, cwd: Path, check: bool
+    ) -> subprocess.CompletedProcess[str]:
+        nonlocal saw_ignored
+        saw_ignored = record.signal.getsignal(signal_number) == record.signal.SIG_IGN
+        write_recorded_header(Path(command[-1]))
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(record.subprocess, "run", fake_run)
+
+    result = record.record(
+        spec, dry_run=False, check_only=False, output_override=str(cast)
+    )
+
+    assert result == 0
+    assert saw_ignored
+    assert record.signal.getsignal(signal_number) == previous_handler
 
 
 def test_record_headed_override_omits_headless_arg(
@@ -1197,9 +1261,140 @@ def test_timeline_progress_messages_use_setup_stage_and_command_labels() -> None
         )
         == "running: ./reploy up"
     )
+    assert (
+        record.progress_message_for_event(
+            {
+                "phase": "command_run_start",
+                "beat": "run",
+                "command": "sed -n '1,8p' file.yaml; printf '\\n'",
+                "display": "sed -n '1,8p' file.yaml",
+            },
+            beat_indexes=beat_indexes,
+            beat_count=beat_count,
+        )
+        == "running: sed -n '1,8p' file.yaml"
+    )
 
 
-def test_multiline_display_renders_separate_prompts() -> None:
+def test_timeline_progress_status_lines_are_normalized() -> None:
+    assert (
+        record.progress_status_line("setup: Prepare workspace", color=False)
+        == "step  setup: Prepare workspace"
+    )
+    assert (
+        record.progress_status_line("stage 2/2: Start server.", color=False)
+        == "step  stage 2/2: Start server."
+    )
+    assert (
+        record.progress_status_line("running: reploy test", color=False)
+        == "cmd   reploy test"
+    )
+    assert (
+        record.progress_status_line("check: Wait for server", color=False)
+        == "check Wait for server"
+    )
+
+
+def test_timeline_progress_status_lines_are_colorized() -> None:
+    assert record.progress_status_line("stage 2/2: Start server.", color=True) == (
+        "\033[36;1mstep \033[0m stage 2/2: Start server."
+    )
+    assert record.progress_status_line("running: reploy test", color=True) == (
+        "\033[32;1mcmd  \033[0m reploy test"
+    )
+
+
+def test_progress_event_printer_keeps_repeated_commands(capsys: pytest.CaptureFixture[str]) -> None:
+    spec = minimal_spec(beats=[{"id": "inspect", "caption": "Inspect files."}])
+    printer = record.ProgressEventPrinter(spec, color=False)
+    event = {
+        "phase": "command_run_start",
+        "beat": "inspect",
+        "command": "sed -n '1,8p' file.yaml",
+    }
+
+    printer.emit(event)
+    printer.emit(dict(event))
+
+    assert capsys.readouterr().err.splitlines() == [
+        "cmd   sed -n '1,8p' file.yaml",
+        "cmd   sed -n '1,8p' file.yaml",
+    ]
+
+
+def test_record_progress_bar_renders_current_stage_and_command(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    spec = minimal_spec(beats=[{"id": "inspect", "caption": "Inspect files."}])
+    printer = record.RecordProgressBar(spec, color=False)
+    printer.renderer.interactive = True
+
+    printer.emit(
+        {
+            "phase": "caption_start",
+            "beat": "inspect",
+            "caption": "Inspect files.",
+        }
+    )
+    printer.emit(
+        {
+            "phase": "command_run_start",
+            "beat": "inspect",
+            "command": "sed -n '1,8p' file.yaml",
+        }
+    )
+
+    output = capsys.readouterr().err
+    assert "progress [" in output
+    assert "current Inspect files." in output
+    assert "current sed -n '1,8p' file.yaml" in output
+
+
+def test_progress_pipe_reporter_reads_repeated_events(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    spec = minimal_spec(beats=[{"id": "inspect", "caption": "Inspect files."}])
+    pipe_path = tmp_path / "progress.pipe"
+    printer = record.ProgressEventPrinter(spec, color=False)
+    reporter = record.ProgressPipeReporter(
+        pipe_path,
+        enabled=True,
+        on_event=printer.emit,
+    )
+    reporter.start()
+    try:
+        event = {
+            "phase": "command_run_start",
+            "beat": "inspect",
+            "command": "sed -n '1,8p' file.yaml",
+        }
+        line = json.dumps(event).encode("utf-8") + b"\n"
+        for _ in range(2):
+            deadline = time.monotonic() + 1
+            while True:
+                try:
+                    fd = os.open(pipe_path, os.O_WRONLY | os.O_NONBLOCK)
+                    break
+                except OSError:
+                    if time.monotonic() > deadline:
+                        raise
+                    time.sleep(0.01)
+            try:
+                os.write(fd, line)
+            finally:
+                os.close(fd)
+            time.sleep(0.05)
+    finally:
+        reporter.stop()
+
+    assert capsys.readouterr().err.splitlines() == [
+        "cmd   sed -n '1,8p' file.yaml",
+        "cmd   sed -n '1,8p' file.yaml",
+    ]
+
+
+def test_multiline_display_records_separate_prompt_events(tmp_path: Path) -> None:
+    timeline = tmp_path / "recording.timeline.jsonl"
     spec = minimal_spec(
         beats=[
             {
@@ -1215,12 +1410,19 @@ def test_multiline_display_renders_separate_prompts() -> None:
         ]
     )
 
-    result = run_rendered_session(spec)
+    result = run_rendered_session(spec, env={"ARBITER_CINEMA_TIMELINE": str(timeline)})
 
     assert result.returncode == 0, result.stderr
-    assert "$ python3 -m venv .venv\n" in result.stdout
-    assert "$ .venv/bin/python -m pip install arbiter-suite\n" in result.stdout
+    assert "$ python3 -m venv .venv\n" not in result.stdout
+    assert "$ .venv/bin/python -m pip install arbiter-suite\n" not in result.stdout
     assert "installed\n" in result.stdout
+    events = record.read_timeline_events(timeline)
+    prompt_starts = [
+        event for event in events if event["phase"] == "command_prompt_start"
+    ]
+    assert [event["command"] for event in prompt_starts] == [
+        "python3 -m venv .venv\n.venv/bin/python -m pip install arbiter-suite\n",
+    ]
 
 
 def test_multiline_action_outputs_after_each_command() -> None:
@@ -1241,18 +1443,233 @@ def test_multiline_action_outputs_after_each_command() -> None:
     result = run_rendered_session(spec)
 
     assert result.returncode == 0, result.stderr
-    first_prompt_text = "$ echo first\n"
-    second_prompt_text = "$ echo second\n"
-    first_prompt = result.stdout.index(first_prompt_text)
-    first_output = result.stdout.index("first\n", first_prompt + len(first_prompt_text))
-    second_prompt = result.stdout.index(second_prompt_text)
-    second_output = result.stdout.index(
-        "second\n", second_prompt + len(second_prompt_text)
+    first_output = result.stdout.index("first\n")
+    second_output = result.stdout.index("second\n")
+    assert "$ echo first\n" not in result.stdout
+    assert "$ echo second\n" not in result.stdout
+    assert first_output < second_output
+
+
+def test_action_level_after_anchor_is_recorded_in_timeline(tmp_path: Path) -> None:
+    timeline = tmp_path / "recording.timeline.jsonl"
+    spec = minimal_spec(
+        beats=[
+            {
+                "id": "install",
+                "actions": [
+                    {
+                        "display": "curl -fsSL https://example.test/install.sh",
+                        "run": "printf 'installed\\n'",
+                        "after": "@install@",
+                    }
+                ],
+            }
+        ]
     )
-    assert first_prompt < first_output < second_prompt < second_output
+
+    result = run_rendered_session(spec, env={"ARBITER_CINEMA_TIMELINE": str(timeline)})
+
+    assert result.returncode == 0, result.stderr
+    events = record.read_timeline_events(timeline)
+    prompt_start = next(
+        event for event in events if event["phase"] == "command_prompt_start"
+    )
+    run_start = next(event for event in events if event["phase"] == "command_run_start")
+    run_end = next(event for event in events if event["phase"] == "command_run_end")
+    assert prompt_start["after"] == "@install@"
+    assert run_start["after"] == "@install@"
+    assert run_end["after"] == "@install@"
+
+
+def test_structured_commands_use_display_and_real_output(tmp_path: Path) -> None:
+    spec = minimal_spec(
+        beats=[
+            {
+                "id": "install",
+                "actions": [
+                    {
+                        "commands": [
+                            {
+                                "id": "install",
+                                "run": "printf 'installed\\n'",
+                                "after": "@install@",
+                                "display": "curl -fsSL https://example.test/install.sh | sh",
+                                "follow_along": True,
+                                "retime": "realtime",
+                            },
+                            {"run": "printf 'version 1\\n'"},
+                        ],
+                        "expect": {"output_contains": ["installed", "version 1"]},
+                    }
+                ],
+            }
+        ]
+    )
+
+    timeline = tmp_path / "timeline.jsonl"
+    result = run_rendered_session(spec, env={"ARBITER_CINEMA_TIMELINE": str(timeline)})
+
+    assert result.returncode == 0, result.stderr
+    assert "$ curl -fsSL https://example.test/install.sh | sh\n" not in result.stdout
+    assert "$ printf 'installed\\n'\n" not in result.stdout
+    assert "installed\n" in result.stdout
+    assert "$ printf 'version 1\\n'\n" not in result.stdout
+    timeline_text = timeline.read_text(encoding="utf-8")
+    assert '"command_id": "install"' in timeline_text
+    assert (
+        '"command": "curl -fsSL https://example.test/install.sh | sh"' in timeline_text
+    )
+    assert '"command": "printf \'version 1\\\\n\'"' in timeline_text
+    assert '"after": "@install@"' in timeline_text
+    assert '"follow_along": "true"' in timeline_text
+    assert '"follow_along": "false"' in timeline_text
+    assert '"retime": "realtime"' in timeline_text
+    assert '"retime": "normal"' in timeline_text
+    assert '"show_prompt_after": "true"' in timeline_text
+
+
+def test_structured_commands_can_suppress_trailing_prompt(tmp_path: Path) -> None:
+    spec = minimal_spec(
+        beats=[
+            {
+                "id": "install",
+                "actions": [
+                    {
+                        "commands": [
+                            {
+                                "run": "clear",
+                                "show_prompt_after": False,
+                            },
+                        ],
+                    }
+                ],
+            }
+        ]
+    )
+
+    timeline = tmp_path / "timeline.jsonl"
+    result = run_rendered_session(spec, env={"ARBITER_CINEMA_TIMELINE": str(timeline)})
+
+    assert result.returncode == 0, result.stderr
+    timeline_text = timeline.read_text(encoding="utf-8")
+    assert '"command": "clear"' in timeline_text
+    assert '"show_prompt_after": "false"' in timeline_text
+
+
+def test_structured_commands_can_suppress_visible_output() -> None:
+    spec = minimal_spec(
+        beats=[
+            {
+                "id": "install",
+                "actions": [
+                    {
+                        "commands": [
+                            {
+                                "run": "printf 'hidden output\\n'",
+                                "display": "installer",
+                                "output": "suppress",
+                            }
+                        ],
+                        "expect": {"output_contains": ["hidden output"]},
+                    }
+                ],
+            }
+        ]
+    )
+
+    result = run_rendered_session(spec)
+
+    assert result.returncode == 0, result.stderr
+    assert "$ installer\n" not in result.stdout
+    assert "hidden output\n" not in result.stdout
+
+
+def test_realtime_command_streams_carriage_return_output_before_newline(
+    tmp_path: Path,
+) -> None:
+    spec = minimal_spec(
+        beats=[
+            {
+                "id": "build",
+                "actions": [
+                    {
+                        "commands": [
+                            {
+                                "run": "printf 'spin |\\r'; sleep 1.0; printf 'done\\n'",
+                                "retime": "realtime",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+    )
+    script = record.render_session_script(spec).encode()
+    process = subprocess.Popen(
+        ["bash"],
+        cwd=REPO_ROOT,
+        env={**os.environ, "ARBITER_CINEMA_TIMELINE": str(tmp_path / "timeline.jsonl")},
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert process.stdin is not None
+    assert process.stdout is not None
+    process.stdin.write(script)
+    process.stdin.close()
+
+    output = b""
+    deadline = time.monotonic() + 0.6
+    try:
+        while time.monotonic() < deadline and b"spin |" not in output:
+            ready, _, _ = select.select([process.stdout], [], [], 0.05)
+            if ready:
+                output += os.read(process.stdout.fileno(), 4096)
+        assert b"spin |" in output
+        remaining_stdout, stderr = process.communicate(timeout=3)
+    except BaseException:
+        process.kill()
+        process.communicate()
+        raise
+
+    assert process.returncode == 0, stderr.decode(errors="replace")
+    assert b"done\n" in output + remaining_stdout
+
+
+def test_structured_commands_can_fake_visible_output() -> None:
+    spec = minimal_spec(
+        beats=[
+            {
+                "id": "install",
+                "actions": [
+                    {
+                        "commands": [
+                            {
+                                "run": "printf 'real output\\n'",
+                                "display": "installer",
+                                "output": {
+                                    "mode": "fake",
+                                    "text": "friendly output\n",
+                                },
+                            }
+                        ],
+                        "expect": {"output_contains": ["real output"]},
+                    }
+                ],
+            }
+        ]
+    )
+
+    result = run_rendered_session(spec)
+
+    assert result.returncode == 0, result.stderr
+    assert "$ installer\n" not in result.stdout
+    assert "friendly output\n" in result.stdout
+    assert "real output\n" not in result.stdout
 
 
 def test_prompt_reflects_activated_virtual_environment(tmp_path: Path) -> None:
+    timeline = tmp_path / "recording.timeline.jsonl"
     spec = minimal_spec(
         beats=[
             {
@@ -1282,14 +1699,21 @@ def test_prompt_reflects_activated_virtual_environment(tmp_path: Path) -> None:
         env={
             "VIRTUAL_ENV": "/host/project/.venv",
             "VIRTUAL_ENV_PROMPT": "(.venv) ",
+            "ARBITER_CINEMA_TIMELINE": str(timeline),
         },
     )
 
     assert result.returncode == 0, result.stderr
-    assert "$ source arbiter_venv/bin/activate\n" in result.stdout
+    assert "$ source arbiter_venv/bin/activate\n" not in result.stdout
     assert "(.venv) $" not in result.stdout
-    assert "(arbiter_venv) $ \n" in result.stdout
-    assert "(arbiter_venv) $ arbiter-server version\n" in result.stdout
+    assert "(arbiter_venv) $ \n" not in result.stdout
+    assert "(arbiter_venv) $ arbiter-server version\n" not in result.stdout
+    events = record.read_timeline_events(timeline)
+    prompt_starts = [
+        event for event in events if event["phase"] == "command_prompt_start"
+    ]
+    assert prompt_starts[0]["prompt"] == "$"
+    assert prompt_starts[1]["prompt"] == "(arbiter_venv) $"
 
 
 def test_color_enabled_recording_forces_color_environment() -> None:
@@ -1300,8 +1724,9 @@ def test_color_enabled_recording_forces_color_environment() -> None:
                 "actions": [
                     {
                         "run": (
-                            'printf "color=%s term=%s force=%s\\n" '
-                            '"$ARBITER_COLOR" "$TERM" "$FORCE_COLOR"'
+                            'printf "term=%s force=%s clicolor=%s py=%s no_color=%s\\n" '
+                            '"$TERM" "$FORCE_COLOR" "$CLICOLOR_FORCE" '
+                            '"$PY_COLORS" "${NO_COLOR:-}"'
                         )
                     }
                 ],
@@ -1313,7 +1738,35 @@ def test_color_enabled_recording_forces_color_environment() -> None:
     result = run_rendered_session(spec)
 
     assert result.returncode == 0, result.stderr
-    assert "color=always term=xterm-256color force=1\n" in result.stdout
+    assert "term=xterm-256color force=1 clicolor=1 py=1 no_color=\n" in result.stdout
+
+
+def test_recording_environment_variables_can_set_app_specific_color() -> None:
+    spec = minimal_spec(
+        beats=[
+            {
+                "id": "show",
+                "actions": [
+                    {
+                        "run": (
+                            'printf "arbiter=%s reploy=%s\\n" '
+                            '"$ARBITER_COLOR" "$REPLOY_COLOR"'
+                        )
+                    }
+                ],
+            }
+        ]
+    )
+    spec["style"] = {"color": True, "typing": False}
+    spec["environment"]["variables"] = {
+        "ARBITER_COLOR": "always",
+        "REPLOY_COLOR": "always",
+    }
+
+    result = run_rendered_session(spec)
+
+    assert result.returncode == 0, result.stderr
+    assert "arbiter=always reploy=always\n" in result.stdout
 
 
 def test_output_expectations_match_ansi_stripped_text() -> None:
@@ -1498,7 +1951,8 @@ def test_stage_markers_use_progress_log(tmp_path: Path) -> None:
     assert not list(run_dir.glob("*.stderr"))
 
 
-def test_continuation_display_renders_without_extra_prompt() -> None:
+def test_continuation_display_records_without_extra_prompt(tmp_path: Path) -> None:
+    timeline = tmp_path / "recording.timeline.jsonl"
     spec = minimal_spec(
         beats=[
             {
@@ -1513,12 +1967,19 @@ def test_continuation_display_renders_without_extra_prompt() -> None:
         ]
     )
 
-    result = run_rendered_session(spec)
+    result = run_rendered_session(spec, env={"ARBITER_CINEMA_TIMELINE": str(timeline)})
 
     assert result.returncode == 0, result.stderr
-    assert "$ arbiter-server serve \\\n" in result.stdout
-    assert "  arbiter.server.bind.host=127.0.0.1\n" in result.stdout
+    assert "$ arbiter-server serve \\\n" not in result.stdout
+    assert "  arbiter.server.bind.host=127.0.0.1\n" not in result.stdout
     assert "$ arbiter.server.bind.host=127.0.0.1" not in result.stdout
+    events = record.read_timeline_events(timeline)
+    command = next(
+        event["command"]
+        for event in events
+        if event["phase"] == "command_prompt_start"
+    )
+    assert command == "arbiter-server serve \\\n  arbiter.server.bind.host=127.0.0.1"
 
 
 def test_hidden_check_success_is_not_recorded() -> None:
@@ -1621,6 +2082,8 @@ def test_visible_timeline_events_include_command_and_hold(tmp_path: Path) -> Non
     assert {event["action_id"] for event in command_events} == {"show_1"}
     assert {event["chunk_index"] for event in command_events} == {0}
     assert command_events[0]["command"] == "echo hi"
+    assert command_events[0]["prompt"] == "$"
+    assert command_events[0]["color"] == 0
     hold_events = [event for event in events if event["phase"].startswith("hold_")]
     assert {event["seconds"] for event in hold_events} == {0.0}
 

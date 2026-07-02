@@ -24,6 +24,10 @@ CONFIG_DIR = REPO_ROOT / "media" / "conf"
 RECORDING_SCRIPT_DIR = REPO_ROOT / "media" / "recording-scripts"
 GENERATED_DIR = REPO_ROOT / "media" / "generated"
 MAX_INLINE_RUN_LINES = 10
+NARRATION_BEAT_KEYS = {"id", "heading", "narration", "viewer_hold"}
+NARRATION_MARKER_RE = re.compile(
+    r"@(?:(wait):([A-Za-z][A-Za-z0-9_-]*)(?:\+([0-9]+(?:\.[0-9]+)?)(ms|s))?|([A-Za-z][A-Za-z0-9_-]*))@"
+)
 
 
 class StudioConfigError(RuntimeError):
@@ -100,6 +104,7 @@ class StudioConfig:
     action: StudioAction = StudioAction.build
     step: StudioStep | None = None
     output_format: str = "text"
+    verbose: bool = False
     load_env_file: bool = True
     env_file: str | None = ".env"
     env_override: bool = False
@@ -110,7 +115,7 @@ class StudioConfig:
     dry_run: bool = False
     headed: bool = False
     force: bool = False
-    timestamps: bool = False
+    timestamps: bool = True
     allow_mismatch: bool = False
     run_id: str | None = None
     runs_since: str | None = None
@@ -267,7 +272,9 @@ def display_path(path: Path) -> str:
         return str(path)
 
 
-def studio_directive_blocks(script_text: str) -> list[dict[str, Any]]:
+def studio_directive_blocks(
+    script_text: str, *, resolve: bool = True
+) -> list[dict[str, Any]]:
     blocks: list[dict[str, Any]] = []
     lines = script_text.splitlines()
     index = 0
@@ -296,7 +303,7 @@ def studio_directive_blocks(script_text: str) -> list[dict[str, Any]]:
                 config = OmegaConf.create(text)
                 value = OmegaConf.to_container(
                     config,
-                    resolve=True,
+                    resolve=resolve,
                     enum_to_str=True,
                 )
             except OmegaConfBaseException as exc:
@@ -328,6 +335,23 @@ def validate_step_inline_run_length(step: dict[str, Any], *, field: str) -> None
             f"{field}.run has {line_count} non-empty lines; "
             f"inline run blocks are limited to {MAX_INLINE_RUN_LINES}. "
             "Move longer shell into an organized run_file."
+        )
+
+
+def validate_step_command_inline_run_lengths(
+    step: dict[str, Any], *, field: str
+) -> None:
+    commands = step.get("commands")
+    if commands is None:
+        return
+    if not isinstance(commands, list):
+        raise StudioConfigError(f"{field}.commands must be a list")
+    for index, command in enumerate(commands, start=1):
+        if not isinstance(command, dict):
+            raise StudioConfigError(f"{field}.commands.{index} must be a mapping")
+        validate_step_inline_run_length(
+            command,
+            field=f"{field}.commands.{index}",
         )
 
 
@@ -368,10 +392,69 @@ def validate_recording_inline_run_lengths(spec: dict[str, Any]) -> None:
                     step,
                     field=f"recording.beats.{beat_id}.{field}.{index}",
                 )
+                validate_step_command_inline_run_lengths(
+                    step,
+                    field=f"recording.beats.{beat_id}.{field}.{index}",
+                )
 
 
 def normalize_narration_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
+
+
+def narration_marker_gap_seconds(value: str | None, unit: str | None) -> float:
+    if value is None:
+        return 0.0
+    gap = float(value)
+    return gap / 1000.0 if unit == "ms" else gap
+
+
+def narration_text_and_anchors(
+    text: str,
+) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
+    parts: list[str] = []
+    anchors: list[dict[str, Any]] = []
+    waits: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    previous = 0
+    for match in NARRATION_MARKER_RE.finditer(text):
+        before = text[match.start() - 1] if match.start() > 0 else ""
+        after = text[match.end()] if match.end() < len(text) else ""
+        if before.isalnum() or before == "_" or after.isalnum() or after == "_":
+            raise StudioConfigError(
+                f"narration marker {match.group(0)} must be separated from words"
+            )
+        parts.append(text[previous : match.start()])
+        marker = match.group(0)
+        marker_offset = len(normalize_narration_text("".join(parts)))
+        marker_kind = match.group(1)
+        if marker_kind == "wait":
+            wait_target = match.group(2)
+            gap_seconds = narration_marker_gap_seconds(match.group(3), match.group(4))
+            waits.append(
+                {
+                    "target": wait_target,
+                    "marker": marker,
+                    "text_offset": marker_offset,
+                    "gap_seconds": gap_seconds,
+                }
+            )
+            previous = match.end()
+            continue
+        anchor_id = match.group(5)
+        if anchor_id in seen:
+            raise StudioConfigError(f"duplicate narration anchor: @{anchor_id}@")
+        seen.add(anchor_id)
+        anchors.append(
+            {
+                "id": anchor_id,
+                "marker": marker,
+                "text_offset": marker_offset,
+            }
+        )
+        previous = match.end()
+    parts.append(text[previous:])
+    return normalize_narration_text("".join(parts)), anchors, waits
 
 
 def scene_title_from_directive(value: object) -> str:
@@ -403,7 +486,7 @@ def narration_from_script(
     *, recording_id: str, script_path: Path, blocks: list[dict[str, Any]]
 ) -> dict[str, Any]:
     scene_title = ""
-    beats: list[dict[str, str]] = []
+    beats: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
     for block in blocks:
         if "scene" in block:
@@ -432,13 +515,25 @@ def narration_from_script(
             if normalized_id in seen_ids:
                 raise StudioConfigError(f"duplicate narration beat id: {normalized_id}")
             seen_ids.add(normalized_id)
-            beats.append(
-                {
-                    "id": normalized_id,
-                    "heading": heading.strip(),
-                    "text": normalize_narration_text(narration),
-                }
-            )
+            text, anchors, waits = narration_text_and_anchors(narration)
+            beat = {
+                "id": normalized_id,
+                "heading": heading.strip(),
+                "text": text,
+            }
+            if anchors:
+                beat["anchors"] = anchors
+            if waits:
+                beat["waits"] = waits
+            viewer_hold = value.get("viewer_hold")
+            if viewer_hold is not None:
+                if not isinstance(viewer_hold, (int, float)) or viewer_hold < 0:
+                    raise StudioConfigError(
+                        f"studio-directive beat {normalized_id}.viewer_hold "
+                        "must be a non-negative number"
+                    )
+                beat["viewer_hold"] = float(viewer_hold)
+            beats.append(beat)
     if not scene_title:
         raise StudioConfigError(f"recording script must define a scene: {script_path}")
     if not beats:
@@ -454,6 +549,58 @@ def narration_from_script(
     }
 
 
+def recording_beat_values_from_script(
+    blocks: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    recording_beats: list[dict[str, Any]] = []
+    for block in blocks:
+        for value in beat_values_from_directive(block):
+            if not isinstance(value, dict):
+                continue
+            beat_id = value.get("id")
+            if not isinstance(beat_id, str) or not beat_id.strip():
+                continue
+            executable_keys = set(value) - NARRATION_BEAT_KEYS
+            if not executable_keys:
+                continue
+            beat = {
+                key: data
+                for key, data in value.items()
+                if key not in {"heading", "narration"}
+            }
+            beat["id"] = beat_id.strip()
+            recording_beats.append(beat)
+    return recording_beats
+
+
+def merge_script_recording_beats(
+    spec: dict[str, Any], blocks: list[dict[str, Any]]
+) -> None:
+    inline_beats = recording_beat_values_from_script(blocks)
+    if not inline_beats:
+        return
+    existing = spec.get("beats")
+    if existing is None:
+        spec["beats"] = inline_beats
+        return
+    if not isinstance(existing, list):
+        raise StudioConfigError("recording.beats must be a list")
+    seen_ids = {
+        beat.get("id")
+        for beat in existing
+        if isinstance(beat, dict) and isinstance(beat.get("id"), str)
+    }
+    duplicate_ids = sorted(
+        beat["id"] for beat in inline_beats if beat["id"] in seen_ids
+    )
+    if duplicate_ids:
+        raise StudioConfigError(
+            "recording beat defined in both recording.beats and beat directive: "
+            + ", ".join(duplicate_ids)
+        )
+    spec["beats"] = [*existing, *inline_beats]
+
+
 def recording_id_from_config(config: dict[str, Any], recording_id: str | None) -> str:
     if recording_id:
         return recording_id
@@ -467,6 +614,21 @@ def recording_id_from_config(config: dict[str, Any], recording_id: str | None) -
     raise StudioConfigError("recording id must be a non-empty string")
 
 
+def resolve_recording_spec_interpolations(spec: dict[str, Any]) -> dict[str, Any]:
+    try:
+        config = OmegaConf.create({"recording": spec})
+        resolved = OmegaConf.to_container(config, resolve=True, enum_to_str=True)
+    except OmegaConfBaseException as exc:
+        raise StudioConfigError(
+            f"failed to resolve recording script config: {exc}"
+        ) from exc
+    if not isinstance(resolved, dict) or not isinstance(
+        resolved.get("recording"), dict
+    ):
+        raise StudioConfigError("resolved recording script config must be a mapping")
+    return resolved["recording"]
+
+
 def recording_script_path(recording_id: str) -> Path:
     return RECORDING_SCRIPT_DIR / f"{recording_id}.md"
 
@@ -476,7 +638,7 @@ def recording_from_script(recording_id: str) -> dict[str, Any]:
     if not script_path.exists():
         raise StudioConfigError(f"recording script not found: {script_path}")
     script_text = script_path.read_text(encoding="utf-8")
-    blocks = studio_directive_blocks(script_text)
+    blocks = studio_directive_blocks(script_text, resolve=False)
     recording_blocks = [block["recording"] for block in blocks if "recording" in block]
     if len(recording_blocks) != 1:
         raise StudioConfigError(
@@ -488,11 +650,13 @@ def recording_from_script(recording_id: str) -> dict[str, Any]:
     spec = dict(recording)
     spec.setdefault("id", recording_id)
     spec["script"] = display_path(script_path)
+    merge_script_recording_beats(spec, blocks)
     spec["narration"] = narration_from_script(
         recording_id=recording_id,
         script_path=script_path,
         blocks=blocks,
     )
+    spec = resolve_recording_spec_interpolations(spec)
     validate_recording_inline_run_lengths(spec)
     return spec
 
@@ -548,7 +712,7 @@ def recording_spec_from_config(
             script_path = resolve_config_path(script)
             if script_path.exists():
                 script_text = script_path.read_text(encoding="utf-8")
-                blocks = studio_directive_blocks(script_text)
+                blocks = studio_directive_blocks(script_text, resolve=False)
                 spec.setdefault(
                     "narration",
                     narration_from_script(
@@ -557,6 +721,8 @@ def recording_spec_from_config(
                         blocks=blocks,
                     ),
                 )
+                merge_script_recording_beats(spec, blocks)
+                spec = resolve_recording_spec_interpolations(spec)
                 validate_recording_inline_run_lengths(spec)
     else:
         spec = recording_from_script(resolved_recording_id)

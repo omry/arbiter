@@ -36,6 +36,8 @@ from studio_config import (
     load_recording_spec_from_hydra_cfg,
     studio_directive_blocks as parse_studio_directive_blocks,
 )
+from terminal_style import ANSI_CYAN_BOLD, ANSI_GREEN_BOLD
+from tool_progress import LogProgressRenderer, ProgressBarRenderer, ToolProgress
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -50,6 +52,45 @@ DEFAULT_OPENAI_TTS_USD_PER_1M_CHARACTERS = 15.0
 
 class AudioError(RuntimeError):
     pass
+
+
+AUDIO_PROGRESS = ToolProgress("audio")
+StatusSummary = tuple[str, str, str]
+
+
+def status_line(
+    status: str,
+    message: str,
+    *,
+    color: str,
+    current: int | None = None,
+    total: int | None = None,
+) -> None:
+    AUDIO_PROGRESS.status(
+        status,
+        message,
+        color=color,
+        current=current,
+        total=total,
+    )
+
+
+def pass_line(
+    message: str,
+    *,
+    current: int | None = None,
+    total: int | None = None,
+) -> None:
+    status_line("pass", message, color=ANSI_GREEN_BOLD, current=current, total=total)
+
+
+def info_line(
+    message: str,
+    *,
+    current: int | None = None,
+    total: int | None = None,
+) -> None:
+    status_line("info", message, color=ANSI_CYAN_BOLD, current=current, total=total)
 
 
 @dataclass(frozen=True)
@@ -511,6 +552,33 @@ def audio_items_requiring_synthesis(
     return needed
 
 
+def audio_items_requiring_materialization(
+    plan: list[AudioPlanItem],
+    settings: AudioSettings,
+    *,
+    force: bool = False,
+) -> list[AudioPlanItem]:
+    if force:
+        return list(plan)
+    needed: list[AudioPlanItem] = []
+    for item in plan:
+        if item.output_path.exists():
+            continue
+        if reusable_cache_path(item, settings) is not None:
+            needed.append(item)
+    return needed
+
+
+def timestamp_items_requiring_generation(
+    plan: list[AudioPlanItem],
+    *,
+    force: bool = False,
+) -> list[AudioPlanItem]:
+    if force:
+        return list(plan)
+    return [item for item in plan if not timeline_path_for(item).exists()]
+
+
 def openai_tts_billable_characters(
     segment: NarrationSegment,
     settings: AudioSettings,
@@ -542,10 +610,56 @@ def format_usd(value: float) -> str:
 
 
 def print_openai_tts_billing_summary(summary: AudioBillingSummary) -> None:
-    print(
+    info_line(
         "OpenAI TTS estimated cost this run: "
         f"{format_usd(summary.estimated_cost_usd)}"
     )
+
+
+def audio_ready_summary(
+    *,
+    generated_count: int,
+    reused_count: int,
+    generated_timestamp_count: int | None,
+    estimated_cost: str | None,
+) -> str:
+    parts: list[str] = []
+    if generated_count:
+        parts.append(f"{generated_count} generated segments")
+    if reused_count:
+        parts.append(f"{reused_count} reused segments")
+    if generated_timestamp_count:
+        parts.append(f"{generated_timestamp_count} generated timestamp files")
+    if estimated_cost is not None:
+        parts.append(f"estimated cost {estimated_cost}")
+    return "audio updated: " + ", ".join(parts)
+
+
+def published_audio_summary(
+    *,
+    audio_path: Path,
+    timestamp_count: int,
+) -> str:
+    return (
+        f"published audio ready: {audio_path.name}, metadata, "
+        f"{timestamp_count} timestamp files"
+    )
+
+
+def print_paths_or_summary(
+    *,
+    verbose: bool,
+    path_label: str,
+    summary_label: str,
+    paths: list[Path],
+    current: int | None = None,
+    total: int | None = None,
+) -> None:
+    if verbose:
+        for path in paths:
+            pass_line(f"{path_label}: {display_path(path)}")
+    elif paths:
+        pass_line(f"{summary_label}: {len(paths)}", current=current, total=total)
 
 
 def openai_speech_bytes(
@@ -712,6 +826,35 @@ def publish_audio(
     return output_path
 
 
+def published_timestamp_path(metadata_path: Path, item: AudioPlanItem) -> Path:
+    return metadata_path.with_name(
+        f"{metadata_path.stem}.{item.segment.segment_id}.timestamps.json"
+    )
+
+
+def publish_timestamp_sidecars(
+    plan: list[AudioPlanItem],
+    metadata_path: Path,
+) -> dict[str, Path]:
+    published: dict[str, Path] = {}
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    for item in plan:
+        source = timeline_path_for(item)
+        if not source.exists():
+            continue
+        target = published_timestamp_path(metadata_path, item)
+        payload = json.loads(source.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise AudioError(f"audio timestamp metadata must be a mapping: {source}")
+        compact = compact_timestamp_payload(payload)
+        target.write_text(
+            json.dumps(compact, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        published[item.segment.segment_id] = target
+    return published
+
+
 def audio_duration_seconds(
     path: Path,
     *,
@@ -754,7 +897,11 @@ def audio_metadata_payload(
     plan: list[AudioPlanItem],
     output_path: Path,
     *,
-    guide_by_segment_id: dict[str, dict[str, str]] | None = None,
+    guide_by_segment_id: dict[str, dict[str, Any]] | None = None,
+    anchors_by_segment_id: dict[str, list[dict[str, Any]]] | None = None,
+    waits_by_segment_id: dict[str, list[dict[str, Any]]] | None = None,
+    pause_after_by_segment_id: dict[str, float] | None = None,
+    timestamps_by_segment_id: dict[str, Path] | None = None,
     ffprobe: str = "ffprobe",
     run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> dict[str, Any]:
@@ -770,8 +917,27 @@ def audio_metadata_payload(
             "offset": round(offset, 3),
             "duration": round(duration, 3),
         }
+        if anchors_by_segment_id and item.segment.segment_id in anchors_by_segment_id:
+            segment["anchors"] = anchors_by_segment_id[item.segment.segment_id]
+        if waits_by_segment_id and item.segment.segment_id in waits_by_segment_id:
+            segment["waits"] = waits_by_segment_id[item.segment.segment_id]
         if guide_by_segment_id and item.segment.segment_id in guide_by_segment_id:
             segment["guide"] = guide_by_segment_id[item.segment.segment_id]
+        if (
+            pause_after_by_segment_id
+            and item.segment.segment_id in pause_after_by_segment_id
+        ):
+            segment["pause_after"] = round(
+                pause_after_by_segment_id[item.segment.segment_id],
+                3,
+            )
+        if (
+            timestamps_by_segment_id
+            and item.segment.segment_id in timestamps_by_segment_id
+        ):
+            segment["timestamps"] = display_path(
+                timestamps_by_segment_id[item.segment.segment_id]
+            )
         segments.append(segment)
         offset += duration
     return {
@@ -785,13 +951,20 @@ def audio_metadata_payload(
     }
 
 
-def guide_payload(value: object) -> dict[str, str] | None:
+def guide_payload(value: object) -> dict[str, Any] | None:
     if not isinstance(value, dict):
         return None
-    try_command = value.get("try_command")
-    if not isinstance(try_command, str) or not try_command.strip():
+    raw_commands = value.get("commands")
+    if not isinstance(raw_commands, list):
         return None
-    payload = {"try_command": normalize_narration_text(try_command)}
+    commands = [
+        normalize_narration_text(command)
+        for command in raw_commands
+        if isinstance(command, str) and command.strip()
+    ]
+    if not commands:
+        return None
+    payload: dict[str, Any] = {"commands": commands}
     success_hint = value.get("success_hint")
     if isinstance(success_hint, str) and success_hint.strip():
         payload["success_hint"] = normalize_narration_text(success_hint)
@@ -801,12 +974,12 @@ def guide_payload(value: object) -> dict[str, str] | None:
 def guide_by_segment_id_from_spec(
     spec: dict[str, Any],
     plan: list[AudioPlanItem],
-) -> dict[str, dict[str, str]]:
+) -> dict[str, dict[str, Any]]:
     beats = spec.get("beats")
     if not isinstance(beats, list) or not plan:
         return {}
     segment_offset = 1 if plan[0].segment.segment_id == "overview" else 0
-    guides: dict[str, dict[str, str]] = {}
+    guides: dict[str, dict[str, Any]] = {}
     for index, beat in enumerate(beats):
         if not isinstance(beat, dict):
             continue
@@ -817,6 +990,127 @@ def guide_by_segment_id_from_spec(
         if guide is not None:
             guides[plan[segment_index].segment.segment_id] = guide
     return guides
+
+
+def anchors_by_segment_id_from_spec(
+    spec: dict[str, Any],
+    plan: list[AudioPlanItem],
+) -> dict[str, list[dict[str, Any]]]:
+    narration = narration_mapping_from_spec(spec)
+    beats = narration.get("beats")
+    if not isinstance(beats, list):
+        return {}
+    plan_by_id = {item.segment.segment_id for item in plan}
+    anchors: dict[str, list[dict[str, Any]]] = {}
+    for beat in beats:
+        if not isinstance(beat, dict):
+            continue
+        segment_id = beat.get("id")
+        raw_anchors = beat.get("anchors")
+        if (
+            not isinstance(segment_id, str)
+            or segment_id not in plan_by_id
+            or not isinstance(raw_anchors, list)
+        ):
+            continue
+        clean_anchors = []
+        for raw_anchor in raw_anchors:
+            if not isinstance(raw_anchor, dict):
+                continue
+            anchor_id = raw_anchor.get("id")
+            marker = raw_anchor.get("marker")
+            text_offset = raw_anchor.get("text_offset")
+            if (
+                isinstance(anchor_id, str)
+                and anchor_id
+                and isinstance(marker, str)
+                and isinstance(text_offset, int)
+            ):
+                clean_anchors.append(
+                    {
+                        "id": anchor_id,
+                        "marker": marker,
+                        "text_offset": text_offset,
+                    }
+                )
+        if clean_anchors:
+            anchors[segment_id] = clean_anchors
+    return anchors
+
+
+def waits_by_segment_id_from_spec(
+    spec: dict[str, Any],
+    plan: list[AudioPlanItem],
+) -> dict[str, list[dict[str, Any]]]:
+    narration = narration_mapping_from_spec(spec)
+    beats = narration.get("beats")
+    if not isinstance(beats, list):
+        return {}
+    plan_by_id = {item.segment.segment_id for item in plan}
+    waits: dict[str, list[dict[str, Any]]] = {}
+    for beat in beats:
+        if not isinstance(beat, dict):
+            continue
+        segment_id = beat.get("id")
+        raw_waits = beat.get("waits")
+        if (
+            not isinstance(segment_id, str)
+            or segment_id not in plan_by_id
+            or not isinstance(raw_waits, list)
+        ):
+            continue
+        clean_waits = []
+        for raw_wait in raw_waits:
+            if not isinstance(raw_wait, dict):
+                continue
+            target = raw_wait.get("target")
+            marker = raw_wait.get("marker")
+            text_offset = raw_wait.get("text_offset")
+            gap_seconds = raw_wait.get("gap_seconds")
+            if (
+                isinstance(target, str)
+                and target
+                and isinstance(marker, str)
+                and isinstance(text_offset, int)
+                and isinstance(gap_seconds, (int, float))
+                and gap_seconds >= 0
+            ):
+                clean_waits.append(
+                    {
+                        "target": target,
+                        "marker": marker,
+                        "text_offset": text_offset,
+                        "gap_seconds": round(float(gap_seconds), 3),
+                    }
+                )
+        if clean_waits:
+            waits[segment_id] = clean_waits
+    return waits
+
+
+def pause_after_by_segment_id_from_spec(
+    spec: dict[str, Any],
+    plan: list[AudioPlanItem],
+) -> dict[str, float]:
+    narration = narration_mapping_from_spec(spec)
+    beats = narration.get("beats")
+    if not isinstance(beats, list) or not plan:
+        return {}
+    plan_by_id = {item.segment.segment_id for item in plan}
+    pauses: dict[str, float] = {}
+    for beat in beats:
+        if not isinstance(beat, dict):
+            continue
+        segment_id = beat.get("id")
+        pause_after = beat.get("viewer_hold")
+        if (
+            isinstance(segment_id, str)
+            and segment_id in plan_by_id
+            and isinstance(pause_after, (int, float))
+            and pause_after > 0
+        ):
+            pauses[segment_id] = float(pause_after)
+    return pauses
 
 
 def format_browse_timestamp(seconds: float) -> str:
@@ -865,7 +1159,11 @@ def publish_audio_metadata(
     output_path: Path,
     metadata_path: Path,
     *,
-    guide_by_segment_id: dict[str, dict[str, str]] | None = None,
+    guide_by_segment_id: dict[str, dict[str, Any]] | None = None,
+    anchors_by_segment_id: dict[str, list[dict[str, Any]]] | None = None,
+    waits_by_segment_id: dict[str, list[dict[str, Any]]] | None = None,
+    pause_after_by_segment_id: dict[str, float] | None = None,
+    timestamps_by_segment_id: dict[str, Path] | None = None,
     ffprobe: str = "ffprobe",
     run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> Path:
@@ -874,6 +1172,10 @@ def publish_audio_metadata(
         plan,
         output_path,
         guide_by_segment_id=guide_by_segment_id,
+        anchors_by_segment_id=anchors_by_segment_id,
+        waits_by_segment_id=waits_by_segment_id,
+        pause_after_by_segment_id=pause_after_by_segment_id,
+        timestamps_by_segment_id=timestamps_by_segment_id,
         ffprobe=ffprobe,
         run=run,
     )
@@ -936,6 +1238,37 @@ def validate_published_audio_metadata(
         f"{display_path(metadata_path)}: {mismatch}; "
         "run audio_generate and audio_publish"
     )
+
+
+def published_audio_is_fresh(
+    plan: list[AudioPlanItem],
+    output_path: Path,
+    metadata_path: Path,
+) -> bool:
+    if not output_path.exists() or not metadata_path.exists():
+        return False
+    if published_audio_metadata_mismatch(plan, metadata_path) is not None:
+        return False
+    try:
+        output_mtime = output_path.stat().st_mtime_ns
+        metadata_mtime = metadata_path.stat().st_mtime_ns
+    except OSError:
+        return False
+    published_mtime = min(output_mtime, metadata_mtime)
+    for item in plan:
+        inputs = [item.output_path]
+        timestamp_path = timeline_path_for(item)
+        if timestamp_path.exists():
+            inputs.append(timestamp_path)
+        for path in inputs:
+            if not path.exists():
+                return False
+            try:
+                if path.stat().st_mtime_ns > published_mtime:
+                    return False
+            except OSError:
+                return False
+    return True
 
 
 def multipart_escape(value: str) -> str:
@@ -1054,22 +1387,66 @@ def timeline_payload(
     transcription: TranscriptionSettings,
     response: dict[str, Any],
 ) -> dict[str, Any]:
+    del transcription
+    return compact_timestamp_payload(
+        {
+            "recording": recording_id,
+            "segment": item.segment.segment_id,
+            "source_text": item.segment.text,
+            "transcript": response.get("text"),
+            "duration": response.get("duration"),
+            "words": response.get("words", []),
+        }
+    )
+
+
+def compact_timestamp_word(word: object) -> dict[str, Any] | None:
+    if not isinstance(word, dict):
+        return None
+    raw_word = word.get("word")
+    start = word.get("start")
+    end = word.get("end")
+    if (
+        not isinstance(raw_word, str)
+        or not isinstance(start, (int, float))
+        or not isinstance(end, (int, float))
+    ):
+        return None
     return {
-        "recording": recording_id,
-        "segment": item.segment.segment_id,
-        "heading": item.segment.heading,
-        "cache_key": item.cache_key,
-        "audio": display_path(item.output_path),
-        "transcription_model": transcription.model,
-        "timestamp_granularities": list(transcription.timestamp_granularities),
-        "source_text": item.segment.text,
-        "transcript": response.get("text"),
-        "duration": response.get("duration"),
-        "language": response.get("language"),
-        "words": response.get("words", []),
-        "segments": response.get("segments", []),
-        "usage": response.get("usage"),
+        "end": round(float(end), 3),
+        "start": round(float(start), 3),
+        "word": raw_word,
     }
+
+
+def compact_timestamp_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    compact: dict[str, Any] = {}
+    for key in ("recording", "segment", "source_text", "transcript"):
+        value = payload.get(key)
+        if isinstance(value, str):
+            compact[key] = value
+    duration = payload.get("duration")
+    if isinstance(duration, (int, float)):
+        compact["duration"] = round(float(duration), 3)
+    words = payload.get("words")
+    compact_words: list[dict[str, Any]] = []
+    if isinstance(words, list):
+        for word in words:
+            compact_word = compact_timestamp_word(word)
+            if compact_word is not None:
+                compact_words.append(compact_word)
+    compact["words"] = compact_words
+    return compact
+
+
+def timestamp_sidecar_matches_item(path: Path, item: AudioPlanItem) -> bool:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    return payload.get("source_text") == item.segment.text
 
 
 def generate_timestamps(
@@ -1086,7 +1463,11 @@ def generate_timestamps(
     written: list[Path] = []
     for item in plan:
         timeline_path = timeline_path_for(item)
-        if timeline_path.exists() and not force:
+        if (
+            timeline_path.exists()
+            and not force
+            and timestamp_sidecar_matches_item(timeline_path, item)
+        ):
             written.append(timeline_path)
             continue
         response = transcribe(item, settings, transcription)
@@ -1237,78 +1618,234 @@ def run_tool_from_hydra_cfg(cfg: DictConfig) -> int:
         force = config.get("force", False)
         timestamps = config.get("timestamps", False)
         output_format = config.get("output_format", "text")
+        verbose = config.get("verbose", False)
         if not isinstance(force, bool):
             raise AudioError("force must be a boolean")
         if not isinstance(timestamps, bool):
             raise AudioError("timestamps must be a boolean")
         if not isinstance(output_format, str):
             raise AudioError("output_format must be a string")
+        if not isinstance(verbose, bool):
+            raise AudioError("verbose must be a boolean")
         recording_id = require_string(spec, "_recording_id", field="recording")
-        if action == "sync_narration":
-            path = sync_narration_config(spec)
-            print(f"synced narration {display_path(path)}")
-            return 0
-        settings = audio_settings(spec)
-        transcription = transcription_settings(spec)
-        segments = load_narration_segments(spec)
-        plan = plan_audio(recording_id, segments, settings)
-        guide_by_segment_id = guide_by_segment_id_from_spec(spec, plan)
-        published_audio = output_audio_path(spec, recording_id, settings)
-        published_metadata = output_audio_metadata_path(spec, published_audio)
-        if action == "dry_run":
-            print_plan(
-                plan,
-                settings,
-                published_audio,
-                published_metadata,
-                output_format=output_format,
-            )
-            return 0
-        if action == "check":
-            validate_published_audio_metadata(plan, published_metadata)
-            state = "enabled" if settings.enabled else "disabled"
-            print(
-                f"ok: {recording_id} audio {state}; "
-                f"{len(plan)} narration segment(s), provider {settings.provider}, "
-                f"transcription {transcription.model}"
-            )
-            return 0
-        if action == "publish":
-            path = publish_audio(plan, published_audio)
-            metadata_path = publish_audio_metadata(
-                recording_id,
-                plan,
-                published_audio,
-                published_metadata,
-                guide_by_segment_id=guide_by_segment_id,
-            )
-            print(f"published audio {display_path(path)}")
-            print(f"published audio metadata {display_path(metadata_path)}")
-            return 0
-        if not settings.enabled:
-            raise AudioError("audio is disabled in the recording config")
-        synthesized_items = audio_items_requiring_synthesis(
-            plan,
-            settings,
-            force=force,
+        previous_renderer = AUDIO_PROGRESS.renderer
+        AUDIO_PROGRESS.renderer = (
+            LogProgressRenderer() if verbose else ProgressBarRenderer()
         )
-        paths = generate_audio(plan, settings, force=force)
-        for path in paths:
-            print(f"audio {display_path(path)}")
-        if settings.provider == "openai":
-            billing = estimate_openai_tts_billing(synthesized_items, settings)
-            print_openai_tts_billing_summary(billing)
-        if timestamps:
-            timeline_paths = generate_timestamps(
-                recording_id,
+
+        def restore_renderer() -> bool:
+            was_progress_bar = isinstance(AUDIO_PROGRESS.renderer, ProgressBarRenderer)
+            if isinstance(AUDIO_PROGRESS.renderer, ProgressBarRenderer):
+                AUDIO_PROGRESS.renderer.finish(replay=False)
+            AUDIO_PROGRESS.renderer = previous_renderer
+            return was_progress_bar
+
+        def finish(
+            code: int,
+            *,
+            summaries: list[StatusSummary] | None = None,
+        ) -> int:
+            was_progress_bar = restore_renderer()
+            if code == 0 and was_progress_bar and summaries:
+                for status, message, color in summaries:
+                    status_line(status, message, color=color)
+            return code
+
+        if action == "sync_narration":
+            try:
+                path = sync_narration_config(spec)
+                pass_line(f"synced narration: {display_path(path)}", current=1, total=1)
+                return finish(
+                    0,
+                    summaries=[
+                        (
+                            "pass",
+                            f"synced narration: {display_path(path)}",
+                            ANSI_GREEN_BOLD,
+                        )
+                    ],
+                )
+            except BaseException:
+                restore_renderer()
+                raise
+        try:
+            settings = audio_settings(spec)
+            transcription = transcription_settings(spec)
+            segments = load_narration_segments(spec)
+            plan = plan_audio(recording_id, segments, settings)
+            guide_by_segment_id = guide_by_segment_id_from_spec(spec, plan)
+            anchors_by_segment_id = anchors_by_segment_id_from_spec(spec, plan)
+            waits_by_segment_id = waits_by_segment_id_from_spec(spec, plan)
+            pause_after_by_segment_id = pause_after_by_segment_id_from_spec(spec, plan)
+            published_audio = output_audio_path(spec, recording_id, settings)
+            published_metadata = output_audio_metadata_path(spec, published_audio)
+            if action == "dry_run":
+                print_plan(
+                    plan,
+                    settings,
+                    published_audio,
+                    published_metadata,
+                    output_format=output_format,
+                )
+                return finish(0)
+            if action == "check":
+                validate_published_audio_metadata(plan, published_metadata)
+                state = "enabled" if settings.enabled else "disabled"
+                pass_line(
+                    f"{recording_id} audio {state}; "
+                    f"{len(plan)} narration segment(s), provider {settings.provider}, "
+                    f"transcription {transcription.model}",
+                    current=1,
+                    total=1,
+                )
+                return finish(
+                    0,
+                    summaries=[
+                        (
+                            "pass",
+                            f"{recording_id} audio {state}; "
+                            f"{len(plan)} narration segment(s), "
+                            f"provider {settings.provider}, "
+                            f"transcription {transcription.model}",
+                            ANSI_GREEN_BOLD,
+                        )
+                    ],
+                )
+            if action == "publish":
+                path = publish_audio(plan, published_audio)
+                timestamps_by_segment_id = publish_timestamp_sidecars(
+                    plan,
+                    published_metadata,
+                )
+                metadata_path = publish_audio_metadata(
+                    recording_id,
+                    plan,
+                    published_audio,
+                    published_metadata,
+                    guide_by_segment_id=guide_by_segment_id,
+                    anchors_by_segment_id=anchors_by_segment_id,
+                    waits_by_segment_id=waits_by_segment_id,
+                    pause_after_by_segment_id=pause_after_by_segment_id,
+                    timestamps_by_segment_id=timestamps_by_segment_id,
+                )
+                total_steps = 3
+                pass_line(
+                    f"published audio: {display_path(path)}",
+                    current=1,
+                    total=total_steps,
+                )
+                pass_line(
+                    f"published audio metadata: {display_path(metadata_path)}",
+                    current=2,
+                    total=total_steps,
+                )
+                print_paths_or_summary(
+                    verbose=verbose,
+                    path_label="published audio timestamps",
+                    summary_label="published audio timestamps",
+                    paths=list(timestamps_by_segment_id.values()),
+                    current=3,
+                    total=total_steps,
+                )
+                return finish(
+                    0,
+                    summaries=[
+                        (
+                            "pass",
+                            published_audio_summary(
+                                audio_path=path,
+                                timestamp_count=len(timestamps_by_segment_id),
+                            ),
+                            ANSI_GREEN_BOLD,
+                        )
+                    ],
+                )
+            if not settings.enabled:
+                raise AudioError("audio is disabled in the recording config")
+            synthesized_items = audio_items_requiring_synthesis(
                 plan,
                 settings,
-                transcription,
                 force=force,
             )
-            for path in timeline_paths:
-                print(f"timeline {display_path(path)}")
-        return 0
+            materialized_items = audio_items_requiring_materialization(
+                plan,
+                settings,
+                force=force,
+            )
+            timestamp_items = (
+                timestamp_items_requiring_generation(plan, force=force)
+                if timestamps
+                else []
+            )
+            total_steps = 1 + (1 if synthesized_items else 0) + (
+                1 if timestamps else 0
+            )
+            current_step = 1
+            paths = generate_audio(plan, settings, force=force)
+            print_paths_or_summary(
+                verbose=verbose,
+                path_label="audio",
+                summary_label="audio segments ready",
+                paths=paths,
+                current=current_step,
+                total=total_steps,
+            )
+            if settings.provider == "openai" and synthesized_items:
+                current_step += 1
+                billing = estimate_openai_tts_billing(synthesized_items, settings)
+                info_line(
+                    "OpenAI TTS estimated cost this run: "
+                    f"{format_usd(billing.estimated_cost_usd)}",
+                    current=current_step,
+                    total=total_steps,
+                )
+            else:
+                billing = None
+            timeline_paths: list[Path] | None = None
+            if timestamps:
+                current_step += 1
+                timeline_paths = generate_timestamps(
+                    recording_id,
+                    plan,
+                    settings,
+                    transcription,
+                    force=force,
+                )
+                print_paths_or_summary(
+                    verbose=verbose,
+                    path_label="timeline",
+                    summary_label="audio timestamps ready",
+                    paths=timeline_paths,
+                    current=current_step,
+                    total=total_steps,
+                )
+            estimated_cost = (
+                format_usd(billing.estimated_cost_usd) if billing is not None else None
+            )
+            generated_count = len(synthesized_items)
+            reused_count = len(materialized_items)
+            generated_timestamp_count = len(timestamp_items) if timestamps else None
+            summaries = []
+            if generated_count or reused_count or generated_timestamp_count:
+                summaries.append(
+                    (
+                        "pass",
+                        audio_ready_summary(
+                            generated_count=generated_count,
+                            reused_count=reused_count,
+                            generated_timestamp_count=generated_timestamp_count,
+                            estimated_cost=estimated_cost,
+                        ),
+                        ANSI_GREEN_BOLD,
+                    )
+                )
+            return finish(
+                0,
+                summaries=summaries,
+            )
+        except BaseException:
+            restore_renderer()
+            raise
     except StudioConfigError as exc:
         raise AudioError(str(exc)) from exc
 

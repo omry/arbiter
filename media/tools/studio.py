@@ -5,10 +5,14 @@ from __future__ import annotations
 
 import hashlib
 import html
+import io
 import json
+import os
 import shlex
+import subprocess
 import sys
 import time
+from contextlib import redirect_stdout
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -36,17 +40,74 @@ from studio_config import (
     load_configured_env_file,
     recording_spec_from_config,
 )
+from terminal_style import (
+    ANSI_CYAN_BOLD,
+    ANSI_DIM,
+    ANSI_GREEN_BOLD,
+    ANSI_RED_BOLD,
+    ANSI_YELLOW_BOLD,
+    color_enabled,
+    color_text,
+)
 
 
 class StudioError(RuntimeError):
     pass
 
 
-RECORDING_FINGERPRINT_VERSION = 1
+RECORDING_FINGERPRINT_VERSION = 2
 FINGERPRINT_PRIVATE_SPEC_KEYS = {"_overrides", "_recording_id"}
+CAPTURE_FINGERPRINT_IGNORED_KEYS = {
+    "audio",
+    "audio_metadata",
+    "guide",
+    "narration",
+    "publish",
+    "retimed_cast",
+    "surfaces",
+}
 
 
 ToolRunner = Callable[[Any], int]
+
+
+def text_output_enabled(cfg: DictConfig) -> bool:
+    return OmegaConf.select(cfg, "output_format", default="text") != "json"
+
+
+def status_line(
+    status: str,
+    message: str,
+    *,
+    color: str,
+    detail: str | None = None,
+) -> None:
+    enabled = color_enabled()
+    label = color_text(f"{status:<5}", color, enabled=enabled)
+    line = f"{label} {message}"
+    if detail:
+        line += color_text(f" ({detail})", ANSI_DIM, enabled=enabled)
+    print(line, flush=True)
+
+
+def step_line(message: str) -> None:
+    status_line("step", message, color=ANSI_CYAN_BOLD)
+
+
+def skip_line(message: str, *, detail: str | None = None) -> None:
+    status_line("skip", message, color=ANSI_YELLOW_BOLD, detail=detail)
+
+
+def pass_line(message: str) -> None:
+    status_line("pass", message, color=ANSI_GREEN_BOLD)
+
+
+def fail_line(message: str) -> None:
+    status_line("fail", message, color=ANSI_RED_BOLD)
+
+
+def info_line(message: str) -> None:
+    status_line("info", message, color=ANSI_CYAN_BOLD)
 
 
 BUILD_STEPS = [
@@ -74,6 +135,11 @@ BUILD_STEPS = [
         "action": "publish_surface",
         "kind": "link",
         "description": "embed the finished recording in the selected publish surface",
+    },
+    {
+        "action": "align_check",
+        "kind": "validate",
+        "description": "verify visible captions and commands still match the script",
     },
 ]
 
@@ -110,78 +176,240 @@ ALIGN_ACTIONS = {
 }
 
 
-def cfg_with_step(cfg: DictConfig, step: str) -> DictConfig:
+def cfg_with_step(cfg: DictConfig, step: str, **overrides: object) -> DictConfig:
     data = OmegaConf.to_container(cfg, resolve=False, enum_to_str=True)
     if not isinstance(data, dict):
         raise StudioError("composed Hydra config must be a mapping")
     data["step"] = step
+    for key, value in overrides.items():
+        data[key] = str(value) if isinstance(value, Path) else value
     return OmegaConf.create(data)
 
 
-def run_step(label: str, runner: ToolRunner, cfg: DictConfig, step: str) -> None:
-    if OmegaConf.select(cfg, "output_format", default="text") != "json":
-        print(f"::: studio: {label}")
-    result = runner(cfg_with_step(cfg, step))
+def run_step(
+    label: str,
+    runner: ToolRunner,
+    cfg: DictConfig,
+    step: str,
+    *,
+    quiet: bool = False,
+    config_overrides: dict[str, object] | None = None,
+) -> str:
+    if text_output_enabled(cfg) and not quiet:
+        step_line(label)
+    captured = io.StringIO()
+    try:
+        if quiet:
+            with redirect_stdout(captured):
+                result = runner(cfg_with_step(cfg, step, **(config_overrides or {})))
+        else:
+            result = runner(cfg_with_step(cfg, step, **(config_overrides or {})))
+    except BaseException:
+        output = captured.getvalue()
+        if output:
+            print(output, end="")
+        raise
+    output = captured.getvalue()
     if result != 0:
+        if output:
+            print(output, end="")
         raise StudioError(f"{label} failed with exit code {result}")
+    return output
 
 
 def run_record_action(cfg: DictConfig, action: str, label: str | None = None) -> None:
     spec: dict[str, Any] | None = None
-    output_format = OmegaConf.select(cfg, "output_format", default="text")
+    config = container_from_hydra_cfg(cfg)
+    output_format = config.get("output_format", "text")
+    verbose = bool_config(config, "verbose")
     if action == "record":
-        config = container_from_hydra_cfg(cfg)
         spec = recording_spec_from_config(config, recording_id=None, overrides=())
-        invalidated = invalidate_retimed_cast_for_spec(spec)
-        if invalidated is not None and output_format != "json":
-            print(f"invalidated retimed cast {display_path(invalidated)}")
     run_step(
         label or action.replace("_", " "), record.run_tool_from_hydra_cfg, cfg, action
     )
     if spec is not None:
         fingerprint_path = write_recording_fingerprint(spec)
-        if output_format != "json":
-            print(f"wrote {display_path(fingerprint_path)}")
+        if output_format != "json" and verbose:
+            pass_line(f"wrote recording fingerprint: {display_path(fingerprint_path)}")
 
 
-def run_build_record_action(cfg: DictConfig) -> None:
+def run_build_record_action(cfg: DictConfig, spec: dict[str, Any]) -> None:
     config = container_from_hydra_cfg(cfg)
-    spec = recording_spec_from_config(config, recording_id=None, overrides=())
-    output_format = OmegaConf.select(cfg, "output_format", default="text")
+    output_format = config.get("output_format", "text")
+    verbose = bool_config(config, "verbose")
     if not bool_config(config, "force"):
         reason = recording_skip_reason(spec)
         if reason is None:
             if output_format != "json":
                 cast_path = retime_cast.cast_path_from_manifest(spec)
-                print(
-                    "::: studio: skip record baseline cast "
-                    f"({display_path(cast_path)} is fresh)"
+                skip_line(
+                    "record baseline cast",
+                    detail=f"{display_path(cast_path)} is fresh",
                 )
             return
-        if output_format != "json":
-            print(f"::: studio: record baseline cast ({reason})")
-    invalidated = invalidate_retimed_cast_for_spec(spec)
-    if invalidated is not None and output_format != "json":
-        print(f"invalidated retimed cast {display_path(invalidated)}")
+        if output_format != "json" and verbose:
+            info_line(f"record baseline cast: {reason}")
     run_step("record baseline cast", record.run_tool_from_hydra_cfg, cfg, "record")
-    fingerprint_path = write_recording_fingerprint(spec)
-    if output_format != "json":
-        print(f"wrote {display_path(fingerprint_path)}")
 
 
 def run_audio_action(cfg: DictConfig, action: str, label: str | None = None) -> None:
     run_step(label or f"audio {action}", audio.run_tool_from_hydra_cfg, cfg, action)
 
 
-def run_retime_action(cfg: DictConfig, action: str, label: str | None = None) -> None:
-    run_step(
-        label or f"retime {action}", retime_cast.run_tool_from_hydra_cfg, cfg, action
+def status_message_from_output(output: str, status: str) -> str | None:
+    prefix = f"{status:<5} "
+    for line in reversed(output.splitlines()):
+        if line.startswith(prefix):
+            return line[len(prefix) :]
+    return None
+
+
+def run_build_audio_actions(
+    cfg: DictConfig,
+    *,
+    generate_needed: bool,
+    publish_needed: bool,
+) -> None:
+    if not generate_needed and not publish_needed:
+        return
+    config = container_from_hydra_cfg(cfg)
+    verbose = bool_config(config, "verbose")
+    if verbose:
+        if generate_needed:
+            run_audio_action(cfg, "generate", "generate audio")
+        if publish_needed:
+            run_audio_action(cfg, "publish", "publish audio")
+        return
+
+    if text_output_enabled(cfg):
+        step_line("audio")
+    generate_output = ""
+    publish_output = ""
+    if generate_needed:
+        generate_output = run_step(
+            "audio",
+            audio.run_tool_from_hydra_cfg,
+            cfg,
+            "generate",
+            quiet=True,
+        )
+    if publish_needed:
+        publish_output = run_step(
+            "audio",
+            audio.run_tool_from_hydra_cfg,
+            cfg,
+            "publish",
+            quiet=True,
+        )
+    if text_output_enabled(cfg):
+        message = status_message_from_output(generate_output, "pass")
+        if message is None:
+            message = status_message_from_output(publish_output, "pass")
+        pass_line(message or "audio ready")
+
+
+def audio_generate_needs_work(cfg: DictConfig) -> bool:
+    config = container_from_hydra_cfg(cfg)
+    if bool_config(config, "force"):
+        return True
+    spec = recording_spec_from_config(config, recording_id=None, overrides=())
+    try:
+        settings = audio.audio_settings(spec)
+        if not settings.enabled:
+            return True
+        segments = audio.load_narration_segments(spec)
+        recording_id = audio.require_string(spec, "_recording_id", field="recording")
+        plan = audio.plan_audio(recording_id, segments, settings)
+    except audio.AudioError:
+        return True
+    if audio.audio_items_requiring_synthesis(plan, settings):
+        return True
+    if audio.audio_items_requiring_materialization(plan, settings):
+        return True
+    timestamps = bool_config(config, "timestamps", default=True)
+    return bool(
+        timestamps and audio.timestamp_items_requiring_generation(plan, force=False)
     )
 
 
-def run_align_action(cfg: DictConfig, action: str, label: str | None = None) -> None:
+def audio_publish_needs_work(cfg: DictConfig) -> bool:
+    config = container_from_hydra_cfg(cfg)
+    if bool_config(config, "force"):
+        return True
+    spec = recording_spec_from_config(config, recording_id=None, overrides=())
+    try:
+        settings = audio.audio_settings(spec)
+        if not settings.enabled:
+            return True
+        segments = audio.load_narration_segments(spec)
+        recording_id = audio.require_string(spec, "_recording_id", field="recording")
+        plan = audio.plan_audio(recording_id, segments, settings)
+        published_audio = audio.output_audio_path(spec, recording_id, settings)
+        published_metadata = audio.output_audio_metadata_path(spec, published_audio)
+    except audio.AudioError:
+        return True
+    return not audio.published_audio_is_fresh(
+        plan,
+        published_audio,
+        published_metadata,
+    )
+
+
+def retime_needs_work(cfg: DictConfig) -> bool:
+    config = container_from_hydra_cfg(cfg)
+    if bool_config(config, "force"):
+        return True
+    spec = recording_spec_from_config(config, recording_id=None, overrides=())
+    try:
+        paths = artifact_paths(spec)
+        retime_cast.require_fresh_retimed_cast(
+            cast_path=paths["cast"],
+            timeline_path=paths["timeline"],
+            output_path=paths["retimed_cast"],
+            audio_metadata_path=paths["audio_metadata"],
+        )
+    except (StudioError, retime_cast.RetimeError):
+        return True
+    return False
+
+
+def staged_retimed_cast_path(path: Path) -> Path:
+    return path.with_name(f".{path.name}.build-{os.getpid()}.tmp")
+
+
+def run_retime_action(
+    cfg: DictConfig,
+    action: str,
+    label: str | None = None,
+    *,
+    output: Path | None = None,
+    quiet: bool = False,
+) -> str:
+    config_overrides = {"output": output} if output is not None else None
+    return run_step(
+        label or f"retime {action}",
+        retime_cast.run_tool_from_hydra_cfg,
+        cfg,
+        action,
+        quiet=quiet,
+        config_overrides=config_overrides,
+    )
+
+
+def run_align_action(
+    cfg: DictConfig,
+    action: str,
+    label: str | None = None,
+    *,
+    cast: Path | None = None,
+) -> None:
+    config_overrides = {"cast": cast} if cast is not None else None
     run_step(
-        label or f"align {action}", align_cast.run_tool_from_hydra_cfg, cfg, action
+        label or f"align {action}",
+        align_cast.run_tool_from_hydra_cfg,
+        cfg,
+        action,
+        config_overrides=config_overrides,
     )
 
 
@@ -338,6 +566,26 @@ def normalize_fingerprint_value(value: Any) -> Any:
     return value
 
 
+def capture_fingerprint_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): capture_fingerprint_value(item)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+            if str(key) not in CAPTURE_FINGERPRINT_IGNORED_KEYS
+            and not (
+                str(key).startswith("_")
+                and str(key) not in FINGERPRINT_PRIVATE_SPEC_KEYS
+            )
+        }
+    if isinstance(value, list):
+        return [capture_fingerprint_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [capture_fingerprint_value(item) for item in value]
+    if isinstance(value, Path):
+        return display_path(value)
+    return value
+
+
 def collect_run_file_values(value: Any) -> list[str]:
     if isinstance(value, dict):
         paths: list[str] = []
@@ -357,10 +605,6 @@ def collect_run_file_values(value: Any) -> list[str]:
 
 def fingerprint_dependency_paths(spec: dict[str, Any]) -> list[Path]:
     paths: list[Path] = []
-    for field in ["script", "_manifest_path"]:
-        value = spec.get(field)
-        if isinstance(value, str) and value:
-            paths.append(retime_cast.relative_path(value))
     for value in collect_run_file_values(spec):
         paths.append(retime_cast.relative_path(value))
     paths.extend(
@@ -386,7 +630,7 @@ def file_fingerprint_entry(path: Path) -> dict[str, Any]:
 
 
 def recording_fingerprint_payload(spec: dict[str, Any]) -> dict[str, Any]:
-    spec_payload = normalize_fingerprint_value(spec)
+    spec_payload = capture_fingerprint_value(spec)
     dependencies = [
         file_fingerprint_entry(path) for path in fingerprint_dependency_paths(spec)
     ]
@@ -482,20 +726,6 @@ def recording_skip_reason(spec: dict[str, Any]) -> str | None:
     if stored.get("fingerprint") != current["fingerprint"]:
         return "recording fingerprint changed"
     return None
-
-
-def invalidate_retimed_cast_for_spec(spec: dict[str, Any]) -> Path | None:
-    cast_path = retime_cast.cast_path_from_manifest(spec)
-    retimed_path = retime_cast.output_path_from_manifest(spec, cast_path)
-    if not retimed_path.exists():
-        return None
-    retimed_path.unlink()
-    return retimed_path
-
-
-def invalidate_retimed_cast(config: dict[str, Any]) -> Path | None:
-    spec = recording_spec_from_config(config, recording_id=None, overrides=())
-    return invalidate_retimed_cast_for_spec(spec)
 
 
 def publish_config(spec: dict[str, Any]) -> dict[str, Any]:
@@ -647,13 +877,13 @@ def run_clean(config: dict[str, Any]) -> int:
         )
         return 0
 
-    print("::: studio: clean recording outputs")
+    step_line("clean recording outputs")
     if removed_display:
         for path in removed_display:
-            print(f"removed {path}")
+            pass_line(f"removed {path}")
     else:
-        print("nothing to clean")
-    print("retained audio outputs, audio metadata, audio cache, and recording runs")
+        skip_line("nothing to clean")
+    info_line("retained audio outputs, audio metadata, audio cache, and recording runs")
     return 0
 
 
@@ -716,6 +946,31 @@ def render_docusaurus_mdx(spec: dict[str, Any], surface: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def ensure_mdx_component_import(
+    text: str,
+    *,
+    component: str,
+    import_path: str,
+) -> str:
+    import_line = f"import {component} from {json.dumps(import_path)};"
+    if import_line in text:
+        return text
+    if f"import {component} " in text:
+        return text
+    if text.startswith("---\n"):
+        end_index = text.find("\n---\n", 4)
+        if end_index >= 0:
+            insert_index = end_index + len("\n---\n")
+            return (
+                text[:insert_index]
+                + "\n"
+                + import_line
+                + "\n"
+                + text[insert_index:]
+            )
+    return import_line + "\n\n" + text
+
+
 def render_html_iframe(spec: dict[str, Any], surface: dict[str, Any]) -> str:
     params = player_params(spec, surface, artifact_paths(spec))
     iframe_params = {
@@ -773,7 +1028,11 @@ def replace_placeholder(text: str, placeholder: str, replacement: str) -> str:
     )
 
 
-def publish_surface(config: dict[str, Any]) -> Path | None:
+def publish_surface(
+    config: dict[str, Any],
+    *,
+    validation_retimed_cast: Path | None = None,
+) -> Path | None:
     spec = recording_spec_from_config(config, recording_id=None, overrides=())
     selected = selected_surface(config, spec)
     if selected is None:
@@ -783,7 +1042,7 @@ def publish_surface(config: dict[str, Any]) -> Path | None:
         retime_cast.require_fresh_retimed_cast(
             cast_path=paths["cast"],
             timeline_path=paths["timeline"],
-            output_path=paths["retimed_cast"],
+            output_path=validation_retimed_cast or paths["retimed_cast"],
             audio_metadata_path=paths["audio_metadata"],
         )
     except retime_cast.RetimeError as exc:
@@ -802,11 +1061,20 @@ def publish_surface(config: dict[str, Any]) -> Path | None:
         if not placeholder:
             raise StudioError("docusaurus_mdx surfaces require a placeholder")
         original = path.read_text(encoding="utf-8")
-        rendered = render_docusaurus_mdx(spec, surface)
-        path.write_text(
-            replace_placeholder(original, placeholder, rendered),
-            encoding="utf-8",
+        component = optional_string(surface.get("component")) or "TerminalCast"
+        import_path = (
+            optional_string(surface.get("component_import"))
+            or f"@site/src/components/{component}"
         )
+        rendered = render_docusaurus_mdx(spec, surface)
+        updated = ensure_mdx_component_import(
+            replace_placeholder(original, placeholder, rendered),
+            component=component,
+            import_path=import_path,
+        )
+        if updated == original:
+            return None
+        path.write_text(updated, encoding="utf-8")
         return path
     if surface_type == "plain_html":
         placeholder = optional_string(surface.get("placeholder"))
@@ -814,25 +1082,56 @@ def publish_surface(config: dict[str, Any]) -> Path | None:
             raise StudioError("plain_html surfaces require a placeholder")
         original = path.read_text(encoding="utf-8")
         rendered = render_html_iframe(spec, surface)
-        path.write_text(
-            replace_placeholder(original, placeholder, rendered),
-            encoding="utf-8",
-        )
+        updated = replace_placeholder(original, placeholder, rendered)
+        if updated == original:
+            return None
+        path.write_text(updated, encoding="utf-8")
         return path
     if surface_type == "standalone_html":
+        rendered = render_standalone_html(spec, surface)
+        if path.exists() and path.read_text(encoding="utf-8") == rendered:
+            return None
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(render_standalone_html(spec, surface), encoding="utf-8")
+        path.write_text(rendered, encoding="utf-8")
         return path
     raise StudioError(f"unsupported publish surface type: {surface_type}")
 
 
-def run_publish_surface(cfg: DictConfig) -> None:
-    if OmegaConf.select(cfg, "output_format", default="text") != "json":
-        print("::: studio: publish surface")
+def run_publish_surface(
+    cfg: DictConfig,
+    *,
+    validation_retimed_cast: Path | None = None,
+) -> None:
     config = container_from_hydra_cfg(cfg)
-    path = publish_surface(config)
-    if path is not None and config.get("output_format") != "json":
-        print(f"wrote {display_path(path)}")
+    path = publish_surface(config, validation_retimed_cast=validation_retimed_cast)
+    if path is not None and text_output_enabled(cfg):
+        step_line("publish surface")
+        pass_line(f"wrote publish surface: {display_path(path)}")
+
+
+def run_play(cfg: DictConfig, config: dict[str, Any]) -> int:
+    cast_override = config.get("cast")
+    run_id = config.get("run_id")
+    recording_id = recording_id_from_value(config.get("recording"))
+    if cast_override is not None or run_id is not None or recording_id is None:
+        run_record_action(cfg, "play", "play")
+        return 0
+
+    spec = recording_spec_from_config(config, recording_id=None, overrides=())
+    cast_path = artifact_paths(spec)["retimed_cast"]
+    if not cast_path.exists():
+        raise StudioError(
+            f"retimed cast not found: {display_path(cast_path)}; "
+            "run media/tools/studio action=build first"
+        )
+    if text_output_enabled(cfg):
+        step_line(f"play retimed cast: {display_path(cast_path)}")
+    record.check_asciinema()
+    return subprocess.run(
+        ["asciinema", "play", str(cast_path)],
+        cwd=retime_cast.REPO_ROOT,
+        check=False,
+    ).returncode
 
 
 def studio_tool_command(recording_id: str, *overrides: str) -> str:
@@ -849,10 +1148,20 @@ def print_success_followups(cfg: DictConfig) -> None:
     recording_id = recording_id_from_value(recording_value)
     if not isinstance(recording_id, str) or not recording_id:
         return
-    print("Follow-up commands:")
-    print("  " + studio_tool_command(recording_id, "action=play"))
-    print("  " + studio_tool_command(recording_id, "action=inspect"))
-    print("  " + studio_tool_command(recording_id, "step=align"))
+    print()
+    print(color_text("next", ANSI_CYAN_BOLD) + " follow-up commands")
+    print(
+        "  "
+        + color_text("play   ", ANSI_GREEN_BOLD)
+        + " "
+        + studio_tool_command(recording_id, "action=play")
+    )
+    print(
+        "  "
+        + color_text("inspect", ANSI_GREEN_BOLD)
+        + " "
+        + studio_tool_command(recording_id, "action=inspect")
+    )
 
 
 def format_elapsed(seconds: float) -> str:
@@ -869,21 +1178,63 @@ def format_elapsed(seconds: float) -> str:
 def print_build_elapsed(cfg: DictConfig, seconds: float, *, success: bool) -> None:
     if OmegaConf.select(cfg, "output_format", default="text") == "json":
         return
-    status = "completed" if success else "failed"
-    print(f"::: studio: build {status} after {format_elapsed(seconds)}")
+    if success:
+        pass_line(f"build completed after {format_elapsed(seconds)}")
+    else:
+        fail_line(f"build failed after {format_elapsed(seconds)}")
 
 
 def run_build(cfg: DictConfig) -> int:
     started = time.monotonic()
     success = False
+    config = container_from_hydra_cfg(cfg)
+    spec = recording_spec_from_config(config, recording_id=None, overrides=())
+    staged_retimed: Path | None = None
     try:
-        run_build_record_action(cfg)
-        run_audio_action(cfg, "generate", "generate audio")
-        run_audio_action(cfg, "publish", "publish audio")
-        run_retime_action(cfg, "retime", "retime cast")
-        run_publish_surface(cfg)
+        run_build_record_action(cfg, spec)
+        generate_needed = audio_generate_needs_work(cfg)
+        publish_needed = audio_publish_needs_work(cfg)
+        run_build_audio_actions(
+            cfg,
+            generate_needed=generate_needed,
+            publish_needed=publish_needed,
+        )
+        if retime_needs_work(cfg):
+            retimed_path = artifact_paths(spec)["retimed_cast"]
+            staged_retimed = staged_retimed_cast_path(retimed_path)
+            if staged_retimed.exists():
+                staged_retimed.unlink()
+            verbose = bool_config(config, "verbose")
+            if text_output_enabled(cfg) and not verbose:
+                step_line("retime cast")
+            run_retime_action(
+                cfg,
+                "retime",
+                "retime cast",
+                output=staged_retimed,
+                quiet=not verbose,
+            )
+            if not staged_retimed.exists():
+                raise StudioError(
+                    "retime cast did not write expected output: "
+                    f"{display_path(staged_retimed)}"
+                )
+            run_align_action(cfg, "check", "check alignment", cast=staged_retimed)
+            run_publish_surface(cfg, validation_retimed_cast=staged_retimed)
+            staged_retimed.replace(retimed_path)
+            staged_retimed = None
+            if text_output_enabled(cfg) and not verbose:
+                pass_line(f"wrote retimed cast: {display_path(retimed_path)}")
+        else:
+            run_align_action(cfg, "check", "check alignment")
+            run_publish_surface(cfg)
+        fingerprint_path = write_recording_fingerprint(spec)
+        if text_output_enabled(cfg) and bool_config(config, "verbose"):
+            pass_line(f"wrote recording fingerprint: {display_path(fingerprint_path)}")
         success = True
     finally:
+        if staged_retimed is not None and staged_retimed.exists():
+            staged_retimed.unlink()
         print_build_elapsed(cfg, time.monotonic() - started, success=success)
     print_success_followups(cfg)
     return 0
@@ -893,6 +1244,7 @@ def run_check(cfg: DictConfig) -> int:
     run_record_action(cfg, "check", "check recording")
     run_audio_action(cfg, "check", "check audio")
     run_retime_action(cfg, "check", "check retime")
+    run_align_action(cfg, "check", "check alignment")
     return 0
 
 
@@ -950,6 +1302,8 @@ def run_tool_from_hydra_cfg(cfg: DictConfig) -> int:
         return run_build(cfg)
     if action == "check":
         return run_check(cfg)
+    if action == "play":
+        return run_play(cfg, config)
 
     if action in RECORD_ACTIONS:
         run_record_action(cfg, RECORD_ACTIONS[action], str(action).replace("_", " "))
@@ -965,9 +1319,9 @@ def main(cfg: DictConfig) -> None:
         raise SystemExit(run_tool_from_hydra_cfg(cfg))
     except record.RecordingInterrupted as exc:
         print(
-            record.color_text(
+            color_text(
                 f"interrupted: {exc}",
-                record.ANSI_YELLOW_BOLD,
+                ANSI_YELLOW_BOLD,
                 enabled=use_color,
             ),
             file=sys.stderr,
@@ -975,9 +1329,9 @@ def main(cfg: DictConfig) -> None:
         raise SystemExit(130) from exc
     except KeyboardInterrupt:
         print(
-            record.color_text(
+            color_text(
                 "interrupted: studio run cancelled by user",
-                record.ANSI_YELLOW_BOLD,
+                ANSI_YELLOW_BOLD,
                 enabled=use_color,
             ),
             file=sys.stderr,
@@ -985,8 +1339,7 @@ def main(cfg: DictConfig) -> None:
         raise SystemExit(130)
     except Exception as exc:
         print(
-            record.color_text("error:", record.ANSI_RED_BOLD, enabled=use_color)
-            + f" {exc}",
+            color_text("error:", ANSI_RED_BOLD, enabled=use_color) + f" {exc}",
             file=sys.stderr,
         )
         raise SystemExit(1) from exc

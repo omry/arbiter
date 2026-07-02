@@ -389,6 +389,53 @@ beat:
 ```
 ````
 
+Beats may also include terminal actions. Prefer `actions[].commands` when a
+beat contains more than one visible command, because each command can then carry
+its own timing and follow-along metadata:
+
+````markdown
+```studio-directive
+beat:
+  id: demo
+  heading: Demo
+  narration: >-
+    List the options. @list@ Then wait for that command before continuing.
+    @wait:list-options+250ms@ @add@ Add the selected options.
+  actions:
+  - commands:
+    - id: list-options
+      run: reploy bundle list-options
+      after: "@list@"
+    - run: reploy bundle add --name imap,smtp
+      after: "@add@"
+      post_enter_pause: 0.5
+```
+````
+
+Command fields:
+
+- `run`: shell snippet to execute. Recording scripts are trusted automation;
+  do not run scripts from untrusted sources.
+- `display`: optional command text to show and type in the cast. Defaults to
+  `run`.
+- `after`: optional narration anchor, such as `@list@`, that delays command
+  typing until the spoken narration reaches that anchor.
+- `id`: optional command identifier used by narration wait markers such as
+  `@wait:list-options@`.
+- `follow_along`: marks commands that should become guided-mode checkpoints.
+- `output`: `real`, `suppress`, or `{mode: fake, text: ...}`.
+- `pre_command_pause`: pause after the prompt has appeared and before command
+  text starts typing.
+- `pre_enter_pause`: pause after command text is typed and before Enter.
+- `post_enter_pause`: pause after Enter before command output begins.
+- `post_command_pause`: pause after command output before the next command.
+- `show_prompt_after`: set to `false` for commands like `clear` that should not
+  leave an idle prompt behind.
+- `retime: realtime`: preserve captured output timing relative to command
+  start. Use it for animated or carriage-return output such as spinners. It
+  streams command output as raw chunks, so line-based display filtering does not
+  apply.
+
 The audio tools read narration directly from the Markdown script. To materialize
 the extracted narration as generated data for review, run:
 
