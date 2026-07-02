@@ -10,14 +10,14 @@
     },
     {
       "path": "media/tools/studio.py",
-      "sha256": "ad5648a85d27aa5c90f24dcb167b1a036b23940f500e2d1283750ad9a23db9c5"
+      "sha256": "2aaf00b4c343a784f0e937f5683ede74fc7e3c7185669abaf50b1bf6f02265e7"
     },
     {
       "path": "media/tools/studio_config.py",
       "sha256": "aba3773dd9ad7bbcdfeb7ead00d2acdb90cba40b150c288c06e5dd5021e57240"
     }
   ],
-  "fingerprint": "0ecc4a29782ee274ceebba260eb527142cb67c0b12ceef790dcee42e5056edee",
+  "fingerprint": "614875c22e3485fefd335662c7e72a5ae21418d4401734d67826a6c60faabec9",
   "recording": "install-and-bootstrap",
   "spec_sha256": "0f9a6cb3e6dbbd500a5758f8b93230f6f3135915e02c6fd6aed4412c658472f4",
   "version": 2
