@@ -6,8 +6,10 @@ import smtplib
 
 import pytest
 
+from arbiter_server.services import operation_input_schema
 from arbiter_server.storage import PluginStorage
 from arbiter_smtp import (
+    SendEmailInput,
     SMTPSentCopyError,
     SMTPRuntime,
     SentCopyDestination,
@@ -157,15 +159,24 @@ def _runtime(
 ) -> SMTPRuntime:
     return runtime_cls(
         accounts={"primary": account or SMTPConfig(policy="bot")},
-        policies={
-            "bot": policy
-            or SMTPServicePolicyConfig(
-                idempotency=SMTPIdempotencyConfig(cache_dir=str(cache_dir))
-            )
-        },
+        policies={"bot": policy or SMTPServicePolicyConfig()},
         smtp_client_factory=factory or RecordingSMTPClientFactory(),
+        plugin_storage=PluginStorage(plugin_name="smtp", root=cache_dir),
         sent_message_appender=sent_message_appender,
     )
+
+
+def test_send_email_discovery_schema_describes_idempotency_key_for_agents() -> None:
+    schema = operation_input_schema(SendEmailInput)
+
+    properties = schema["properties"]
+    assert isinstance(properties, dict)
+    idempotency_schema = properties["idempotency_key"]
+    assert isinstance(idempotency_schema, dict)
+    description = idempotency_schema["description"]
+    assert isinstance(description, str)
+    assert "Generate a unique stable key" in description
+    assert "reuse it only when retrying the same account" in description
 
 
 def test_runtime_tests_accounts_without_sending(tmp_path: Path) -> None:
@@ -218,7 +229,6 @@ def test_runtime_tests_required_sent_copy_destination(tmp_path: Path) -> None:
     factory = RecordingSMTPClientFactory()
     appender = RecordingSentMessageAppender()
     policy = SMTPServicePolicyConfig(
-        idempotency=SMTPIdempotencyConfig(cache_dir=str(tmp_path)),
         sent_copy=SMTPSentCopyPolicyConfig(
             on_failure=SMTPSentCopyFailureMode.fail,
         ),
@@ -254,7 +264,6 @@ def test_runtime_tests_required_sent_copy_destination_failure(
 ) -> None:
     factory = RecordingSMTPClientFactory()
     policy = SMTPServicePolicyConfig(
-        idempotency=SMTPIdempotencyConfig(cache_dir=str(tmp_path)),
         sent_copy=SMTPSentCopyPolicyConfig(
             on_failure=SMTPSentCopyFailureMode.fail,
         ),
@@ -345,13 +354,10 @@ def test_runtime_reports_idempotency_storage_test_failure(tmp_path: Path) -> Non
 
     runtime = SMTPRuntime(
         accounts={"primary": SMTPConfig(policy="bot")},
-        policies={
-            "bot": SMTPServicePolicyConfig(
-                idempotency=SMTPIdempotencyConfig(cache_dir=str(tmp_path)),
-            )
-        },
+        policies={"bot": SMTPServicePolicyConfig()},
         smtp_client_factory=factory,
         idempotency_store_factory=failing_store_factory,
+        plugin_storage=PluginStorage(plugin_name="smtp", root=tmp_path),
     )
 
     assert runtime.test_accounts() == {
@@ -359,7 +365,7 @@ def test_runtime_reports_idempotency_storage_test_failure(tmp_path: Path) -> Non
             "status": "failed",
             "stage": "connect_auth_noop_idempotency",
             "error_type": "RuntimeError",
-            "message": f"cache not writable: {tmp_path}",
+            "message": f"cache not writable: {tmp_path / 'smtp' / 'idempotency'}",
         }
     }
     assert factory.clients[0].tested is True
@@ -529,7 +535,6 @@ def test_send_email_required_sent_copy_fails_before_smtp_when_unresolved(
 ) -> None:
     factory = RecordingSMTPClientFactory()
     policy = SMTPServicePolicyConfig(
-        idempotency=SMTPIdempotencyConfig(cache_dir=str(tmp_path)),
         sent_copy=SMTPSentCopyPolicyConfig(
             on_failure=SMTPSentCopyFailureMode.fail,
         ),
@@ -552,7 +557,6 @@ def test_send_email_required_sent_copy_preflight_clears_idempotency_reservation(
 ) -> None:
     factory = RecordingSMTPClientFactory()
     policy = SMTPServicePolicyConfig(
-        idempotency=SMTPIdempotencyConfig(cache_dir=str(tmp_path)),
         sent_copy=SMTPSentCopyPolicyConfig(
             on_failure=SMTPSentCopyFailureMode.fail,
         ),
@@ -598,7 +602,6 @@ def test_send_email_required_sent_copy_append_failure_reports_submitted_message(
     factory = RecordingSMTPClientFactory()
     appender = RecordingSentMessageAppender(append_error=RuntimeError("append failed"))
     policy = SMTPServicePolicyConfig(
-        idempotency=SMTPIdempotencyConfig(cache_dir=str(tmp_path)),
         sent_copy=SMTPSentCopyPolicyConfig(
             on_failure=SMTPSentCopyFailureMode.fail,
         ),
@@ -675,7 +678,6 @@ def test_send_email_idempotency_replay_retries_failed_sent_copy_without_resend(
         append_error=RuntimeError("append failed")
     )
     first_policy = SMTPServicePolicyConfig(
-        idempotency=SMTPIdempotencyConfig(cache_dir=str(tmp_path)),
         sent_copy=SMTPSentCopyPolicyConfig(
             on_failure=SMTPSentCopyFailureMode.fail,
         ),
@@ -699,7 +701,6 @@ def test_send_email_idempotency_replay_retries_failed_sent_copy_without_resend(
     second_factory = RecordingSMTPClientFactory()
     second_appender = RecordingSentMessageAppender()
     second_policy = SMTPServicePolicyConfig(
-        idempotency=SMTPIdempotencyConfig(cache_dir=str(tmp_path)),
         sent_copy=SMTPSentCopyPolicyConfig(
             on_failure=SMTPSentCopyFailureMode.fail,
         ),
@@ -776,12 +777,12 @@ def test_send_email_clears_idempotency_reservation_after_rate_limit(
     factory = RecordingSMTPClientFactory()
     policy = SMTPServicePolicyConfig(
         limits=SMTPLimitsConfig(max_messages_per_minute=0),
-        idempotency=SMTPIdempotencyConfig(cache_dir=str(tmp_path)),
     )
     runtime = SMTPRuntime(
         accounts={"primary": SMTPConfig(policy="bot")},
         policies={"bot": policy},
         smtp_client_factory=factory,
+        plugin_storage=PluginStorage(plugin_name="smtp", root=tmp_path),
     )
 
     with pytest.raises(ValueError, match="max_messages_per_minute"):
@@ -912,24 +913,7 @@ def test_runtime_rejects_invalid_idempotency_config(tmp_path: Path) -> None:
             accounts={"primary": SMTPConfig(policy="bot")},
             policies={
                 "bot": SMTPServicePolicyConfig(
-                    idempotency=SMTPIdempotencyConfig(
-                        expiration_days=0,
-                        cache_dir=str(tmp_path),
-                    ),
-                )
-            },
-            smtp_client_factory=RecordingSMTPClientFactory(),
-        )
-
-    with pytest.raises(
-        ValueError,
-        match="SMTP idempotency cache_dir must be non-empty: bot",
-    ):
-        SMTPRuntime(
-            accounts={"primary": SMTPConfig(policy="bot")},
-            policies={
-                "bot": SMTPServicePolicyConfig(
-                    idempotency=SMTPIdempotencyConfig(cache_dir="  "),
+                    idempotency=SMTPIdempotencyConfig(expiration_days=0),
                 )
             },
             smtp_client_factory=RecordingSMTPClientFactory(),

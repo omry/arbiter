@@ -172,7 +172,13 @@ class SendEmailInput:
     )
     idempotency_key: str | None = field(
         default=None,
-        metadata={"description": "Optional caller-supplied key for retry-safe dedupe."},
+        metadata={
+            "description": (
+                "Optional retry token for this logical email send. Generate a "
+                "unique stable key for a send attempt and reuse it only when "
+                "retrying the same account, recipients, subject, and body."
+            )
+        },
     )
 
 
@@ -741,13 +747,6 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
                     "SMTP idempotency expiration_days must be positive: "
                     f"{policy_name}"
                 )
-            cache_dir = smtp_policy.idempotency.cache_dir
-            if cache_dir is not None and not cache_dir.strip():
-                raise ValueError(
-                    f"SMTP idempotency cache_dir must be non-empty: {policy_name}"
-                )
-            if cache_dir is not None and self._plugin_storage is not None:
-                self._plugin_storage.path(cache_dir.strip())
 
     def _normalize_recipients(
         self,
@@ -1002,15 +1001,8 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
         )
 
     def _idempotency_cache_dir(self, smtp_policy: SMTPServicePolicyConfig) -> str:
-        configured_cache_dir = smtp_policy.idempotency.cache_dir
-        if configured_cache_dir is not None:
-            if self._plugin_storage is not None:
-                return str(self._plugin_storage.path(configured_cache_dir.strip()))
-            return configured_cache_dir.strip()
         if self._plugin_storage is None:
-            raise ValueError(
-                "SMTP idempotency cache_dir is required when plugin storage is unavailable"
-            )
+            raise ValueError("SMTP idempotency storage requires plugin storage")
         return str(self._plugin_storage.path("idempotency"))
 
     def _idempotency_expire_seconds(
@@ -1101,9 +1093,6 @@ limits:
 # Dedupe window for repeated send attempts.
 idempotency:
   expiration_days: 7
-  # Optional plugin-relative subdirectory. Defaults to the SMTP plugin's
-  # private writable space under idempotency/.
-  cache_dir: null
 
 # Empty lists do not restrict recipients. Add entries to enforce allow/block rules.
 recipient_policy:
@@ -1201,14 +1190,6 @@ class SMTPServicePlugin:
                 errors.append(
                     ConfigCheckIssue(
                         message="SMTP idempotency expiration_days must be positive",
-                        policy=policy_name,
-                    )
-                )
-            cache_dir = smtp_policy.idempotency.cache_dir
-            if cache_dir is not None and not cache_dir.strip():
-                errors.append(
-                    ConfigCheckIssue(
-                        message="SMTP idempotency cache_dir must be non-empty",
                         policy=policy_name,
                     )
                 )

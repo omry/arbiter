@@ -58,7 +58,6 @@ class SMTPLimitsConfig:
 @dataclass
 class SMTPIdempotencyConfig:
     expiration_days: int = 7
-    cache_dir: str | None = None
 
 
 @dataclass
@@ -138,7 +137,6 @@ Static SMTP checks:
 | --- | --- |
 | `sent_copy.folder` is non-empty when configured | `SMTP sent_copy.folder must be non-empty` |
 | `idempotency.expiration_days` is positive | `SMTP idempotency expiration_days must be positive` |
-| `idempotency.cache_dir` is non-empty when configured | `SMTP idempotency cache_dir must be non-empty` |
 
 Live SMTP checks:
 

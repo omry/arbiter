@@ -68,6 +68,6 @@ reuses the stored submitted message bytes and retries only the IMAP Sent copy.
 Until that retry succeeds or the record expires, the keyed retry record can
 contain the submitted message bytes.
 
-When `idempotency.cache_dir` is `null`, Arbiter stores SMTP idempotency records
-under the SMTP plugin's server-managed writable data directory. If set,
-`cache_dir` is a plugin-relative subdirectory, not an arbitrary filesystem path.
+Arbiter stores SMTP idempotency records under the SMTP plugin's server-managed
+writable data directory. Operators control persistence by preserving plugin data;
+callers only provide retry keys.

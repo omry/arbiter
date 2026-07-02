@@ -57,8 +57,8 @@ Agents do not provide or override these fields when sending mail.
 
 - `recipient_policy`: allow or block recipients and recipient domains.
 - `limits`: bound recipients per message and sends per minute.
-- `idempotency`: control safe retry storage for repeated send attempts with the
-  same caller-provided key.
+- `idempotency`: control the safe retry window for repeated send attempts with
+  the same caller-provided key.
 - `sent_copy`: enable Sent-copy behavior and choose whether failures warn or
   fail.
 
