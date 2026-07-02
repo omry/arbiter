@@ -1,16 +1,16 @@
 {
   "audio": "website/static/audio/casts/install-and-bootstrap.mp3",
-  "duration": 84.864,
+  "duration": 88.392,
   "recording": "install-and-bootstrap",
   "segments": [
     {
-      "audio": "media/cache/audio/install-and-bootstrap/overview-2daa66d5348439fc.mp3",
-      "duration": 9.72,
+      "audio": "media/cache/audio/install-and-bootstrap/overview-5c731d253c7b28f6.mp3",
+      "duration": 11.064,
       "heading": "Overview",
       "id": "overview",
       "offset": 0.0,
       "pause_after": 1.0,
-      "text": "In this tutorial, we will install Arbiter the standard way: stage it locally with Reploy, configure and test it, then install it as a permanent Docker service on the system.",
+      "text": "In this tutorial, we will install Arbiter using the standard workflow: stage it locally with Reploy, configure and test it, then install it as a permanent Docker service on the system.",
       "timestamps": "website/static/audio/casts/install-and-bootstrap.overview.timestamps.json"
     },
     {
@@ -31,7 +31,7 @@
       },
       "heading": "Install Reploy",
       "id": "install-reploy",
-      "offset": 9.72,
+      "offset": 11.064,
       "pause_after": 1.0,
       "text": "First, install Reploy.",
       "timestamps": "website/static/audio/casts/install-and-bootstrap.install-reploy.timestamps.json"
@@ -61,7 +61,7 @@
       },
       "heading": "Bootstrap Docker Staging Directory",
       "id": "init-staging",
-      "offset": 12.432,
+      "offset": 13.776,
       "pause_after": 1.0,
       "text": "Use Reploy to create the staging directory. Then enter it; the rest of the setup runs from inside that staged deployment.",
       "timestamps": "website/static/audio/casts/install-and-bootstrap.init-staging.timestamps.json"
@@ -97,7 +97,7 @@
       },
       "heading": "Select Mail Bundle",
       "id": "prepare-bundle",
-      "offset": 20.832,
+      "offset": 22.176,
       "pause_after": 1.0,
       "text": "Arbiter has a pluggable architecture. For this demo, we add the IMAP and SMTP plugins. First, list the available bundle options. Then add the mail plugins. Now build the bundle. Reploy builds a local bundle from the selected dependencies, and that bundle becomes part of the staged app. Installation will use the tested artifact instead of resolving packages again later. Reploy rebuilds the bundle automatically when dependencies change; running the build here pays that cost now instead of during the next app command.",
       "timestamps": "website/static/audio/casts/install-and-bootstrap.prepare-bundle.timestamps.json",
@@ -115,35 +115,43 @@
         {
           "id": "server",
           "marker": "@server@",
-          "text_offset": 313
+          "text_offset": 319
         },
         {
           "id": "account",
           "marker": "@account@",
-          "text_offset": 346
+          "text_offset": 359
         },
         {
           "id": "inspect",
           "marker": "@inspect@",
-          "text_offset": 405
+          "text_offset": 422
         }
       ],
-      "audio": "media/cache/audio/install-and-bootstrap/bootstrap-config-94d221ca2ba0f735.mp3",
-      "duration": 31.32,
+      "audio": "media/cache/audio/install-and-bootstrap/bootstrap-config-0c0f12f688508b24.mp3",
+      "duration": 33.504,
       "guide": {
         "commands": [
           "reploy app bootstrap server",
           "reploy app bootstrap --plugins imap,smtp --account bot",
-          "find conf/arbiter -maxdepth 4 -type f | sort"
+          "find conf -maxdepth 5 -type f | sort"
         ],
         "success_hint": "You should see server, account, and policy YAML files under conf/."
       },
       "heading": "Bootstrap Arbiter Config",
       "id": "bootstrap-config",
-      "offset": 53.544,
+      "offset": 54.888,
       "pause_after": 1.0,
-      "text": "Arbiter uses Hydra as its configuration framework. Hydra composes the config object Arbiter uses from YAML files in the conf directory and validates those files with schemas provided by Arbiter and its plugins. Arbiter provides bootstrap commands that create initial config files you can edit to match your needs. First, create the server config. Then bootstrap IMAP and SMTP account and policy templates. These files are starting points; edit them to match your accounts, folders, and policy boundaries.",
-      "timestamps": "website/static/audio/casts/install-and-bootstrap.bootstrap-config.timestamps.json"
+      "text": "Arbiter uses Hydra as its configuration framework. Hydra composes Arbiter's runtime configuration from YAML files in the `conf` directory, then validates it against schemas provided by Arbiter and its plugins. Arbiter provides bootstrap commands that create initial configuration files you can edit to match your needs. First, create the server configuration. Then bootstrap the IMAP and SMTP account and policy templates. These files are starting points. Edit them to match your accounts, folders, and policy boundaries.",
+      "timestamps": "website/static/audio/casts/install-and-bootstrap.bootstrap-config.timestamps.json",
+      "waits": [
+        {
+          "gap_seconds": 0.0,
+          "marker": "@wait:bootstrap-server@",
+          "target": "bootstrap-server",
+          "text_offset": 359
+        }
+      ]
     }
   ]
 }

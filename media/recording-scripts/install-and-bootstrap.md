@@ -142,9 +142,7 @@ beat:
   id: overview
   heading: Overview
   narration: >-
-    In this tutorial, we will install Arbiter the standard way: stage it locally
-    with Reploy, configure and test it, then install it as a permanent Docker
-    service on the system.
+    In this tutorial, we will install Arbiter using the standard workflow: stage it locally with Reploy, configure and test it, then install it as a permanent Docker service on the system.
   viewer_hold: 1.0
 ```
 
@@ -272,17 +270,18 @@ beat:
   id: bootstrap-config
   heading: Bootstrap Arbiter Config
   narration: >-
-    Arbiter uses Hydra as its configuration framework. Hydra composes the config object Arbiter uses from YAML files in the conf directory and validates those files
-    with schemas provided by Arbiter and its plugins. Arbiter provides bootstrap commands that create
-    initial config files you can edit to match your needs. @server@ First,
-    create the server config. @account@ Then bootstrap IMAP and SMTP account
-    and policy templates. @inspect@ These files are starting points; edit them
-    to match your accounts, folders, and policy boundaries.
+    Arbiter uses Hydra as its configuration framework. Hydra composes Arbiter's runtime configuration from YAML files in the `conf` directory, then validates it against schemas provided by Arbiter and its plugins.
+    Arbiter provides bootstrap commands that create initial configuration files you can edit to match your needs.
+    @server@ First, create the server configuration.@wait:bootstrap-server@
+    @account@ Then bootstrap the IMAP and SMTP account and policy templates.
+    @inspect@ These files are starting points. Edit them to match your accounts, folders, and policy boundaries.
+
   marker: bootstrap-config
   caption: Bootstrap editable Arbiter config files.
   actions:
   - commands:
-    - run: reploy app bootstrap server
+    - id: bootstrap-server
+      run: reploy app bootstrap server
       after: "@server@"
     - run: reploy app bootstrap --plugins imap,smtp --account bot
       after: "@account@"
