@@ -15,8 +15,9 @@ import subprocess
 import sys
 import time
 import webbrowser
-from contextlib import redirect_stdout
 from collections.abc import Callable
+from contextlib import redirect_stdout
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlencode, unquote, urlparse
@@ -276,6 +277,170 @@ def status_message_from_output(output: str, status: str) -> str | None:
     return None
 
 
+@dataclass(frozen=True)
+class BuildAudioStats:
+    generated_segments: int
+    reused_segments: int
+    generated_timestamp_files: int
+    tts_billable_characters: int | None
+    transcription_audio_seconds: float | None
+    estimated_tts_cost: str | None
+    estimated_transcription_cost: str | None
+    estimated_openai_cost: str | None
+    transcription_cost_unavailable: bool = False
+    timestamp_items: tuple[audio.AudioPlanItem, ...] = ()
+
+
+def count_phrase(count: int, singular: str, plural: str | None = None) -> str:
+    if count == 1:
+        return f"1 {singular}"
+    return f"{count} {plural or singular + 's'}"
+
+
+def build_audio_stats(
+    cfg: DictConfig, *, generate_needed: bool
+) -> BuildAudioStats | None:
+    if not generate_needed:
+        return None
+    config = container_from_hydra_cfg(cfg)
+    try:
+        spec = recording_spec_from_config(config, recording_id=None, overrides=())
+        settings = audio.audio_settings(spec)
+        if not settings.enabled:
+            return None
+        transcription = audio.transcription_settings(spec)
+        segments = audio.load_narration_segments(spec)
+        recording_id = audio.require_string(spec, "_recording_id", field="recording")
+        plan = audio.plan_audio(recording_id, segments, settings)
+    except (StudioConfigError, audio.AudioError):
+        return None
+
+    force = bool_config(config, "force")
+    synthesized_items = audio.audio_items_requiring_synthesis(
+        plan,
+        settings,
+        force=force,
+    )
+    materialized_items = [
+        item
+        for item in audio.audio_items_requiring_materialization(
+            plan,
+            settings,
+            force=force,
+        )
+        if item not in synthesized_items
+    ]
+    timestamps = bool_config(config, "timestamps", default=True)
+    timestamp_items = (
+        audio.timestamp_items_requiring_generation(
+            plan,
+            transcription=transcription,
+            force=force,
+        )
+        if timestamps
+        else []
+    )
+    billing = (
+        audio.estimate_openai_tts_billing(synthesized_items, settings)
+        if settings.provider == "openai"
+        else None
+    )
+    return BuildAudioStats(
+        generated_segments=len(synthesized_items),
+        reused_segments=len(materialized_items),
+        generated_timestamp_files=len(timestamp_items),
+        tts_billable_characters=(
+            billing.billable_characters if billing is not None else None
+        ),
+        transcription_audio_seconds=None,
+        estimated_tts_cost=(
+            audio.format_usd(billing.estimated_cost_usd)
+            if billing is not None
+            else None
+        ),
+        estimated_transcription_cost=None,
+        estimated_openai_cost=(
+            audio.format_usd(billing.estimated_cost_usd)
+            if billing is not None
+            else None
+        ),
+        timestamp_items=tuple(timestamp_items),
+    )
+
+
+def build_audio_stats_with_transcription_cost(
+    cfg: DictConfig,
+    stats: BuildAudioStats,
+) -> BuildAudioStats:
+    if not stats.timestamp_items:
+        return stats
+    config = container_from_hydra_cfg(cfg)
+    try:
+        spec = recording_spec_from_config(config, recording_id=None, overrides=())
+        settings = audio.audio_settings(spec)
+        transcription = audio.transcription_settings(spec)
+        billing = audio.estimate_openai_transcription_billing(
+            list(stats.timestamp_items),
+            transcription,
+        )
+    except (StudioConfigError, audio.AudioError):
+        return replace(stats, transcription_cost_unavailable=True)
+
+    tts_cost = None
+    if stats.estimated_tts_cost is not None:
+        if stats.tts_billable_characters is not None:
+            tts_cost = (
+                stats.tts_billable_characters
+                * settings.tts_usd_per_1m_characters
+                / 1_000_000
+            )
+    total_cost = billing.estimated_cost_usd + (tts_cost or 0)
+    return replace(
+        stats,
+        transcription_audio_seconds=billing.audio_seconds,
+        estimated_transcription_cost=audio.format_usd(billing.estimated_cost_usd),
+        estimated_openai_cost=audio.format_usd(total_cost),
+    )
+
+
+def build_audio_stats_message(stats: BuildAudioStats) -> str | None:
+    parts: list[str] = []
+    if stats.generated_segments:
+        parts.append(count_phrase(stats.generated_segments, "generated TTS segment"))
+    if stats.reused_segments:
+        parts.append(count_phrase(stats.reused_segments, "reused cached segment"))
+    if stats.generated_timestamp_files:
+        parts.append(
+            count_phrase(stats.generated_timestamp_files, "generated timestamp file")
+        )
+    if stats.tts_billable_characters is not None:
+        parts.append(f"{stats.tts_billable_characters} TTS chars")
+    if stats.transcription_audio_seconds is not None:
+        parts.append(f"{stats.transcription_audio_seconds:.1f}s transcribed audio")
+    if (
+        stats.estimated_tts_cost is not None
+        and stats.estimated_transcription_cost is not None
+        and stats.estimated_openai_cost is not None
+    ):
+        parts.append(
+            "estimated OpenAI cost "
+            f"TTS {stats.estimated_tts_cost}, "
+            f"transcription {stats.estimated_transcription_cost}, "
+            f"total {stats.estimated_openai_cost}"
+        )
+    elif stats.estimated_tts_cost is not None:
+        parts.append(f"estimated TTS cost {stats.estimated_tts_cost}")
+    elif stats.estimated_transcription_cost is not None:
+        parts.append(
+            f"estimated transcription cost {stats.estimated_transcription_cost}"
+        )
+    if stats.transcription_cost_unavailable:
+        parts.append("transcription cost unavailable")
+    if not parts:
+        return None
+    return "audio updated: " + ", ".join(parts)
+
+
 def run_build_audio_actions(
     cfg: DictConfig,
     *,
@@ -295,6 +460,7 @@ def run_build_audio_actions(
 
     if text_output_enabled(cfg):
         step_line("audio")
+    stats = build_audio_stats(cfg, generate_needed=generate_needed)
     generate_output = ""
     publish_output = ""
     if generate_needed:
@@ -305,6 +471,8 @@ def run_build_audio_actions(
             "generate",
             quiet=True,
         )
+        if stats is not None:
+            stats = build_audio_stats_with_transcription_cost(cfg, stats)
     if publish_needed:
         publish_output = run_step(
             "audio",
@@ -314,7 +482,9 @@ def run_build_audio_actions(
             quiet=True,
         )
     if text_output_enabled(cfg):
-        message = status_message_from_output(generate_output, "pass")
+        message = build_audio_stats_message(stats) if stats is not None else None
+        if message is None:
+            message = status_message_from_output(generate_output, "pass")
         if message is None:
             message = status_message_from_output(publish_output, "pass")
         pass_line(message or "audio ready")
@@ -329,6 +499,7 @@ def audio_generate_needs_work(cfg: DictConfig) -> bool:
         settings = audio.audio_settings(spec)
         if not settings.enabled:
             return True
+        transcription = audio.transcription_settings(spec)
         segments = audio.load_narration_segments(spec)
         recording_id = audio.require_string(spec, "_recording_id", field="recording")
         plan = audio.plan_audio(recording_id, segments, settings)
@@ -340,7 +511,12 @@ def audio_generate_needs_work(cfg: DictConfig) -> bool:
         return True
     timestamps = bool_config(config, "timestamps", default=True)
     return bool(
-        timestamps and audio.timestamp_items_requiring_generation(plan, force=False)
+        timestamps
+        and audio.timestamp_items_requiring_generation(
+            plan,
+            transcription=transcription,
+            force=False,
+        )
     )
 
 
@@ -356,6 +532,12 @@ def audio_publish_needs_work(cfg: DictConfig) -> bool:
         segments = audio.load_narration_segments(spec)
         recording_id = audio.require_string(spec, "_recording_id", field="recording")
         plan = audio.plan_audio(recording_id, segments, settings)
+        anchors_by_segment_id = audio.anchors_by_segment_id_from_spec(spec, plan)
+        waits_by_segment_id = audio.waits_by_segment_id_from_spec(spec, plan)
+        pause_after_by_segment_id = audio.pause_after_by_segment_id_from_spec(
+            spec,
+            plan,
+        )
         published_audio = audio.output_audio_path(spec, recording_id, settings)
         published_metadata = audio.output_audio_metadata_path(spec, published_audio)
     except audio.AudioError:
@@ -364,6 +546,9 @@ def audio_publish_needs_work(cfg: DictConfig) -> bool:
         plan,
         published_audio,
         published_metadata,
+        anchors_by_segment_id=anchors_by_segment_id,
+        waits_by_segment_id=waits_by_segment_id,
+        pause_after_by_segment_id=pause_after_by_segment_id,
     )
 
 

@@ -295,8 +295,15 @@ def test_audio_settings_and_plan_use_manifest_values(tmp_path: Path) -> None:
             "voice": "marin",
             "format": "mp3",
             "instructions": "Speak clearly.",
-            "billing": {"tts_usd_per_1m_characters": 20.0},
+            "billing": {
+                "tts_usd_per_1m_characters": 20.0,
+                "transcription_usd_per_minute": 0.012,
+            },
             "cache_dir": str(tmp_path / "cache"),
+            "transcription": {
+                "model": "whisper-1",
+                "timestamp_granularities": ["word", "segment"],
+            },
         }
     }
     segment = audio.NarrationSegment(
@@ -306,11 +313,13 @@ def test_audio_settings_and_plan_use_manifest_values(tmp_path: Path) -> None:
     )
 
     settings = audio.audio_settings(spec)
+    transcription = audio.transcription_settings(spec)
     plan = audio.plan_audio("demo", [segment], settings)
 
     assert settings.enabled is True
     assert settings.instructions == "Speak clearly."
     assert settings.tts_usd_per_1m_characters == 20.0
+    assert transcription.usd_per_minute == 0.012
     assert len(plan) == 1
     assert plan[0].output_path.parent == tmp_path / "cache" / "demo"
     assert plan[0].output_path.name.startswith("intro-")
@@ -486,6 +495,50 @@ def test_openai_tts_billing_summary_prints_total_cost(capsys: Any) -> None:
     assert capsys.readouterr().out == (
         "info  OpenAI TTS estimated cost this run: $0.001500\n"
     )
+
+
+def test_openai_transcription_billing_uses_audio_duration(tmp_path: Path) -> None:
+    settings = audio.AudioSettings(
+        enabled=True,
+        provider="openai",
+        env="OPENAI_TEST_KEY",
+        model="gpt-4o-mini-tts",
+        voice="marin",
+        format="mp3",
+        instructions=None,
+        cache_dir=tmp_path,
+    )
+    transcription = audio.TranscriptionSettings(
+        model="whisper-1",
+        timestamp_granularities=("word", "segment"),
+        usd_per_minute=0.012,
+    )
+    segments = [
+        audio.NarrationSegment("first", "First", "One."),
+        audio.NarrationSegment("second", "Second", "Two."),
+    ]
+    plan = audio.plan_audio("demo", segments, settings)
+    durations = {
+        plan[0].output_path: "15.000\n",
+        plan[1].output_path: "45.000\n",
+    }
+    for item in plan:
+        item.output_path.parent.mkdir(parents=True, exist_ok=True)
+        item.output_path.write_bytes(b"audio")
+
+    def fake_run(command: list[str], *, capture_output: bool, text: bool) -> Any:
+        return subprocess.CompletedProcess(command, 0, durations[Path(command[-1])], "")
+
+    billing = audio.estimate_openai_transcription_billing(
+        plan,
+        transcription,
+        ffprobe="ffprobe-test",
+        run=fake_run,
+    )
+
+    assert billing.generated_timestamp_files == 2
+    assert billing.audio_seconds == 60.0
+    assert billing.estimated_cost_usd == 0.012
 
 
 def test_print_paths_or_summary_is_concise_by_default(
@@ -867,7 +920,9 @@ def test_publish_audio_metadata_can_reference_timestamps_and_anchors(
         "recording": "demo",
         "segment": "intro",
         "source_text": "Install now.",
+        "timestamp_granularities": ["word", "segment"],
         "transcript": "Install now.",
+        "transcription_model": "whisper-1",
         "words": [
             {"end": 0.457, "start": 0.123, "word": "Install"},
             {"end": 0.8, "start": 0.5, "word": "now"},
@@ -928,12 +983,55 @@ def test_timeline_payload_keeps_only_studio_timestamp_fields(tmp_path: Path) -> 
         "recording": "demo",
         "segment": "intro",
         "source_text": "Install now.",
+        "timestamp_granularities": ["word", "segment"],
         "transcript": "Install now.",
+        "transcription_model": "whisper-1",
         "words": [
             {"end": 0.457, "start": 0.012, "word": "Install"},
             {"end": 1.0, "start": 0.6, "word": "now"},
         ],
     }
+
+
+def test_timestamp_items_requiring_generation_rejects_stale_sidecar(
+    tmp_path: Path,
+) -> None:
+    settings = audio.AudioSettings(
+        enabled=True,
+        provider="openai",
+        env="OPENAI_TEST_KEY",
+        model="gpt-4o-mini-tts",
+        voice="marin",
+        format="mp3",
+        instructions=None,
+        cache_dir=tmp_path / "cache",
+    )
+    segment = audio.NarrationSegment("intro", "Intro", "Install now.")
+    item = audio.plan_audio("demo", [segment], settings)[0]
+    transcription = audio.TranscriptionSettings(
+        model="whisper-1",
+        timestamp_granularities=("word", "segment"),
+    )
+    timestamp_path = audio.timeline_path_for(item)
+    timestamp_path.parent.mkdir(parents=True, exist_ok=True)
+    timestamp_path.write_text(
+        json.dumps(
+            {
+                "recording": "demo",
+                "segment": "intro",
+                "source_text": "Install now.",
+                "timestamp_granularities": ["word"],
+                "transcription_model": "old-model",
+                "words": [{"word": "Install", "start": 0.0, "end": 0.3}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert audio.timestamp_items_requiring_generation(
+        [item],
+        transcription=transcription,
+    ) == [item]
 
 
 def test_generate_timestamps_regenerates_stale_source_text(
@@ -1090,6 +1188,135 @@ def test_validate_published_audio_metadata_rejects_stale_text(tmp_path: Path) ->
         assert "run audio_generate and audio_publish" in message
     else:
         raise AssertionError("stale audio metadata should fail validation")
+
+
+def test_validate_published_audio_metadata_rejects_stale_waits(tmp_path: Path) -> None:
+    settings = audio.AudioSettings(
+        enabled=True,
+        provider="openai",
+        env="OPENAI_TEST_KEY",
+        model="gpt-4o-mini-tts",
+        voice="marin",
+        format="mp3",
+        instructions=None,
+        cache_dir=tmp_path,
+    )
+    plan = audio.plan_audio(
+        "demo",
+        [audio.NarrationSegment("overview", "Overview", "Hello.")],
+        settings,
+    )
+    metadata = tmp_path / "published.json"
+    metadata.write_text(
+        json.dumps(
+            {
+                "recording": "demo",
+                "audio": str(tmp_path / "published.mp3"),
+                "duration": 1.0,
+                "segments": [
+                    {
+                        "id": "overview",
+                        "heading": "Overview",
+                        "text": "Hello.",
+                        "audio": str(plan[0].output_path),
+                        "offset": 0.0,
+                        "duration": 1.0,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        audio.validate_published_audio_metadata(
+            plan,
+            metadata,
+            waits_by_segment_id={
+                "overview": [
+                    {
+                        "target": "bootstrap-server",
+                        "marker": "@wait:bootstrap-server@",
+                        "text_offset": 6,
+                        "gap_seconds": 0.0,
+                    }
+                ]
+            },
+        )
+    except audio.AudioError as exc:
+        message = str(exc)
+        assert "published audio metadata is stale" in message
+        assert "segment 'overview' field 'waits' is stale" in message
+    else:
+        raise AssertionError("stale audio waits should fail validation")
+
+
+def test_validate_published_audio_metadata_accepts_retimed_waits(
+    tmp_path: Path,
+) -> None:
+    settings = audio.AudioSettings(
+        enabled=True,
+        provider="openai",
+        env="OPENAI_TEST_KEY",
+        model="gpt-4o-mini-tts",
+        voice="marin",
+        format="mp3",
+        instructions=None,
+        cache_dir=tmp_path,
+    )
+    plan = audio.plan_audio(
+        "demo",
+        [audio.NarrationSegment("overview", "Overview", "Hello.")],
+        settings,
+    )
+    metadata = tmp_path / "published.json"
+    metadata.write_text(
+        json.dumps(
+            {
+                "recording": "demo",
+                "audio": str(tmp_path / "published.mp3"),
+                "duration": 1.0,
+                "segments": [
+                    {
+                        "id": "overview",
+                        "heading": "Overview",
+                        "text": "Hello.",
+                        "audio": str(plan[0].output_path),
+                        "offset": 0.0,
+                        "duration": 1.0,
+                        "waits": [
+                            {
+                                "target": "bootstrap-server",
+                                "marker": "@wait:bootstrap-server@",
+                                "text_offset": 6,
+                                "gap_seconds": 0.0,
+                                "audio_second": 0.5,
+                                "presentation_start": 1.0,
+                                "presentation_end": 2.0,
+                                "pause_seconds": 1.0,
+                            }
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    audio.validate_published_audio_metadata(
+        plan,
+        metadata,
+        waits_by_segment_id={
+            "overview": [
+                {
+                    "target": "bootstrap-server",
+                    "marker": "@wait:bootstrap-server@",
+                    "text_offset": 6,
+                    "gap_seconds": 0.0,
+                }
+            ]
+        },
+    )
 
 
 def test_audio_metadata_includes_guide_for_matching_beat_segment(

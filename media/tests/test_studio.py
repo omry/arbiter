@@ -78,6 +78,7 @@ def write_minimal_recording_outputs(spec: dict[str, Any]) -> None:
 
 def write_audio_generation_outputs(spec: dict[str, Any]) -> None:
     settings = studio.audio.audio_settings(spec)
+    transcription = studio.audio.transcription_settings(spec)
     segments = studio.audio.load_narration_segments(spec)
     plan = studio.audio.plan_audio(spec["_recording_id"], segments, settings)
     for item in plan:
@@ -85,7 +86,18 @@ def write_audio_generation_outputs(spec: dict[str, Any]) -> None:
         item.output_path.write_bytes(b"cached audio")
         timestamp_path = studio.audio.timeline_path_for(item)
         timestamp_path.parent.mkdir(parents=True, exist_ok=True)
-        timestamp_path.write_text("{}\n", encoding="utf-8")
+        timestamp_path.write_text(
+            json.dumps(
+                studio.audio.timeline_payload(
+                    spec["_recording_id"],
+                    item,
+                    transcription,
+                    {"text": item.segment.text, "words": []},
+                )
+            )
+            + "\n",
+            encoding="utf-8",
+        )
 
 
 def write_fake_retimed_output(cfg: Any) -> None:
@@ -174,6 +186,106 @@ def test_build_runs_full_media_pipeline(
     assert "inspect media/tools/studio recording=demo action=inspect\n" in output
     assert "media/tools/studio recording=demo step=align\n" not in output
     assert studio.recording_skip_reason(spec) is None
+
+
+def test_build_audio_summary_reports_tts_usage_and_cost(
+    tmp_path: Path, monkeypatch: Any, capsys: Any
+) -> None:
+    spec = minimal_build_spec(tmp_path)
+    spec["narration"] = {
+        "beats": [
+            {"id": "one", "heading": "One", "text": "Hello."},
+            {"id": "two", "heading": "Two", "text": "Goodbye."},
+        ]
+    }
+    calls: list[str] = []
+
+    def run_audio(cfg: Any) -> int:
+        calls.append(cfg.step)
+        if cfg.step == "generate":
+            settings = studio.audio.audio_settings(spec)
+            segments = studio.audio.load_narration_segments(spec)
+            plan = studio.audio.plan_audio("demo", segments, settings)
+            for item in plan:
+                item.output_path.parent.mkdir(parents=True, exist_ok=True)
+                item.output_path.write_bytes(b"audio")
+        return 0
+
+    monkeypatch.setattr(
+        studio,
+        "recording_spec_from_config",
+        lambda *_args, **_kwargs: spec,
+    )
+    monkeypatch.setattr(
+        studio.audio,
+        "audio_duration_seconds",
+        lambda *_args, **_kwargs: 30.0,
+    )
+    monkeypatch.setattr(studio.audio, "run_tool_from_hydra_cfg", run_audio)
+
+    studio.run_build_audio_actions(
+        cfg("build"),
+        generate_needed=True,
+        publish_needed=False,
+    )
+
+    assert calls == ["generate"]
+    assert capsys.readouterr().out == (
+        "step  audio\n"
+        "pass  audio updated: 2 generated TTS segments, "
+        "2 generated timestamp files, 14 TTS chars, "
+        "60.0s transcribed audio, estimated OpenAI cost "
+        "TTS $0.000210, transcription $0.006000, total $0.006210\n"
+    )
+
+
+def test_build_audio_summary_reports_unavailable_transcription_cost(
+    tmp_path: Path, monkeypatch: Any, capsys: Any
+) -> None:
+    spec = minimal_build_spec(tmp_path)
+    spec["narration"] = {
+        "beats": [
+            {"id": "one", "heading": "One", "text": "Hello."},
+            {"id": "two", "heading": "Two", "text": "Goodbye."},
+        ]
+    }
+
+    def run_audio(cfg: Any) -> int:
+        if cfg.step == "generate":
+            settings = studio.audio.audio_settings(spec)
+            segments = studio.audio.load_narration_segments(spec)
+            plan = studio.audio.plan_audio("demo", segments, settings)
+            for item in plan:
+                item.output_path.parent.mkdir(parents=True, exist_ok=True)
+                item.output_path.write_bytes(b"audio")
+        return 0
+
+    monkeypatch.setattr(
+        studio,
+        "recording_spec_from_config",
+        lambda *_args, **_kwargs: spec,
+    )
+    monkeypatch.setattr(
+        studio.audio,
+        "audio_duration_seconds",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            studio.audio.AudioError("ffprobe failed")
+        ),
+    )
+    monkeypatch.setattr(studio.audio, "run_tool_from_hydra_cfg", run_audio)
+
+    studio.run_build_audio_actions(
+        cfg("build"),
+        generate_needed=True,
+        publish_needed=False,
+    )
+
+    assert capsys.readouterr().out == (
+        "step  audio\n"
+        "pass  audio updated: 2 generated TTS segments, "
+        "2 generated timestamp files, 14 TTS chars, "
+        "estimated TTS cost $0.000210, transcription cost unavailable\n"
+    )
 
 
 def test_failed_record_preserves_existing_retimed_cast(
@@ -599,6 +711,101 @@ def test_build_skips_audio_generate_when_outputs_are_fresh(
     output = capsys.readouterr().out
     assert "step  generate audio" not in output
     assert output.count("step  audio\n") == 1
+
+
+def test_audio_publish_needs_work_when_wait_metadata_changes(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    spec = minimal_build_spec(tmp_path)
+    spec["narration"] = {
+        "beats": [
+            {
+                "id": "one",
+                "heading": "One",
+                "text": "Hello.",
+                "waits": [
+                    {
+                        "target": "bootstrap-server",
+                        "marker": "@wait:bootstrap-server@",
+                        "text_offset": 6,
+                        "gap_seconds": 0.0,
+                    }
+                ],
+            }
+        ]
+    }
+    settings = studio.audio.audio_settings(spec)
+    segments = studio.audio.load_narration_segments(spec)
+    plan = studio.audio.plan_audio(spec["_recording_id"], segments, settings)
+    plan[0].output_path.parent.mkdir(parents=True)
+    plan[0].output_path.write_bytes(b"audio")
+    studio.audio.timeline_path_for(plan[0]).write_text("{}\n", encoding="utf-8")
+    published_audio = studio.audio.output_audio_path(
+        spec,
+        spec["_recording_id"],
+        settings,
+    )
+    published_audio.parent.mkdir(parents=True, exist_ok=True)
+    published_audio.write_bytes(b"published")
+    metadata = studio.audio.output_audio_metadata_path(spec, published_audio)
+    metadata.write_text(
+        json.dumps(
+            {
+                "recording": "demo",
+                "audio": str(published_audio),
+                "duration": 1.0,
+                "segments": [
+                    {
+                        "id": "one",
+                        "heading": "One",
+                        "text": "Hello.",
+                        "audio": str(plan[0].output_path),
+                        "offset": 0.0,
+                        "duration": 1.0,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        studio,
+        "recording_spec_from_config",
+        lambda *_args, **_kwargs: spec,
+    )
+
+    assert studio.audio_publish_needs_work(cfg("build"))
+
+
+def test_audio_generate_needs_work_when_timestamp_sidecar_is_stale(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    spec = minimal_build_spec(tmp_path)
+    spec["narration"] = {"beats": [{"id": "one", "heading": "One", "text": "Hello."}]}
+    settings = studio.audio.audio_settings(spec)
+    segments = studio.audio.load_narration_segments(spec)
+    plan = studio.audio.plan_audio(spec["_recording_id"], segments, settings)
+    plan[0].output_path.parent.mkdir(parents=True)
+    plan[0].output_path.write_bytes(b"audio")
+    studio.audio.timeline_path_for(plan[0]).write_text(
+        json.dumps(
+            {
+                "recording": "demo",
+                "segment": "one",
+                "source_text": "Hello.",
+                "timestamp_granularities": ["word"],
+                "transcription_model": "old-model",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        studio,
+        "recording_spec_from_config",
+        lambda *_args, **_kwargs: spec,
+    )
+
+    assert studio.audio_generate_needs_work(cfg("build"))
 
 
 def test_build_verbose_keeps_audio_substeps(

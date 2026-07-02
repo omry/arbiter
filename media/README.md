@@ -487,6 +487,18 @@ media/tools/studio recording=install-and-bootstrap step=audio_generate timestamp
 The timestamp step writes `*.timeline.json` sidecars next to the cached audio
 segments. It uses the recording config's `audio.transcription` settings.
 
+Studio reports estimated OpenAI costs for generated TTS segments and generated
+transcription timestamp files. TTS estimates are based on generated narration
+characters. Transcription estimates are based on generated audio duration. The
+defaults can be overridden in recording config with:
+
+```yaml
+audio:
+  billing:
+    tts_usd_per_1m_characters: 15.0
+    transcription_usd_per_minute: 0.006
+```
+
 Audio segment cache files are written under `media/cache/audio/` by default and
 are ignored by git. Cache keys include the normalized narration text plus the
 provider, model, voice, format, and generation instructions so unchanged

@@ -48,6 +48,7 @@ SUPPORTED_TIMESTAMP_GRANULARITIES = {"word", "segment"}
 DEFAULT_TRANSCRIPTION_MODEL = "whisper-1"
 DEFAULT_TIMESTAMP_GRANULARITIES = ("word", "segment")
 DEFAULT_OPENAI_TTS_USD_PER_1M_CHARACTERS = 15.0
+DEFAULT_OPENAI_TRANSCRIPTION_USD_PER_MINUTE = 0.006
 
 
 class AudioError(RuntimeError):
@@ -123,6 +124,7 @@ class AudioSettings:
 class TranscriptionSettings:
     model: str
     timestamp_granularities: tuple[str, ...]
+    usd_per_minute: float = DEFAULT_OPENAI_TRANSCRIPTION_USD_PER_MINUTE
 
 
 @dataclass(frozen=True)
@@ -136,6 +138,13 @@ class AudioPlanItem:
 class AudioBillingSummary:
     generated_segments: int
     billable_characters: int
+    estimated_cost_usd: float
+
+
+@dataclass(frozen=True)
+class AudioTranscriptionBillingSummary:
+    generated_timestamp_files: int
+    audio_seconds: float
     estimated_cost_usd: float
 
 
@@ -330,9 +339,24 @@ def transcription_settings(spec: dict[str, Any]) -> TranscriptionSettings:
             )
         if granularity not in normalized:
             normalized.append(granularity)
+    billing = as_mapping(audio.get("billing"), field="audio.billing")
+    usd_per_minute = billing.get(
+        "transcription_usd_per_minute",
+        DEFAULT_OPENAI_TRANSCRIPTION_USD_PER_MINUTE,
+    )
+    if isinstance(usd_per_minute, bool) or not isinstance(
+        usd_per_minute,
+        (int, float),
+    ):
+        raise AudioError("audio.billing.transcription_usd_per_minute must be a number")
+    if usd_per_minute < 0:
+        raise AudioError(
+            "audio.billing.transcription_usd_per_minute must not be negative"
+        )
     return TranscriptionSettings(
         model=model,
         timestamp_granularities=tuple(normalized),
+        usd_per_minute=float(usd_per_minute),
     )
 
 
@@ -572,11 +596,21 @@ def audio_items_requiring_materialization(
 def timestamp_items_requiring_generation(
     plan: list[AudioPlanItem],
     *,
+    transcription: TranscriptionSettings | None = None,
     force: bool = False,
 ) -> list[AudioPlanItem]:
     if force:
         return list(plan)
-    return [item for item in plan if not timeline_path_for(item).exists()]
+    needed: list[AudioPlanItem] = []
+    for item in plan:
+        timeline_path = timeline_path_for(item)
+        if not timeline_path.exists() or not timestamp_sidecar_matches_item(
+            timeline_path,
+            item,
+            transcription=transcription,
+        ):
+            needed.append(item)
+    return needed
 
 
 def openai_tts_billable_characters(
@@ -601,6 +635,25 @@ def estimate_openai_tts_billing(
     )
 
 
+def estimate_openai_transcription_billing(
+    items: list[AudioPlanItem],
+    transcription: TranscriptionSettings,
+    *,
+    ffprobe: str = "ffprobe",
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> AudioTranscriptionBillingSummary:
+    seconds = sum(
+        audio_duration_seconds(item.output_path, ffprobe=ffprobe, run=run)
+        for item in items
+    )
+    cost = seconds * transcription.usd_per_minute / 60
+    return AudioTranscriptionBillingSummary(
+        generated_timestamp_files=len(items),
+        audio_seconds=seconds,
+        estimated_cost_usd=cost,
+    )
+
+
 def format_usd(value: float) -> str:
     if value == 0:
         return "$0.00"
@@ -616,12 +669,21 @@ def print_openai_tts_billing_summary(summary: AudioBillingSummary) -> None:
     )
 
 
+def print_openai_transcription_billing_summary(
+    summary: AudioTranscriptionBillingSummary,
+) -> None:
+    info_line(
+        "OpenAI transcription estimated cost this run: "
+        f"{format_usd(summary.estimated_cost_usd)}"
+    )
+
+
 def audio_ready_summary(
     *,
     generated_count: int,
     reused_count: int,
     generated_timestamp_count: int | None,
-    estimated_cost: str | None,
+    estimated_tts_cost: str | None,
 ) -> str:
     parts: list[str] = []
     if generated_count:
@@ -630,8 +692,8 @@ def audio_ready_summary(
         parts.append(f"{reused_count} reused segments")
     if generated_timestamp_count:
         parts.append(f"{generated_timestamp_count} generated timestamp files")
-    if estimated_cost is not None:
-        parts.append(f"estimated cost {estimated_cost}")
+    if estimated_tts_cost is not None:
+        parts.append(f"estimated TTS cost {estimated_tts_cost}")
     return "audio updated: " + ", ".join(parts)
 
 
@@ -1191,6 +1253,10 @@ def publish_audio_metadata(
 def published_audio_metadata_mismatch(
     plan: list[AudioPlanItem],
     metadata_path: Path,
+    *,
+    anchors_by_segment_id: dict[str, list[dict[str, Any]]] | None = None,
+    waits_by_segment_id: dict[str, list[dict[str, Any]]] | None = None,
+    pause_after_by_segment_id: dict[str, float] | None = None,
 ) -> str | None:
     if not metadata_path.exists():
         return None
@@ -1205,6 +1271,24 @@ def published_audio_metadata_mismatch(
         return "metadata segments field is missing or invalid"
     if len(segments) != len(plan):
         return f"segment count is {len(segments)}, expected {len(plan)}"
+
+    def wait_metadata_matches(
+        actual_value: object,
+        expected_value: object,
+    ) -> bool:
+        if not isinstance(actual_value, list) or not isinstance(expected_value, list):
+            return actual_value == expected_value
+        if len(actual_value) != len(expected_value):
+            return False
+        for actual_wait, expected_wait in zip(
+            actual_value, expected_value, strict=True
+        ):
+            if not isinstance(actual_wait, dict) or not isinstance(expected_wait, dict):
+                return actual_wait == expected_wait
+            for key, value in expected_wait.items():
+                if actual_wait.get(key) != value:
+                    return False
+        return True
 
     for index, (item, segment) in enumerate(zip(plan, segments, strict=True)):
         if not isinstance(segment, dict):
@@ -1223,14 +1307,49 @@ def published_audio_metadata_mismatch(
                     f"segment {segment_id!r} field {field!r} is stale "
                     f"(metadata has {actual_value!r}, expected {expected_value!r})"
                 )
+        metadata_fields: list[
+            tuple[str, dict[str, list[dict[str, Any]]] | dict[str, float] | None]
+        ] = [
+            ("anchors", anchors_by_segment_id),
+            ("waits", waits_by_segment_id),
+            ("pause_after", pause_after_by_segment_id),
+        ]
+        for field, expected_by_segment_id in metadata_fields:
+            if expected_by_segment_id is None:
+                continue
+            segment_id = item.segment.segment_id
+            expected_value = expected_by_segment_id.get(segment_id)
+            if field == "pause_after" and isinstance(expected_value, (int, float)):
+                expected_value = round(float(expected_value), 3)
+            actual_value = segment.get(field)
+            matches = (
+                wait_metadata_matches(actual_value, expected_value)
+                if field == "waits"
+                else actual_value == expected_value
+            )
+            if not matches:
+                return (
+                    f"segment {segment_id!r} field {field!r} is stale "
+                    f"(metadata has {actual_value!r}, expected {expected_value!r})"
+                )
     return None
 
 
 def validate_published_audio_metadata(
     plan: list[AudioPlanItem],
     metadata_path: Path,
+    *,
+    anchors_by_segment_id: dict[str, list[dict[str, Any]]] | None = None,
+    waits_by_segment_id: dict[str, list[dict[str, Any]]] | None = None,
+    pause_after_by_segment_id: dict[str, float] | None = None,
 ) -> None:
-    mismatch = published_audio_metadata_mismatch(plan, metadata_path)
+    mismatch = published_audio_metadata_mismatch(
+        plan,
+        metadata_path,
+        anchors_by_segment_id=anchors_by_segment_id,
+        waits_by_segment_id=waits_by_segment_id,
+        pause_after_by_segment_id=pause_after_by_segment_id,
+    )
     if mismatch is None:
         return
     raise AudioError(
@@ -1244,10 +1363,23 @@ def published_audio_is_fresh(
     plan: list[AudioPlanItem],
     output_path: Path,
     metadata_path: Path,
+    *,
+    anchors_by_segment_id: dict[str, list[dict[str, Any]]] | None = None,
+    waits_by_segment_id: dict[str, list[dict[str, Any]]] | None = None,
+    pause_after_by_segment_id: dict[str, float] | None = None,
 ) -> bool:
     if not output_path.exists() or not metadata_path.exists():
         return False
-    if published_audio_metadata_mismatch(plan, metadata_path) is not None:
+    if (
+        published_audio_metadata_mismatch(
+            plan,
+            metadata_path,
+            anchors_by_segment_id=anchors_by_segment_id,
+            waits_by_segment_id=waits_by_segment_id,
+            pause_after_by_segment_id=pause_after_by_segment_id,
+        )
+        is not None
+    ):
         return False
     try:
         output_mtime = output_path.stat().st_mtime_ns
@@ -1387,13 +1519,14 @@ def timeline_payload(
     transcription: TranscriptionSettings,
     response: dict[str, Any],
 ) -> dict[str, Any]:
-    del transcription
     return compact_timestamp_payload(
         {
             "recording": recording_id,
             "segment": item.segment.segment_id,
             "source_text": item.segment.text,
+            "timestamp_granularities": list(transcription.timestamp_granularities),
             "transcript": response.get("text"),
+            "transcription_model": transcription.model,
             "duration": response.get("duration"),
             "words": response.get("words", []),
         }
@@ -1421,10 +1554,23 @@ def compact_timestamp_word(word: object) -> dict[str, Any] | None:
 
 def compact_timestamp_payload(payload: dict[str, Any]) -> dict[str, Any]:
     compact: dict[str, Any] = {}
-    for key in ("recording", "segment", "source_text", "transcript"):
+    for key in (
+        "recording",
+        "segment",
+        "source_text",
+        "transcript",
+        "transcription_model",
+    ):
         value = payload.get(key)
         if isinstance(value, str):
             compact[key] = value
+    timestamp_granularities = payload.get("timestamp_granularities")
+    if (
+        isinstance(timestamp_granularities, list)
+        and timestamp_granularities
+        and all(isinstance(item, str) for item in timestamp_granularities)
+    ):
+        compact["timestamp_granularities"] = timestamp_granularities
     duration = payload.get("duration")
     if isinstance(duration, (int, float)):
         compact["duration"] = round(float(duration), 3)
@@ -1439,14 +1585,25 @@ def compact_timestamp_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return compact
 
 
-def timestamp_sidecar_matches_item(path: Path, item: AudioPlanItem) -> bool:
+def timestamp_sidecar_matches_item(
+    path: Path,
+    item: AudioPlanItem,
+    *,
+    transcription: TranscriptionSettings | None = None,
+) -> bool:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
     if not isinstance(payload, dict):
         return False
-    return payload.get("source_text") == item.segment.text
+    if payload.get("source_text") != item.segment.text:
+        return False
+    if transcription is None:
+        return True
+    return payload.get("transcription_model") == transcription.model and payload.get(
+        "timestamp_granularities"
+    ) == list(transcription.timestamp_granularities)
 
 
 def generate_timestamps(
@@ -1466,7 +1623,11 @@ def generate_timestamps(
         if (
             timeline_path.exists()
             and not force
-            and timestamp_sidecar_matches_item(timeline_path, item)
+            and timestamp_sidecar_matches_item(
+                timeline_path,
+                item,
+                transcription=transcription,
+            )
         ):
             written.append(timeline_path)
             continue
@@ -1689,7 +1850,13 @@ def run_tool_from_hydra_cfg(cfg: DictConfig) -> int:
                 )
                 return finish(0)
             if action == "check":
-                validate_published_audio_metadata(plan, published_metadata)
+                validate_published_audio_metadata(
+                    plan,
+                    published_metadata,
+                    anchors_by_segment_id=anchors_by_segment_id,
+                    waits_by_segment_id=waits_by_segment_id,
+                    pause_after_by_segment_id=pause_after_by_segment_id,
+                )
                 state = "enabled" if settings.enabled else "disabled"
                 pass_line(
                     f"{recording_id} audio {state}; "
@@ -1773,7 +1940,11 @@ def run_tool_from_hydra_cfg(cfg: DictConfig) -> int:
                 force=force,
             )
             timestamp_items = (
-                timestamp_items_requiring_generation(plan, force=force)
+                timestamp_items_requiring_generation(
+                    plan,
+                    transcription=transcription,
+                    force=force,
+                )
                 if timestamps
                 else []
             )
@@ -1817,7 +1988,29 @@ def run_tool_from_hydra_cfg(cfg: DictConfig) -> int:
                     current=current_step,
                     total=total_steps,
                 )
-            estimated_cost = (
+                if settings.provider == "openai" and timestamp_items:
+                    transcription_billing = estimate_openai_transcription_billing(
+                        timestamp_items,
+                        transcription,
+                    )
+                    info_line(
+                        "OpenAI transcription estimated cost this run: "
+                        f"{format_usd(transcription_billing.estimated_cost_usd)}",
+                        current=current_step,
+                        total=total_steps,
+                    )
+                    if billing is not None:
+                        total_cost = (
+                            billing.estimated_cost_usd
+                            + transcription_billing.estimated_cost_usd
+                        )
+                        info_line(
+                            "OpenAI total estimated cost this run: "
+                            f"{format_usd(total_cost)}",
+                            current=current_step,
+                            total=total_steps,
+                        )
+            estimated_tts_cost = (
                 format_usd(billing.estimated_cost_usd) if billing is not None else None
             )
             generated_count = len(synthesized_items)
@@ -1832,7 +2025,7 @@ def run_tool_from_hydra_cfg(cfg: DictConfig) -> int:
                             generated_count=generated_count,
                             reused_count=reused_count,
                             generated_timestamp_count=generated_timestamp_count,
-                            estimated_cost=estimated_cost,
+                            estimated_tts_cost=estimated_tts_cost,
                         ),
                         ANSI_GREEN_BOLD,
                     )
