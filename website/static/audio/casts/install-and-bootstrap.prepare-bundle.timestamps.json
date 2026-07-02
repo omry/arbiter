@@ -1,0 +1,424 @@
+{
+  "duration": 32.71,
+  "recording": "install-and-bootstrap",
+  "segment": "prepare-bundle",
+  "source_text": "Arbiter has a pluggable architecture. For this demo, we add the IMAP and SMTP plugins. First, list the available bundle options. Then add the mail plugins. Now build the bundle. Reploy builds a local bundle from the selected dependencies, and that bundle becomes part of the staged app. Installation will use the tested artifact instead of resolving packages again later. Reploy rebuilds the bundle automatically when dependencies change; running the build here pays that cost now instead of during the next app command.",
+  "transcript": "Arbiter has a pluggable architecture. For this demo, we add the IMAP and SMTP plugins. First, list the available bundle options. Then, add the mail plugins. Now build the bundle. Reploy builds a local bundle from the selected dependencies, and that bundle becomes part of the staged app. Installation will use the tested artifact instead of resolving packages again later. Reploy rebuilds the bundle automatically when dependencies change. Running the build here pays that cost now instead of during the next app command.",
+  "words": [
+    {
+      "end": 0.4,
+      "start": 0.0,
+      "word": "Arbiter"
+    },
+    {
+      "end": 0.76,
+      "start": 0.4,
+      "word": "has"
+    },
+    {
+      "end": 1.2,
+      "start": 0.76,
+      "word": "a"
+    },
+    {
+      "end": 1.36,
+      "start": 1.2,
+      "word": "pluggable"
+    },
+    {
+      "end": 1.96,
+      "start": 1.36,
+      "word": "architecture"
+    },
+    {
+      "end": 2.68,
+      "start": 2.64,
+      "word": "For"
+    },
+    {
+      "end": 2.92,
+      "start": 2.68,
+      "word": "this"
+    },
+    {
+      "end": 3.12,
+      "start": 2.92,
+      "word": "demo"
+    },
+    {
+      "end": 3.68,
+      "start": 3.56,
+      "word": "we"
+    },
+    {
+      "end": 3.84,
+      "start": 3.68,
+      "word": "add"
+    },
+    {
+      "end": 4.2,
+      "start": 3.84,
+      "word": "the"
+    },
+    {
+      "end": 4.46,
+      "start": 4.2,
+      "word": "IMAP"
+    },
+    {
+      "end": 4.74,
+      "start": 4.46,
+      "word": "and"
+    },
+    {
+      "end": 5.38,
+      "start": 4.74,
+      "word": "SMTP"
+    },
+    {
+      "end": 5.78,
+      "start": 5.38,
+      "word": "plugins"
+    },
+    {
+      "end": 6.8,
+      "start": 6.52,
+      "word": "First"
+    },
+    {
+      "end": 7.46,
+      "start": 7.46,
+      "word": "list"
+    },
+    {
+      "end": 7.7,
+      "start": 7.46,
+      "word": "the"
+    },
+    {
+      "end": 8.08,
+      "start": 7.7,
+      "word": "available"
+    },
+    {
+      "end": 8.38,
+      "start": 8.08,
+      "word": "bundle"
+    },
+    {
+      "end": 8.88,
+      "start": 8.38,
+      "word": "options"
+    },
+    {
+      "end": 9.92,
+      "start": 9.72,
+      "word": "Then"
+    },
+    {
+      "end": 10.36,
+      "start": 10.22,
+      "word": "add"
+    },
+    {
+      "end": 10.56,
+      "start": 10.36,
+      "word": "the"
+    },
+    {
+      "end": 10.74,
+      "start": 10.56,
+      "word": "mail"
+    },
+    {
+      "end": 11.12,
+      "start": 10.74,
+      "word": "plugins"
+    },
+    {
+      "end": 12.0,
+      "start": 11.84,
+      "word": "Now"
+    },
+    {
+      "end": 12.28,
+      "start": 12.0,
+      "word": "build"
+    },
+    {
+      "end": 12.76,
+      "start": 12.28,
+      "word": "the"
+    },
+    {
+      "end": 12.76,
+      "start": 12.76,
+      "word": "bundle"
+    },
+    {
+      "end": 13.66,
+      "start": 13.52,
+      "word": "Reploy"
+    },
+    {
+      "end": 14.1,
+      "start": 13.66,
+      "word": "builds"
+    },
+    {
+      "end": 14.3,
+      "start": 14.1,
+      "word": "a"
+    },
+    {
+      "end": 14.62,
+      "start": 14.3,
+      "word": "local"
+    },
+    {
+      "end": 14.82,
+      "start": 14.62,
+      "word": "bundle"
+    },
+    {
+      "end": 15.08,
+      "start": 14.82,
+      "word": "from"
+    },
+    {
+      "end": 15.3,
+      "start": 15.08,
+      "word": "the"
+    },
+    {
+      "end": 15.64,
+      "start": 15.3,
+      "word": "selected"
+    },
+    {
+      "end": 16.1,
+      "start": 15.64,
+      "word": "dependencies"
+    },
+    {
+      "end": 16.92,
+      "start": 16.8,
+      "word": "and"
+    },
+    {
+      "end": 17.22,
+      "start": 16.92,
+      "word": "that"
+    },
+    {
+      "end": 17.42,
+      "start": 17.22,
+      "word": "bundle"
+    },
+    {
+      "end": 17.82,
+      "start": 17.42,
+      "word": "becomes"
+    },
+    {
+      "end": 18.12,
+      "start": 17.82,
+      "word": "part"
+    },
+    {
+      "end": 18.28,
+      "start": 18.12,
+      "word": "of"
+    },
+    {
+      "end": 18.48,
+      "start": 18.28,
+      "word": "the"
+    },
+    {
+      "end": 18.78,
+      "start": 18.48,
+      "word": "staged"
+    },
+    {
+      "end": 19.24,
+      "start": 18.78,
+      "word": "app"
+    },
+    {
+      "end": 20.5,
+      "start": 19.88,
+      "word": "Installation"
+    },
+    {
+      "end": 20.8,
+      "start": 20.5,
+      "word": "will"
+    },
+    {
+      "end": 21.0,
+      "start": 20.8,
+      "word": "use"
+    },
+    {
+      "end": 21.22,
+      "start": 21.0,
+      "word": "the"
+    },
+    {
+      "end": 21.54,
+      "start": 21.22,
+      "word": "tested"
+    },
+    {
+      "end": 22.04,
+      "start": 21.54,
+      "word": "artifact"
+    },
+    {
+      "end": 22.6,
+      "start": 22.04,
+      "word": "instead"
+    },
+    {
+      "end": 23.2,
+      "start": 22.6,
+      "word": "of"
+    },
+    {
+      "end": 23.2,
+      "start": 23.2,
+      "word": "resolving"
+    },
+    {
+      "end": 23.66,
+      "start": 23.2,
+      "word": "packages"
+    },
+    {
+      "end": 24.02,
+      "start": 23.66,
+      "word": "again"
+    },
+    {
+      "end": 24.3,
+      "start": 24.02,
+      "word": "later"
+    },
+    {
+      "end": 25.4,
+      "start": 25.22,
+      "word": "Reploy"
+    },
+    {
+      "end": 26.0,
+      "start": 25.4,
+      "word": "rebuilds"
+    },
+    {
+      "end": 26.38,
+      "start": 26.0,
+      "word": "the"
+    },
+    {
+      "end": 26.38,
+      "start": 26.38,
+      "word": "bundle"
+    },
+    {
+      "end": 26.94,
+      "start": 26.38,
+      "word": "automatically"
+    },
+    {
+      "end": 27.24,
+      "start": 26.94,
+      "word": "when"
+    },
+    {
+      "end": 27.68,
+      "start": 27.24,
+      "word": "dependencies"
+    },
+    {
+      "end": 28.16,
+      "start": 27.68,
+      "word": "change"
+    },
+    {
+      "end": 28.82,
+      "start": 28.16,
+      "word": "Running"
+    },
+    {
+      "end": 29.02,
+      "start": 28.82,
+      "word": "the"
+    },
+    {
+      "end": 29.22,
+      "start": 29.02,
+      "word": "build"
+    },
+    {
+      "end": 29.5,
+      "start": 29.22,
+      "word": "here"
+    },
+    {
+      "end": 29.72,
+      "start": 29.5,
+      "word": "pays"
+    },
+    {
+      "end": 29.94,
+      "start": 29.72,
+      "word": "that"
+    },
+    {
+      "end": 30.2,
+      "start": 29.94,
+      "word": "cost"
+    },
+    {
+      "end": 30.54,
+      "start": 30.2,
+      "word": "now"
+    },
+    {
+      "end": 31.12,
+      "start": 30.6,
+      "word": "instead"
+    },
+    {
+      "end": 31.38,
+      "start": 31.12,
+      "word": "of"
+    },
+    {
+      "end": 31.48,
+      "start": 31.38,
+      "word": "during"
+    },
+    {
+      "end": 31.62,
+      "start": 31.48,
+      "word": "the"
+    },
+    {
+      "end": 31.88,
+      "start": 31.62,
+      "word": "next"
+    },
+    {
+      "end": 32.14,
+      "start": 31.88,
+      "word": "app"
+    },
+    {
+      "end": 32.46,
+      "start": 32.14,
+      "word": "command"
+    }
+  ]
+}

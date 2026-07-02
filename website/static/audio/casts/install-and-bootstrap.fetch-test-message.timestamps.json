@@ -1,0 +1,174 @@
+{
+  "duration": 14.16,
+  "recording": "install-and-bootstrap",
+  "segment": "fetch-test-message",
+  "source_text": "The local SMTP server delivers into the same mailbox that the IMAP server exposes. Search the bot inbox by subject, keep the returned IMAP UID, then fetch the message body through `imap:get_message`.",
+  "transcript": "The local SMTP server delivers into the same mailbox that the INAP server exposes. Search the bot inbox by subject. Keep the returned INAP UID. Then fetch the message body through INAP GetMessage.",
+  "words": [
+    {
+      "end": 0.64,
+      "start": 0.0,
+      "word": "The"
+    },
+    {
+      "end": 1.02,
+      "start": 0.64,
+      "word": "local"
+    },
+    {
+      "end": 1.8,
+      "start": 1.02,
+      "word": "SMTP"
+    },
+    {
+      "end": 2.18,
+      "start": 1.8,
+      "word": "server"
+    },
+    {
+      "end": 2.74,
+      "start": 2.18,
+      "word": "delivers"
+    },
+    {
+      "end": 2.96,
+      "start": 2.74,
+      "word": "into"
+    },
+    {
+      "end": 3.2,
+      "start": 2.96,
+      "word": "the"
+    },
+    {
+      "end": 3.54,
+      "start": 3.2,
+      "word": "same"
+    },
+    {
+      "end": 3.82,
+      "start": 3.54,
+      "word": "mailbox"
+    },
+    {
+      "end": 4.34,
+      "start": 3.82,
+      "word": "that"
+    },
+    {
+      "end": 4.86,
+      "start": 4.34,
+      "word": "the"
+    },
+    {
+      "end": 4.86,
+      "start": 4.86,
+      "word": "INAP"
+    },
+    {
+      "end": 5.24,
+      "start": 4.86,
+      "word": "server"
+    },
+    {
+      "end": 5.8,
+      "start": 5.24,
+      "word": "exposes"
+    },
+    {
+      "end": 6.7,
+      "start": 6.7,
+      "word": "Search"
+    },
+    {
+      "end": 7.0,
+      "start": 6.7,
+      "word": "the"
+    },
+    {
+      "end": 7.16,
+      "start": 7.0,
+      "word": "bot"
+    },
+    {
+      "end": 7.52,
+      "start": 7.16,
+      "word": "inbox"
+    },
+    {
+      "end": 7.86,
+      "start": 7.52,
+      "word": "by"
+    },
+    {
+      "end": 8.22,
+      "start": 7.86,
+      "word": "subject"
+    },
+    {
+      "end": 8.9,
+      "start": 8.9,
+      "word": "Keep"
+    },
+    {
+      "end": 9.14,
+      "start": 8.9,
+      "word": "the"
+    },
+    {
+      "end": 9.5,
+      "start": 9.14,
+      "word": "returned"
+    },
+    {
+      "end": 9.98,
+      "start": 9.5,
+      "word": "INAP"
+    },
+    {
+      "end": 10.44,
+      "start": 9.98,
+      "word": "UID"
+    },
+    {
+      "end": 11.6,
+      "start": 11.34,
+      "word": "Then"
+    },
+    {
+      "end": 11.82,
+      "start": 11.6,
+      "word": "fetch"
+    },
+    {
+      "end": 12.02,
+      "start": 11.82,
+      "word": "the"
+    },
+    {
+      "end": 12.32,
+      "start": 12.02,
+      "word": "message"
+    },
+    {
+      "end": 12.64,
+      "start": 12.32,
+      "word": "body"
+    },
+    {
+      "end": 12.94,
+      "start": 12.64,
+      "word": "through"
+    },
+    {
+      "end": 13.34,
+      "start": 12.94,
+      "word": "INAP"
+    },
+    {
+      "end": 14.0,
+      "start": 13.34,
+      "word": "GetMessage"
+    }
+  ]
+}

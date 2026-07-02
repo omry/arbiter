@@ -1,0 +1,159 @@
+{
+  "duration": 9.72,
+  "recording": "install-and-bootstrap",
+  "segment": "overview",
+  "source_text": "In this tutorial, we will install Arbiter the standard way: stage it locally with Reploy, configure and test it, then install it as a permanent Docker service on the system.",
+  "transcript": "In this tutorial, we will install Arbiter the standard way, stage it locally with Reploy, configure and test it, then install it as a permanent Docker service on the system.",
+  "words": [
+    {
+      "end": 0.2,
+      "start": 0.0,
+      "word": "In"
+    },
+    {
+      "end": 0.44,
+      "start": 0.2,
+      "word": "this"
+    },
+    {
+      "end": 0.84,
+      "start": 0.44,
+      "word": "tutorial"
+    },
+    {
+      "end": 1.32,
+      "start": 1.22,
+      "word": "we"
+    },
+    {
+      "end": 1.54,
+      "start": 1.32,
+      "word": "will"
+    },
+    {
+      "end": 1.86,
+      "start": 1.54,
+      "word": "install"
+    },
+    {
+      "end": 2.22,
+      "start": 1.86,
+      "word": "Arbiter"
+    },
+    {
+      "end": 2.44,
+      "start": 2.22,
+      "word": "the"
+    },
+    {
+      "end": 2.76,
+      "start": 2.44,
+      "word": "standard"
+    },
+    {
+      "end": 3.06,
+      "start": 2.76,
+      "word": "way"
+    },
+    {
+      "end": 3.74,
+      "start": 3.74,
+      "word": "stage"
+    },
+    {
+      "end": 3.92,
+      "start": 3.74,
+      "word": "it"
+    },
+    {
+      "end": 4.16,
+      "start": 3.92,
+      "word": "locally"
+    },
+    {
+      "end": 4.44,
+      "start": 4.16,
+      "word": "with"
+    },
+    {
+      "end": 4.82,
+      "start": 4.44,
+      "word": "Reploy"
+    },
+    {
+      "end": 5.6,
+      "start": 5.42,
+      "word": "configure"
+    },
+    {
+      "end": 5.84,
+      "start": 5.6,
+      "word": "and"
+    },
+    {
+      "end": 6.06,
+      "start": 5.84,
+      "word": "test"
+    },
+    {
+      "end": 6.24,
+      "start": 6.06,
+      "word": "it"
+    },
+    {
+      "end": 6.78,
+      "start": 6.64,
+      "word": "then"
+    },
+    {
+      "end": 7.14,
+      "start": 6.78,
+      "word": "install"
+    },
+    {
+      "end": 7.3,
+      "start": 7.14,
+      "word": "it"
+    },
+    {
+      "end": 7.46,
+      "start": 7.3,
+      "word": "as"
+    },
+    {
+      "end": 7.68,
+      "start": 7.46,
+      "word": "a"
+    },
+    {
+      "end": 7.96,
+      "start": 7.68,
+      "word": "permanent"
+    },
+    {
+      "end": 8.32,
+      "start": 7.96,
+      "word": "Docker"
+    },
+    {
+      "end": 8.76,
+      "start": 8.32,
+      "word": "service"
+    },
+    {
+      "end": 9.0,
+      "start": 8.76,
+      "word": "on"
+    },
+    {
+      "end": 9.18,
+      "start": 9.0,
+      "word": "the"
+    },
+    {
+      "end": 9.44,
+      "start": 9.18,
+      "word": "system"
+    }
+  ]
+}

@@ -1,0 +1,204 @@
+{
+  "duration": 16.1,
+  "recording": "install-and-bootstrap",
+  "segment": "bootstrap-env",
+  "source_text": "The account files read credentials from the deployment environment. This demo uses dedicated local mail servers, so it is okay to show the generated username and password. In production, the env file contains real secrets and should stay protected.",
+  "transcript": "The account files read credentials from the deployment environment. This demo uses dedicated local mail servers, so it is OK to show the generated username and password. In production, the env file contains real secrets and should stay protected.",
+  "words": [
+    {
+      "end": 0.26,
+      "start": 0.0,
+      "word": "The"
+    },
+    {
+      "end": 0.6,
+      "start": 0.26,
+      "word": "account"
+    },
+    {
+      "end": 1.04,
+      "start": 0.6,
+      "word": "files"
+    },
+    {
+      "end": 1.58,
+      "start": 1.04,
+      "word": "read"
+    },
+    {
+      "end": 2.0,
+      "start": 1.58,
+      "word": "credentials"
+    },
+    {
+      "end": 2.36,
+      "start": 2.0,
+      "word": "from"
+    },
+    {
+      "end": 2.56,
+      "start": 2.36,
+      "word": "the"
+    },
+    {
+      "end": 3.02,
+      "start": 2.56,
+      "word": "deployment"
+    },
+    {
+      "end": 3.46,
+      "start": 3.02,
+      "word": "environment"
+    },
+    {
+      "end": 4.38,
+      "start": 4.24,
+      "word": "This"
+    },
+    {
+      "end": 4.7,
+      "start": 4.38,
+      "word": "demo"
+    },
+    {
+      "end": 5.26,
+      "start": 4.7,
+      "word": "uses"
+    },
+    {
+      "end": 5.76,
+      "start": 5.26,
+      "word": "dedicated"
+    },
+    {
+      "end": 6.18,
+      "start": 5.76,
+      "word": "local"
+    },
+    {
+      "end": 6.44,
+      "start": 6.18,
+      "word": "mail"
+    },
+    {
+      "end": 6.78,
+      "start": 6.44,
+      "word": "servers"
+    },
+    {
+      "end": 7.38,
+      "start": 7.04,
+      "word": "so"
+    },
+    {
+      "end": 7.5,
+      "start": 7.38,
+      "word": "it"
+    },
+    {
+      "end": 7.72,
+      "start": 7.5,
+      "word": "is"
+    },
+    {
+      "end": 8.0,
+      "start": 7.72,
+      "word": "OK"
+    },
+    {
+      "end": 8.26,
+      "start": 8.0,
+      "word": "to"
+    },
+    {
+      "end": 8.42,
+      "start": 8.26,
+      "word": "show"
+    },
+    {
+      "end": 8.66,
+      "start": 8.42,
+      "word": "the"
+    },
+    {
+      "end": 8.96,
+      "start": 8.66,
+      "word": "generated"
+    },
+    {
+      "end": 9.44,
+      "start": 8.96,
+      "word": "username"
+    },
+    {
+      "end": 9.78,
+      "start": 9.44,
+      "word": "and"
+    },
+    {
+      "end": 10.1,
+      "start": 9.78,
+      "word": "password"
+    },
+    {
+      "end": 10.98,
+      "start": 10.86,
+      "word": "In"
+    },
+    {
+      "end": 11.34,
+      "start": 10.98,
+      "word": "production"
+    },
+    {
+      "end": 12.14,
+      "start": 11.86,
+      "word": "the"
+    },
+    {
+      "end": 12.28,
+      "start": 12.14,
+      "word": "env"
+    },
+    {
+      "end": 12.7,
+      "start": 12.28,
+      "word": "file"
+    },
+    {
+      "end": 13.08,
+      "start": 12.7,
+      "word": "contains"
+    },
+    {
+      "end": 13.52,
+      "start": 13.08,
+      "word": "real"
+    },
+    {
+      "end": 13.92,
+      "start": 13.52,
+      "word": "secrets"
+    },
+    {
+      "end": 14.46,
+      "start": 13.92,
+      "word": "and"
+    },
+    {
+      "end": 14.64,
+      "start": 14.46,
+      "word": "should"
+    },
+    {
+      "end": 14.96,
+      "start": 14.64,
+      "word": "stay"
+    },
+    {
+      "end": 15.32,
+      "start": 14.96,
+      "word": "protected"
+    }
+  ]
+}

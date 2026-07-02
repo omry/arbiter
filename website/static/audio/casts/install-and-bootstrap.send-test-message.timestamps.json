@@ -1,0 +1,219 @@
+{
+  "duration": 18.0,
+  "recording": "install-and-bootstrap",
+  "segment": "send-test-message",
+  "source_text": "With discovery complete, send a real message through the staged server. The SMTP plugin submits the message using the configured bot account. The caller provides only the operation input: account name, recipient, subject, body, and an idempotency key for safe retries.",
+  "transcript": "With discovery complete, send a real message through the staged server. The SMTP plugin submits the message using the configured bot account. The caller provides only the operation input, account name, recipient, subject, body, and an item potency key for safe retries.",
+  "words": [
+    {
+      "end": 0.4,
+      "start": 0.0,
+      "word": "With"
+    },
+    {
+      "end": 0.9,
+      "start": 0.4,
+      "word": "discovery"
+    },
+    {
+      "end": 1.48,
+      "start": 0.9,
+      "word": "complete"
+    },
+    {
+      "end": 2.14,
+      "start": 2.04,
+      "word": "send"
+    },
+    {
+      "end": 2.32,
+      "start": 2.14,
+      "word": "a"
+    },
+    {
+      "end": 2.6,
+      "start": 2.32,
+      "word": "real"
+    },
+    {
+      "end": 2.98,
+      "start": 2.6,
+      "word": "message"
+    },
+    {
+      "end": 3.24,
+      "start": 2.98,
+      "word": "through"
+    },
+    {
+      "end": 3.52,
+      "start": 3.24,
+      "word": "the"
+    },
+    {
+      "end": 3.82,
+      "start": 3.52,
+      "word": "staged"
+    },
+    {
+      "end": 4.2,
+      "start": 3.82,
+      "word": "server"
+    },
+    {
+      "end": 5.16,
+      "start": 4.98,
+      "word": "The"
+    },
+    {
+      "end": 5.7,
+      "start": 5.16,
+      "word": "SMTP"
+    },
+    {
+      "end": 6.14,
+      "start": 5.7,
+      "word": "plugin"
+    },
+    {
+      "end": 6.54,
+      "start": 6.14,
+      "word": "submits"
+    },
+    {
+      "end": 7.1,
+      "start": 6.54,
+      "word": "the"
+    },
+    {
+      "end": 7.1,
+      "start": 7.1,
+      "word": "message"
+    },
+    {
+      "end": 7.58,
+      "start": 7.1,
+      "word": "using"
+    },
+    {
+      "end": 7.9,
+      "start": 7.58,
+      "word": "the"
+    },
+    {
+      "end": 8.24,
+      "start": 7.9,
+      "word": "configured"
+    },
+    {
+      "end": 8.52,
+      "start": 8.24,
+      "word": "bot"
+    },
+    {
+      "end": 8.82,
+      "start": 8.52,
+      "word": "account"
+    },
+    {
+      "end": 9.58,
+      "start": 9.46,
+      "word": "The"
+    },
+    {
+      "end": 9.84,
+      "start": 9.58,
+      "word": "caller"
+    },
+    {
+      "end": 10.28,
+      "start": 9.84,
+      "word": "provides"
+    },
+    {
+      "end": 10.68,
+      "start": 10.28,
+      "word": "only"
+    },
+    {
+      "end": 10.92,
+      "start": 10.68,
+      "word": "the"
+    },
+    {
+      "end": 11.44,
+      "start": 10.92,
+      "word": "operation"
+    },
+    {
+      "end": 11.86,
+      "start": 11.44,
+      "word": "input"
+    },
+    {
+      "end": 12.6,
+      "start": 12.54,
+      "word": "account"
+    },
+    {
+      "end": 12.88,
+      "start": 12.6,
+      "word": "name"
+    },
+    {
+      "end": 13.64,
+      "start": 13.4,
+      "word": "recipient"
+    },
+    {
+      "end": 14.44,
+      "start": 14.2,
+      "word": "subject"
+    },
+    {
+      "end": 15.06,
+      "start": 15.0,
+      "word": "body"
+    },
+    {
+      "end": 15.58,
+      "start": 15.48,
+      "word": "and"
+    },
+    {
+      "end": 15.78,
+      "start": 15.58,
+      "word": "an"
+    },
+    {
+      "end": 16.02,
+      "start": 15.78,
+      "word": "item"
+    },
+    {
+      "end": 16.36,
+      "start": 16.02,
+      "word": "potency"
+    },
+    {
+      "end": 16.68,
+      "start": 16.36,
+      "word": "key"
+    },
+    {
+      "end": 16.94,
+      "start": 16.68,
+      "word": "for"
+    },
+    {
+      "end": 17.16,
+      "start": 16.94,
+      "word": "safe"
+    },
+    {
+      "end": 17.56,
+      "start": 17.16,
+      "word": "retries"
+    }
+  ]
+}

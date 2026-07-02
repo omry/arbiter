@@ -1,0 +1,219 @@
+{
+  "duration": 20.8,
+  "recording": "install-and-bootstrap",
+  "segment": "staging-vs-installed",
+  "source_text": "Staging proves the bundle, configuration, mail access, and client operations before any privileged install step. It is still an operator workspace, not the long-running production service. The installed deployment uses protected ownership, systemd lifecycle management, and the production server port, 8075.",
+  "transcript": "Staging proves the bundle, configuration, mail access, and client operations before any privileged install step. It is still an operator workspace, not the long-running production service. The install deployment uses protected ownership, systemd lifecycle management, and the production server port 8075.",
+  "words": [
+    {
+      "end": 0.56,
+      "start": 0.0,
+      "word": "Staging"
+    },
+    {
+      "end": 1.1,
+      "start": 0.56,
+      "word": "proves"
+    },
+    {
+      "end": 1.74,
+      "start": 1.1,
+      "word": "the"
+    },
+    {
+      "end": 1.74,
+      "start": 1.74,
+      "word": "bundle"
+    },
+    {
+      "end": 2.66,
+      "start": 2.6,
+      "word": "configuration"
+    },
+    {
+      "end": 3.42,
+      "start": 3.36,
+      "word": "mail"
+    },
+    {
+      "end": 3.86,
+      "start": 3.42,
+      "word": "access"
+    },
+    {
+      "end": 4.36,
+      "start": 4.24,
+      "word": "and"
+    },
+    {
+      "end": 4.64,
+      "start": 4.36,
+      "word": "client"
+    },
+    {
+      "end": 5.18,
+      "start": 4.64,
+      "word": "operations"
+    },
+    {
+      "end": 5.56,
+      "start": 5.18,
+      "word": "before"
+    },
+    {
+      "end": 6.0,
+      "start": 5.56,
+      "word": "any"
+    },
+    {
+      "end": 6.4,
+      "start": 6.0,
+      "word": "privileged"
+    },
+    {
+      "end": 6.84,
+      "start": 6.4,
+      "word": "install"
+    },
+    {
+      "end": 7.14,
+      "start": 6.84,
+      "word": "step"
+    },
+    {
+      "end": 8.0,
+      "start": 7.96,
+      "word": "It"
+    },
+    {
+      "end": 8.22,
+      "start": 8.0,
+      "word": "is"
+    },
+    {
+      "end": 8.44,
+      "start": 8.22,
+      "word": "still"
+    },
+    {
+      "end": 8.72,
+      "start": 8.44,
+      "word": "an"
+    },
+    {
+      "end": 9.06,
+      "start": 8.72,
+      "word": "operator"
+    },
+    {
+      "end": 9.6,
+      "start": 9.06,
+      "word": "workspace"
+    },
+    {
+      "end": 10.38,
+      "start": 10.22,
+      "word": "not"
+    },
+    {
+      "end": 10.64,
+      "start": 10.38,
+      "word": "the"
+    },
+    {
+      "end": 10.94,
+      "start": 10.64,
+      "word": "long"
+    },
+    {
+      "end": 11.1,
+      "start": 10.94,
+      "word": "running"
+    },
+    {
+      "end": 11.5,
+      "start": 11.1,
+      "word": "production"
+    },
+    {
+      "end": 11.98,
+      "start": 11.5,
+      "word": "service"
+    },
+    {
+      "end": 12.98,
+      "start": 12.72,
+      "word": "The"
+    },
+    {
+      "end": 13.34,
+      "start": 12.98,
+      "word": "install"
+    },
+    {
+      "end": 13.86,
+      "start": 13.34,
+      "word": "deployment"
+    },
+    {
+      "end": 14.22,
+      "start": 13.86,
+      "word": "uses"
+    },
+    {
+      "end": 14.76,
+      "start": 14.22,
+      "word": "protected"
+    },
+    {
+      "end": 15.24,
+      "start": 14.76,
+      "word": "ownership"
+    },
+    {
+      "end": 16.44,
+      "start": 15.98,
+      "word": "systemd"
+    },
+    {
+      "end": 16.86,
+      "start": 16.44,
+      "word": "lifecycle"
+    },
+    {
+      "end": 17.3,
+      "start": 16.86,
+      "word": "management"
+    },
+    {
+      "end": 17.84,
+      "start": 17.74,
+      "word": "and"
+    },
+    {
+      "end": 18.02,
+      "start": 17.84,
+      "word": "the"
+    },
+    {
+      "end": 18.36,
+      "start": 18.02,
+      "word": "production"
+    },
+    {
+      "end": 18.66,
+      "start": 18.36,
+      "word": "server"
+    },
+    {
+      "end": 18.98,
+      "start": 18.66,
+      "word": "port"
+    },
+    {
+      "end": 20.3,
+      "start": 18.98,
+      "word": "8075"
+    }
+  ]
+}

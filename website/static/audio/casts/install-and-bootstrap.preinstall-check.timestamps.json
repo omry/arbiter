@@ -1,0 +1,119 @@
+{
+  "duration": 9.21,
+  "recording": "install-and-bootstrap",
+  "segment": "preinstall-check",
+  "source_text": "Before install, run the preinstall doctor. This catches production-install mistakes while the deployment is still staged and easy to fix.",
+  "transcript": "Before install, run the pre-install doctor. This catches production install mistakes while the deployment is still staged and easy to fix.",
+  "words": [
+    {
+      "end": 0.52,
+      "start": 0.0,
+      "word": "Before"
+    },
+    {
+      "end": 1.08,
+      "start": 0.52,
+      "word": "install"
+    },
+    {
+      "end": 1.78,
+      "start": 1.62,
+      "word": "run"
+    },
+    {
+      "end": 2.04,
+      "start": 1.78,
+      "word": "the"
+    },
+    {
+      "end": 2.4,
+      "start": 2.04,
+      "word": "pre"
+    },
+    {
+      "end": 2.68,
+      "start": 2.4,
+      "word": "install"
+    },
+    {
+      "end": 3.16,
+      "start": 2.68,
+      "word": "doctor"
+    },
+    {
+      "end": 4.04,
+      "start": 3.96,
+      "word": "This"
+    },
+    {
+      "end": 4.38,
+      "start": 4.04,
+      "word": "catches"
+    },
+    {
+      "end": 4.98,
+      "start": 4.38,
+      "word": "production"
+    },
+    {
+      "end": 5.46,
+      "start": 4.98,
+      "word": "install"
+    },
+    {
+      "end": 5.9,
+      "start": 5.46,
+      "word": "mistakes"
+    },
+    {
+      "end": 6.44,
+      "start": 5.9,
+      "word": "while"
+    },
+    {
+      "end": 6.64,
+      "start": 6.44,
+      "word": "the"
+    },
+    {
+      "end": 6.92,
+      "start": 6.64,
+      "word": "deployment"
+    },
+    {
+      "end": 7.32,
+      "start": 6.92,
+      "word": "is"
+    },
+    {
+      "end": 7.56,
+      "start": 7.32,
+      "word": "still"
+    },
+    {
+      "end": 7.94,
+      "start": 7.56,
+      "word": "staged"
+    },
+    {
+      "end": 8.32,
+      "start": 7.94,
+      "word": "and"
+    },
+    {
+      "end": 8.48,
+      "start": 8.32,
+      "word": "easy"
+    },
+    {
+      "end": 8.94,
+      "start": 8.48,
+      "word": "to"
+    },
+    {
+      "end": 8.94,
+      "start": 8.94,
+      "word": "fix"
+    }
+  ]
+}

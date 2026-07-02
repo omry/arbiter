@@ -1,0 +1,189 @@
+{
+  "duration": 14.35,
+  "recording": "install-and-bootstrap",
+  "segment": "install-server",
+  "source_text": "Finally, run the install command a production operator uses. It installs the checked staging deployment to the protected target, writes the systemd unit, applies service ownership, and prepares Arbiter to run from /opt/arbiter.",
+  "transcript": "Finally, run the install command a production operator uses. It installs the checked staging deployment to the protected target, writes the systemd unit, applies service ownership, and prepares Arbiter to run from slash opt slash Arbiter.",
+  "words": [
+    {
+      "end": 0.56,
+      "start": 0.0,
+      "word": "Finally"
+    },
+    {
+      "end": 1.18,
+      "start": 0.9,
+      "word": "run"
+    },
+    {
+      "end": 1.48,
+      "start": 1.18,
+      "word": "the"
+    },
+    {
+      "end": 1.86,
+      "start": 1.48,
+      "word": "install"
+    },
+    {
+      "end": 2.2,
+      "start": 1.86,
+      "word": "command"
+    },
+    {
+      "end": 2.48,
+      "start": 2.2,
+      "word": "a"
+    },
+    {
+      "end": 2.82,
+      "start": 2.48,
+      "word": "production"
+    },
+    {
+      "end": 3.22,
+      "start": 2.82,
+      "word": "operator"
+    },
+    {
+      "end": 3.6,
+      "start": 3.22,
+      "word": "uses"
+    },
+    {
+      "end": 4.46,
+      "start": 4.46,
+      "word": "It"
+    },
+    {
+      "end": 4.96,
+      "start": 4.46,
+      "word": "installs"
+    },
+    {
+      "end": 5.1,
+      "start": 4.96,
+      "word": "the"
+    },
+    {
+      "end": 5.42,
+      "start": 5.1,
+      "word": "checked"
+    },
+    {
+      "end": 5.84,
+      "start": 5.42,
+      "word": "staging"
+    },
+    {
+      "end": 6.24,
+      "start": 5.84,
+      "word": "deployment"
+    },
+    {
+      "end": 6.46,
+      "start": 6.24,
+      "word": "to"
+    },
+    {
+      "end": 6.66,
+      "start": 6.46,
+      "word": "the"
+    },
+    {
+      "end": 6.96,
+      "start": 6.66,
+      "word": "protected"
+    },
+    {
+      "end": 7.38,
+      "start": 6.96,
+      "word": "target"
+    },
+    {
+      "end": 8.18,
+      "start": 8.18,
+      "word": "writes"
+    },
+    {
+      "end": 8.44,
+      "start": 8.18,
+      "word": "the"
+    },
+    {
+      "end": 8.96,
+      "start": 8.44,
+      "word": "systemd"
+    },
+    {
+      "end": 9.18,
+      "start": 8.96,
+      "word": "unit"
+    },
+    {
+      "end": 9.94,
+      "start": 9.94,
+      "word": "applies"
+    },
+    {
+      "end": 10.36,
+      "start": 9.94,
+      "word": "service"
+    },
+    {
+      "end": 10.68,
+      "start": 10.36,
+      "word": "ownership"
+    },
+    {
+      "end": 11.4,
+      "start": 11.2,
+      "word": "and"
+    },
+    {
+      "end": 11.7,
+      "start": 11.4,
+      "word": "prepares"
+    },
+    {
+      "end": 12.02,
+      "start": 11.7,
+      "word": "Arbiter"
+    },
+    {
+      "end": 12.36,
+      "start": 12.02,
+      "word": "to"
+    },
+    {
+      "end": 12.54,
+      "start": 12.36,
+      "word": "run"
+    },
+    {
+      "end": 12.76,
+      "start": 12.54,
+      "word": "from"
+    },
+    {
+      "end": 13.18,
+      "start": 12.76,
+      "word": "slash"
+    },
+    {
+      "end": 13.4,
+      "start": 13.18,
+      "word": "opt"
+    },
+    {
+      "end": 13.8,
+      "start": 13.4,
+      "word": "slash"
+    },
+    {
+      "end": 14.06,
+      "start": 13.8,
+      "word": "Arbiter"
+    }
+  ]
+}

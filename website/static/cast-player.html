@@ -50,7 +50,7 @@
         display: flex;
         align-items: center;
         gap: 0.75rem;
-        min-height: 2.9rem;
+        height: calc(2.7em + 1.3rem + 1px);
         padding: 0.65rem 0.8rem;
         border-bottom: 1px solid var(--border);
         background: var(--panel);
@@ -59,15 +59,32 @@
       .narration {
         flex: 1 1 auto;
         min-width: 10rem;
-        overflow: hidden;
+        overflow-x: hidden;
+        overflow-y: hidden;
         color: var(--fg);
         font-weight: 650;
+        height: 2.7em;
         line-height: 1.35;
-        text-overflow: ellipsis;
         white-space: normal;
-        display: -webkit-box;
-        -webkit-box-orient: vertical;
-        -webkit-line-clamp: 2;
+        overflow-wrap: break-word;
+      }
+
+      .narration-word {
+        border-radius: 0.18rem;
+        transition: color 120ms ease, opacity 120ms ease;
+      }
+
+      .narration-word.past {
+        color: rgba(248, 248, 242, 0.82);
+      }
+
+      .narration-word.current {
+        background: rgba(139, 233, 253, 0.18);
+        color: var(--fg);
+      }
+
+      .narration-word.future {
+        opacity: 0.72;
       }
 
       button {
@@ -150,6 +167,46 @@
         height: 100%;
       }
 
+      .playback-flash {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 5rem;
+        height: 5rem;
+        border: 1px solid rgba(248, 248, 242, 0.35);
+        border-radius: 50%;
+        background: rgba(25, 26, 36, 0.72);
+        color: var(--fg);
+        opacity: 0;
+        pointer-events: none;
+        transform: translate(-50%, -50%) scale(0.96);
+        transition: opacity 600ms ease, transform 600ms ease;
+      }
+
+      .playback-flash[data-visible="true"] {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
+        transition-duration: 80ms;
+      }
+
+      .playback-flash[data-fading="true"] {
+        opacity: 0;
+        transform: translate(-50%, -50%) scale(2);
+      }
+
+      .playback-flash svg {
+        width: 2.25rem;
+        height: 2.25rem;
+        stroke: currentColor;
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        fill: none;
+      }
+
       .guide-modal {
         position: absolute;
         inset: 0;
@@ -224,6 +281,7 @@
 
       .progress {
         --position: 0%;
+        --thumb-size: 0.9rem;
         width: 100%;
         height: 0.45rem;
         border: 0;
@@ -277,12 +335,21 @@
       .section-marker {
         position: absolute;
         top: 50%;
+        --thumb-offset: 0rem;
         width: 2px;
         height: 0.9rem;
         border-radius: 999px;
         background: rgba(248, 248, 242, 0.72);
         box-shadow: 0 0 0 1px rgba(25, 26, 36, 0.85);
-        transform: translate(-50%, -50%);
+        transform: translate(calc(-50% + var(--thumb-offset)), -50%);
+      }
+
+      .section-marker.debug {
+        width: 1px;
+        height: 0.52rem;
+        background: var(--cyan);
+        opacity: 0.58;
+        box-shadow: 0 0 0 1px rgba(25, 26, 36, 0.75);
       }
 
       .section-marker.active {
@@ -291,9 +358,16 @@
         background: var(--green);
       }
 
+      .section-marker.debug.active {
+        width: 2px;
+        height: 0.86rem;
+        background: var(--cyan);
+        opacity: 1;
+      }
+
       .progress::-webkit-slider-thumb {
-        width: 0.9rem;
-        height: 0.9rem;
+        width: var(--thumb-size);
+        height: var(--thumb-size);
         border: 2px solid var(--panel);
         border-radius: 999px;
         background: var(--fg);
@@ -364,6 +438,7 @@
       </div>
       <div class="stage">
         <pre class="terminal" id="terminal" aria-live="polite"></pre>
+        <div class="playback-flash" id="playback-flash" aria-hidden="true"></div>
         <div class="guide-modal" id="guide" role="dialog" aria-modal="true" aria-labelledby="guide-title" hidden>
           <div class="guide-card" id="guide-card">
             <h2 class="guide-title" id="guide-title">Checkpoint</h2>
@@ -414,8 +489,18 @@
       const explicitIntroSeconds = params.has('introSeconds');
       let introSeconds = Math.max(0, Number(params.get('introSeconds') || '0'));
       const introSegment = params.get('introSegment') || '';
+      function parentDebugMode() {
+        try {
+          if (window.parent && window.parent !== window) {
+            return new URLSearchParams(window.parent.location.search).get('debug') === '1';
+          }
+        } catch {
+          return false;
+        }
+        return false;
+      }
+      const debugMode = params.get('debug') === '1' || parentDebugMode();
       const titleText = params.get('title') || 'Terminal recording';
-      const narrationPostPauseSeconds = 2.0;
 
       const terminal = document.getElementById('terminal');
       const narration = document.getElementById('narration');
@@ -429,6 +514,7 @@
       const progress = document.getElementById('progress');
       const sectionMarkers = document.getElementById('section-markers');
       const sectionTooltip = document.getElementById('section-tooltip');
+      const playbackFlash = document.getElementById('playback-flash');
       const voice = document.getElementById('voice');
       const guidedButton = document.getElementById('guided');
       const guideModal = document.getElementById('guide');
@@ -452,14 +538,20 @@
       let playing = false;
       let timers = [];
       let progressTimer = null;
-      let html = '';
-      let openClass = '';
+      let activeClass = '';
+      let activeStyle = '';
+      let terminalLines = [[]];
+      let cursorColumn = 0;
       let audio = null;
       let audioReady = false;
       let introActive = false;
       let resumeAfterSeek = false;
       let muted = false;
       let narrationSegments = [];
+      let narrationRenderedHtml = '';
+      let narrationRenderedTitle = '';
+      let narrationScrollTarget = 0;
+      let narrationScrollAnimation = null;
       let audioPlaybackSegments = [];
       let audioPresentationSeconds = 0;
       let audioTimer = null;
@@ -469,6 +561,7 @@
       let activeGuideCheckpoint = null;
       let guideDrag = null;
       let scrubbing = false;
+      let playbackFlashTimers = [];
       const checkpointSnapSeconds = 3.0;
 
       const icons = {
@@ -508,10 +601,113 @@
           .replaceAll('>', '&gt;');
       }
 
-      function closeSpan() {
-        if (openClass) {
-          html += '</span>';
-          openClass = '';
+      function escapeAttribute(text) {
+        return escapeHtml(text).replaceAll('"', '&quot;');
+      }
+
+      function ansi256Color(value) {
+        const color = Number(value);
+        if (!Number.isInteger(color) || color < 0 || color > 255) {
+          return '';
+        }
+        if (color < 16) {
+          return '';
+        }
+        if (color >= 232) {
+          const level = 8 + ((color - 232) * 10);
+          const hex = level.toString(16).padStart(2, '0');
+          return `#${hex}${hex}${hex}`;
+        }
+        const channel = (component) => (
+          component === 0 ? 0 : 55 + (component * 40)
+        );
+        const offset = color - 16;
+        const red = channel(Math.floor(offset / 36));
+        const green = channel(Math.floor((offset % 36) / 6));
+        const blue = channel(offset % 6);
+        return `#${[red, green, blue]
+          .map((component) => component.toString(16).padStart(2, '0'))
+          .join('')}`;
+      }
+
+      function timestampUrl(reference) {
+        const value = String(reference || '').trim();
+        if (!value) {
+          return null;
+        }
+        if (/^https?:\/\//.test(value) || value.startsWith('/')) {
+          return value;
+        }
+        if (value.startsWith('website/static/')) {
+          return `/${value.slice('website/static/'.length)}`;
+        }
+        return new URL(value, window.location.href).toString();
+      }
+
+      function wordNeedle(word) {
+        return String(word || '')
+          .trim()
+          .replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '')
+          .toLocaleLowerCase();
+      }
+
+      function alignTimestampWords(text, words) {
+        if (!text || !Array.isArray(words)) {
+          return [];
+        }
+        const lowerText = text.toLocaleLowerCase();
+        let cursor = 0;
+        const spans = [];
+        for (const word of words) {
+          const needle = wordNeedle(word?.word);
+          const start = Number(word?.start);
+          const end = Number(word?.end);
+          if (!needle || !Number.isFinite(start) || !Number.isFinite(end)) {
+            continue;
+          }
+          const index = lowerText.indexOf(needle, cursor);
+          if (index < 0) {
+            continue;
+          }
+          spans.push({
+            end,
+            textEnd: index + needle.length,
+            textStart: index,
+            start,
+          });
+          cursor = index + needle.length;
+        }
+        for (let index = 0; index < spans.length; index += 1) {
+          const span = spans[index];
+          if (span.end > span.start) {
+            continue;
+          }
+          const next = spans[index + 1];
+          const fallbackEnd = next && next.end > span.start
+            ? Math.min(next.end, span.start + 0.2)
+            : span.start + 0.2;
+          span.end = Number(fallbackEnd.toFixed(3));
+          if (next && next.start < span.end) {
+            next.start = span.end;
+          }
+        }
+        return spans;
+      }
+
+      async function loadSegmentTimestamps(segment) {
+        const url = timestampUrl(segment.timestamps);
+        if (!url) {
+          return;
+        }
+        try {
+          const response = await fetch(url);
+          if (!response.ok) {
+            return;
+          }
+          const payload = await response.json();
+          segment.wordSpans = alignTimestampWords(segment.text, payload.words);
+        } catch {
+          segment.wordSpans = [];
         }
       }
 
@@ -519,23 +715,116 @@
         const codes = paramsText
           ? paramsText.split(';').map((value) => Number(value || '0'))
           : [0];
-        for (const code of codes) {
+        for (let index = 0; index < codes.length; index += 1) {
+          const code = codes[index];
           if (code === 0 || code === 39) {
-            closeSpan();
+            activeClass = '';
+            activeStyle = '';
+          } else if (
+            code === 38 &&
+            codes[index + 1] === 5 &&
+            Number.isInteger(codes[index + 2])
+          ) {
+            const color = ansi256Color(codes[index + 2]);
+            if (color) {
+              activeClass = '';
+              activeStyle = `color: ${color}`;
+            }
+            index += 2;
+          } else if (
+            code === 38 &&
+            codes[index + 1] === 2 &&
+            Number.isInteger(codes[index + 2]) &&
+            Number.isInteger(codes[index + 3]) &&
+            Number.isInteger(codes[index + 4])
+          ) {
+            const red = Math.min(255, Math.max(0, codes[index + 2]));
+            const green = Math.min(255, Math.max(0, codes[index + 3]));
+            const blue = Math.min(255, Math.max(0, codes[index + 4]));
+            activeClass = '';
+            activeStyle = `color: rgb(${red}, ${green}, ${blue})`;
+            index += 4;
           } else if (colorMap[code]) {
-            closeSpan();
-            openClass = colorMap[code];
-            html += `<span class="${openClass}">`;
+            activeClass = colorMap[code];
+            activeStyle = '';
           }
         }
+      }
+
+      function resetTerminalBuffer() {
+        terminalLines = [[]];
+        cursorColumn = 0;
+        activeClass = '';
+        activeStyle = '';
+      }
+
+      function currentTerminalLine() {
+        if (!terminalLines.length) {
+          terminalLines.push([]);
+        }
+        return terminalLines[terminalLines.length - 1];
+      }
+
+      function putTerminalChar(char) {
+        const line = currentTerminalLine();
+        line[cursorColumn] = {
+          char,
+          className: activeClass,
+          style: activeStyle,
+        };
+        cursorColumn += 1;
+      }
+
+      function clearTerminalLineAfterCursor() {
+        currentTerminalLine().length = cursorColumn;
+      }
+
+      function clearTerminalScreen() {
+        terminalLines = [[]];
+        cursorColumn = 0;
+      }
+
+      function renderTerminalLine(line) {
+        let rendered = '';
+        let openRenderKey = '';
+        const closeRenderSpan = () => {
+          if (openRenderKey) {
+            rendered += '</span>';
+            openRenderKey = '';
+          }
+        };
+        for (const cell of line) {
+          const className = cell?.className || '';
+          const style = cell?.style || '';
+          const renderKey = `${className}\n${style}`;
+          if (renderKey !== openRenderKey) {
+            closeRenderSpan();
+            if (className || style) {
+              openRenderKey = renderKey;
+              const classAttribute = className
+                ? ` class="${escapeAttribute(className)}"`
+                : '';
+              const styleAttribute = style
+                ? ` style="${escapeAttribute(style)}"`
+                : '';
+              rendered += `<span${classAttribute}${styleAttribute}>`;
+            }
+          }
+          rendered += escapeHtml(cell?.char || ' ');
+        }
+        closeRenderSpan();
+        return rendered;
+      }
+
+      function renderTerminalBuffer() {
+        terminal.innerHTML = terminalLines.map(renderTerminalLine).join('\n');
+        terminal.scrollTop = terminal.scrollHeight;
       }
 
       function appendChunk(chunk) {
         if (introActive) {
           introActive = false;
-          html = '';
-          openClass = '';
-          terminal.textContent = '';
+          resetTerminalBuffer();
         }
         for (let index = 0; index < chunk.length; index += 1) {
           const char = chunk[index];
@@ -544,6 +833,15 @@
             if (match) {
               if (match[2] === 'm') {
                 setAnsi(match[1]);
+              } else if (match[2] === 'K') {
+                clearTerminalLineAfterCursor();
+              } else if (match[2] === 'J') {
+                const mode = match[1] || '0';
+                if (mode === '2' || mode === '3') {
+                  clearTerminalScreen();
+                }
+              } else if (match[2] === 'H') {
+                cursorColumn = 0;
               }
               index += match[0].length - 1;
               continue;
@@ -554,13 +852,22 @@
               continue;
             }
           }
-          if (char === '\r' || char === '\b') {
+          if (char === '\r') {
+            cursorColumn = 0;
             continue;
           }
-          html += escapeHtml(char);
+          if (char === '\n') {
+            terminalLines.push([]);
+            cursorColumn = 0;
+            continue;
+          }
+          if (char === '\b') {
+            cursorColumn = Math.max(0, cursorColumn - 1);
+            continue;
+          }
+          putTerminalChar(char);
         }
-        terminal.innerHTML = html + (openClass ? '</span>' : '');
-        terminal.scrollTop = terminal.scrollHeight;
+        renderTerminalBuffer();
       }
 
       function formatTime(seconds) {
@@ -577,11 +884,21 @@
       }
 
       function isCaptionPayload(payload) {
+        if (!String(payload || '').includes('\u001b[36;1m# ')) {
+          return false;
+        }
         const lines = plainTerminalText(payload)
           .split('\n')
           .map((line) => line.trim())
           .filter(Boolean);
         return lines.length === 1 && lines[0].startsWith('# ');
+      }
+
+      function isTypedCaptionStart(events, index) {
+        return (
+          events[index]?.data === '\u001b[36;1m' &&
+          events[index + 1]?.data === '#'
+        );
       }
 
       function updateTotalSeconds() {
@@ -608,10 +925,22 @@
           seen.add(start);
           const marker = document.createElement('span');
           marker.className = 'section-marker';
-          marker.style.left = `${Math.min(100, Math.max(0, (start / totalSeconds) * 100))}%`;
+          if (point.debugOnly) {
+            marker.classList.add('debug');
+          }
+          const ratio = Math.min(1, Math.max(0, start / totalSeconds));
+          const percent = ratio * 100;
+          marker.style.left = `${percent}%`;
+          marker.style.setProperty(
+            '--thumb-offset',
+            `${((0.5 - ratio) * 0.9).toFixed(4)}rem`,
+          );
           marker.dataset.start = String(start);
+          marker.dataset.kind = point.debugOnly ? 'debug' : 'checkpoint';
           marker.dataset.heading = point.heading || 'Checkpoint';
-          marker.title = point.heading || 'Checkpoint';
+          marker.title = point.debugOnly
+            ? `Debug checkpoint: ${point.heading || 'Beat'}`
+            : point.heading || 'Checkpoint';
           sectionMarkers.appendChild(marker);
         }
       }
@@ -689,7 +1018,7 @@
         sectionTooltip.style.left = `${left}px`;
       }
 
-      function narrationForSeconds(seconds) {
+      function narrationSegmentForSeconds(seconds) {
         if (audioPlaybackSegments.length) {
           const clamped = Math.max(0, seconds);
           const active = audioPlaybackSegments.find((segment) => (
@@ -697,17 +1026,24 @@
             clamped < segment.presentationEnd
           ));
           if (active) {
-            return active.text || active.heading || titleText;
+            return {
+              localSeconds: (active.audioLocalStart || 0)
+                + (clamped - active.presentationStart),
+              segment: active,
+            };
           }
           const previous = [...audioPlaybackSegments]
             .reverse()
             .find((segment) => clamped >= segment.presentationEnd);
           if (previous) {
-            return previous.text || previous.heading || titleText;
+            return {
+              localSeconds: previous.audioLocalEnd ?? previous.duration,
+              segment: previous,
+            };
           }
         }
         if (!narrationSegments.length) {
-          return introText || titleText;
+          return null;
         }
         const clamped = Math.max(0, seconds);
         const active = narrationSegments.find((segment) => {
@@ -716,13 +1052,139 @@
           return clamped >= start && clamped < end;
         });
         const segment = active || narrationSegments[narrationSegments.length - 1];
-        return segment.text || segment.heading || titleText;
+        return {
+          localSeconds: active ? clamped - segment.offset : segment.duration,
+          segment,
+        };
       }
 
-      function updateNarration(seconds) {
-        const text = narrationForSeconds(seconds);
-        narration.textContent = text;
-        narration.title = text;
+      function narrationHtmlForSegment(segment, localSeconds) {
+        const text = segment?.text || segment?.heading || titleText;
+        const spans = Array.isArray(segment?.wordSpans) ? segment.wordSpans : [];
+        if (!spans.length) {
+          return escapeHtml(text);
+        }
+        let cursor = 0;
+        let html = '';
+        for (const span of spans) {
+          if (span.textStart > cursor) {
+            html += escapeHtml(text.slice(cursor, span.textStart));
+          }
+          const state = localSeconds >= span.end
+            ? 'past'
+            : localSeconds >= span.start
+              ? 'current'
+              : 'future';
+          html += `<span class="narration-word ${state}">${escapeHtml(
+            text.slice(span.textStart, span.textEnd),
+          )}</span>`;
+          cursor = span.textEnd;
+        }
+        if (cursor < text.length) {
+          html += escapeHtml(text.slice(cursor));
+        }
+        return html;
+      }
+
+      function cancelNarrationScrollAnimation() {
+        if (
+          narrationScrollAnimation != null &&
+          typeof window.cancelAnimationFrame === 'function'
+        ) {
+          window.cancelAnimationFrame(narrationScrollAnimation);
+        }
+        narrationScrollAnimation = null;
+      }
+
+      function animateNarrationScrollTop(target) {
+        cancelNarrationScrollAnimation();
+        if (typeof window.requestAnimationFrame !== 'function') {
+          narration.scrollTop = target;
+          return;
+        }
+        const start = narration.scrollTop;
+        const distance = target - start;
+        if (Math.abs(distance) <= 0.5) {
+          narration.scrollTop = target;
+          return;
+        }
+        const durationMs = 320;
+        const startTime = performance.now();
+        const step = (now) => {
+          const progress = Math.min(1, Math.max(0, (now - startTime) / durationMs));
+          const eased = 1 - ((1 - progress) ** 3);
+          narration.scrollTop = start + distance * eased;
+          narration.scrollLeft = 0;
+          if (progress < 1) {
+            narrationScrollAnimation = window.requestAnimationFrame(step);
+          } else {
+            narration.scrollTop = target;
+            narrationScrollAnimation = null;
+          }
+        };
+        narrationScrollAnimation = window.requestAnimationFrame(step);
+      }
+
+      function setNarrationScrollTop(target, {animate = false} = {}) {
+        const next = Math.max(0, Number(target) || 0);
+        const previousTarget = narrationScrollTarget;
+        narrationScrollTarget = next;
+        narration.scrollLeft = 0;
+        if (animate && Math.abs(previousTarget - next) <= 0.5) {
+          return;
+        }
+        if (
+          animate &&
+          next > narration.scrollTop &&
+          Math.abs(previousTarget - next) > 0.5
+        ) {
+          animateNarrationScrollTop(next);
+        } else {
+          cancelNarrationScrollAnimation();
+          narration.scrollTop = next;
+        }
+        narration.scrollLeft = 0;
+      }
+
+      function updateNarrationScroll({animate = false} = {}) {
+        const overflow = narration.scrollHeight - narration.clientHeight;
+        narration.scrollLeft = 0;
+        if (overflow <= 1) {
+          setNarrationScrollTop(0);
+          return;
+        }
+        const current = narration.querySelector('.narration-word.current');
+        if (!current) {
+          if (animate) {
+            narration.scrollLeft = 0;
+            return;
+          }
+          setNarrationScrollTop(0);
+          return;
+        }
+        const lineHeight = Math.max(1, narration.clientHeight / 2);
+        const targetLine = Math.floor(current.offsetTop / lineHeight);
+        setNarrationScrollTop(Math.min(overflow, targetLine * lineHeight), {
+          animate,
+        });
+      }
+
+      function updateNarration(seconds, {animateScroll = false} = {}) {
+        const active = narrationSegmentForSeconds(seconds);
+        const text = active?.segment?.text || active?.segment?.heading || introText || titleText;
+        const html = active
+          ? narrationHtmlForSegment(active.segment, active.localSeconds)
+          : escapeHtml(text);
+        if (html !== narrationRenderedHtml) {
+          narration.innerHTML = html;
+          narrationRenderedHtml = html;
+        }
+        if (text !== narrationRenderedTitle) {
+          narration.title = text;
+          narrationRenderedTitle = text;
+        }
+        narration.scrollLeft = 0;
+        updateNarrationScroll({animate: animateScroll});
       }
 
       function updateProgress() {
@@ -738,7 +1200,7 @@
           ? String(Math.round((clamped / totalSeconds) * 1000))
           : '0';
         progress.style.setProperty('--position', `${percent}%`);
-        updateNarration(clamped);
+        updateNarration(clamped, {animateScroll: playing && !scrubbing});
         updateSectionMarkerState(clamped);
         updateTransportButtons();
       }
@@ -765,6 +1227,33 @@
         }
         button.setAttribute('aria-label', label);
         button.title = label;
+      }
+
+      function clearPlaybackFlashTimers() {
+        playbackFlashTimers.forEach((timer) => clearTimeout(timer));
+        playbackFlashTimers = [];
+      }
+
+      function showPlaybackFlash(iconName) {
+        if (!playbackFlash || !icons[iconName]) {
+          return;
+        }
+        clearPlaybackFlashTimers();
+        playbackFlash.innerHTML = icons[iconName];
+        playbackFlash.dataset.visible = 'true';
+        playbackFlash.dataset.fading = 'false';
+        playbackFlashTimers.push(
+          setTimeout(() => {
+            playbackFlash.dataset.fading = 'true';
+            playbackFlash.dataset.visible = 'false';
+          }, 100),
+        );
+        playbackFlashTimers.push(
+          setTimeout(() => {
+            playbackFlash.removeAttribute('data-visible');
+            playbackFlash.removeAttribute('data-fading');
+          }, 700),
+        );
       }
 
       function sectionStartTimes() {
@@ -878,17 +1367,20 @@
       function showGuideModal(point) {
         hideSectionTooltip();
         const guide = point.guide || {};
-        const command = String(guide.try_command || '').trim();
+        const commands = Array.isArray(guide.commands) ? guide.commands : [];
+        const commandText = commands.join('\n');
         const hint = String(guide.success_hint || '').trim();
         guideTitle.textContent = point.heading
           ? `Checkpoint: ${point.heading}`
           : 'Checkpoint';
-        guideSummary.textContent = command
-          ? 'Run this command in your terminal before continuing.'
+        guideSummary.textContent = commands.length
+          ? commands.length === 1
+            ? 'Run this command in your terminal before continuing.'
+            : 'Run these commands in your terminal before continuing.'
           : 'Pause here and confirm your local terminal is in the same state.';
-        guideCommand.hidden = !command;
-        guideCopyButton.hidden = !command;
-        guideCommand.textContent = command;
+        guideCommand.hidden = !commandText;
+        guideCopyButton.hidden = !commandText;
+        guideCommand.textContent = commandText;
         guideHint.textContent = hint || 'Continue when your local result matches the video.';
         resetGuidePosition();
         guideModal.hidden = false;
@@ -947,8 +1439,25 @@
         return distance <= checkpointSnapSeconds ? nearest : null;
       }
 
+      function nearestStageMarker(seconds) {
+        const starts = sectionStartTimes();
+        if (!starts.length) {
+          return null;
+        }
+        let nearest = null;
+        let distance = Infinity;
+        for (const start of starts) {
+          const markerDistance = Math.abs(start - seconds);
+          if (markerDistance < distance) {
+            nearest = start;
+            distance = markerDistance;
+          }
+        }
+        return distance <= checkpointSnapSeconds ? nearest : null;
+      }
+
       function snapSeekSeconds(seconds) {
-        return nearestCheckpoint(seconds)?.time ?? seconds;
+        return nearestStageMarker(seconds) ?? seconds;
       }
 
       function jumpSection(direction) {
@@ -975,6 +1484,56 @@
           return;
         }
         seekTo(target, {resume: playing});
+      }
+
+      function seekBy(deltaSeconds) {
+        if (!totalSeconds || !Number.isFinite(deltaSeconds)) {
+          return;
+        }
+        const liveSeconds = playing
+          ? (performance.now() - startedAt) / 1000
+          : currentSeconds;
+        const rawTarget = Math.max(0, Math.min(liveSeconds + deltaSeconds, totalSeconds));
+        const target = snapSeekSeconds(rawTarget);
+        seekTo(target, {resume: playing});
+      }
+
+      function ignoresPlaybackShortcut(event) {
+        const target = event?.target;
+        if (!target || target === progress) {
+          return false;
+        }
+        const tagName = String(target.tagName || '').toLowerCase();
+        return (
+          tagName === 'input' ||
+          tagName === 'textarea' ||
+          tagName === 'select' ||
+          Boolean(target.isContentEditable)
+        );
+      }
+
+      function handleKeyboardSeek(event) {
+        if (
+          event.defaultPrevented ||
+          event.altKey ||
+          event.ctrlKey ||
+          event.metaKey ||
+          event.shiftKey ||
+          ignoresPlaybackShortcut(event)
+        ) {
+          return false;
+        }
+        if (event.key === 'ArrowLeft') {
+          event.preventDefault();
+          seekBy(-10);
+          return true;
+        }
+        if (event.key === 'ArrowRight') {
+          event.preventDefault();
+          seekBy(10);
+          return true;
+        }
+        return false;
       }
 
       function progressValueSeconds() {
@@ -1083,12 +1642,9 @@
 
       function renderAt(seconds) {
         const clamped = Math.max(0, Math.min(seconds, totalSeconds));
-        html = '';
-        openClass = '';
+        resetTerminalBuffer();
         introActive = Boolean(introText && introSeconds > 0);
-        terminal.innerHTML = introActive
-          ? `<span class="ansi-cyan"># ${escapeHtml(titleText)}</span>\n\n${escapeHtml(introText)}\n`
-          : '';
+        terminal.innerHTML = '';
         eventIndex = 0;
         for (let index = 0; index < events.length; index += 1) {
           const event = events[index];
@@ -1234,7 +1790,11 @@
             duration: Number(segment.duration || 0),
             heading: String(segment.heading || ''),
             text: String(segment.text || ''),
+            timestamps: String(segment.timestamps || ''),
             guide: normalizeGuide(segment.guide),
+            pauseAfter: normalizePauseAfter(segment.pause_after),
+            waits: normalizePresentationWaits(segment.waits),
+            wordSpans: [],
           }))
           .filter(
             (segment) =>
@@ -1242,6 +1802,7 @@
               Number.isFinite(segment.duration) &&
               segment.duration >= 0,
           );
+        await Promise.all(narrationSegments.map(loadSegmentTimestamps));
         const selected = introSegment
           ? segments.find((segment) => segment.id === introSegment)
           : segments[0];
@@ -1263,15 +1824,96 @@
         if (!value || typeof value !== 'object') {
           return null;
         }
-        const tryCommand = String(value.try_command || '').trim();
+        const rawCommands = Array.isArray(value.commands) ? value.commands : [];
+        const commands = rawCommands
+          .map((command) => String(command || '').trim())
+          .filter(Boolean);
         const successHint = String(value.success_hint || '').trim();
-        if (!tryCommand && !successHint) {
+        if (!commands.length && !successHint) {
           return null;
         }
         return {
-          try_command: tryCommand,
+          commands,
           success_hint: successHint,
         };
+      }
+
+      function normalizePauseAfter(value) {
+        const seconds = Number(value || 0);
+        if (!Number.isFinite(seconds) || seconds < 0) {
+          return 0;
+        }
+        return seconds;
+      }
+
+      function normalizePresentationWaits(value) {
+        if (!Array.isArray(value)) {
+          return [];
+        }
+        return value
+          .map((wait) => ({
+            marker: String(wait?.marker || ''),
+            audioSecond: Number(wait?.audio_second),
+            pauseSeconds: Number(wait?.pause_seconds),
+          }))
+          .filter((wait) => (
+            wait.marker &&
+            Number.isFinite(wait.audioSecond) &&
+            Number.isFinite(wait.pauseSeconds) &&
+            wait.audioSecond >= 0 &&
+            wait.pauseSeconds >= 0
+          ))
+          .sort((left, right) => left.audioSecond - right.audioSecond);
+      }
+
+      function appendAudioPlaybackSegments(segment, presentationStart) {
+        const duration = Math.max(0, segment.duration);
+        const waits = (Array.isArray(segment.waits) ? segment.waits : [])
+          .filter((wait) => wait.audioSecond <= duration);
+        let audioCursor = 0;
+        let presentationCursor = presentationStart;
+        let presentationEnd = presentationStart;
+
+        for (const wait of waits) {
+          const waitAudioSecond = Math.max(audioCursor, wait.audioSecond);
+          const sliceDuration = waitAudioSecond - audioCursor;
+          if (sliceDuration > 0) {
+            const sliceEnd = presentationCursor + sliceDuration;
+            audioPlaybackSegments.push({
+              ...segment,
+              audioStart: segment.offset + audioCursor,
+              audioEnd: segment.offset + waitAudioSecond,
+              audioLocalStart: audioCursor,
+              audioLocalEnd: waitAudioSecond,
+              presentationStart: presentationCursor,
+              presentationEnd: sliceEnd,
+              postPauseEnd: sliceEnd,
+            });
+            presentationCursor = sliceEnd;
+            presentationEnd = Math.max(presentationEnd, sliceEnd);
+          }
+          presentationCursor += wait.pauseSeconds;
+          presentationEnd = Math.max(presentationEnd, presentationCursor);
+          audioCursor = waitAudioSecond;
+        }
+
+        if (audioCursor < duration) {
+          const sliceEnd = presentationCursor + (duration - audioCursor);
+          audioPlaybackSegments.push({
+            ...segment,
+            audioStart: segment.offset + audioCursor,
+            audioEnd: segment.offset + duration,
+            audioLocalStart: audioCursor,
+            audioLocalEnd: duration,
+            presentationStart: presentationCursor,
+            presentationEnd: sliceEnd,
+            postPauseEnd: sliceEnd + segment.pauseAfter,
+          });
+          presentationEnd = Math.max(presentationEnd, sliceEnd + segment.pauseAfter);
+        } else {
+          presentationEnd = Math.max(presentationEnd, presentationCursor + segment.pauseAfter);
+        }
+        return presentationEnd;
       }
 
       function selectedIntroSegmentIndex() {
@@ -1293,29 +1935,20 @@
         guidedPausePoints = [];
 
         const introIndex = selectedIntroSegmentIndex();
+        let introPresentationEnd = introSeconds;
         if (introIndex >= 0) {
           const segment = narrationSegments[introIndex];
-          const presentationEnd = Math.max(introSeconds, segment.duration);
-          audioPlaybackSegments.push({
-            ...segment,
-            audioStart: segment.offset,
-            audioEnd: segment.offset + segment.duration,
-            presentationStart: 0,
-            presentationEnd,
-            postPauseEnd: presentationEnd + narrationPostPauseSeconds,
-          });
+          introPresentationEnd = appendAudioPlaybackSegments(segment, 0);
+          audioPresentationSeconds = Math.max(audioPresentationSeconds, introPresentationEnd);
         }
 
         let segmentIndex = introIndex >= 0 ? introIndex + 1 : 0;
-        let shift = introIndex >= 0
-          ? Math.max(introSeconds, narrationSegments[introIndex].duration) + narrationPostPauseSeconds
-          : introSeconds;
+        let shift = introIndex >= 0 ? introPresentationEnd : introSeconds;
         let captionCount = 0;
         let currentSection = null;
-        let nextSectionStart = shift;
         const presentationEvents = [];
 
-        for (const event of rawEvents) {
+        for (const [eventIndex, event] of rawEvents.entries()) {
           const shifted = {
             time: event.time + shift,
             data: event.data,
@@ -1323,22 +1956,27 @@
           presentationEvents.push(shifted);
 
           if (
-            isCaptionPayload(event.data) &&
+            (isCaptionPayload(event.data) ||
+              isTypedCaptionStart(rawEvents, eventIndex)) &&
             segmentIndex < narrationSegments.length
           ) {
             captionCount += 1;
             const segment = narrationSegments[segmentIndex];
             segmentIndex += 1;
             if (segment.duration > 0) {
-              const presentationStart = Math.max(shifted.time, nextSectionStart);
-              const presentationEnd = presentationStart + segment.duration;
-              const postPauseEnd = presentationEnd + narrationPostPauseSeconds;
-              if (captionCount > 1 && currentSection) {
+              const presentationStart = shifted.time;
+              const postPauseEnd = appendAudioPlaybackSegments(segment, presentationStart);
+              if (
+                captionCount > 1 &&
+                currentSection &&
+                (currentSection.guide || debugMode)
+              ) {
                 guidedPausePoints.push({
                   time: presentationStart,
                   sectionStart: currentSection.start,
                   heading: currentSection.heading,
                   guide: currentSection.guide,
+                  debugOnly: !currentSection.guide,
                 });
               }
               currentSection = {
@@ -1346,19 +1984,10 @@
                 heading: segment.heading,
                 guide: segment.guide,
               };
-              audioPlaybackSegments.push({
-                ...segment,
-                audioStart: segment.offset,
-                audioEnd: segment.offset + segment.duration,
-                presentationStart,
-                presentationEnd,
-                postPauseEnd,
-              });
               audioPresentationSeconds = Math.max(
                 audioPresentationSeconds,
                 postPauseEnd,
               );
-              nextSectionStart = postPauseEnd;
             }
           }
         }
@@ -1412,7 +2041,7 @@
         return Math.min(seconds, audio?.duration || seconds);
       }
 
-      function play() {
+      function play(options = {}) {
         if (!events.length) {
           return;
         }
@@ -1425,9 +2054,12 @@
         updateTransportButtons();
         scheduleEvents();
         startAudio();
+        if (options.feedback === true) {
+          showPlaybackFlash('play');
+        }
       }
 
-      function pause() {
+      function pause(options = {}) {
         if (!playing) {
           return;
         }
@@ -1440,6 +2072,9 @@
         pausedAtGuidedPoint = false;
         hideGuideModal();
         updateProgress();
+        if (options.feedback === true) {
+          showPlaybackFlash('pause');
+        }
       }
 
       function togglePlaybackFromTerminal() {
@@ -1452,17 +2087,17 @@
           return;
         }
         if (playing) {
-          pause();
+          pause({feedback: true});
         } else {
-          play();
+          play({feedback: true});
         }
       }
 
       function togglePlayPause() {
         if (playing) {
-          pause();
+          pause({feedback: true});
         } else {
-          play();
+          play({feedback: true});
         }
       }
 
@@ -1556,7 +2191,10 @@
       progressWrap.addEventListener('pointermove', showSectionTooltip);
       progressWrap.addEventListener('pointerleave', hideSectionTooltip);
       progress.addEventListener('pointerdown', beginScrub);
-      progress.addEventListener('keydown', () => {
+      progress.addEventListener('keydown', (event) => {
+        if (handleKeyboardSeek(event)) {
+          return;
+        }
         resumeAfterSeek = playing;
       });
       progress.addEventListener('input', () => {
@@ -1575,6 +2213,7 @@
       progress.addEventListener('pointercancel', () => {
         scrubbing = false;
       });
+      document.addEventListener('keydown', handleKeyboardSeek);
 
       updateTransportButtons();
 

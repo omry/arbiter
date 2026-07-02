@@ -1,36 +1,24 @@
 {
   "dependencies": [
     {
-      "path": "media/recording-scripts/install-and-bootstrap.md",
-      "sha256": "1788be5fd60c13033c9a1228ed874e5f228943c9d1e11104afbdf60010afaed7"
-    },
-    {
-      "path": "media/recording-scripts/install-and-bootstrap/install-server.sh",
-      "sha256": "6bac97e67889534c29123885385fec6c9eb262d12d3a08a1b2d2a4514e5892b1"
-    },
-    {
       "path": "media/recording-scripts/install-and-bootstrap/setup-main.sh",
-      "sha256": "681d1989d7eadfe705125aa1ff06bb90b9b845f603c92bb53be15cd1b3a560b8"
-    },
-    {
-      "path": "media/recording-scripts/install-and-bootstrap/wait-for-delivered-message.sh",
-      "sha256": "62423a281285fcb907ce125fac37de38188dcb8ab373be2b09830d43ea9a14ae"
+      "sha256": "ac0d85918bec1d96eea353485ab2e85bd2109212ddf832896d979229ab357bba"
     },
     {
       "path": "media/tools/record.py",
-      "sha256": "35d6ad689d0722ddaa551711b5a2cdf5414b926dfbf41ab896cff8878ac8eac1"
+      "sha256": "7da359e37487b154150f95232f11ccc15e7bc03ad7d686e71b1bc42b9101adc7"
     },
     {
       "path": "media/tools/studio.py",
-      "sha256": "18b208bb2bd2e1fe7af2c45225675912bfad18b1dbed04fc79705077493a0d4d"
+      "sha256": "4991966dcd85338465409911461af3079d2acac7ef11c4a0a78f18120f588d2b"
     },
     {
       "path": "media/tools/studio_config.py",
-      "sha256": "65567f10591cff1f564e66e2e5f8520dd32aefed3aa441a370cae1773b1d2a99"
+      "sha256": "56e449e07fe65a134f8a3c01eafd154aa8f188c735fd7677a20dc05b8c6a42c9"
     }
   ],
-  "fingerprint": "9e58fb41367d2983983a72b13181ffc1cdbb11581f232d152351a0910e6708b3",
+  "fingerprint": "87345b9239706c9cebc12add4f3b8499bbf3a1ddcf69e5c7e920adcc3eb01253",
   "recording": "install-and-bootstrap",
-  "spec_sha256": "b5dffa8f163717965289169f57bee7e9db80448576183e4eedfd2f1e056b8516",
-  "version": 1
+  "spec_sha256": "3ce8fb1992220397b905f0c8d0bf288429fa8fc59aa49f4a70bc65854e20d197",
+  "version": 2
 }

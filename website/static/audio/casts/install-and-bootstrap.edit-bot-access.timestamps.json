@@ -1,0 +1,244 @@
+{
+  "duration": 17.71,
+  "recording": "install-and-bootstrap",
+  "segment": "edit-bot-access",
+  "source_text": "For this tutorial the bot is intentionally broad: it can read, search, append, mark, move, and delete in the local IMAP mailbox, and it can send through the local SMTP account. This is safe here because the recording uses disposable mail servers created just for the demo.",
+  "transcript": "For this tutorial, the bot is intentionally broad. It can read, search, append, mark, move, and delete in the local IMAP mailbox, and it can send through the local SMTP account. This is safe here because the recording uses disposable mail servers created just for the demo.",
+  "words": [
+    {
+      "end": 0.2,
+      "start": 0.0,
+      "word": "For"
+    },
+    {
+      "end": 0.46,
+      "start": 0.2,
+      "word": "this"
+    },
+    {
+      "end": 0.94,
+      "start": 0.46,
+      "word": "tutorial"
+    },
+    {
+      "end": 1.32,
+      "start": 1.16,
+      "word": "the"
+    },
+    {
+      "end": 1.48,
+      "start": 1.32,
+      "word": "bot"
+    },
+    {
+      "end": 1.76,
+      "start": 1.48,
+      "word": "is"
+    },
+    {
+      "end": 2.22,
+      "start": 1.76,
+      "word": "intentionally"
+    },
+    {
+      "end": 2.68,
+      "start": 2.22,
+      "word": "broad"
+    },
+    {
+      "end": 3.3,
+      "start": 3.28,
+      "word": "It"
+    },
+    {
+      "end": 3.5,
+      "start": 3.3,
+      "word": "can"
+    },
+    {
+      "end": 3.82,
+      "start": 3.5,
+      "word": "read"
+    },
+    {
+      "end": 4.44,
+      "start": 4.44,
+      "word": "search"
+    },
+    {
+      "end": 5.0,
+      "start": 4.74,
+      "word": "append"
+    },
+    {
+      "end": 5.5,
+      "start": 5.5,
+      "word": "mark"
+    },
+    {
+      "end": 6.06,
+      "start": 5.82,
+      "word": "move"
+    },
+    {
+      "end": 6.36,
+      "start": 6.14,
+      "word": "and"
+    },
+    {
+      "end": 6.6,
+      "start": 6.36,
+      "word": "delete"
+    },
+    {
+      "end": 7.1,
+      "start": 6.6,
+      "word": "in"
+    },
+    {
+      "end": 7.26,
+      "start": 7.1,
+      "word": "the"
+    },
+    {
+      "end": 7.62,
+      "start": 7.26,
+      "word": "local"
+    },
+    {
+      "end": 7.96,
+      "start": 7.62,
+      "word": "IMAP"
+    },
+    {
+      "end": 8.44,
+      "start": 7.96,
+      "word": "mailbox"
+    },
+    {
+      "end": 9.26,
+      "start": 8.74,
+      "word": "and"
+    },
+    {
+      "end": 9.38,
+      "start": 9.26,
+      "word": "it"
+    },
+    {
+      "end": 9.7,
+      "start": 9.38,
+      "word": "can"
+    },
+    {
+      "end": 9.86,
+      "start": 9.7,
+      "word": "send"
+    },
+    {
+      "end": 10.06,
+      "start": 9.86,
+      "word": "through"
+    },
+    {
+      "end": 10.32,
+      "start": 10.06,
+      "word": "the"
+    },
+    {
+      "end": 10.56,
+      "start": 10.32,
+      "word": "local"
+    },
+    {
+      "end": 11.2,
+      "start": 10.56,
+      "word": "SMTP"
+    },
+    {
+      "end": 11.6,
+      "start": 11.2,
+      "word": "account"
+    },
+    {
+      "end": 12.5,
+      "start": 12.34,
+      "word": "This"
+    },
+    {
+      "end": 12.7,
+      "start": 12.5,
+      "word": "is"
+    },
+    {
+      "end": 12.92,
+      "start": 12.7,
+      "word": "safe"
+    },
+    {
+      "end": 13.24,
+      "start": 12.92,
+      "word": "here"
+    },
+    {
+      "end": 13.72,
+      "start": 13.24,
+      "word": "because"
+    },
+    {
+      "end": 13.92,
+      "start": 13.72,
+      "word": "the"
+    },
+    {
+      "end": 14.26,
+      "start": 13.92,
+      "word": "recording"
+    },
+    {
+      "end": 14.64,
+      "start": 14.26,
+      "word": "uses"
+    },
+    {
+      "end": 15.28,
+      "start": 14.64,
+      "word": "disposable"
+    },
+    {
+      "end": 15.68,
+      "start": 15.28,
+      "word": "mail"
+    },
+    {
+      "end": 16.02,
+      "start": 15.68,
+      "word": "servers"
+    },
+    {
+      "end": 16.44,
+      "start": 16.02,
+      "word": "created"
+    },
+    {
+      "end": 16.86,
+      "start": 16.44,
+      "word": "just"
+    },
+    {
+      "end": 17.04,
+      "start": 16.86,
+      "word": "for"
+    },
+    {
+      "end": 17.3,
+      "start": 17.04,
+      "word": "the"
+    },
+    {
+      "end": 17.4,
+      "start": 17.3,
+      "word": "demo"
+    }
+  ]
+}

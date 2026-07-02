@@ -1,0 +1,24 @@
+{
+  "duration": 2.71,
+  "recording": "install-and-bootstrap",
+  "segment": "install-reploy",
+  "source_text": "First, install Reploy.",
+  "transcript": "First, install Reaploy.",
+  "words": [
+    {
+      "end": 0.72,
+      "start": 0.0,
+      "word": "First"
+    },
+    {
+      "end": 1.52,
+      "start": 1.04,
+      "word": "install"
+    },
+    {
+      "end": 2.24,
+      "start": 1.52,
+      "word": "Reaploy"
+    }
+  ]
+}

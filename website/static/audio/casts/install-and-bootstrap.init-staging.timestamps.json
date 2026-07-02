@@ -1,0 +1,114 @@
+{
+  "duration": 8.4,
+  "recording": "install-and-bootstrap",
+  "segment": "init-staging",
+  "source_text": "Use Reploy to create the staging directory. Then enter it; the rest of the setup runs from inside that staged deployment.",
+  "transcript": "Use replay to create the staging directory, then enter it. The rest of the setup runs from inside that stage deployment.",
+  "words": [
+    {
+      "end": 0.48,
+      "start": 0.0,
+      "word": "Use"
+    },
+    {
+      "end": 0.86,
+      "start": 0.48,
+      "word": "replay"
+    },
+    {
+      "end": 1.5,
+      "start": 0.86,
+      "word": "to"
+    },
+    {
+      "end": 1.8,
+      "start": 1.5,
+      "word": "create"
+    },
+    {
+      "end": 2.1,
+      "start": 1.8,
+      "word": "the"
+    },
+    {
+      "end": 2.38,
+      "start": 2.1,
+      "word": "staging"
+    },
+    {
+      "end": 2.88,
+      "start": 2.38,
+      "word": "directory"
+    },
+    {
+      "end": 3.98,
+      "start": 3.72,
+      "word": "then"
+    },
+    {
+      "end": 4.42,
+      "start": 3.98,
+      "word": "enter"
+    },
+    {
+      "end": 4.78,
+      "start": 4.42,
+      "word": "it"
+    },
+    {
+      "end": 5.3,
+      "start": 5.3,
+      "word": "The"
+    },
+    {
+      "end": 5.5,
+      "start": 5.3,
+      "word": "rest"
+    },
+    {
+      "end": 5.64,
+      "start": 5.5,
+      "word": "of"
+    },
+    {
+      "end": 5.78,
+      "start": 5.64,
+      "word": "the"
+    },
+    {
+      "end": 6.0,
+      "start": 5.78,
+      "word": "setup"
+    },
+    {
+      "end": 6.32,
+      "start": 6.0,
+      "word": "runs"
+    },
+    {
+      "end": 6.66,
+      "start": 6.32,
+      "word": "from"
+    },
+    {
+      "end": 7.04,
+      "start": 6.66,
+      "word": "inside"
+    },
+    {
+      "end": 7.34,
+      "start": 7.04,
+      "word": "that"
+    },
+    {
+      "end": 7.62,
+      "start": 7.34,
+      "word": "stage"
+    },
+    {
+      "end": 8.04,
+      "start": 7.62,
+      "word": "deployment"
+    }
+  ]
+}

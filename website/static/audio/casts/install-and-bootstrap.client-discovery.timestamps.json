@@ -1,0 +1,179 @@
+{
+  "duration": 14.95,
+  "recording": "install-and-bootstrap",
+  "segment": "client-discovery",
+  "source_text": "Now use the Arbiter client against the staged server. Agents start by discovering plugins, then inspect accounts and operation schemas before running an operation. They see capabilities and policy-shaped controls, not service credentials.",
+  "transcript": "Now use the Arbiter client against the staged server. Agents start by discovering plugins, then inspect accounts and operation schemas before running an operation. They see capabilities and policy-shaped controls, not service credentials.",
+  "words": [
+    {
+      "end": 0.34,
+      "start": 0.0,
+      "word": "Now"
+    },
+    {
+      "end": 0.7,
+      "start": 0.34,
+      "word": "use"
+    },
+    {
+      "end": 1.0,
+      "start": 0.7,
+      "word": "the"
+    },
+    {
+      "end": 1.18,
+      "start": 1.0,
+      "word": "Arbiter"
+    },
+    {
+      "end": 1.66,
+      "start": 1.18,
+      "word": "client"
+    },
+    {
+      "end": 2.04,
+      "start": 1.66,
+      "word": "against"
+    },
+    {
+      "end": 2.26,
+      "start": 2.04,
+      "word": "the"
+    },
+    {
+      "end": 2.68,
+      "start": 2.26,
+      "word": "staged"
+    },
+    {
+      "end": 3.04,
+      "start": 2.68,
+      "word": "server"
+    },
+    {
+      "end": 4.0,
+      "start": 4.0,
+      "word": "Agents"
+    },
+    {
+      "end": 4.32,
+      "start": 4.0,
+      "word": "start"
+    },
+    {
+      "end": 4.56,
+      "start": 4.32,
+      "word": "by"
+    },
+    {
+      "end": 5.0,
+      "start": 4.56,
+      "word": "discovering"
+    },
+    {
+      "end": 5.48,
+      "start": 5.0,
+      "word": "plugins"
+    },
+    {
+      "end": 6.14,
+      "start": 6.02,
+      "word": "then"
+    },
+    {
+      "end": 6.54,
+      "start": 6.14,
+      "word": "inspect"
+    },
+    {
+      "end": 6.96,
+      "start": 6.54,
+      "word": "accounts"
+    },
+    {
+      "end": 7.24,
+      "start": 6.96,
+      "word": "and"
+    },
+    {
+      "end": 7.76,
+      "start": 7.24,
+      "word": "operation"
+    },
+    {
+      "end": 8.22,
+      "start": 7.76,
+      "word": "schemas"
+    },
+    {
+      "end": 8.76,
+      "start": 8.22,
+      "word": "before"
+    },
+    {
+      "end": 9.04,
+      "start": 8.76,
+      "word": "running"
+    },
+    {
+      "end": 9.3,
+      "start": 9.04,
+      "word": "an"
+    },
+    {
+      "end": 9.64,
+      "start": 9.3,
+      "word": "operation"
+    },
+    {
+      "end": 10.5,
+      "start": 10.38,
+      "word": "They"
+    },
+    {
+      "end": 10.78,
+      "start": 10.5,
+      "word": "see"
+    },
+    {
+      "end": 11.34,
+      "start": 10.78,
+      "word": "capabilities"
+    },
+    {
+      "end": 11.98,
+      "start": 11.34,
+      "word": "and"
+    },
+    {
+      "end": 12.4,
+      "start": 11.98,
+      "word": "policy"
+    },
+    {
+      "end": 12.68,
+      "start": 12.4,
+      "word": "shaped"
+    },
+    {
+      "end": 13.2,
+      "start": 12.68,
+      "word": "controls"
+    },
+    {
+      "end": 13.98,
+      "start": 13.86,
+      "word": "not"
+    },
+    {
+      "end": 14.28,
+      "start": 13.98,
+      "word": "service"
+    },
+    {
+      "end": 14.6,
+      "start": 14.28,
+      "word": "credentials"
+    }
+  ]
+}

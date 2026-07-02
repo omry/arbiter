@@ -1,0 +1,204 @@
+{
+  "duration": 15.64,
+  "recording": "install-and-bootstrap",
+  "segment": "review-generated-config",
+  "source_text": "Before editing, inspect the generated files. The bot has one IMAP account, one SMTP account, and matching policies. In a real deployment these files point at your mail provider and enforce the access level you want agents to have.",
+  "transcript": "Before editing, inspect the generated files. The bot has one IMAP account, one SMTP account, and matching policies. In a real deployment, these files point at your mail provider and enforce the access level you want agents to have.",
+  "words": [
+    {
+      "end": 0.48,
+      "start": 0.0,
+      "word": "Before"
+    },
+    {
+      "end": 0.92,
+      "start": 0.48,
+      "word": "editing"
+    },
+    {
+      "end": 1.68,
+      "start": 1.68,
+      "word": "inspect"
+    },
+    {
+      "end": 2.02,
+      "start": 1.68,
+      "word": "the"
+    },
+    {
+      "end": 2.38,
+      "start": 2.02,
+      "word": "generated"
+    },
+    {
+      "end": 2.8,
+      "start": 2.38,
+      "word": "files"
+    },
+    {
+      "end": 3.48,
+      "start": 3.3,
+      "word": "The"
+    },
+    {
+      "end": 3.6,
+      "start": 3.48,
+      "word": "bot"
+    },
+    {
+      "end": 3.88,
+      "start": 3.6,
+      "word": "has"
+    },
+    {
+      "end": 4.24,
+      "start": 3.88,
+      "word": "one"
+    },
+    {
+      "end": 4.56,
+      "start": 4.24,
+      "word": "IMAP"
+    },
+    {
+      "end": 4.96,
+      "start": 4.56,
+      "word": "account"
+    },
+    {
+      "end": 5.8,
+      "start": 5.6,
+      "word": "one"
+    },
+    {
+      "end": 6.34,
+      "start": 5.8,
+      "word": "SMTP"
+    },
+    {
+      "end": 6.72,
+      "start": 6.34,
+      "word": "account"
+    },
+    {
+      "end": 7.32,
+      "start": 7.14,
+      "word": "and"
+    },
+    {
+      "end": 7.6,
+      "start": 7.32,
+      "word": "matching"
+    },
+    {
+      "end": 8.22,
+      "start": 7.6,
+      "word": "policies"
+    },
+    {
+      "end": 9.0,
+      "start": 8.96,
+      "word": "In"
+    },
+    {
+      "end": 9.2,
+      "start": 9.0,
+      "word": "a"
+    },
+    {
+      "end": 9.34,
+      "start": 9.2,
+      "word": "real"
+    },
+    {
+      "end": 9.7,
+      "start": 9.34,
+      "word": "deployment"
+    },
+    {
+      "end": 10.54,
+      "start": 10.4,
+      "word": "these"
+    },
+    {
+      "end": 10.78,
+      "start": 10.54,
+      "word": "files"
+    },
+    {
+      "end": 11.1,
+      "start": 10.78,
+      "word": "point"
+    },
+    {
+      "end": 11.28,
+      "start": 11.1,
+      "word": "at"
+    },
+    {
+      "end": 11.4,
+      "start": 11.28,
+      "word": "your"
+    },
+    {
+      "end": 11.64,
+      "start": 11.4,
+      "word": "mail"
+    },
+    {
+      "end": 12.06,
+      "start": 11.64,
+      "word": "provider"
+    },
+    {
+      "end": 12.7,
+      "start": 12.06,
+      "word": "and"
+    },
+    {
+      "end": 13.06,
+      "start": 12.7,
+      "word": "enforce"
+    },
+    {
+      "end": 13.34,
+      "start": 13.06,
+      "word": "the"
+    },
+    {
+      "end": 13.68,
+      "start": 13.34,
+      "word": "access"
+    },
+    {
+      "end": 13.94,
+      "start": 13.68,
+      "word": "level"
+    },
+    {
+      "end": 14.16,
+      "start": 13.94,
+      "word": "you"
+    },
+    {
+      "end": 14.44,
+      "start": 14.16,
+      "word": "want"
+    },
+    {
+      "end": 14.76,
+      "start": 14.44,
+      "word": "agents"
+    },
+    {
+      "end": 14.98,
+      "start": 14.76,
+      "word": "to"
+    },
+    {
+      "end": 15.24,
+      "start": 14.98,
+      "word": "have"
+    }
+  ]
+}
