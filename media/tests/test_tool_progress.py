@@ -191,9 +191,7 @@ def test_progress_bar_renderer_truncates_current_step_to_one_line() -> None:
     )
 
     output_lines = [
-        line.removeprefix("\r\033[2K")
-        for line in stream.getvalue().split("\n")
-        if line
+        line.removeprefix("\r\033[2K") for line in stream.getvalue().split("\n") if line
     ]
     assert len(output_lines) == 2
     assert output_lines[1] == "current This is a very long..."

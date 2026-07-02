@@ -1304,7 +1304,9 @@ def test_timeline_progress_status_lines_are_colorized() -> None:
     )
 
 
-def test_progress_event_printer_keeps_repeated_commands(capsys: pytest.CaptureFixture[str]) -> None:
+def test_progress_event_printer_keeps_repeated_commands(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     spec = minimal_spec(beats=[{"id": "inspect", "caption": "Inspect files."}])
     printer = record.ProgressEventPrinter(spec, color=False)
     event = {
@@ -1975,9 +1977,7 @@ def test_continuation_display_records_without_extra_prompt(tmp_path: Path) -> No
     assert "$ arbiter.server.bind.host=127.0.0.1" not in result.stdout
     events = record.read_timeline_events(timeline)
     command = next(
-        event["command"]
-        for event in events
-        if event["phase"] == "command_prompt_start"
+        event["command"] for event in events if event["phase"] == "command_prompt_start"
     )
     assert command == "arbiter-server serve \\\n  arbiter.server.bind.host=127.0.0.1"
 

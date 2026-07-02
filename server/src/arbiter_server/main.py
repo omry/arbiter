@@ -3989,13 +3989,11 @@ def _print_bootstrap_activation_hint(
         return
     if len(plugins) == 1:
         print(
-            "To activate the generated policy, add this to "
-            f"{plugins_config_file}:"
+            "To activate the generated policy, add this to " f"{plugins_config_file}:"
         )
     else:
         print(
-            "To activate the generated policies, add this to "
-            f"{plugins_config_file}:"
+            "To activate the generated policies, add this to " f"{plugins_config_file}:"
         )
     print("defaults:")
     print(f"  - {_config_group_for_kind('policy')}:")

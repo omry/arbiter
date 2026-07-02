@@ -574,8 +574,14 @@ def test_followup_commands_color_command_labels_when_forced(
 
     output = capsys.readouterr().out
     assert "\033[36;1mnext\033[0m follow-up commands\n" in output
-    assert "\033[32;1mplay   \033[0m media/tools/studio recording=demo action=play\n" in output
-    assert "\033[32;1minspect\033[0m media/tools/studio recording=demo action=inspect\n" in output
+    assert (
+        "\033[32;1mplay   \033[0m media/tools/studio recording=demo action=play\n"
+        in output
+    )
+    assert (
+        "\033[32;1minspect\033[0m media/tools/studio recording=demo action=inspect\n"
+        in output
+    )
 
 
 def test_build_force_records_even_when_recording_is_fresh(

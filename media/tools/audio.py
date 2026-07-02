@@ -1777,9 +1777,7 @@ def run_tool_from_hydra_cfg(cfg: DictConfig) -> int:
                 if timestamps
                 else []
             )
-            total_steps = 1 + (1 if synthesized_items else 0) + (
-                1 if timestamps else 0
-            )
+            total_steps = 1 + (1 if synthesized_items else 0) + (1 if timestamps else 0)
             current_step = 1
             paths = generate_audio(plan, settings, force=force)
             print_paths_or_summary(

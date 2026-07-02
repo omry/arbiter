@@ -13,7 +13,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CHECK_RECORDINGS = REPO_ROOT / "website" / "scripts" / "check-recordings.js"
 
 
-def write_recording_tree(root: Path, *, script_text: str, stored_sha: str | None = None) -> None:
+def write_recording_tree(
+    root: Path, *, script_text: str, stored_sha: str | None = None
+) -> None:
     recording_dir = root / "media" / "recording-scripts"
     casts_dir = root / "website" / "static" / "casts"
     audio_dir = root / "website" / "static" / "audio" / "casts"

@@ -961,13 +961,7 @@ def ensure_mdx_component_import(
         end_index = text.find("\n---\n", 4)
         if end_index >= 0:
             insert_index = end_index + len("\n---\n")
-            return (
-                text[:insert_index]
-                + "\n"
-                + import_line
-                + "\n"
-                + text[insert_index:]
-            )
+            return text[:insert_index] + "\n" + import_line + "\n" + text[insert_index:]
     return import_line + "\n\n" + text
 
 

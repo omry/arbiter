@@ -136,9 +136,7 @@ def clean_terminal_text(text: str) -> str:
 
 
 def is_colored_caption_line(text: str) -> bool:
-    return "\x1b[36;1m# " in text and clean_terminal_text(text).strip().startswith(
-        "# "
-    )
+    return "\x1b[36;1m# " in text and clean_terminal_text(text).strip().startswith("# ")
 
 
 def read_cast_lines(path: Path) -> list[CastLine]:
@@ -463,7 +461,9 @@ def print_mismatch_lines(report: AlignmentReport, *, limit: int = 12) -> None:
         info_line(line)
     remaining = len(report.mismatch_lines) - len(shown)
     if remaining > 0:
-        warn_line(f"{remaining} more alignment mismatches hidden; rerun with verbose=true")
+        warn_line(
+            f"{remaining} more alignment mismatches hidden; rerun with verbose=true"
+        )
 
 
 def run_tool_from_hydra_cfg(cfg: DictConfig) -> int:

@@ -150,9 +150,9 @@ context.window.document = context.document;
 
 vm.createContext(context);
 vm.runInContext(playerScript, context);
-"""
-        .replace("__SEARCH_JSON__", repr(search))
-        .replace(
+""".replace(
+            "__SEARCH_JSON__", repr(search)
+        ).replace(
             "__PARENT_SEARCH_JSON__",
             "null" if parent_search is None else repr(parent_search),
         )

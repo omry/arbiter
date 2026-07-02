@@ -568,7 +568,7 @@ def test_install_recording_prepares_visible_cli_environment() -> None:
     assert 'reploy_venv="${recording_param_reploy_venv:-../reploy/.venv}"' in setup_run
     assert "recording_param_reploy_version" not in setup_run
     assert "sh -s -- --version" not in setup_run
-    assert 'curl -fsSL https://reploy.yadan.net/install.sh | sh' in setup_run
+    assert "curl -fsSL https://reploy.yadan.net/install.sh | sh" in setup_run
     assert "local Reploy binary not found; using script installer" in setup_run
     assert '"$HOME/.local/bin/reploy" --help' in setup_run
     assert 'export HOME="$recording_workspace"' in setup_run

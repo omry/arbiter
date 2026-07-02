@@ -2771,10 +2771,7 @@ def test_cli_bootstrap_server_writes_main_config(
     )
     _assert_posix_mode(config_file, 0o640)
     plugins_file = config_dir / "plugins.yaml"
-    assert plugins_file.read_text(encoding="utf-8") == (
-        "defaults:\n"
-        "  - _self_\n"
-    )
+    assert plugins_file.read_text(encoding="utf-8") == ("defaults:\n" "  - _self_\n")
     _assert_posix_mode(plugins_file, 0o640)
     assert not (config_dir / "arbiter" / "server.yaml").exists()
     assert capsys.readouterr().out == (

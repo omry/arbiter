@@ -236,9 +236,7 @@ def command_output_config(
         text = None
     elif isinstance(raw_output, str):
         if raw_output not in {"real", "suppress", "fake"}:
-            raise RecordingError(
-                f"{field}.output must be one of: real, suppress, fake"
-            )
+            raise RecordingError(f"{field}.output must be one of: real, suppress, fake")
         mode = raw_output
         text = None
     elif isinstance(raw_output, dict):
@@ -257,7 +255,9 @@ def command_output_config(
         raise RecordingError(f"{field}.output must be a string or mapping")
     if mode == "fake":
         if not isinstance(text, str):
-            raise RecordingError(f"{field}.output.text must be a string for fake output")
+            raise RecordingError(
+                f"{field}.output.text must be a string for fake output"
+            )
     elif text is not None and not isinstance(text, str):
         raise RecordingError(f"{field}.output.text must be a string")
     return {"mode": mode, "text": text or ""}
@@ -1934,7 +1934,7 @@ def render_session_script(spec: dict[str, Any]) -> str:
             '  local output_mode="${5:-real}"',
             '  local fake_output="${6:-}"',
             '  local retime="${7:-normal}"',
-            "  if [[ \"$output_mode\" == suppress || \"$output_mode\" == fake ]]; then",
+            '  if [[ "$output_mode" == suppress || "$output_mode" == fake ]]; then',
             '    eval "$command_chunk" >>"$recording_stdout_path" 2>>"$recording_stderr_path" </dev/null',
             "    local status=$?",
             '    if [[ "$output_mode" == fake && -n "$fake_output" ]]; then',
@@ -2449,8 +2449,7 @@ def render_session_script(spec: dict[str, Any]) -> str:
                     f"{shell_quote(display_command)} "
                     f"{shell_quote(command)} "
                     f"{shell_quote(progress_json)} "
-                    f"{shell_quote(after_anchor)} "
-                    + " ".join(gate_args)
+                    f"{shell_quote(after_anchor)} " + " ".join(gate_args)
                 )
         checks = as_list(beat.get("checks"), field=f"beats.{beat_id}.checks")
         for index, check in enumerate(checks, start=1):

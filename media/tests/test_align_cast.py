@@ -141,8 +141,7 @@ def test_alignment_report_matches_structured_action_commands(tmp_path: Path) -> 
     assert report.aligned is True
     assert "commands: 2/2 matched" in report.text
     assert (
-        "ok    0.500s  install.1: "
-        "curl -fsSL https://example.test/install.sh | sh"
+        "ok    0.500s  install.1: " "curl -fsSL https://example.test/install.sh | sh"
     ) in report.text
     assert "ok    1.500s  install.1: tool --version" in report.text
 
