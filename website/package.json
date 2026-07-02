@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "start": "NO_UPDATE_NOTIFIER=1 docusaurus start --host 127.0.0.1 --port 4670",
+    "prebuild": "node scripts/check-recordings.js",
     "build": "NO_UPDATE_NOTIFIER=1 docusaurus build",
     "serve": "NO_UPDATE_NOTIFIER=1 docusaurus serve --host 127.0.0.1",
     "clear": "NO_UPDATE_NOTIFIER=1 docusaurus clear"
