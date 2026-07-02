@@ -47,8 +47,8 @@ accounts, and maintain the local env file.
 │   │   └── smtp
 │   │       ├── bot.yaml        # bot policy with full SMTP access
 │   │       └── personal.yaml   # restricted access to owner SMTP
-│   └── server.yaml             # server settings
-├── arbiter-server.yaml         # root server composition config
+├── arbiter-server.yaml         # root server config and base composition
+├── plugins.yaml                # active account and policy selections
 └── .env                        # local environment-backed values
 ```
 
@@ -57,10 +57,23 @@ deployment operator, not by the agent using the service.
 
 ## Basic model
 
-`arbiter-server.yaml` is the default root server config. It selects the active
-server settings, accounts, and policies. Operators normally change the active
-set with `arbiter-server config activate` and `arbiter-server config
-deactivate`, not by editing the root file by hand.
+`arbiter-server.yaml` is the default root server config. It selects the server
+schema, imports `plugins.yaml`, and contains the deployment's server settings.
+
+`plugins.yaml` selects the active accounts and policies:
+
+```yaml title="~/.arbiter/plugins.yaml"
+defaults:
+  - arbiter/account:
+    - smtp/bot
+  - arbiter/policy:
+    - smtp/bot_policy
+  - _self_
+```
+
+Operators normally change `plugins.yaml` with `arbiter-server config activate`
+and `arbiter-server config deactivate`, not by editing the defaults list by
+hand.
 
 Use `--config-name foo` when the root config file is named `foo.yaml`:
 
@@ -100,8 +113,7 @@ That command starts the server on port `8075` for that process only.
 
 Hydra also supports config group overrides. Arbiter uses config groups for
 server settings, accounts, and policies, but normal account activation should go
-through `arbiter-server config activate` so the root composition remains
-consistent.
+through `arbiter-server config activate` so `plugins.yaml` remains consistent.
 
 ## Server TLS
 
@@ -186,7 +198,7 @@ arbiter-server bootstrap --plugin imap --account personal
 ```
 
 Creating a config file does not make it active. Activate accounts after editing
-the generated templates:
+the generated templates. Activation updates `plugins.yaml`:
 
 ```bash
 arbiter-server config activate --plugin smtp --account bot

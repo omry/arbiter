@@ -1967,17 +1967,18 @@ def test_cli_config_show_reports_reploy_display_path_for_unreadable_main_config(
     )
 
 
-def test_cli_config_activate_reports_reploy_display_path_for_unreadable_main_config(
+def test_cli_config_activate_reports_reploy_display_path_for_unreadable_plugins_config(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config_dir = tmp_path.resolve()
-    config_file = config_dir / "arbiter-server.yaml"
+    plugins_config_file = config_dir / "plugins.yaml"
     account_file = config_dir / "arbiter" / "account" / "smtp" / "bot.yaml"
     policy_file = config_dir / "arbiter" / "policy" / "smtp" / "bot_policy.yaml"
     account_file.parent.mkdir(parents=True)
     policy_file.parent.mkdir(parents=True)
+    plugins_config_file.write_text("defaults:\n  - _self_\n", encoding="utf-8")
     account_file.write_text("policy: bot_policy\n", encoding="utf-8")
     policy_file.write_text("allow: true\n", encoding="utf-8")
     monkeypatch.setenv("REPLOY_CONFIG_CONTAINER_DIR", str(config_dir))
@@ -1985,7 +1986,7 @@ def test_cli_config_activate_reports_reploy_display_path_for_unreadable_main_con
     real_exists = Path.exists
 
     def exists(path: Path) -> bool:
-        if path == config_file:
+        if path == plugins_config_file:
             raise PermissionError("permission denied")
         return real_exists(path)
 
@@ -2009,7 +2010,7 @@ def test_cli_config_activate_reports_reploy_display_path_for_unreadable_main_con
 
     assert capsys.readouterr().err == (
         "Arbiter config error: cannot read config file: "
-        "conf/arbiter-server.yaml: permission denied\n"
+        "conf/plugins.yaml: permission denied\n"
     )
 
 
@@ -2258,9 +2259,10 @@ def test_cli_accepts_config_args_after_subcommand(
     assert main(["bootstrap", "--server", "--config-dir", str(tmp_path)]) == 0
 
     assert (tmp_path / "arbiter-server.yaml").exists()
+    assert (tmp_path / "plugins.yaml").exists()
     assert capsys.readouterr().out == (
         f"wrote {tmp_path / 'arbiter-server.yaml'}\n"
-        f"wrote {tmp_path / 'arbiter' / 'server.yaml'}\n"
+        f"wrote {tmp_path / 'plugins.yaml'}\n"
     )
 
 
@@ -2720,9 +2722,10 @@ def test_cli_bootstrap_server_uses_default_config_dir(
 
     config_dir = tmp_path / ".arbiter"
     assert (config_dir / "arbiter-server.yaml").exists()
+    assert (config_dir / "plugins.yaml").exists()
     assert capsys.readouterr().out == (
         f"wrote {config_dir / 'arbiter-server.yaml'}\n"
-        f"wrote {config_dir / 'arbiter' / 'server.yaml'}\n"
+        f"wrote {config_dir / 'plugins.yaml'}\n"
     )
 
 
@@ -2748,33 +2751,34 @@ def test_cli_bootstrap_server_writes_main_config(
         "#   arbiter:\n"
         "#     env_file: local.env\n"
         "  - arbiter_app_config_schema\n"
-        "  - arbiter: server\n"
+        "  - plugins\n"
         "  - _self_\n"
-    )
-    server_file = config_dir / "arbiter" / "server.yaml"
-    assert server_file.read_text(encoding="utf-8") == (
-        "# @package arbiter\n"
-        "server:\n"
-        "  name: arbiter\n"
-        "  transport: https\n"
-        "  bind:\n"
-        "    scheme: https\n"
-        "    host: 127.0.0.1\n"
-        "    port: 8075\n"
-        '    path: ""\n'
-        "  public:\n"
-        "    scheme: https\n"
-        "  tls:\n"
-        "    source: SELF_SIGNED\n"
-        "deployment_scope: unknown\n"
-        "discovery:\n"
-        "  max_account_preview_limit: 25\n"
-        "  max_operation_preview_limit: 25\n"
+        "\n"
+        "arbiter:\n"
+        "  server:\n"
+        "    name: arbiter\n"
+        "    transport: https\n"
+        "    bind:\n"
+        "      host: 127.0.0.1\n"
+        "      port: 8075\n"
+        '      path: ""\n'
+        "    tls:\n"
+        "      source: SELF_SIGNED\n"
+        "  deployment_scope: unknown\n"
+        "  discovery:\n"
+        "    max_account_preview_limit: 25\n"
+        "    max_operation_preview_limit: 25\n"
     )
     _assert_posix_mode(config_file, 0o640)
-    _assert_posix_mode(server_file, 0o640)
+    plugins_file = config_dir / "plugins.yaml"
+    assert plugins_file.read_text(encoding="utf-8") == (
+        "defaults:\n"
+        "  - _self_\n"
+    )
+    _assert_posix_mode(plugins_file, 0o640)
+    assert not (config_dir / "arbiter" / "server.yaml").exists()
     assert capsys.readouterr().out == (
-        f"wrote {config_file}\n" f"wrote {server_file}\n"
+        f"wrote {config_file}\n" f"wrote {plugins_file}\n"
     )
 
     monkeypatch.setattr(
@@ -2833,9 +2837,9 @@ def test_cli_bootstrap_server_accepts_matching_existing_config(
     assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
 
     config_file = config_dir / "arbiter-server.yaml"
-    server_file = config_dir / "arbiter" / "server.yaml"
+    plugins_file = config_dir / "plugins.yaml"
     assert capsys.readouterr().out == (
-        f"unchanged {config_file}\n" f"unchanged {server_file}\n"
+        f"unchanged {config_file}\n" f"unchanged {plugins_file}\n"
     )
 
 
@@ -3413,7 +3417,7 @@ def test_cli_bootstrap_plugin_policy_writes_service_example(
     assert capsys.readouterr().out == (
         f"wrote {policy_file}\n"
         "\n"
-        f"To activate the generated policy, add this to {config_dir / 'arbiter-server.yaml'}:\n"
+        f"To activate the generated policy, add this to {config_dir / 'plugins.yaml'}:\n"
         "defaults:\n"
         "  - arbiter/policy:\n"
         "    - smtp/readonly\n"
@@ -3461,7 +3465,7 @@ def test_cli_config_activate_account_activates_matching_policy(
         == 0
     )
 
-    config_yaml = (config_dir / "arbiter-server.yaml").read_text(encoding="utf-8")
+    config_yaml = (config_dir / "plugins.yaml").read_text(encoding="utf-8")
     assert "  - arbiter/account:\n" in config_yaml
     assert "    - smtp/personal_account\n" in config_yaml
     assert "  - arbiter/policy:\n" in config_yaml
@@ -3472,7 +3476,7 @@ def test_cli_config_activate_account_activates_matching_policy(
         cfg.arbiter.policy.smtp.personal_account_policy.limits.max_recipients_per_message
         == 10
     )
-    assert capsys.readouterr().out == f"updated {config_dir / 'arbiter-server.yaml'}\n"
+    assert capsys.readouterr().out == f"updated {config_dir / 'plugins.yaml'}\n"
 
 
 def test_cli_config_activate_account_accepts_comma_separated_plugins(
@@ -3503,12 +3507,12 @@ def test_cli_config_activate_account_accepts_comma_separated_plugins(
         == 0
     )
 
-    config_yaml = (config_dir / "arbiter-server.yaml").read_text(encoding="utf-8")
+    config_yaml = (config_dir / "plugins.yaml").read_text(encoding="utf-8")
     assert "    - imap/default\n" in config_yaml
     assert "    - smtp/default\n" in config_yaml
     assert "    - imap/default_policy\n" in config_yaml
     assert "    - smtp/default_policy\n" in config_yaml
-    assert capsys.readouterr().out == f"updated {config_dir / 'arbiter-server.yaml'}\n"
+    assert capsys.readouterr().out == f"updated {config_dir / 'plugins.yaml'}\n"
 
     assert (
         main(
@@ -3526,12 +3530,12 @@ def test_cli_config_activate_account_accepts_comma_separated_plugins(
         == 0
     )
 
-    config_yaml = (config_dir / "arbiter-server.yaml").read_text(encoding="utf-8")
+    config_yaml = (config_dir / "plugins.yaml").read_text(encoding="utf-8")
     assert "    - imap/default\n" not in config_yaml
     assert "    - smtp/default\n" not in config_yaml
     assert "    - imap/default_policy\n" not in config_yaml
     assert "    - smtp/default_policy\n" not in config_yaml
-    assert capsys.readouterr().out == f"updated {config_dir / 'arbiter-server.yaml'}\n"
+    assert capsys.readouterr().out == f"updated {config_dir / 'plugins.yaml'}\n"
 
 
 def test_cli_config_activate_accepts_plugin_and_account_options(
@@ -3562,12 +3566,12 @@ def test_cli_config_activate_accepts_plugin_and_account_options(
         == 0
     )
 
-    config_yaml = (config_dir / "arbiter-server.yaml").read_text(encoding="utf-8")
+    config_yaml = (config_dir / "plugins.yaml").read_text(encoding="utf-8")
     assert "    - imap/default\n" in config_yaml
     assert "    - smtp/default\n" in config_yaml
     assert "    - imap/default_policy\n" in config_yaml
     assert "    - smtp/default_policy\n" in config_yaml
-    assert capsys.readouterr().out == f"updated {config_dir / 'arbiter-server.yaml'}\n"
+    assert capsys.readouterr().out == f"updated {config_dir / 'plugins.yaml'}\n"
 
 
 def test_cli_config_activate_lists_installed_plugin_status(
@@ -3804,7 +3808,7 @@ def test_cli_config_activate_account_can_alias_policy_file_name(
         == 0
     )
 
-    config_yaml = (config_dir / "arbiter-server.yaml").read_text(encoding="utf-8")
+    config_yaml = (config_dir / "plugins.yaml").read_text(encoding="utf-8")
     assert "  - arbiter/account:\n" in config_yaml
     assert "    - smtp/bot\n" in config_yaml
     assert "  - arbiter/policy:\n" in config_yaml
@@ -3867,10 +3871,10 @@ def test_cli_config_deactivate_account_deactivates_unused_policy(
         == 0
     )
 
-    config_yaml = (config_dir / "arbiter-server.yaml").read_text(encoding="utf-8")
+    config_yaml = (config_dir / "plugins.yaml").read_text(encoding="utf-8")
     assert "  - arbiter/account:\n" not in config_yaml
     assert "  - arbiter/policy:\n" not in config_yaml
-    assert capsys.readouterr().out == f"updated {config_dir / 'arbiter-server.yaml'}\n"
+    assert capsys.readouterr().out == f"updated {config_dir / 'plugins.yaml'}\n"
 
 
 def test_cli_config_deactivate_account_keeps_shared_policy(
@@ -3935,7 +3939,7 @@ def test_cli_config_deactivate_account_keeps_shared_policy(
         == 0
     )
 
-    config_yaml = (config_dir / "arbiter-server.yaml").read_text(encoding="utf-8")
+    config_yaml = (config_dir / "plugins.yaml").read_text(encoding="utf-8")
     assert "    - smtp/primary\n" not in config_yaml
     assert "    - smtp/secondary\n" in config_yaml
     assert "    - smtp/shared\n" in config_yaml
@@ -3954,7 +3958,7 @@ def test_cli_config_deactivate_account_keeps_shared_policy(
         )
         == 0
     )
-    config_yaml = (config_dir / "arbiter-server.yaml").read_text(encoding="utf-8")
+    config_yaml = (config_dir / "plugins.yaml").read_text(encoding="utf-8")
     assert "    - smtp/secondary\n" not in config_yaml
     assert "    - smtp/shared\n" not in config_yaml
 

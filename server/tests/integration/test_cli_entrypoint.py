@@ -539,10 +539,12 @@ def test_arbiter_console_script_bootstrap_arbiter(
     assert result.returncode == 0
     assert result.stdout == (
         f"wrote {tmp_path / 'arbiter-server.yaml'}\n"
-        f"wrote {tmp_path / 'arbiter' / 'server.yaml'}\n"
+        f"wrote {tmp_path / 'plugins.yaml'}\n"
     )
     assert result.stderr == ""
     assert (tmp_path / "arbiter-server.yaml").exists()
+    assert (tmp_path / "plugins.yaml").exists()
+    assert not (tmp_path / "arbiter" / "server.yaml").exists()
 
 
 def test_arbiter_console_script_bootstrap_plugin_account(
@@ -682,7 +684,7 @@ def test_arbiter_console_script_config_deactivate(
     )
 
     assert result.returncode == 0
-    assert result.stdout == f"updated {tmp_path / 'arbiter-server.yaml'}\n"
+    assert result.stdout == f"updated {tmp_path / 'plugins.yaml'}\n"
     assert result.stderr == ""
 
 

@@ -110,26 +110,26 @@ MAIN_CONFIG_TEMPLATE = """defaults:
 #   arbiter:
 #     env_file: local.env
   - arbiter_app_config_schema
-  - arbiter: server
+  - plugins
   - _self_
+
+arbiter:
+  server:
+    name: arbiter
+    transport: https
+    bind:
+      host: 127.0.0.1
+      port: 8075
+      path: ""
+    tls:
+      source: SELF_SIGNED
+  deployment_scope: unknown
+  discovery:
+    max_account_preview_limit: 25
+    max_operation_preview_limit: 25
 """
-SERVER_CONFIG_TEMPLATE = """# @package arbiter
-server:
-  name: arbiter
-  transport: https
-  bind:
-    scheme: https
-    host: 127.0.0.1
-    port: 8075
-    path: ""
-  public:
-    scheme: https
-  tls:
-    source: SELF_SIGNED
-deployment_scope: unknown
-discovery:
-  max_account_preview_limit: 25
-  max_operation_preview_limit: 25
+PLUGINS_CONFIG_TEMPLATE = """defaults:
+  - _self_
 """
 
 
@@ -3263,7 +3263,7 @@ def _run_bootstrap_server(
     return _write_bootstrap_files(
         [
             (config_dir_path / f"{config_name}.yaml", MAIN_CONFIG_TEMPLATE),
-            (config_dir_path / "arbiter" / "server.yaml", SERVER_CONFIG_TEMPLATE),
+            (config_dir_path / "plugins.yaml", PLUGINS_CONFIG_TEMPLATE),
         ],
         force=force,
     )
@@ -3369,7 +3369,15 @@ def _config_file_path(config_dir: Path, config_name: str) -> Path:
     return config_dir / f"{config_name}.yaml"
 
 
-def _load_main_config_lines(config_file: Path) -> list[str] | None:
+def _plugins_config_file_path(config_dir: Path) -> Path:
+    return config_dir / "plugins.yaml"
+
+
+def _load_defaults_config_lines(
+    config_file: Path,
+    *,
+    config_label: str,
+) -> list[str] | None:
     try:
         config_exists = _display_path_exists(config_file, label="config file")
     except ValueError as exc:
@@ -3377,7 +3385,7 @@ def _load_main_config_lines(config_file: Path) -> list[str] | None:
         return None
     if not config_exists:
         print_cli_error(
-            "main config not found: "
+            f"{config_label} not found: "
             f"{_display_config_path(config_file)}; run bootstrap --server first",
             area="config",
         )
@@ -3392,12 +3400,16 @@ def _load_main_config_lines(config_file: Path) -> list[str] | None:
         return None
     if "defaults:\n" not in lines:
         print_cli_error(
-            "main config does not contain a defaults list: "
+            f"{config_label} does not contain a defaults list: "
             f"{_display_config_path(config_file)}",
             area="config",
         )
         return None
     return lines
+
+
+def _load_main_config_lines(config_file: Path) -> list[str] | None:
+    return _load_defaults_config_lines(config_file, config_label="main config")
 
 
 def _find_defaults_group(lines: Sequence[str], group: str) -> tuple[int, int] | None:
@@ -3614,6 +3626,17 @@ def _write_main_config_lines(config_file: Path, lines: Sequence[str]) -> None:
     _write_text_with_mode(config_file, "".join(lines), CONFIG_FILE_MODE)
 
 
+def _load_plugins_config_lines(config_dir: Path) -> tuple[Path, list[str]] | None:
+    plugins_config_file = _plugins_config_file_path(config_dir)
+    lines = _load_defaults_config_lines(
+        plugins_config_file,
+        config_label="plugins config",
+    )
+    if lines is None:
+        return None
+    return plugins_config_file, lines
+
+
 def _split_cli_name_list(
     value: str,
     *,
@@ -3669,10 +3692,10 @@ def _run_config_activate_account(
         if policy_config_name is None:
             return 1
         selections.append((plugin, policy_config_name))
-    config_file = _config_file_path(config_dir_path, config_name)
-    lines = _load_main_config_lines(config_file)
-    if lines is None:
+    plugins_config = _load_plugins_config_lines(config_dir_path)
+    if plugins_config is None:
         return 1
+    plugins_config_file, lines = plugins_config
     try:
         changed = False
         for plugin, policy_config_name in selections:
@@ -3696,8 +3719,8 @@ def _run_config_activate_account(
         print_cli_error(str(exc), area="config")
         return 1
     if changed:
-        _write_main_config_lines(config_file, lines)
-        print(f"updated {_display_config_path(config_file)}")
+        _write_main_config_lines(plugins_config_file, lines)
+        print(f"updated {_display_config_path(plugins_config_file)}")
     elif len(plugins) == 1:
         print(f"account already active: {plugins[0]}/{name}")
     else:
@@ -3734,10 +3757,10 @@ def _run_config_deactivate_account(
         if policy_config_name is None:
             return 1
         selections.append((plugin, policy_name, policy_config_name))
-    config_file = _config_file_path(config_dir_path, config_name)
-    lines = _load_main_config_lines(config_file)
-    if lines is None:
+    plugins_config = _load_plugins_config_lines(config_dir_path)
+    if plugins_config is None:
         return 1
+    plugins_config_file, lines = plugins_config
     changed = False
     for plugin, policy_name, policy_config_name in selections:
         changed = (
@@ -3775,8 +3798,8 @@ def _run_config_deactivate_account(
                 or changed
             )
     if changed:
-        _write_main_config_lines(config_file, lines)
-        print(f"updated {_display_config_path(config_file)}")
+        _write_main_config_lines(plugins_config_file, lines)
+        print(f"updated {_display_config_path(plugins_config_file)}")
     elif len(plugins) == 1:
         print(f"account already inactive: {plugins[0]}/{name}")
     else:
@@ -3787,10 +3810,10 @@ def _run_config_deactivate_account(
 
 def _run_config_activation_summary(*, config_dir: str, config_name: str) -> int:
     config_dir_path = Path(config_dir).expanduser()
-    config_file = _config_file_path(config_dir_path, config_name)
-    lines = _load_main_config_lines(config_file)
-    if lines is None:
+    plugins_config = _load_plugins_config_lines(config_dir_path)
+    if plugins_config is None:
         return 1
+    _plugins_config_file, lines = plugins_config
 
     installed_plugins = service_plugin_names()
     active_plugins_by_account: dict[str, list[str]] = {}
@@ -3928,7 +3951,7 @@ def _print_bootstrap_activation_hint(
     kind: BootstrapObjectKind,
     name: str,
 ) -> None:
-    config_file = config_dir / f"{config_name}.yaml"
+    plugins_config_file = _plugins_config_file_path(config_dir)
     print("")
     if kind == "account":
         command_prefix = _display_command_prefix(config_dir=config_dir)
@@ -3965,9 +3988,15 @@ def _print_bootstrap_activation_hint(
         print(f"  {command_prefix} config show")
         return
     if len(plugins) == 1:
-        print(f"To activate the generated policy, add this to {config_file}:")
+        print(
+            "To activate the generated policy, add this to "
+            f"{plugins_config_file}:"
+        )
     else:
-        print(f"To activate the generated policies, add this to {config_file}:")
+        print(
+            "To activate the generated policies, add this to "
+            f"{plugins_config_file}:"
+        )
     print("defaults:")
     print(f"  - {_config_group_for_kind('policy')}:")
     for plugin in plugins:

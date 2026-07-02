@@ -55,14 +55,14 @@ list, config groups, schemas, interpolation, and command-line overrides fit
 together, see [Configuration Model](../operate/configuration-model.md).
 
 Bootstrap the Arbiter server config once per installation. This creates the root
-composition scaffold and the default server config. Plugin-owned account and
-policy config is bootstrapped separately when you configure that plugin for the
-first time.
+server config and the plugin activation file. Plugin-owned account and policy
+config is bootstrapped separately when you configure that plugin for the first
+time.
 
 ```bash
 arbiter-server bootstrap --server
 # wrote ~/.arbiter/arbiter-server.yaml
-# wrote ~/.arbiter/arbiter/server.yaml
+# wrote ~/.arbiter/plugins.yaml
 ```
 
 Add an SMTP account template and its matching policy:
@@ -83,11 +83,35 @@ Edit the generated files:
 <details>
 <summary>Show generated config shape</summary>
 
-The root config is mostly a Hydra defaults list:
+The root config selects the server schema, plugin activation file, and server
+defaults:
 
 ```yaml title="~/.arbiter/arbiter-server.yaml"
 defaults:
-  - arbiter: server
+  - arbiter_app_config_schema
+  - plugins
+  - _self_
+
+arbiter:
+  server:
+    name: arbiter
+    transport: https
+    bind:
+      host: 127.0.0.1
+      port: 8075
+      path: ""
+    tls:
+      source: SELF_SIGNED
+  deployment_scope: unknown
+  discovery:
+    max_account_preview_limit: 25
+    max_operation_preview_limit: 25
+```
+
+Activating accounts updates the plugin activation file:
+
+```yaml title="~/.arbiter/plugins.yaml"
+defaults:
   - arbiter/account:
     - smtp/bot
   - arbiter/policy:
@@ -126,7 +150,7 @@ After editing, include the account in the composed config:
 
 ```bash
 arbiter-server config activate --plugin smtp --account bot
-# updated ~/.arbiter/arbiter-server.yaml
+# updated ~/.arbiter/plugins.yaml
 ```
 
 Inspect the composed config:
