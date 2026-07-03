@@ -18,12 +18,13 @@ It is recommended to deny agents direct access to protected services and
 credentials, typically by sandboxing the agent. For the full trust model, see
 [Security Model](security.md).
 
-## Example config directory
+## Example deployment directory
 
-Server config lives in `~/.arbiter` by default. Use `--config-dir <dir>` for a
-different deployment directory, such as a test fixture or container mount.
+Server config is part of the server deployment. In a staged or deployed layout,
+YAML config lives under `conf/`, while local environment-backed values live in
+`.arbiter.env` beside that `conf/` directory.
 
-An example server config directory looks like this:
+An example server deployment directory looks like this:
 
 This can look like a lot at first glance, but operators do not need to create
 the structure by hand. `arbiter-server bootstrap`, `arbiter-server config
@@ -31,26 +32,26 @@ activate`, and `arbiter-server env bootstrap` create the scaffold, activate
 accounts, and maintain the local env file.
 
 ```text
-~
-├── .arbiter
-│   ├── arbiter
-│   │   ├── account
-│   │   │   ├── imap
-│   │   │   │   ├── bot.yaml        # IMAP account owned by the bot
-│   │   │   │   └── personal.yaml   # owner IMAP account
-│   │   │   └── smtp
-│   │   │       ├── bot.yaml        # SMTP account owned by the bot
-│   │   │       └── personal.yaml   # owner SMTP account
-│   │   ├── policy
-│   │   │   ├── imap
-│   │   │   │   ├── bot.yaml        # bot policy with full IMAP access
-│   │   │   │   └── personal.yaml   # restricted access to owner IMAP
-│   │   │   └── smtp
-│   │   │       ├── bot.yaml        # bot policy with full SMTP access
-│   │   │       └── personal.yaml   # restricted access to owner SMTP
-│   ├── arbiter-server.yaml         # root server config and base composition
-│   └── plugins.yaml                # active account and policy selections
-└── .arbiter.env                    # local environment-backed values
+arbiter-deployment/
+├── .arbiter.env                    # local environment-backed values
+└── conf
+    ├── arbiter
+    │   ├── account
+    │   │   ├── imap
+    │   │   │   ├── bot.yaml        # IMAP account owned by the bot
+    │   │   │   └── personal.yaml   # owner IMAP account
+    │   │   └── smtp
+    │   │       ├── bot.yaml        # SMTP account owned by the bot
+    │   │       └── personal.yaml   # owner SMTP account
+    │   ├── policy
+    │   │   ├── imap
+    │   │   │   ├── bot.yaml        # bot policy with full IMAP access
+    │   │   │   └── personal.yaml   # restricted access to owner IMAP
+    │   │   └── smtp
+    │   │       ├── bot.yaml        # bot policy with full SMTP access
+    │   │       └── personal.yaml   # restricted access to owner SMTP
+    ├── arbiter-server.yaml         # root server config and base composition
+    └── plugins.yaml                # active account and policy selections
 ```
 
 The config directory is normal files on disk. It should be owned by the
@@ -63,7 +64,7 @@ schema, imports `plugins.yaml`, and contains the deployment's server settings.
 
 `plugins.yaml` selects the active accounts and policies:
 
-```yaml title="~/.arbiter/plugins.yaml"
+```yaml title="conf/plugins.yaml"
 defaults:
   - arbiter/account:
     - smtp/bot
@@ -175,17 +176,17 @@ multiple accounts can share one policy when that is useful.
 
 ## Scaffolding flow
 
-Server config commands use `~/.arbiter` by default. Pass `--config-dir <dir>`
-when you want to target a different config directory:
+Server config commands accept `--config-dir <dir>` before the subcommand. Use
+the deployment's `conf/` directory:
 
 ```bash
-arbiter-server --config-dir ./config.local bootstrap --server
+arbiter-server --config-dir ./arbiter-deployment/conf bootstrap --server
 ```
 
 For a normal deployment, start by bootstrapping the root server scaffold once:
 
 ```bash
-arbiter-server bootstrap --server
+arbiter-server --config-dir ./arbiter-deployment/conf bootstrap --server
 ```
 
 To protect user config, all bootstrap commands refuse to rewrite an existing
@@ -194,20 +195,25 @@ file unless `--force` is added.
 After the root scaffold exists, bootstrap plugin-owned objects as needed:
 
 ```bash
-arbiter-server bootstrap --plugin smtp --account bot
-arbiter-server bootstrap --plugin imap --account personal
+arbiter-server --config-dir ./arbiter-deployment/conf bootstrap --plugin smtp --account bot
+arbiter-server --config-dir ./arbiter-deployment/conf bootstrap --plugin imap --account personal
 ```
 
 Creating a config file does not make it active. Activate accounts after editing
 the generated templates. Activation updates `plugins.yaml`:
 
 ```bash
-arbiter-server config activate --plugin smtp --account bot
-arbiter-server config activate --plugin imap --account personal
+arbiter-server --config-dir ./arbiter-deployment/conf config activate --plugin smtp --account bot
+arbiter-server --config-dir ./arbiter-deployment/conf config activate --plugin imap --account personal
 ```
 
-Use `arbiter-server config show` to inspect the composed result and
-`arbiter-server config check` before serving.
+Use `config show` to inspect the composed result and `config check` before
+serving:
+
+```bash
+arbiter-server --config-dir ./arbiter-deployment/conf config show
+arbiter-server --config-dir ./arbiter-deployment/conf config check
+```
 
 ## Env file management
 
@@ -215,19 +221,18 @@ Generated account configs should reference credentials through
 `${oc.env:...}` rather than storing secrets directly in YAML. Arbiter can
 help maintain the local env file named by server config:
 
-```yaml title="~/.arbiter/arbiter-server.yaml"
+```yaml title="conf/arbiter-server.yaml"
 arbiter:
   env_file: ../.arbiter.env
 ```
 
-Relative env file paths are resolved from the config directory. With the
-default config directory, this means `~/.arbiter.env`; with Reploy deployments,
-the generated config lives in `conf/` and the env file lives beside that
-directory as `.arbiter.env`.
+Relative env file paths are resolved from the config directory. With the staged
+deployment layout, `../.arbiter.env` resolves from `conf/` to `.arbiter.env` at
+the deployment root.
 
 ```bash
-arbiter-server env bootstrap
-arbiter-server env check
+arbiter-server --config-dir ./arbiter-deployment/conf env bootstrap
+arbiter-server --config-dir ./arbiter-deployment/conf env check
 ```
 
 When `arbiter.env_file` is set, `arbiter-server` loads that dotenv file into
@@ -246,7 +251,7 @@ The generated env file depends on the config that is active when the command
 runs. For example, a composed config with SMTP and IMAP bot accounts might
 produce entries like:
 
-```dotenv title="~/.arbiter.env"
+```dotenv title=".arbiter.env"
 # arbiter-imap
 IMAP_BOT_ACCOUNT_HOST=
 # IMAP_BOT_ACCOUNT_PORT=993

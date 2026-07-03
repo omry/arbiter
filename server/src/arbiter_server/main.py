@@ -87,7 +87,7 @@ ENV_REFERENCE_FULL_VALUE_PATTERN = re.compile(
     r"^\$\{oc\.env:(?P<name>[^,}\s]+)(?:,[^}]*)?\}$"
 )
 DEFAULT_ENV_FILE_NAME = "../.arbiter.env"
-DEFAULT_CONFIG_DIR = "~/.arbiter"
+DEFAULT_CONFIG_DIR = "conf"
 DEFAULT_SERVER_CONFIG_NAME = "arbiter-server"
 CONFIG_FILE_MODE = 0o640
 ENV_FILE_MODE = 0o600

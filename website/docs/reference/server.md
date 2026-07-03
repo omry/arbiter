@@ -14,7 +14,7 @@ arbiter-server [--config-dir DIR] [--config-name NAME] <command>
 ```
 
 - `--config-dir DIR`: directory containing the root Hydra config. Defaults to
-  `~/.arbiter`.
+  `conf`.
 - `--config-name NAME`: root config file name without `.yaml`. Defaults to
   `arbiter-server`.
 
@@ -34,7 +34,7 @@ Examples:
 ```bash
 arbiter-server serve
 arbiter-server serve arbiter.server.bind.port=8075
-arbiter-server --config-dir ./config.local serve
+arbiter-server --config-dir ./arbiter-deployment/conf serve
 ```
 
 ## config

@@ -114,15 +114,14 @@ https://127.0.0.1:8075
 ```
 
 Arbiter does not ship a runnable service config. Bootstrap a Hydra
-config, edit it, then run the server. The default config directory is
-`~/.arbiter`; pass `--config-dir <dir>` before a subcommand to use a different
-location. `config.local/` is ignored scratchspace for repository-local
-development.
+config, edit it, then run the server. Keep server-owned files together in a
+deployment directory; for local development, `arbiter-server/conf` is a useful
+repository-local config directory.
 Plugin-owned object templates are created by the plugin command surface:
 
 ```bash
-arbiter-server bootstrap --server
-arbiter-server bootstrap --plugin smtp --account primary
+arbiter-server --config-dir ./arbiter-server/conf bootstrap --server
+arbiter-server --config-dir ./arbiter-server/conf bootstrap --plugin smtp --account primary
 ```
 
 `${oc.env:...}` reads the process environment that your shell, supervisor,
@@ -132,10 +131,10 @@ can name one optional dotenv-style file to load before composition.
 See [website/docs/operate/configuration-model.md](website/docs/operate/configuration-model.md)
 for the generated file layout and composition flow.
 
-For local development, a shell-owned env file can be useful:
+For local development, the server env file lives beside `conf/`:
 
 ```bash
-# ~/.arbiter/local.env
+# arbiter-server/.arbiter.env
 SMTP_PRIMARY_ACCOUNT_HOST=smtp.example.com
 # SMTP_PRIMARY_ACCOUNT_PORT=587
 SMTP_PRIMARY_ACCOUNT_USERNAME=agent@example.com
@@ -159,8 +158,8 @@ file. Relative paths are resolved from the config directory.
 Build or refresh that file from the active config:
 
 ```bash
-arbiter-server env bootstrap
-arbiter-server env check
+arbiter-server --config-dir ./arbiter-server/conf env bootstrap
+arbiter-server --config-dir ./arbiter-server/conf env check
 ```
 
 `env bootstrap` keeps existing assignments, adds missing config references, and
@@ -171,8 +170,8 @@ If `arbiter.env_file` is not set yet, it adds `arbiter.env_file:
 Then run from this directory:
 
 ```bash
-arbiter-server config check
-arbiter-server serve
+arbiter-server --config-dir ./arbiter-server/conf config check
+arbiter-server --config-dir ./arbiter-server/conf serve
 ```
 
 `config check` and `serve` require at least one configured service account.

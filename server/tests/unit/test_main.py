@@ -2300,6 +2300,27 @@ def test_cli_accepts_config_args_after_subcommand(
     )
 
 
+def test_cli_default_config_dir_keeps_env_in_deployment_root(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["bootstrap", "--server"]) == 0
+    assert (tmp_path / "conf" / "arbiter-server.yaml").exists()
+    assert (tmp_path / "conf" / "plugins.yaml").exists()
+    assert capsys.readouterr().out == (
+        "wrote conf/arbiter-server.yaml\n"
+        "wrote conf/plugins.yaml\n"
+    )
+
+    assert main(["env", "bootstrap"]) == 0
+    assert (tmp_path / ".arbiter.env").read_text(encoding="utf-8") == ""
+    _assert_posix_mode(tmp_path / ".arbiter.env", 0o600)
+    assert capsys.readouterr().out == f"wrote {tmp_path / '.arbiter.env'}\n"
+
+
 def test_cli_config_check_subcommand_passes_config_and_overrides(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

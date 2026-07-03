@@ -2,8 +2,8 @@
 title: Quickstart
 ---
 
-This quickstart uses the default config directory, `~/.arbiter`, bootstraps one
-SMTP account, and shows the composed config.
+This quickstart uses a local server deployment directory, bootstraps one SMTP
+account, and shows the composed config.
 
 ## Install
 
@@ -46,9 +46,17 @@ Before production use, read [Security Model](../operate/security.md) and
 
 ## Create config
 
-Arbiter uses `~/.arbiter` by default. To keep config somewhere else, add
-`--config-dir <dir>` before the subcommand, for example
-`arbiter-server --config-dir ./config.local config show`.
+Keep server-owned config in a deployment directory. This quickstart uses
+`./arbiter-server/conf` for YAML config and `./arbiter-server/.arbiter.env`
+for local environment values:
+
+```bash
+export ARBITER_DEPLOY_DIR="./arbiter-server"
+export ARBITER_CONFIG_DIR="$ARBITER_DEPLOY_DIR/conf"
+```
+
+Pass `--config-dir <dir>` before the subcommand when targeting that server
+deployment directory.
 
 Arbiter config is built with Hydra and OmegaConf. For how the defaults
 list, config groups, schemas, interpolation, and command-line overrides fit
@@ -60,24 +68,24 @@ config is bootstrapped separately when you configure that plugin for the first
 time.
 
 ```bash
-arbiter-server bootstrap --server
-# wrote ~/.arbiter/arbiter-server.yaml
-# wrote ~/.arbiter/plugins.yaml
+arbiter-server --config-dir "$ARBITER_CONFIG_DIR" bootstrap --server
+# wrote ./arbiter-server/conf/arbiter-server.yaml
+# wrote ./arbiter-server/conf/plugins.yaml
 ```
 
 Add an SMTP account template and its matching policy:
 
 ```bash
-arbiter-server bootstrap --plugin smtp --account bot
-# wrote ~/.arbiter/arbiter/account/smtp/bot.yaml
-# wrote ~/.arbiter/arbiter/policy/smtp/bot_policy.yaml
+arbiter-server --config-dir "$ARBITER_CONFIG_DIR" bootstrap --plugin smtp --account bot
+# wrote ./arbiter-server/conf/arbiter/account/smtp/bot.yaml
+# wrote ./arbiter-server/conf/arbiter/policy/smtp/bot_policy.yaml
 ```
 
 Edit the generated files:
 
 ```text
-~/.arbiter/arbiter/account/smtp/bot.yaml
-~/.arbiter/arbiter/policy/smtp/bot_policy.yaml
+./arbiter-server/conf/arbiter/account/smtp/bot.yaml
+./arbiter-server/conf/arbiter/policy/smtp/bot_policy.yaml
 ```
 
 <details>
@@ -86,13 +94,14 @@ Edit the generated files:
 The root config selects the server schema, plugin activation file, and server
 defaults:
 
-```yaml title="~/.arbiter/arbiter-server.yaml"
+```yaml title="arbiter-server/conf/arbiter-server.yaml"
 defaults:
   - arbiter_app_config_schema
   - plugins
   - _self_
 
 arbiter:
+  env_file: ../.arbiter.env
   server:
     name: arbiter
     transport: https
@@ -110,7 +119,7 @@ arbiter:
 
 Activating accounts updates the plugin activation file:
 
-```yaml title="~/.arbiter/plugins.yaml"
+```yaml title="arbiter-server/conf/plugins.yaml"
 defaults:
   - arbiter/account:
     - smtp/bot
@@ -122,7 +131,7 @@ defaults:
 The account file extends the plugin-owned schema and uses OmegaConf
 interpolation for secrets:
 
-```yaml title="~/.arbiter/arbiter/account/smtp/bot.yaml"
+```yaml title="arbiter-server/conf/arbiter/account/smtp/bot.yaml"
 defaults:
   - /arbiter/account/smtp/schema@_here_
   - _self_
@@ -149,14 +158,14 @@ your local setup.
 After editing, include the account in the composed config:
 
 ```bash
-arbiter-server config activate --plugin smtp --account bot
-# updated ~/.arbiter/plugins.yaml
+arbiter-server --config-dir "$ARBITER_CONFIG_DIR" config activate --plugin smtp --account bot
+# updated ./arbiter-server/conf/plugins.yaml
 ```
 
 Inspect the composed config:
 
 ```bash
-arbiter-server config show
+arbiter-server --config-dir "$ARBITER_CONFIG_DIR" config show
 ```
 
 ```yaml
@@ -193,24 +202,26 @@ arbiter:
 
 Generated account configs keep secrets out of YAML by referencing environment
 variables with `${oc.env:...}`. Arbiter does not own those secrets, but it
-can help you prepare and check the local env file named by the config.
+can help you prepare and check the env file named by the server config. In this
+deployment layout, `arbiter.env_file: ../.arbiter.env` resolves from
+`./arbiter-server/conf` to `./arbiter-server/.arbiter.env`.
 
 Use `env bootstrap` when the config changed and you want the local env file to
 catch up:
 
 ```bash
-arbiter-server env bootstrap
+arbiter-server --config-dir "$ARBITER_CONFIG_DIR" env bootstrap
 ```
 
-This scans the composed config for `${oc.env:...}` references, creates the
-configured env file if needed, and adds any missing variables without replacing
-existing values. After it runs, open the env file and fill in the blank secret
-values.
+This scans the composed config for `${oc.env:...}` references, creates
+`./arbiter-server/.arbiter.env` if needed, and adds any missing variables
+without replacing existing values. After it runs, open that file and fill in the
+blank secret values.
 
 Use `env check` before starting the server, or after editing the env file:
 
 ```bash
-arbiter-server env check
+arbiter-server --config-dir "$ARBITER_CONFIG_DIR" env check
 ```
 
 This verifies that every `${oc.env:...}` reference in the composed config is
@@ -222,8 +233,8 @@ missing, it prints the variable names and the plugin block they came from.
 Validate, then start the server:
 
 ```bash
-arbiter-server config check
-arbiter-server serve
+arbiter-server --config-dir "$ARBITER_CONFIG_DIR" config check
+arbiter-server --config-dir "$ARBITER_CONFIG_DIR" serve
 ```
 
 In another terminal, point the Arbiter client at the local server:
