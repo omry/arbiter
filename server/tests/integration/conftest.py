@@ -101,7 +101,7 @@ class LocalArbiterServerFactory:
         env: Mapping[str, str] | None = None,
         overrides: Sequence[str] = (),
     ) -> RunningArbiterServer:
-        config_dir = self._tmp_path / f"arbiter-server-{len(self._servers)}"
+        config_dir = self._tmp_path / f"arbiter-server-{len(self._servers)}" / "conf"
         server_env = _server_env(plugin_accounts, env)
         _bootstrap_server_config(config_dir, plugin_accounts, env=server_env)
         last_error: ArbiterServerStartError | None = None
@@ -394,6 +394,14 @@ def _bootstrap_server_config(
             plugin_account.account,
         )
         _assert_ok(activate)
+    env_bootstrap = _run_arbiter_server(
+        "--config-dir",
+        str(config_dir),
+        "env",
+        "bootstrap",
+        env=env,
+    )
+    _assert_ok(env_bootstrap)
     check = _run_arbiter_server(
         "--config-dir",
         str(config_dir),

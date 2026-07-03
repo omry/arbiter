@@ -86,7 +86,7 @@ ENV_REFERENCE_PATTERN = re.compile(r"\$\{oc\.env:(?P<name>[^,}\s]+)(?:,[^}]*)?\}
 ENV_REFERENCE_FULL_VALUE_PATTERN = re.compile(
     r"^\$\{oc\.env:(?P<name>[^,}\s]+)(?:,[^}]*)?\}$"
 )
-DEFAULT_ENV_FILE_NAME = ".env"
+DEFAULT_ENV_FILE_NAME = "../.arbiter.env"
 DEFAULT_CONFIG_DIR = "~/.arbiter"
 DEFAULT_SERVER_CONFIG_NAME = "arbiter-server"
 CONFIG_FILE_MODE = 0o640
@@ -117,6 +117,7 @@ arbiter:
     tls:
       source: SELF_SIGNED
   deployment_scope: unknown
+  env_file: ../.arbiter.env
   discovery:
     max_account_preview_limit: 25
     max_operation_preview_limit: 25
@@ -2637,10 +2638,18 @@ def _read_env_file_values(
 
 def _write_text_with_mode(path: Path, content: str, mode: int) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    file_descriptor, temporary_name = mkstemp(
-        prefix=f".{path.name}.",
-        dir=path.parent,
-    )
+    try:
+        file_descriptor, temporary_name = mkstemp(
+            prefix=f".{path.name}.",
+            dir=path.parent,
+        )
+    except PermissionError:
+        if not path.exists() or path.is_symlink() or not path.is_file():
+            raise
+        path.chmod(mode)
+        path.write_text(content, encoding="utf-8")
+        path.chmod(mode)
+        return
     temporary_path = Path(temporary_name)
     try:
         os.fchmod(file_descriptor, mode)
@@ -2681,7 +2690,7 @@ def _configured_env_file(
     env_file_path = Path(env_file).expanduser()
     if env_file_path.is_absolute():
         return env_file_path
-    return config_dir / env_file_path
+    return (config_dir / env_file_path).resolve(strict=False)
 
 
 def _configure_default_env_file(
@@ -2701,14 +2710,14 @@ def _configure_default_env_file(
         if line.strip() == "arbiter:":
             lines[index + 1 : index + 1] = [env_line]
             _write_text_with_mode(config_file, "".join(lines), CONFIG_FILE_MODE)
-            return config_dir / DEFAULT_ENV_FILE_NAME
+            return (config_dir / DEFAULT_ENV_FILE_NAME).resolve(strict=False)
     if lines and not lines[-1].endswith("\n"):
         lines[-1] = f"{lines[-1]}\n"
     if lines and lines[-1].strip():
         lines.append("\n")
     lines.extend(["arbiter:\n", env_line])
     _write_text_with_mode(config_file, "".join(lines), CONFIG_FILE_MODE)
-    return config_dir / DEFAULT_ENV_FILE_NAME
+    return (config_dir / DEFAULT_ENV_FILE_NAME).resolve(strict=False)
 
 
 def compose_config(
@@ -3131,6 +3140,19 @@ def _display_config_path(path: Path) -> str:
         if not display_dir:
             return path_text[len(prefix) :]
         return display_dir + "/" + path_text[len(prefix) :]
+    container_parent, container_name = container_dir.rsplit("/", 1)
+    display_dir_normalized = display_dir.replace("\\", "/").rstrip("/")
+    if "/" in display_dir_normalized:
+        display_parent, display_name = display_dir_normalized.rsplit("/", 1)
+    else:
+        display_parent, display_name = "", display_dir_normalized
+    if container_parent and display_name == container_name:
+        parent_prefix = container_parent.rstrip("/") + "/"
+        if path_text.startswith(parent_prefix):
+            relative_path = path_text[len(parent_prefix) :]
+            if display_parent in ("", "."):
+                return relative_path
+            return display_parent + "/" + relative_path
     return str(path)
 
 

@@ -31,25 +31,26 @@ activate`, and `arbiter-server env bootstrap` create the scaffold, activate
 accounts, and maintain the local env file.
 
 ```text
-~/.arbiter
-├── arbiter
-│   ├── account
-│   │   ├── imap
-│   │   │   ├── bot.yaml        # IMAP account owned by the bot
-│   │   │   └── personal.yaml   # owner IMAP account
-│   │   └── smtp
-│   │       ├── bot.yaml        # SMTP account owned by the bot
-│   │       └── personal.yaml   # owner SMTP account
-│   ├── policy
-│   │   ├── imap
-│   │   │   ├── bot.yaml        # bot policy with full IMAP access
-│   │   │   └── personal.yaml   # restricted access to owner IMAP
-│   │   └── smtp
-│   │       ├── bot.yaml        # bot policy with full SMTP access
-│   │       └── personal.yaml   # restricted access to owner SMTP
-├── arbiter-server.yaml         # root server config and base composition
-├── plugins.yaml                # active account and policy selections
-└── .env                        # local environment-backed values
+~
+├── .arbiter
+│   ├── arbiter
+│   │   ├── account
+│   │   │   ├── imap
+│   │   │   │   ├── bot.yaml        # IMAP account owned by the bot
+│   │   │   │   └── personal.yaml   # owner IMAP account
+│   │   │   └── smtp
+│   │   │       ├── bot.yaml        # SMTP account owned by the bot
+│   │   │       └── personal.yaml   # owner SMTP account
+│   │   ├── policy
+│   │   │   ├── imap
+│   │   │   │   ├── bot.yaml        # bot policy with full IMAP access
+│   │   │   │   └── personal.yaml   # restricted access to owner IMAP
+│   │   │   └── smtp
+│   │   │       ├── bot.yaml        # bot policy with full SMTP access
+│   │   │       └── personal.yaml   # restricted access to owner SMTP
+│   ├── arbiter-server.yaml         # root server config and base composition
+│   └── plugins.yaml                # active account and policy selections
+└── .arbiter.env                    # local environment-backed values
 ```
 
 The config directory is normal files on disk. It should be owned by the
@@ -216,12 +217,13 @@ help maintain the local env file named by server config:
 
 ```yaml title="~/.arbiter/arbiter-server.yaml"
 arbiter:
-  env_file: .env
+  env_file: ../.arbiter.env
 ```
 
-Relative env file paths are resolved from the config directory. By default that
-means `~/.arbiter/.env`; use `--config-dir <dir>` before the subcommand to use
-a different config root.
+Relative env file paths are resolved from the config directory. With the
+default config directory, this means `~/.arbiter.env`; with Reploy deployments,
+the generated config lives in `conf/` and the env file lives beside that
+directory as `.arbiter.env`.
 
 ```bash
 arbiter-server env bootstrap
@@ -236,15 +238,15 @@ values from the env file.
 Unlike config bootstrap, `env bootstrap` is meant to be re-run. It reads the
 existing env file, keeps existing values, keeps unrelated variables, and adds
 any missing variables discovered in the composed config. If no env file is
-configured yet, it adds `arbiter.env_file: .env` to the root config and creates
-that file. `env check` verifies that all referenced variables are available
-before the server starts.
+configured yet, it adds `arbiter.env_file: ../.arbiter.env` to the root config
+and creates that file. `env check` verifies that all referenced variables are
+available before the server starts.
 
 The generated env file depends on the config that is active when the command
 runs. For example, a composed config with SMTP and IMAP bot accounts might
 produce entries like:
 
-```dotenv title="~/.arbiter/.env"
+```dotenv title="~/.arbiter.env"
 # arbiter-imap
 IMAP_BOT_ACCOUNT_HOST=
 # IMAP_BOT_ACCOUNT_PORT=993

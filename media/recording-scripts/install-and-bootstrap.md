@@ -286,7 +286,7 @@ beat:
     written. @smtp_edit@ For the recording, we edit these files to use the
     local test SMTP server. @smtp_activate@ Activate the SMTP account in the
     composed config. @smtp_env@ Then bootstrap the Arbiter env file. @smtp_secret@
-    Open the env file and enter the SMTP username and password from the test
+    Open .arbiter.env and enter the SMTP username and password from the test
     mail lab. @imap_account@ To test mail sending end to end, add the matching
     IMAP account too. The IMAP bootstrap uses the default-open variant, which
     starts with broad folder access and lets you add deny rules later.
@@ -295,7 +295,7 @@ beat:
     writes as well. @imap_edit@ Edit the IMAP files for the local test server.
     @imap_activate@ Activate the IMAP account. @imap_env@ Re-run env bootstrap;
     it is incremental, so it adds the new IMAP variables without throwing away
-    the SMTP values. @imap_secret@ Open the env file again and add the IMAP
+    the SMTP values. @imap_secret@ Open .arbiter.env again and add the IMAP
     username and password. @check@ Now run a normal config check. It validates
     the composed YAML and schemas. @live_check@ Finally, run a live config
     check; this also logs into the test IMAP and SMTP servers.
@@ -322,7 +322,7 @@ beat:
     - run: reploy app env bootstrap
       after: "@smtp_env@"
     - run: recording_apply_mail_lab_config --account mail-demo --plugins smtp --update-env
-      display: "$EDITOR conf/.env"
+      display: "$EDITOR .arbiter.env"
       after: "@smtp_secret@"
     - run: reploy app bootstrap --plugin imap --account mail-demo --variant default-open
       after: "@imap_account@"
@@ -338,7 +338,7 @@ beat:
     - run: reploy app env bootstrap
       after: "@imap_env@"
     - run: recording_apply_mail_lab_config --account mail-demo --plugins imap --update-env
-      display: "$EDITOR conf/.env"
+      display: "$EDITOR .arbiter.env"
       after: "@imap_secret@"
     - run: reploy app config check
       after: "@check@"
@@ -350,7 +350,7 @@ beat:
       file_exists:
       - ./conf/arbiter-server.yaml
       - ./conf/plugins.yaml
-      - ./conf/.env
+      - ./.arbiter.env
       - ./conf/arbiter/account/imap/mail-demo.yaml
       - ./conf/arbiter/policy/imap/mail-demo_policy.yaml
       - ./conf/arbiter/account/smtp/mail-demo.yaml

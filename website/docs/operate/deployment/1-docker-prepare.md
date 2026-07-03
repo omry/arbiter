@@ -163,16 +163,16 @@ reploy app env bootstrap
 Arbiter config files should reference secrets through environment variables,
 for example `${oc.env:SMTP_BOT_ACCOUNT_PASSWORD}`. `env bootstrap` composes the
 current config, finds those environment references, and creates or updates
-`conf/.env` with placeholders for any missing values. Existing values are
-preserved, so rerunning it is safe.
+`.arbiter.env` at the deployment root with placeholders for any missing values.
+Existing values are preserved, so rerunning it is safe.
 
 Run this again after adding plugins, accounts, or policies. New plugin config
 can introduce new credential variables, and `env bootstrap` adds the new
 placeholders without removing the values you already filled in.
 
-Keep `docker.env` separate from `conf/.env`: `docker.env` controls the Compose
-wrapper, while `conf/.env` is created by Arbiter env tooling and belongs
-to the config package.
+Keep `docker.env` separate from `.arbiter.env`: `docker.env` controls the
+Compose wrapper, while `.arbiter.env` is created by Arbiter env tooling and
+belongs to the Arbiter server config.
 
 ## Start and test
 

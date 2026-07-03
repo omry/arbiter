@@ -483,7 +483,9 @@ def test_arbiter_clients_artifact_help(
 def test_arbiter_console_script_env_bootstrap_and_check(
     tmp_path: Path,
 ) -> None:
-    config_file = tmp_path / "arbiter-server.yaml"
+    config_dir = tmp_path / "conf"
+    config_dir.mkdir()
+    config_file = config_dir / "arbiter-server.yaml"
     config_file.write_text(
         "arbiter:\n"
         "  account:\n"
@@ -496,24 +498,24 @@ def test_arbiter_console_script_env_bootstrap_and_check(
 
     bootstrap = _run_arbiter_server(
         "--config-dir",
-        str(tmp_path),
+        str(config_dir),
         "env",
         "bootstrap",
     )
 
     assert bootstrap.returncode == 0
-    assert bootstrap.stdout == f"wrote {tmp_path / '.env'}\n"
+    assert bootstrap.stdout == f"wrote {tmp_path / '.arbiter.env'}\n"
     assert bootstrap.stderr == ""
     assert config_file.read_text(encoding="utf-8") == (
         "arbiter:\n"
-        "  env_file: .env\n"
+        "  env_file: ../.arbiter.env\n"
         "  account:\n"
         "    smtp:\n"
         "      primary:\n"
         "        username: ${oc.env:SMTP_PRIMARY_ACCOUNT_USERNAME}\n"
         "        password: ${oc.env:SMTP_PRIMARY_ACCOUNT_PASSWORD}\n"
     )
-    assert (tmp_path / ".env").read_text(encoding="utf-8") == (
+    assert (tmp_path / ".arbiter.env").read_text(encoding="utf-8") == (
         "# arbiter-smtp\n"
         "SMTP_PRIMARY_ACCOUNT_USERNAME=\n"
         "SMTP_PRIMARY_ACCOUNT_PASSWORD=\n"
@@ -521,7 +523,7 @@ def test_arbiter_console_script_env_bootstrap_and_check(
 
     check = _run_arbiter_server(
         "--config-dir",
-        str(tmp_path),
+        str(config_dir),
         "env",
         "check",
     )

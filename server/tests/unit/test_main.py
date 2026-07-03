@@ -1234,7 +1234,8 @@ def test_cli_serve_unsafe_skip_runtime_permission_checks_only_skips_permission_g
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    assert main(["--config-dir", str(tmp_path), "bootstrap", "--server"]) == 0
+    config_dir = tmp_path / "conf"
+    assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
     capsys.readouterr()
 
     def reject_permissions(**_kwargs: object) -> None:
@@ -1245,14 +1246,15 @@ def test_cli_serve_unsafe_skip_runtime_permission_checks_only_skips_permission_g
         reject_permissions,
     )
 
-    assert main(["--config-dir", str(tmp_path), "serve"]) == 1
+    assert main(["--config-dir", str(config_dir), "serve"]) == 1
     assert "permission sentinel" in capsys.readouterr().err
 
+    (tmp_path / ".arbiter.env").write_text("", encoding="utf-8")
     assert (
         main(
             [
                 "--config-dir",
-                str(tmp_path),
+                str(config_dir),
                 "--unsafe-skip-runtime-permission-checks",
                 "serve",
             ]
@@ -1397,6 +1399,27 @@ def test_write_text_with_mode_replaces_from_restricted_temp(
         "destination_content_before": "OLD_SECRET=value\n",
         "destination_mode_before": 0o644,
     }
+    assert env_file.read_text(encoding="utf-8") == "NEW_SECRET=value\n"
+    _assert_posix_mode(env_file, 0o600)
+
+
+def test_write_text_with_mode_rewrites_existing_file_when_temp_dir_is_blocked(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if not _SUPPORTS_POSIX_FILE_MODES:
+        pytest.skip("POSIX file mode replacement semantics are not available")
+    env_file = tmp_path / "local.env"
+    env_file.write_text("", encoding="utf-8")
+    env_file.chmod(0o600)
+
+    def blocked_mkstemp(*_args: object, **_kwargs: object) -> tuple[int, str]:
+        raise PermissionError("permission denied")
+
+    monkeypatch.setattr("arbiter_server.main.mkstemp", blocked_mkstemp)
+
+    _write_text_with_mode(env_file, "NEW_SECRET=value\n", ENV_FILE_MODE)
+
     assert env_file.read_text(encoding="utf-8") == "NEW_SECRET=value\n"
     _assert_posix_mode(env_file, 0o600)
 
@@ -1919,27 +1942,31 @@ def test_cli_env_bootstrap_reports_reploy_display_path_for_current_env_file(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    config_dir = tmp_path / "conf"
+    config_dir.mkdir()
     monkeypatch.delenv("SMTP_PRIMARY_ACCOUNT_PASSWORD", raising=False)
-    monkeypatch.setenv("REPLOY_CONFIG_CONTAINER_DIR", str(tmp_path))
-    monkeypatch.setenv("REPLOY_CONFIG_DISPLAY_DIR", "conf")
-    (tmp_path / "arbiter-server.yaml").write_text(
+    monkeypatch.setenv("REPLOY_CONFIG_CONTAINER_DIR", str(config_dir))
+    monkeypatch.setenv("REPLOY_CONFIG_DISPLAY_DIR", "deploy/conf")
+    (config_dir / "arbiter-server.yaml").write_text(
         "arbiter:\n"
-        "  env_file: .env\n"
+        "  env_file: ../.arbiter.env\n"
         "  account:\n"
         "    smtp:\n"
         "      primary:\n"
         "        password: ${oc.env:SMTP_PRIMARY_ACCOUNT_PASSWORD}\n",
         encoding="utf-8",
     )
-    env_file = tmp_path / ".env"
+    env_file = tmp_path / ".arbiter.env"
     env_file.write_text(
         "# arbiter-smtp\n" "SMTP_PRIMARY_ACCOUNT_PASSWORD=\n",
         encoding="utf-8",
     )
 
-    assert main(["--config-dir", str(tmp_path), "env", "bootstrap"]) == 0
+    assert main(["--config-dir", str(config_dir), "env", "bootstrap"]) == 0
 
-    assert capsys.readouterr().out == "env file already up to date: conf/.env\n"
+    assert capsys.readouterr().out == (
+        "env file already up to date: deploy/.arbiter.env\n"
+    )
 
 
 def test_cli_config_show_reports_reploy_display_path_for_unreadable_main_config(
@@ -1947,9 +1974,11 @@ def test_cli_config_show_reports_reploy_display_path_for_unreadable_main_config(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config_file = tmp_path.resolve() / "arbiter-server.yaml"
-    monkeypatch.setenv("REPLOY_CONFIG_CONTAINER_DIR", str(tmp_path.resolve()))
-    monkeypatch.setenv("REPLOY_CONFIG_DISPLAY_DIR", "conf")
+    config_dir = tmp_path.resolve() / "conf"
+    config_dir.mkdir()
+    config_file = config_dir / "arbiter-server.yaml"
+    monkeypatch.setenv("REPLOY_CONFIG_CONTAINER_DIR", str(config_dir))
+    monkeypatch.setenv("REPLOY_CONFIG_DISPLAY_DIR", "deploy/conf")
     real_exists = Path.exists
 
     def exists(path: Path) -> bool:
@@ -1959,11 +1988,11 @@ def test_cli_config_show_reports_reploy_display_path_for_unreadable_main_config(
 
     monkeypatch.setattr(Path, "exists", exists)
 
-    assert main(["--config-dir", str(tmp_path), "config", "show"]) == 1
+    assert main(["--config-dir", str(config_dir), "config", "show"]) == 1
 
     assert capsys.readouterr().err == (
         "Arbiter config error: cannot read config file: "
-        "conf/arbiter-server.yaml: permission denied\n"
+        "deploy/conf/arbiter-server.yaml: permission denied\n"
     )
 
 
@@ -1972,7 +2001,7 @@ def test_cli_config_activate_reports_reploy_display_path_for_unreadable_plugins_
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config_dir = tmp_path.resolve()
+    config_dir = tmp_path.resolve() / "conf"
     plugins_config_file = config_dir / "plugins.yaml"
     account_file = config_dir / "arbiter" / "account" / "smtp" / "bot.yaml"
     policy_file = config_dir / "arbiter" / "policy" / "smtp" / "bot_policy.yaml"
@@ -1982,7 +2011,7 @@ def test_cli_config_activate_reports_reploy_display_path_for_unreadable_plugins_
     account_file.write_text("policy: bot_policy\n", encoding="utf-8")
     policy_file.write_text("allow: true\n", encoding="utf-8")
     monkeypatch.setenv("REPLOY_CONFIG_CONTAINER_DIR", str(config_dir))
-    monkeypatch.setenv("REPLOY_CONFIG_DISPLAY_DIR", "conf")
+    monkeypatch.setenv("REPLOY_CONFIG_DISPLAY_DIR", "deploy/conf")
     real_exists = Path.exists
 
     def exists(path: Path) -> bool:
@@ -2010,7 +2039,7 @@ def test_cli_config_activate_reports_reploy_display_path_for_unreadable_plugins_
 
     assert capsys.readouterr().err == (
         "Arbiter config error: cannot read config file: "
-        "conf/plugins.yaml: permission denied\n"
+        "deploy/conf/plugins.yaml: permission denied\n"
     )
 
 
@@ -2019,11 +2048,13 @@ def test_cli_env_bootstrap_reports_reploy_display_path_for_unreadable_env_file(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config_file = tmp_path / "arbiter-server.yaml"
-    env_file = tmp_path / ".env"
+    config_dir = tmp_path / "conf"
+    config_dir.mkdir()
+    config_file = config_dir / "arbiter-server.yaml"
+    env_file = tmp_path / ".arbiter.env"
     config_file.write_text(
         "arbiter:\n"
-        "  env_file: .env\n"
+        "  env_file: ../.arbiter.env\n"
         "  account:\n"
         "    smtp:\n"
         "      primary:\n"
@@ -2031,8 +2062,8 @@ def test_cli_env_bootstrap_reports_reploy_display_path_for_unreadable_env_file(
         encoding="utf-8",
     )
     env_file.write_text("", encoding="utf-8")
-    monkeypatch.setenv("REPLOY_CONFIG_CONTAINER_DIR", str(tmp_path.resolve()))
-    monkeypatch.setenv("REPLOY_CONFIG_DISPLAY_DIR", "conf")
+    monkeypatch.setenv("REPLOY_CONFIG_CONTAINER_DIR", str(config_dir.resolve()))
+    monkeypatch.setenv("REPLOY_CONFIG_DISPLAY_DIR", "deploy/conf")
     real_exists = Path.exists
 
     def exists(path: Path) -> bool:
@@ -2042,10 +2073,11 @@ def test_cli_env_bootstrap_reports_reploy_display_path_for_unreadable_env_file(
 
     monkeypatch.setattr(Path, "exists", exists)
 
-    assert main(["--config-dir", str(tmp_path), "env", "bootstrap"]) == 1
+    assert main(["--config-dir", str(config_dir), "env", "bootstrap"]) == 1
 
     assert capsys.readouterr().err == (
-        "Arbiter env error: cannot read env file: conf/.env: permission denied\n"
+        "Arbiter env error: cannot read env file: "
+        "deploy/.arbiter.env: permission denied\n"
     )
 
 
@@ -2069,21 +2101,21 @@ def test_cli_env_bootstrap_configures_default_env_file(
 
     assert (tmp_path / "arbiter-server.yaml").read_text(encoding="utf-8") == (
         "arbiter:\n"
-        "  env_file: .env\n"
+        "  env_file: ../.arbiter.env\n"
         "  account:\n"
         "    smtp:\n"
         "      primary:\n"
         "        username: ${oc.env:SMTP_PRIMARY_ACCOUNT_USERNAME}\n"
         "        password: ${oc.env:SMTP_PRIMARY_ACCOUNT_PASSWORD}\n"
     )
-    assert (tmp_path / ".env").read_text(encoding="utf-8") == (
+    assert (tmp_path.parent / ".arbiter.env").read_text(encoding="utf-8") == (
         "# arbiter-smtp\n"
         "SMTP_PRIMARY_ACCOUNT_USERNAME=\n"
         "SMTP_PRIMARY_ACCOUNT_PASSWORD=\n"
     )
     _assert_posix_mode(tmp_path / "arbiter-server.yaml", 0o640)
-    _assert_posix_mode(tmp_path / ".env", 0o600)
-    assert capsys.readouterr().out == f"wrote {tmp_path / '.env'}\n"
+    _assert_posix_mode(tmp_path.parent / ".arbiter.env", 0o600)
+    assert capsys.readouterr().out == f"wrote {tmp_path.parent / '.arbiter.env'}\n"
 
 
 def test_cli_env_bootstrap_reports_reploy_display_path_for_written_env_file(
@@ -2091,10 +2123,12 @@ def test_cli_env_bootstrap_reports_reploy_display_path_for_written_env_file(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    config_dir = tmp_path / "conf"
+    config_dir.mkdir()
     monkeypatch.delenv("SMTP_PRIMARY_ACCOUNT_PASSWORD", raising=False)
-    monkeypatch.setenv("REPLOY_CONFIG_CONTAINER_DIR", str(tmp_path))
-    monkeypatch.setenv("REPLOY_CONFIG_DISPLAY_DIR", "conf")
-    (tmp_path / "arbiter-server.yaml").write_text(
+    monkeypatch.setenv("REPLOY_CONFIG_CONTAINER_DIR", str(config_dir))
+    monkeypatch.setenv("REPLOY_CONFIG_DISPLAY_DIR", "deploy/conf")
+    (config_dir / "arbiter-server.yaml").write_text(
         "arbiter:\n"
         "  account:\n"
         "    smtp:\n"
@@ -2103,9 +2137,9 @@ def test_cli_env_bootstrap_reports_reploy_display_path_for_written_env_file(
         encoding="utf-8",
     )
 
-    assert main(["--config-dir", str(tmp_path), "env", "bootstrap"]) == 0
+    assert main(["--config-dir", str(config_dir), "env", "bootstrap"]) == 0
 
-    assert capsys.readouterr().out == "wrote conf/.env\n"
+    assert capsys.readouterr().out == "wrote deploy/.arbiter.env\n"
 
 
 def test_cli_lists_plugins_as_json(
@@ -2809,6 +2843,7 @@ def test_cli_bootstrap_server_writes_main_config(
         "    tls:\n"
         "      source: SELF_SIGNED\n"
         "  deployment_scope: unknown\n"
+        "  env_file: ../.arbiter.env\n"
         "  discovery:\n"
         "    max_account_preview_limit: 25\n"
         "    max_operation_preview_limit: 25\n"
@@ -2826,6 +2861,7 @@ def test_cli_bootstrap_server_writes_main_config(
         "arbiter_server.main.discover_service_plugins",
         lambda: _test_service_plugins(),
     )
+    (tmp_path / ".arbiter.env").write_text("", encoding="utf-8")
 
     assert main(["--config-dir", str(config_dir), "config", "check"]) == 1
     captured = capsys.readouterr()
@@ -3212,7 +3248,7 @@ def test_cli_env_bootstrap_includes_bootstrapped_account_hosts(
 
     assert main(["--config-dir", str(config_dir), "env", "bootstrap"]) == 0
 
-    env_text = (config_dir / ".env").read_text(encoding="utf-8")
+    env_text = (config_dir.parent / ".arbiter.env").read_text(encoding="utf-8")
     assert "IMAP_BOT_ACCOUNT_HOST=\n" in env_text
     assert "IMAP_BOT_ACCOUNT_USERNAME=\n" in env_text
     assert "IMAP_BOT_ACCOUNT_PASSWORD=\n" in env_text
@@ -3511,6 +3547,7 @@ def test_cli_config_activate_account_activates_matching_policy(
     assert "    - smtp/personal_account\n" in config_yaml
     assert "  - arbiter/policy:\n" in config_yaml
     assert "    - smtp/personal_account_policy\n" in config_yaml
+    (tmp_path / ".arbiter.env").write_text("", encoding="utf-8")
     cfg = compose_config(config_dir=config_dir, config_name="arbiter-server")
     assert cfg.arbiter.account.smtp.personal_account.policy == "personal_account_policy"
     assert (
@@ -3854,6 +3891,7 @@ def test_cli_config_activate_account_can_alias_policy_file_name(
     assert "    - smtp/bot\n" in config_yaml
     assert "  - arbiter/policy:\n" in config_yaml
     assert "    - smtp/bot\n" in config_yaml
+    (tmp_path / ".arbiter.env").write_text("", encoding="utf-8")
     cfg = compose_config(config_dir=config_dir, config_name="arbiter-server")
     assert cfg.arbiter.account.smtp.bot.policy == "bot_policy"
     assert cfg.arbiter.policy.smtp.bot_policy.limits.max_messages_per_minute is None

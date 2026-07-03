@@ -172,7 +172,7 @@ def test_apply_mail_lab_config_updates_staged_account_files(
     smtp_text = smtp_account.read_text(encoding="utf-8")
     imap_policy_text = imap_policy.read_text(encoding="utf-8")
     smtp_policy_text = smtp_policy.read_text(encoding="utf-8")
-    env_text = (config_dir / ".env").read_text(encoding="utf-8")
+    env_text = (config_dir.parent / ".arbiter.env").read_text(encoding="utf-8")
     assert "# @package arbiter.account.imap.bot\n" in imap_text
     assert "host: host.docker.internal\n" in imap_text
     assert "port: 2143\n" in imap_text
@@ -234,7 +234,7 @@ def test_apply_mail_lab_config_supports_mail_demo_account(
     )
 
     smtp_text = smtp_account.read_text(encoding="utf-8")
-    env_text = (config_dir / ".env").read_text(encoding="utf-8")
+    env_text = (config_dir.parent / ".arbiter.env").read_text(encoding="utf-8")
     assert "# @package arbiter.account.smtp.mail-demo\n" in smtp_text
     assert "username: ${oc.env:SMTP_MAIL_DEMO_ACCOUNT_USERNAME}\n" in smtp_text
     assert "password: ${oc.env:SMTP_MAIL_DEMO_ACCOUNT_PASSWORD}\n" in smtp_text
@@ -250,7 +250,7 @@ def test_apply_mail_lab_config_supports_mail_demo_account(
     )
 
     imap_text = imap_account.read_text(encoding="utf-8")
-    env_text = (config_dir / ".env").read_text(encoding="utf-8")
+    env_text = (config_dir.parent / ".arbiter.env").read_text(encoding="utf-8")
     assert "# @package arbiter.account.imap.mail-demo\n" in imap_text
     assert "username: ${oc.env:IMAP_MAIL_DEMO_ACCOUNT_USERNAME}\n" in imap_text
     assert "password: ${oc.env:IMAP_MAIL_DEMO_ACCOUNT_PASSWORD}\n" in imap_text

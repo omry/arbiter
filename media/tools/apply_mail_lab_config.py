@@ -88,9 +88,8 @@ def update_account_files(config_dir: Path, *, account: str, plugins: set[str]) -
                 "authenticate": True,
                 "username": f"${{oc.env:SMTP_{env_suffix}_USERNAME}}",
                 "password": f"${{oc.env:SMTP_{env_suffix}_PASSWORD}}",
-                "from_email": os.environ.get("BOT_FROM_EMAIL") or require_env(
-                    "BOT_EMAIL"
-                ),
+                "from_email": os.environ.get("BOT_FROM_EMAIL")
+                or require_env("BOT_EMAIL"),
                 "from_name": "Arbiter",
                 "tls": "none",
                 "verify_peer": False,
@@ -206,7 +205,7 @@ def update_env_file(config_dir: Path, *, account: str, plugins: set[str]) -> Non
     imap_password = f"IMAP_{env_suffix}_PASSWORD"
     smtp_username = f"SMTP_{env_suffix}_USERNAME"
     smtp_password = f"SMTP_{env_suffix}_PASSWORD"
-    env_file = config_dir / ".env"
+    env_file = config_dir.parent / ".arbiter.env"
     values = read_env_file(env_file)
     if "imap" in plugins:
         values.update(
@@ -256,7 +255,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--update-env",
         action="store_true",
-        help="Also write mail-lab credentials into the staged config .env file.",
+        help="Also write mail-lab credentials into the staged .arbiter.env file.",
     )
     return parser
 

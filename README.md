@@ -150,7 +150,7 @@ Point the root config at the env file:
 
 ```yaml
 arbiter:
-  env_file: local.env
+  env_file: ../.arbiter.env
 ```
 
 Existing process environment variables take precedence over values from the env
@@ -165,8 +165,8 @@ arbiter-server env check
 
 `env bootstrap` keeps existing assignments, adds missing config references, and
 groups entries under sorted `# arbiter-*` blocks plus `# miscellaneous`.
-If `arbiter.env_file` is not set yet, it adds `arbiter.env_file: .env` to the
-root config first.
+If `arbiter.env_file` is not set yet, it adds `arbiter.env_file:
+../.arbiter.env` to the root config first.
 
 Then run from this directory:
 

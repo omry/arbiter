@@ -125,7 +125,7 @@ def test_reploy_blueprints_forward_option_based_bootstrap() -> None:
         "        argv:\n"
         "          - arbiter-server\n"
         "          - --config-dir\n"
-        "          - /config\n"
+        "          - /config/conf\n"
         "          - --config-name\n"
         "          - ${ARBITER_CONFIG_NAME}\n"
         "          - bootstrap\n"
@@ -133,6 +133,15 @@ def test_reploy_blueprints_forward_option_based_bootstrap() -> None:
     assert expected in (SERVER_PACK_ROOT / "arbiter.blueprint.yaml").read_text(
         encoding="utf-8"
     )
+
+
+def test_reploy_blueprint_preserves_top_level_env_file() -> None:
+    blueprint = _load_server_blueprint()
+    install = blueprint["install"]
+    docker = blueprint["docker"]
+
+    assert docker["deployment_dirs"]["config"] == "conf"
+    assert ".arbiter.env" in install["upgrade"]["artifacts"]["config"]["paths"]
 
 
 def test_reploy_blueprints_expose_activate_alias() -> None:
@@ -198,7 +207,7 @@ def test_reploy_blueprint_declares_install_defaults() -> None:
         },
         "upgrade": {
             "artifacts": {
-                "config": {"default": "preserve", "paths": ["conf/"]},
+                "config": {"default": "preserve", "paths": ["conf/", ".arbiter.env"]},
                 "data": {"default": "preserve", "paths": ["data/"]},
             }
         },
