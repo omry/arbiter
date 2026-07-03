@@ -332,9 +332,8 @@ def source_timestamp_words(text: str) -> list[SourceTimestampWord]:
         if not normalized:
             continue
         stripped_start = match.start()
-        while (
-            stripped_start < match.end()
-            and not normalized_timestamp_word(text[stripped_start])
+        while stripped_start < match.end() and not normalized_timestamp_word(
+            text[stripped_start]
         ):
             stripped_start += 1
         words.append(

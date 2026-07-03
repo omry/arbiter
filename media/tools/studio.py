@@ -1176,8 +1176,7 @@ def render_html_embed(spec: dict[str, Any], surface: dict[str, Any]) -> str:
     if "introSegment" in params:
         attributes["intro-segment"] = params["introSegment"]
     rendered_attributes = " ".join(
-        f'{key}="{html.escape(value, quote=True)}"'
-        for key, value in attributes.items()
+        f'{key}="{html.escape(value, quote=True)}"' for key, value in attributes.items()
     )
     return (
         '<script src="/cast-player-embed.js"></script>\n'

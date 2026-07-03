@@ -961,7 +961,9 @@ Promise.resolve().then(() => {
     assert result.returncode == 0, result.stderr
 
 
-def test_cast_player_audio_boundary_advances_to_next_segment_when_timer_fires_early() -> None:
+def test_cast_player_audio_boundary_advances_to_next_segment_when_timer_fires_early() -> (
+    None
+):
     result = run_cast_player_script(
         r"""
 vm.runInContext(`
