@@ -3050,6 +3050,7 @@ def _run_config_check(
             config_dir=config_dir,
             config_name=config_name,
             overrides=overrides,
+            enforce_runtime_permissions=True,
         )
         failed = False
         components: list[ConfigCheckComponentReport] = []

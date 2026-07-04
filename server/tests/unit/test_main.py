@@ -2371,6 +2371,30 @@ def test_cli_config_check_reports_hydra_composition_errors_compactly(
     assert "Traceback" not in captured.err
 
 
+def test_cli_config_check_rejects_world_readable_env_file(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    if not _SUPPORTS_POSIX_FILE_MODES:
+        pytest.skip("POSIX permission checks are not available")
+    config_file = tmp_path / "arbiter-server.yaml"
+    config_file.write_text(
+        "arbiter:\n" "  env_file: local.env\n" "  server:\n" "    transport: https\n",
+        encoding="utf-8",
+    )
+    config_file.chmod(0o640)
+    env_file = tmp_path / "local.env"
+    env_file.write_text("", encoding="utf-8")
+    env_file.chmod(0o644)
+
+    assert main(["--config-dir", str(tmp_path), "config", "check"]) == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "unsafe app env file permissions" in captured.err
+    assert str(env_file) in captured.err
+
+
 def test_cli_config_check_prints_warnings_without_failing(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
@@ -2881,7 +2905,9 @@ def test_cli_bootstrap_server_writes_main_config(
         "arbiter_server.main.discover_service_plugins",
         lambda: _test_service_plugins(),
     )
-    (tmp_path / ".arbiter.env").write_text("", encoding="utf-8")
+    env_file = tmp_path / ".arbiter.env"
+    env_file.write_text("", encoding="utf-8")
+    env_file.chmod(0o600)
 
     assert main(["--config-dir", str(config_dir), "config", "check"]) == 1
     captured = capsys.readouterr()
