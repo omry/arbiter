@@ -165,7 +165,7 @@ built wheelhouse, or another release-approved artifact path.
 
 Complete a focused security analysis before the initial release. Cover:
 
-- native HTTP boundary and caller trust assumptions
+- native HTTPS boundary and caller trust assumptions
 - local and Docker deployment modes
 - config and environment file handling
 - plugin discovery and loading
