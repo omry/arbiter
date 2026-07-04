@@ -132,7 +132,7 @@ def test_reploy_blueprints_forward_option_based_bootstrap() -> None:
             "argv_prefix": [
                 "arbiter-server",
                 "--config-dir",
-                "/config/conf",
+                "/conf",
                 "--config-name",
                 "${ARBITER_CONFIG_NAME}",
             ],
@@ -151,14 +151,13 @@ def test_reploy_blueprint_preserves_config_and_env_separately() -> None:
     docker = blueprint["docker"]
 
     assert docker["deployment_dirs"]["config"] == "conf"
-    assert install["upgrade"]["artifacts"]["config"] == {
-        "default": "preserve",
-        "paths": ["conf/"],
-    }
-    assert install["upgrade"]["artifacts"]["env"] == {
-        "default": "preserve",
-        "paths": [".arbiter.env"],
-    }
+    assert install["managed_paths"]["files"] == [
+        {"path": ".arbiter.env", "update": "preserve", "mount": "/{{ path }}"},
+    ]
+    assert install["managed_paths"]["dirs"] == [
+        {"path": "conf", "update": "preserve", "mount": "/{{ path }}"},
+        {"path": "data", "update": "preserve", "mount": "/{{ path }}"},
+    ]
 
 
 def test_reploy_blueprints_expose_activate_alias() -> None:
@@ -221,12 +220,14 @@ def test_reploy_blueprint_declares_install_defaults() -> None:
                 }
             },
         },
-        "upgrade": {
-            "artifacts": {
-                "config": {"default": "preserve", "paths": ["conf/"]},
-                "env": {"default": "preserve", "paths": [".arbiter.env"]},
-                "data": {"default": "preserve", "paths": ["data/"]},
-            }
+        "managed_paths": {
+            "files": [
+                {"path": ".arbiter.env", "update": "preserve", "mount": "/{{ path }}"}
+            ],
+            "dirs": [
+                {"path": "conf", "update": "preserve", "mount": "/{{ path }}"},
+                {"path": "data", "update": "preserve", "mount": "/{{ path }}"},
+            ],
         },
     }
 

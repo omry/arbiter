@@ -34,20 +34,18 @@ install:
         host_bind: 127.0.0.1
         host_port: 18075
         container_port: 8075
-  upgrade:
-    artifacts:
-      config:
-        default: preserve
-        paths:
-          - conf/
-      env:
-        default: preserve
-        paths:
-          - .arbiter.env
-      data:
-        default: preserve
-        paths:
-          - data/
+  managed_paths:
+    files:
+      - path: .arbiter.env
+        update: preserve
+        mount: /{{ path }}
+    dirs:
+      - path: conf
+        update: preserve
+        mount: /{{ path }}
+      - path: data
+        update: preserve
+        mount: /{{ path }}
 
 bundle:
   options:
@@ -118,7 +116,7 @@ docker:
       argv_prefix:
         - arbiter-server
         - --config-dir
-        - /config/conf
+        - /conf
         - --config-name
         - ${ARBITER_CONFIG_NAME}
   commands:
