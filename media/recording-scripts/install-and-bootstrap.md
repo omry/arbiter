@@ -19,6 +19,10 @@ recording:
     window_size: 100x28
     headless: true
     baseline_compressed: true
+  failure_summary:
+    terminal_animations:
+    - regex: '^(?P<prefix>\[STAGING : arbiter\] building installation bundle) [|/\\-]$'
+      replacement: "{prefix}..."
   requirements:
     commands:
     - docker

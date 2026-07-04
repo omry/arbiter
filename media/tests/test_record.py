@@ -537,6 +537,55 @@ def test_script_parameter_names_must_be_shell_safe() -> None:
         raise AssertionError("invalid parameter name should fail validation")
 
 
+def test_failure_summary_accepts_named_capture_replacement() -> None:
+    spec = minimal_spec(beats=[{"id": "one", "actions": [{"run": "true"}]}])
+    spec["failure_summary"] = {
+        "terminal_animations": [
+            {
+                "regex": r"^(?P<prefix>building) [|/\\-]$",
+                "replacement": "{prefix}...",
+            }
+        ]
+    }
+
+    script = record.render_session_script(spec)
+
+    assert "ARBITER_CINEMA_FAILURE_SUMMARY=" in script
+
+
+def test_failure_summary_rejects_unknown_replacement_capture() -> None:
+    spec = minimal_spec(beats=[{"id": "one", "actions": [{"run": "true"}]}])
+    spec["failure_summary"] = {
+        "terminal_animations": [
+            {
+                "regex": r"^(?P<prefix>building) [|/\\-]$",
+                "replacement": "{prefx}...",
+            }
+        ]
+    }
+
+    with pytest.raises(
+        record.RecordingError,
+        match="replacement references unknown regex capture 'prefx'",
+    ):
+        record.render_session_script(spec)
+
+
+def test_failure_summary_rejects_invalid_replacement_template() -> None:
+    spec = minimal_spec(beats=[{"id": "one", "actions": [{"run": "true"}]}])
+    spec["failure_summary"] = {
+        "terminal_animations": [
+            {
+                "regex": r"^(?P<prefix>building) [|/\\-]$",
+                "replacement": "{prefix...",
+            }
+        ]
+    }
+
+    with pytest.raises(record.RecordingError, match="replacement is invalid"):
+        record.render_session_script(spec)
+
+
 def test_visible_commands_cannot_consume_remaining_session_stdin(
     tmp_path: Path,
 ) -> None:
@@ -2494,6 +2543,111 @@ def test_record_reports_session_failure_sidecar(
         "media/tools/record.py recording=install-and-bootstrap "
         "action=output run_id=20260616-160412" in message
     )
+
+
+def test_recording_failure_formatter_collapses_spinner_frames(tmp_path: Path) -> None:
+    failure = tmp_path / "recording.failure.json"
+    spinner = "\n".join(
+        f"\033[38;5;117m[STAGING : arbiter]\033[0m building installation bundle {frame}"
+        for frame in ["|", "/", "-", "\\"] * 8
+    )
+    failure.write_text(
+        json.dumps(
+            {
+                "kind": "action",
+                "id": "prepare_bundle_1",
+                "name": "prepare_bundle_1",
+                "message": "exited 1, expected 0",
+                "stderr": (
+                    f"{spinner}\n"
+                    "[STAGING : arbiter] building installation bundle... failed\n"
+                    "[STAGING : arbiter] reploy bundle build error: "
+                    "managed file is missing: .arbiter.env\n"
+                ),
+                "failure_summary": {
+                    "terminal_animations": [
+                        {
+                            "regex": r"^(?P<prefix>\[STAGING : arbiter\] building installation bundle) [|/\\-]$",
+                            "replacement": "{prefix}...",
+                        }
+                    ]
+                },
+                "recording_id": "install-and-bootstrap",
+                "run_id": "20260704-203508",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    message = record.format_recording_failure(
+        returncode=1,
+        command=["asciinema", "record"],
+        cast_path=tmp_path / "recording.cast",
+        timeline_path=tmp_path / "recording.timeline.jsonl",
+        failure_path=failure,
+    )
+
+    assert message.count("building installation bundle |") == 0
+    assert message.count("building installation bundle /") == 0
+    assert message.count("building installation bundle -") == 0
+    assert message.count("building installation bundle \\") == 0
+    assert (
+        "\033[38;5;117m[STAGING : arbiter]\033[0m building installation bundle..."
+        in message
+    )
+    assert "[STAGING : arbiter] building installation bundle..." in message
+    assert "[STAGING : arbiter] building installation bundle... failed" in message
+    assert "managed file is missing: .arbiter.env" in message
+
+
+def test_recording_failure_formatter_keeps_spinner_frames_by_default(
+    tmp_path: Path,
+) -> None:
+    failure = tmp_path / "recording.failure.json"
+    failure.write_text(
+        json.dumps(
+            {
+                "kind": "action",
+                "id": "prepare_bundle_1",
+                "name": "prepare_bundle_1",
+                "message": "exited 1, expected 0",
+                "stderr": "building |\nbuilding /\nbuilding -\nbuilding \\\n",
+                "recording_id": "install-and-bootstrap",
+                "run_id": "20260704-203508",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    message = record.format_recording_failure(
+        returncode=1,
+        command=["asciinema", "record"],
+        cast_path=tmp_path / "recording.cast",
+        timeline_path=tmp_path / "recording.timeline.jsonl",
+        failure_path=failure,
+    )
+
+    assert "building |" in message
+    assert "building /" in message
+    assert "building -" in message
+    assert "building \\" in message
+
+
+def test_terminal_animation_rules_can_match_leading_frames() -> None:
+    text = "| building\n/ building\n- building\n\\ building\nreal error\n"
+    collapsed = record.collapse_terminal_animation_lines(
+        text,
+        [
+            {
+                "regex": r"^[|/\\-] (?P<message>building)$",
+                "replacement": "{message}...",
+            }
+        ],
+    )
+
+    assert collapsed == "building...\nreal error\n"
 
 
 def test_recording_failure_formatter_colorizes_status_lines(tmp_path: Path) -> None:

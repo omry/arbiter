@@ -10,6 +10,7 @@ import shlex
 import shutil
 import signal
 import stat
+import string
 import subprocess
 import sys
 import time
@@ -98,6 +99,8 @@ INTERRUPT_RETURNCODES = {
 }
 
 HIDDEN_INTERVAL_JITTER_TOLERANCE_SECONDS = 0.25
+ANSI_CONTROL_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+REPLACEMENT_FIELD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 def host_color_enabled(stream: Any = sys.stderr) -> bool:
@@ -436,6 +439,55 @@ def require_integer(mapping: dict[str, Any], key: str, default: int) -> int:
     if not isinstance(value, int):
         raise RecordingError(f"style.{key} must be an integer")
     return value
+
+
+def failure_summary_config(spec: dict[str, Any]) -> dict[str, Any]:
+    summary = as_mapping(spec.get("failure_summary"), field="failure_summary")
+    raw_rules = summary.get("terminal_animations", [])
+    rules = as_list(raw_rules, field="failure_summary.terminal_animations")
+    terminal_animations: list[dict[str, Any]] = []
+    for index, raw_rule in enumerate(rules, start=1):
+        field = f"failure_summary.terminal_animations.{index}"
+        if not isinstance(raw_rule, dict):
+            raise RecordingError(f"{field} must be a mapping")
+        regex = raw_rule.get("regex")
+        replacement = raw_rule.get("replacement")
+        if not isinstance(regex, str) or not regex:
+            raise RecordingError(f"{field}.regex must be a non-empty string")
+        try:
+            pattern = re.compile(regex)
+        except re.error as exc:
+            raise RecordingError(f"{field}.regex is invalid: {exc}") from exc
+        if not isinstance(replacement, str) or not replacement:
+            raise RecordingError(f"{field}.replacement must be a non-empty string")
+        try:
+            replacement_fields = list(string.Formatter().parse(replacement))
+        except ValueError as exc:
+            raise RecordingError(f"{field}.replacement is invalid: {exc}") from exc
+        for _, placeholder, format_spec, conversion in replacement_fields:
+            if placeholder is None:
+                continue
+            if format_spec or conversion:
+                raise RecordingError(
+                    f"{field}.replacement placeholders do not support format specs"
+                )
+            if not REPLACEMENT_FIELD_RE.fullmatch(placeholder):
+                raise RecordingError(
+                    f"{field}.replacement placeholder {placeholder!r} must be a "
+                    "named regex capture"
+                )
+            if placeholder not in pattern.groupindex:
+                raise RecordingError(
+                    f"{field}.replacement references unknown regex capture "
+                    f"{placeholder!r}"
+                )
+        terminal_animations.append(
+            {
+                "regex": regex,
+                "replacement": replacement,
+            }
+        )
+    return {"terminal_animations": terminal_animations}
 
 
 def validate_manifest(spec: dict[str, Any]) -> None:
@@ -969,6 +1021,133 @@ def unfinished_check_from_timeline(
     return list(starts.values())[-1]
 
 
+def raw_index_for_plain_start(raw_line: str, plain_start: int) -> int | None:
+    if plain_start == 0:
+        return 0
+    raw_index = 0
+    plain_index = 0
+    while raw_index < len(raw_line):
+        match = ANSI_CONTROL_RE.match(raw_line, raw_index)
+        if match is not None:
+            raw_index = match.end()
+            continue
+        if plain_index == plain_start:
+            return raw_index
+        raw_index += 1
+        plain_index += 1
+    return len(raw_line) if plain_index == plain_start else None
+
+
+def raw_index_for_plain_end(raw_line: str, plain_end: int) -> int | None:
+    raw_index = 0
+    plain_index = 0
+    while raw_index < len(raw_line) and plain_index < plain_end:
+        match = ANSI_CONTROL_RE.match(raw_line, raw_index)
+        if match is not None:
+            raw_index = match.end()
+            continue
+        raw_index += 1
+        plain_index += 1
+    if plain_index != plain_end:
+        return None
+    while raw_index < len(raw_line):
+        match = ANSI_CONTROL_RE.match(raw_line, raw_index)
+        if match is None:
+            break
+        raw_index = match.end()
+    return raw_index
+
+
+def raw_span_for_plain_span(
+    raw_line: str, plain_start: int, plain_end: int
+) -> str | None:
+    raw_start = raw_index_for_plain_start(raw_line, plain_start)
+    raw_end = raw_index_for_plain_end(raw_line, plain_end)
+    if raw_start is None or raw_end is None or raw_start > raw_end:
+        return None
+    return raw_line[raw_start:raw_end]
+
+
+def expand_terminal_animation_replacement(
+    raw_line: str,
+    plain_match: re.Match[str],
+    replacement: str,
+) -> str:
+    result = replacement
+    for name, value in plain_match.groupdict().items():
+        if value is None:
+            continue
+        plain_start, plain_end = plain_match.span(name)
+        raw_value = raw_span_for_plain_span(raw_line, plain_start, plain_end)
+        replacement_value = raw_value if raw_value is not None else value
+        result = result.replace(f"{{{name}}}", replacement_value)
+    return result
+
+
+def terminal_animation_rule_for_line(
+    line: str, rules: list[dict[str, Any]]
+) -> tuple[int, str] | None:
+    plain = ANSI_CONTROL_RE.sub("", line)
+    for index, rule in enumerate(rules):
+        regex = rule.get("regex")
+        replacement = rule.get("replacement")
+        if not isinstance(regex, str) or not isinstance(replacement, str):
+            continue
+        try:
+            pattern = re.compile(regex)
+        except re.error:
+            continue
+        match = pattern.fullmatch(plain)
+        if match is not None:
+            return index, expand_terminal_animation_replacement(
+                line,
+                match,
+                replacement,
+            )
+    return None
+
+
+def collapse_terminal_animation_lines(
+    text: str, rules: list[dict[str, Any]]
+) -> str:
+    lines = text.splitlines(keepends=True)
+    collapsed: list[str] = []
+    pending: list[str] = []
+    pending_rule: int | None = None
+    pending_replacement: str | None = None
+
+    def flush_pending() -> None:
+        nonlocal pending, pending_rule, pending_replacement
+        if not pending:
+            return
+        if len(pending) >= 3 and pending_replacement is not None:
+            newline = "\n" if pending[-1].endswith("\n") else ""
+            collapsed.append(f"{pending_replacement}{newline}")
+        else:
+            collapsed.extend(pending)
+        pending = []
+        pending_rule = None
+        pending_replacement = None
+
+    for line in lines:
+        stripped = line.rstrip("\n")
+        match = terminal_animation_rule_for_line(stripped, rules)
+        if match is None:
+            flush_pending()
+            collapsed.append(line)
+            continue
+
+        rule_index, replacement = match
+        if pending and rule_index != pending_rule:
+            flush_pending()
+        pending.append(line)
+        pending_rule = rule_index
+        pending_replacement = replacement
+
+    flush_pending()
+    return "".join(collapsed)
+
+
 def format_recording_failure(
     *,
     returncode: int,
@@ -1004,6 +1183,14 @@ def format_recording_failure(
             lines.append(color_text(f"reason: {message}", ANSI_RED_BOLD, enabled=color))
         stderr = report.get("stderr")
         if isinstance(stderr, str) and stderr:
+            failure_summary = report.get("failure_summary")
+            terminal_animations = (
+                failure_summary.get("terminal_animations")
+                if isinstance(failure_summary, dict)
+                else None
+            )
+            if isinstance(terminal_animations, list):
+                stderr = collapse_terminal_animation_lines(stderr, terminal_animations)
             label = "stderr"
             if report.get("stderr_truncated"):
                 label = "stderr (last 12000 chars)"
@@ -1335,6 +1522,7 @@ def render_session_script(spec: dict[str, Any]) -> str:
         style, "typing_newline_delay", 0.16
     )
     typing_seed = require_integer(style, "typing_seed", 17)
+    failure_summary = failure_summary_config(spec)
     capture = as_mapping(spec.get("capture"), field="capture")
     baseline_compressed = bool(capture.get("baseline_compressed", False))
     session_typing = typing and not baseline_compressed
@@ -1370,6 +1558,7 @@ def render_session_script(spec: dict[str, Any]) -> str:
             f"recording_typing_punctuation_delay={shell_quote(typing_punctuation_delay)}",
             f"recording_typing_newline_delay={shell_quote(typing_newline_delay)}",
             f"recording_typing_seed={shell_quote(typing_seed)}",
+            f"export ARBITER_CINEMA_FAILURE_SUMMARY={shell_quote(json.dumps(failure_summary, separators=(',', ':')))}",
             'if [[ "$recording_color" == 1 ]]; then',
             "  export CLICOLOR_FORCE=1",
             "  export FORCE_COLOR=1",
@@ -1577,6 +1766,7 @@ def render_session_script(spec: dict[str, Any]) -> str:
             '  local progress_path="${7:-}"',
             '  "$recording_python" - "$recording_failure_path" "$recording_run_failure_path" "$kind" "$step_id" "$step_name" "$message" "$output_path" "$stderr_path" "$progress_path" "$recording_run_dir" "$recording_postmortem_path" "$recording_id" "$recording_run_id" <<\'PY\'',
             "import json",
+            "import os",
             "import sys",
             "from pathlib import Path",
             "",
@@ -1617,6 +1807,7 @@ def render_session_script(spec: dict[str, Any]) -> str:
             "    'postmortem_path': postmortem_path,",
             "    'recording_id': recording_id,",
             "    'run_id': run_id,",
+            "    'failure_summary': json.loads(os.environ.get('ARBITER_CINEMA_FAILURE_SUMMARY', '{}')),",
             "}",
             "for report_path in [sidecar_path, run_failure_path]:",
             "    if not report_path:",
