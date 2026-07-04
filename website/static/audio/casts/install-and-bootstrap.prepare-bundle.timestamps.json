@@ -3,7 +3,12 @@
   "recording": "install-and-bootstrap",
   "segment": "prepare-bundle",
   "source_text": "Arbiter has a pluggable architecture. For this demo, we add the IMAP and SMTP plugins. First, list the available bundle options. Then add the mail plugins. Now build the bundle. Reploy builds a local bundle from the selected dependencies, and that bundle becomes part of the staged app. Installation will use the tested artifact instead of resolving packages again later. Reploy rebuilds the bundle automatically when dependencies change; running the build here pays that cost now instead of during the next app command.",
+  "timestamp_granularities": [
+    "word",
+    "segment"
+  ],
   "transcript": "Arbiter has a pluggable architecture. For this demo, we add the IMAP and SMTP plugins. First, list the available bundle options. Then, add the mail plugins. Now build the bundle. Reploy builds a local bundle from the selected dependencies, and that bundle becomes part of the staged app. Installation will use the tested artifact instead of resolving packages again later. Reploy rebuilds the bundle automatically when dependencies change. Running the build here pays that cost now instead of during the next app command.",
+  "transcription_model": "whisper-1",
   "words": [
     {
       "end": 0.4,

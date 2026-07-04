@@ -3,7 +3,12 @@
   "recording": "install-and-bootstrap",
   "segment": "install-reploy",
   "source_text": "First, install Reploy.",
+  "timestamp_granularities": [
+    "word",
+    "segment"
+  ],
   "transcript": "First, install Reaploy.",
+  "transcription_model": "whisper-1",
   "words": [
     {
       "end": 0.72,

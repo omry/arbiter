@@ -3,7 +3,12 @@
   "recording": "install-and-bootstrap",
   "segment": "overview",
   "source_text": "In this tutorial, we will install Arbiter using the standard workflow: stage it locally with Reploy, configure and test it, then install it as a permanent Docker service on the system.",
+  "timestamp_granularities": [
+    "word",
+    "segment"
+  ],
   "transcript": "In this tutorial, we will install Arbiter using the standard workflow. Stage it locally with Reploy, configure and test it, then install it as a permanent Docker service on the system.",
+  "transcription_model": "whisper-1",
   "words": [
     {
       "end": 0.2,

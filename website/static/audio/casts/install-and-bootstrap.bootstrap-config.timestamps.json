@@ -1,389 +1,1599 @@
 {
-  "duration": 33.5,
+  "duration": 117.86,
   "recording": "install-and-bootstrap",
   "segment": "bootstrap-config",
-  "source_text": "Arbiter uses Hydra as its configuration framework. Hydra composes Arbiter's runtime configuration from YAML files in the `conf` directory, then validates it against schemas provided by Arbiter and its plugins. Arbiter provides bootstrap commands that create initial configuration files you can edit to match your needs. First, create the server configuration. Then bootstrap the IMAP and SMTP account and policy templates. These files are starting points. Edit them to match your accounts, folders, and policy boundaries.",
-  "transcript": "Arbiter uses Hydra as its configuration framework. Hydra composes Arbiter's runtime configuration from YAML files in the conf directory, then validates it against schemas provided by Arbiter and its plugins. Arbiter provides bootstrap commands that create initial configuration files you can edit to match your needs. First, create the server configuration, then bootstrap the IMAP and SMTP account and policy templates. These files are starting points. Edit them to match your accounts, folders, and policy boundaries.",
+  "source_text": "In this section, we will configure Arbiter to use the local test SMTP and IMAP servers. We will create one account named mail-demo in each plugin, with broad access so the demo can focus on installation and smoke testing, not on every policy option exposed by the mail plugins. Start by creating the server config. Take a quick look at arbiter-server.yaml. This file is the Hydra entry point: it selects the server schema, plugin list, and the env file used at startup. Next, bootstrap the SMTP account and policy. SMTP's generated policy is broad by default: empty recipient allow and block lists mean Arbiter is not restricting recipients yet. The account file points at the SMTP host and credentials. The policy keeps rate limits visible, leaves recipient restrictions open, and warns instead of failing if the matching IMAP Sent copy cannot be written. For the recording, we edit these files to use the local test SMTP server. Activate the SMTP account in the composed config. Then bootstrap the Arbiter env file. Open .arbiter.env and enter the SMTP username and password from the test mail lab. To test mail sending end to end, add the matching IMAP account too. The IMAP bootstrap uses the default-open variant, which starts with broad folder access and lets you add deny rules later. Inspect the generated IMAP account. The IMAP policy allows read and search broadly, and this demo edits it to allow writes as well. Edit the IMAP files for the local test server. Activate the IMAP account. Re-run env bootstrap; it is incremental, so it adds the new IMAP variables without throwing away the SMTP values. Open .arbiter.env again and add the IMAP username and password. Now run a normal config check. It validates the composed YAML and schemas. Finally, run a live config check; this also logs into the test IMAP and SMTP servers.",
+  "timestamp_granularities": [
+    "word",
+    "segment"
+  ],
+  "transcript": "In this section, we will configure Arbiter to use the local test SMTP and IMAP servers. We will create one account named mail-demo in each plugin with broad access, so the demo can focus on installation and smoke testing, not on every policy option exposed by the mail plugins. Start by creating the server config. Take a quick look at arbiterserver.yaml. This file is the Hydra entry point. It selects the server schema, plugin list, and the end file used at startup. Next, bootstrap the SMTP account and policy. SMTP's generated policy is broad by default. Empty recipient allow and block lists mean Arbiter is not restricting recipients yet. The account file points at the SMTP host and credentials. The policy keeps rate limits visible, leaves recipient restrictions open, and warns instead of failing if the matching IMAP sent copy cannot be written. For the recording, we edit these files to use the local test SMTP server. Activate the SMTP account in the composed config. Then bootstrap the Arbiter end file. Open .arbiter.end and enter the SMTP username and password from the test mail lab. To test mail sending end-to-end, add the matching IMAP account too. The IMAP bootstrap uses the default open variant, which starts with broad folder access and lets you add deny rules later. Inspect the generated IMAP account. The IMAP policy allows read and search broadly, and this demo edits it to allow writes as well. Edit the IMAP files for the local test server. Activate the IMAP account. Rerun env bootstrap. It is incremental, so it adds the new IMAP variables without throwing away the SMTP values. Open .arbiter.env again and add the IMAP username and password. Now run a normal config check. It validates the composed YAML and schemas. Finally, run a live config check. This also logs into the test IMAP and SMTP servers.",
+  "transcription_model": "whisper-1",
   "words": [
     {
-      "end": 0.38,
+      "end": 0.14,
       "start": 0.0,
-      "word": "Arbiter"
+      "word": "In"
     },
     {
-      "end": 0.9,
+      "end": 0.38,
+      "start": 0.14,
+      "word": "this"
+    },
+    {
+      "end": 0.7,
       "start": 0.38,
-      "word": "uses"
+      "word": "section"
     },
     {
-      "end": 1.32,
-      "start": 0.9,
-      "word": "Hydra"
+      "end": 1.18,
+      "start": 0.86,
+      "word": "we"
     },
     {
-      "end": 1.66,
-      "start": 1.32,
-      "word": "as"
+      "end": 1.44,
+      "start": 1.18,
+      "word": "will"
     },
     {
-      "end": 1.9,
-      "start": 1.66,
-      "word": "its"
+      "end": 1.78,
+      "start": 1.44,
+      "word": "configure"
     },
     {
-      "end": 2.46,
-      "start": 1.9,
-      "word": "configuration"
-    },
-    {
-      "end": 2.98,
-      "start": 2.46,
-      "word": "framework"
-    },
-    {
-      "end": 3.96,
-      "start": 3.96,
-      "word": "Hydra"
-    },
-    {
-      "end": 4.52,
-      "start": 3.96,
-      "word": "composes"
-    },
-    {
-      "end": 5.14,
-      "start": 4.52,
-      "word": "Arbiter's"
-    },
-    {
-      "end": 5.5,
-      "start": 5.14,
-      "word": "runtime"
-    },
-    {
-      "end": 6.14,
-      "start": 5.5,
-      "word": "configuration"
-    },
-    {
-      "end": 6.76,
-      "start": 6.14,
-      "word": "from"
-    },
-    {
-      "end": 7.16,
-      "start": 6.76,
-      "word": "YAML"
-    },
-    {
-      "end": 7.48,
-      "start": 7.16,
-      "word": "files"
-    },
-    {
-      "end": 7.72,
-      "start": 7.48,
-      "word": "in"
-    },
-    {
-      "end": 7.86,
-      "start": 7.72,
-      "word": "the"
-    },
-    {
-      "end": 8.08,
-      "start": 7.86,
-      "word": "conf"
-    },
-    {
-      "end": 8.48,
-      "start": 8.08,
-      "word": "directory"
-    },
-    {
-      "end": 9.36,
-      "start": 8.88,
-      "word": "then"
-    },
-    {
-      "end": 9.82,
-      "start": 9.36,
-      "word": "validates"
-    },
-    {
-      "end": 9.98,
-      "start": 9.82,
-      "word": "it"
-    },
-    {
-      "end": 10.2,
-      "start": 9.98,
-      "word": "against"
-    },
-    {
-      "end": 10.6,
-      "start": 10.2,
-      "word": "schemas"
-    },
-    {
-      "end": 10.98,
-      "start": 10.6,
-      "word": "provided"
-    },
-    {
-      "end": 11.56,
-      "start": 10.98,
-      "word": "by"
-    },
-    {
-      "end": 11.56,
-      "start": 11.56,
+      "end": 2.1,
+      "start": 1.78,
       "word": "Arbiter"
     },
     {
-      "end": 12.0,
-      "start": 11.56,
-      "word": "and"
-    },
-    {
-      "end": 12.22,
-      "start": 12.0,
-      "word": "its"
-    },
-    {
-      "end": 12.6,
-      "start": 12.22,
-      "word": "plugins"
-    },
-    {
-      "end": 13.7,
-      "start": 13.7,
-      "word": "Arbiter"
-    },
-    {
-      "end": 14.18,
-      "start": 13.7,
-      "word": "provides"
-    },
-    {
-      "end": 14.66,
-      "start": 14.18,
-      "word": "bootstrap"
-    },
-    {
-      "end": 15.04,
-      "start": 14.66,
-      "word": "commands"
-    },
-    {
-      "end": 15.54,
-      "start": 15.04,
-      "word": "that"
-    },
-    {
-      "end": 15.82,
-      "start": 15.54,
-      "word": "create"
-    },
-    {
-      "end": 16.28,
-      "start": 15.82,
-      "word": "initial"
-    },
-    {
-      "end": 16.86,
-      "start": 16.28,
-      "word": "configuration"
-    },
-    {
-      "end": 17.2,
-      "start": 16.86,
-      "word": "files"
-    },
-    {
-      "end": 17.64,
-      "start": 17.2,
-      "word": "you"
-    },
-    {
-      "end": 17.9,
-      "start": 17.64,
-      "word": "can"
-    },
-    {
-      "end": 18.06,
-      "start": 17.9,
-      "word": "edit"
-    },
-    {
-      "end": 18.44,
-      "start": 18.06,
+      "end": 2.54,
+      "start": 2.1,
       "word": "to"
     },
     {
-      "end": 18.44,
-      "start": 18.44,
-      "word": "match"
+      "end": 2.76,
+      "start": 2.54,
+      "word": "use"
     },
     {
-      "end": 18.92,
-      "start": 18.44,
-      "word": "your"
-    },
-    {
-      "end": 18.92,
-      "start": 18.92,
-      "word": "needs"
-    },
-    {
-      "end": 20.48,
-      "start": 20.12,
-      "word": "First"
-    },
-    {
-      "end": 21.04,
-      "start": 21.04,
-      "word": "create"
-    },
-    {
-      "end": 21.52,
-      "start": 21.04,
+      "end": 2.96,
+      "start": 2.76,
       "word": "the"
     },
     {
-      "end": 21.52,
-      "start": 21.52,
-      "word": "server"
+      "end": 3.28,
+      "start": 2.96,
+      "word": "local"
     },
     {
-      "end": 22.16,
-      "start": 21.52,
-      "word": "configuration"
+      "end": 3.7,
+      "start": 3.28,
+      "word": "test"
     },
     {
-      "end": 23.34,
-      "start": 22.74,
-      "word": "then"
-    },
-    {
-      "end": 23.66,
-      "start": 23.34,
-      "word": "bootstrap"
-    },
-    {
-      "end": 24.14,
-      "start": 23.66,
-      "word": "the"
-    },
-    {
-      "end": 24.24,
-      "start": 24.14,
-      "word": "IMAP"
-    },
-    {
-      "end": 24.7,
-      "start": 24.24,
-      "word": "and"
-    },
-    {
-      "end": 25.36,
-      "start": 24.7,
+      "end": 4.3,
+      "start": 3.7,
       "word": "SMTP"
     },
     {
-      "end": 25.74,
-      "start": 25.36,
+      "end": 4.76,
+      "start": 4.3,
+      "word": "and"
+    },
+    {
+      "end": 5.04,
+      "start": 4.76,
+      "word": "IMAP"
+    },
+    {
+      "end": 5.36,
+      "start": 5.04,
+      "word": "servers"
+    },
+    {
+      "end": 6.1,
+      "start": 6.06,
+      "word": "We"
+    },
+    {
+      "end": 6.32,
+      "start": 6.1,
+      "word": "will"
+    },
+    {
+      "end": 6.5,
+      "start": 6.32,
+      "word": "create"
+    },
+    {
+      "end": 6.76,
+      "start": 6.5,
+      "word": "one"
+    },
+    {
+      "end": 7.04,
+      "start": 6.76,
       "word": "account"
     },
     {
-      "end": 26.06,
-      "start": 25.74,
+      "end": 7.36,
+      "start": 7.04,
+      "word": "named"
+    },
+    {
+      "end": 7.68,
+      "start": 7.36,
+      "word": "mail"
+    },
+    {
+      "end": 8.04,
+      "start": 7.68,
+      "word": "demo"
+    },
+    {
+      "end": 8.22,
+      "start": 8.04,
+      "word": "in"
+    },
+    {
+      "end": 8.48,
+      "start": 8.22,
+      "word": "each"
+    },
+    {
+      "end": 8.72,
+      "start": 8.48,
+      "word": "plugin"
+    },
+    {
+      "end": 9.4,
+      "start": 8.84,
+      "word": "with"
+    },
+    {
+      "end": 9.74,
+      "start": 9.4,
+      "word": "broad"
+    },
+    {
+      "end": 10.26,
+      "start": 9.74,
+      "word": "access"
+    },
+    {
+      "end": 10.7,
+      "start": 10.56,
+      "word": "so"
+    },
+    {
+      "end": 10.9,
+      "start": 10.7,
+      "word": "the"
+    },
+    {
+      "end": 11.0,
+      "start": 10.9,
+      "word": "demo"
+    },
+    {
+      "end": 11.28,
+      "start": 11.0,
+      "word": "can"
+    },
+    {
+      "end": 11.52,
+      "start": 11.28,
+      "word": "focus"
+    },
+    {
+      "end": 12.28,
+      "start": 11.52,
+      "word": "on"
+    },
+    {
+      "end": 12.28,
+      "start": 12.28,
+      "word": "installation"
+    },
+    {
+      "end": 12.56,
+      "start": 12.28,
       "word": "and"
     },
     {
-      "end": 26.4,
-      "start": 26.06,
+      "end": 12.8,
+      "start": 12.56,
+      "word": "smoke"
+    },
+    {
+      "end": 13.08,
+      "start": 12.8,
+      "word": "testing"
+    },
+    {
+      "end": 13.8,
+      "start": 13.78,
+      "word": "not"
+    },
+    {
+      "end": 14.06,
+      "start": 13.8,
+      "word": "on"
+    },
+    {
+      "end": 14.4,
+      "start": 14.06,
+      "word": "every"
+    },
+    {
+      "end": 14.82,
+      "start": 14.4,
       "word": "policy"
     },
     {
-      "end": 26.78,
-      "start": 26.4,
-      "word": "templates"
+      "end": 15.24,
+      "start": 14.82,
+      "word": "option"
     },
     {
-      "end": 27.92,
-      "start": 27.54,
-      "word": "These"
+      "end": 15.64,
+      "start": 15.24,
+      "word": "exposed"
     },
     {
-      "end": 28.18,
-      "start": 27.92,
-      "word": "files"
+      "end": 15.88,
+      "start": 15.64,
+      "word": "by"
     },
     {
-      "end": 28.5,
-      "start": 28.18,
-      "word": "are"
+      "end": 16.06,
+      "start": 15.88,
+      "word": "the"
     },
     {
-      "end": 28.74,
-      "start": 28.5,
-      "word": "starting"
+      "end": 16.2,
+      "start": 16.06,
+      "word": "mail"
     },
     {
-      "end": 29.08,
-      "start": 28.74,
+      "end": 16.56,
+      "start": 16.2,
+      "word": "plugins"
+    },
+    {
+      "end": 17.54,
+      "start": 17.4,
+      "word": "Start"
+    },
+    {
+      "end": 17.8,
+      "start": 17.54,
+      "word": "by"
+    },
+    {
+      "end": 18.04,
+      "start": 17.8,
+      "word": "creating"
+    },
+    {
+      "end": 18.32,
+      "start": 18.04,
+      "word": "the"
+    },
+    {
+      "end": 18.5,
+      "start": 18.32,
+      "word": "server"
+    },
+    {
+      "end": 18.88,
+      "start": 18.5,
+      "word": "config"
+    },
+    {
+      "end": 19.7,
+      "start": 19.62,
+      "word": "Take"
+    },
+    {
+      "end": 19.86,
+      "start": 19.7,
+      "word": "a"
+    },
+    {
+      "end": 20.12,
+      "start": 19.86,
+      "word": "quick"
+    },
+    {
+      "end": 20.3,
+      "start": 20.12,
+      "word": "look"
+    },
+    {
+      "end": 20.62,
+      "start": 20.3,
+      "word": "at"
+    },
+    {
+      "end": 21.16,
+      "start": 20.62,
+      "word": "arbiterserver"
+    },
+    {
+      "end": 21.74,
+      "start": 21.16,
+      "word": "yaml"
+    },
+    {
+      "end": 22.64,
+      "start": 22.3,
+      "word": "This"
+    },
+    {
+      "end": 22.9,
+      "start": 22.64,
+      "word": "file"
+    },
+    {
+      "end": 23.12,
+      "start": 22.9,
+      "word": "is"
+    },
+    {
+      "end": 23.32,
+      "start": 23.12,
+      "word": "the"
+    },
+    {
+      "end": 23.58,
+      "start": 23.32,
+      "word": "Hydra"
+    },
+    {
+      "end": 23.88,
+      "start": 23.58,
+      "word": "entry"
+    },
+    {
+      "end": 24.14,
+      "start": 23.88,
+      "word": "point"
+    },
+    {
+      "end": 24.92,
+      "start": 24.48,
+      "word": "It"
+    },
+    {
+      "end": 25.24,
+      "start": 24.92,
+      "word": "selects"
+    },
+    {
+      "end": 25.44,
+      "start": 25.24,
+      "word": "the"
+    },
+    {
+      "end": 25.68,
+      "start": 25.44,
+      "word": "server"
+    },
+    {
+      "end": 26.02,
+      "start": 25.68,
+      "word": "schema"
+    },
+    {
+      "end": 26.64,
+      "start": 26.56,
+      "word": "plugin"
+    },
+    {
+      "end": 27.0,
+      "start": 26.64,
+      "word": "list"
+    },
+    {
+      "end": 27.44,
+      "start": 27.24,
+      "word": "and"
+    },
+    {
+      "end": 27.68,
+      "start": 27.44,
+      "word": "the"
+    },
+    {
+      "end": 27.88,
+      "start": 27.68,
+      "word": "end"
+    },
+    {
+      "end": 28.1,
+      "start": 27.88,
+      "word": "file"
+    },
+    {
+      "end": 28.4,
+      "start": 28.1,
+      "word": "used"
+    },
+    {
+      "end": 28.7,
+      "start": 28.4,
+      "word": "at"
+    },
+    {
+      "end": 28.88,
+      "start": 28.7,
+      "word": "startup"
+    },
+    {
+      "end": 30.08,
+      "start": 29.72,
+      "word": "Next"
+    },
+    {
+      "end": 30.76,
+      "start": 30.48,
+      "word": "bootstrap"
+    },
+    {
+      "end": 31.14,
+      "start": 30.76,
+      "word": "the"
+    },
+    {
+      "end": 31.5,
+      "start": 31.14,
+      "word": "SMTP"
+    },
+    {
+      "end": 31.9,
+      "start": 31.5,
+      "word": "account"
+    },
+    {
+      "end": 32.22,
+      "start": 31.9,
+      "word": "and"
+    },
+    {
+      "end": 32.56,
+      "start": 32.22,
+      "word": "policy"
+    },
+    {
+      "end": 34.06,
+      "start": 33.44,
+      "word": "SMTP's"
+    },
+    {
+      "end": 34.4,
+      "start": 34.06,
+      "word": "generated"
+    },
+    {
+      "end": 34.82,
+      "start": 34.4,
+      "word": "policy"
+    },
+    {
+      "end": 35.1,
+      "start": 34.82,
+      "word": "is"
+    },
+    {
+      "end": 35.36,
+      "start": 35.1,
+      "word": "broad"
+    },
+    {
+      "end": 35.58,
+      "start": 35.36,
+      "word": "by"
+    },
+    {
+      "end": 35.88,
+      "start": 35.58,
+      "word": "default"
+    },
+    {
+      "end": 36.78,
+      "start": 36.78,
+      "word": "Empty"
+    },
+    {
+      "end": 37.26,
+      "start": 36.78,
+      "word": "recipient"
+    },
+    {
+      "end": 37.6,
+      "start": 37.26,
+      "word": "allow"
+    },
+    {
+      "end": 37.72,
+      "start": 37.6,
+      "word": "and"
+    },
+    {
+      "end": 37.96,
+      "start": 37.72,
+      "word": "block"
+    },
+    {
+      "end": 38.28,
+      "start": 37.96,
+      "word": "lists"
+    },
+    {
+      "end": 38.76,
+      "start": 38.28,
+      "word": "mean"
+    },
+    {
+      "end": 39.06,
+      "start": 38.76,
+      "word": "Arbiter"
+    },
+    {
+      "end": 39.32,
+      "start": 39.06,
+      "word": "is"
+    },
+    {
+      "end": 39.56,
+      "start": 39.32,
+      "word": "not"
+    },
+    {
+      "end": 39.92,
+      "start": 39.56,
+      "word": "restricting"
+    },
+    {
+      "end": 40.42,
+      "start": 39.92,
+      "word": "recipients"
+    },
+    {
+      "end": 40.74,
+      "start": 40.42,
+      "word": "yet"
+    },
+    {
+      "end": 41.66,
+      "start": 41.5,
+      "word": "The"
+    },
+    {
+      "end": 41.94,
+      "start": 41.66,
+      "word": "account"
+    },
+    {
+      "end": 42.28,
+      "start": 41.94,
+      "word": "file"
+    },
+    {
+      "end": 42.56,
+      "start": 42.28,
       "word": "points"
     },
     {
-      "end": 29.96,
-      "start": 29.7,
-      "word": "Edit"
+      "end": 42.76,
+      "start": 42.56,
+      "word": "at"
     },
     {
-      "end": 30.14,
-      "start": 29.96,
-      "word": "them"
+      "end": 42.96,
+      "start": 42.76,
+      "word": "the"
     },
     {
-      "end": 30.34,
-      "start": 30.14,
-      "word": "to"
+      "end": 43.34,
+      "start": 42.96,
+      "word": "SMTP"
     },
     {
-      "end": 30.52,
-      "start": 30.34,
-      "word": "match"
+      "end": 43.72,
+      "start": 43.34,
+      "word": "host"
     },
     {
-      "end": 30.74,
-      "start": 30.52,
-      "word": "your"
-    },
-    {
-      "end": 31.08,
-      "start": 30.74,
-      "word": "accounts"
-    },
-    {
-      "end": 31.8,
-      "start": 31.8,
-      "word": "folders"
-    },
-    {
-      "end": 32.38,
-      "start": 32.18,
+      "end": 44.5,
+      "start": 43.72,
       "word": "and"
     },
     {
-      "end": 32.68,
-      "start": 32.38,
+      "end": 44.5,
+      "start": 44.5,
+      "word": "credentials"
+    },
+    {
+      "end": 45.42,
+      "start": 45.26,
+      "word": "The"
+    },
+    {
+      "end": 45.74,
+      "start": 45.42,
       "word": "policy"
     },
     {
-      "end": 33.02,
-      "start": 32.68,
-      "word": "boundaries"
+      "end": 46.08,
+      "start": 45.74,
+      "word": "keeps"
+    },
+    {
+      "end": 46.36,
+      "start": 46.08,
+      "word": "rate"
+    },
+    {
+      "end": 46.54,
+      "start": 46.36,
+      "word": "limits"
+    },
+    {
+      "end": 46.9,
+      "start": 46.54,
+      "word": "visible"
+    },
+    {
+      "end": 47.68,
+      "start": 47.68,
+      "word": "leaves"
+    },
+    {
+      "end": 48.14,
+      "start": 47.68,
+      "word": "recipient"
+    },
+    {
+      "end": 48.56,
+      "start": 48.14,
+      "word": "restrictions"
+    },
+    {
+      "end": 48.98,
+      "start": 48.56,
+      "word": "open"
+    },
+    {
+      "end": 49.86,
+      "start": 49.4,
+      "word": "and"
+    },
+    {
+      "end": 50.1,
+      "start": 49.86,
+      "word": "warns"
+    },
+    {
+      "end": 50.36,
+      "start": 50.1,
+      "word": "instead"
+    },
+    {
+      "end": 50.84,
+      "start": 50.36,
+      "word": "of"
+    },
+    {
+      "end": 50.84,
+      "start": 50.84,
+      "word": "failing"
+    },
+    {
+      "end": 51.24,
+      "start": 50.84,
+      "word": "if"
+    },
+    {
+      "end": 51.8,
+      "start": 51.24,
+      "word": "the"
+    },
+    {
+      "end": 51.8,
+      "start": 51.8,
+      "word": "matching"
+    },
+    {
+      "end": 52.18,
+      "start": 51.8,
+      "word": "IMAP"
+    },
+    {
+      "end": 52.46,
+      "start": 52.18,
+      "word": "sent"
+    },
+    {
+      "end": 52.74,
+      "start": 52.46,
+      "word": "copy"
+    },
+    {
+      "end": 53.06,
+      "start": 52.74,
+      "word": "cannot"
+    },
+    {
+      "end": 53.46,
+      "start": 53.06,
+      "word": "be"
+    },
+    {
+      "end": 53.46,
+      "start": 53.46,
+      "word": "written"
+    },
+    {
+      "end": 54.4,
+      "start": 54.04,
+      "word": "For"
+    },
+    {
+      "end": 54.58,
+      "start": 54.4,
+      "word": "the"
+    },
+    {
+      "end": 54.88,
+      "start": 54.58,
+      "word": "recording"
+    },
+    {
+      "end": 55.48,
+      "start": 55.2,
+      "word": "we"
+    },
+    {
+      "end": 55.64,
+      "start": 55.48,
+      "word": "edit"
+    },
+    {
+      "end": 55.94,
+      "start": 55.64,
+      "word": "these"
+    },
+    {
+      "end": 56.14,
+      "start": 55.94,
+      "word": "files"
+    },
+    {
+      "end": 56.32,
+      "start": 56.14,
+      "word": "to"
+    },
+    {
+      "end": 56.56,
+      "start": 56.32,
+      "word": "use"
+    },
+    {
+      "end": 56.72,
+      "start": 56.56,
+      "word": "the"
+    },
+    {
+      "end": 57.1,
+      "start": 56.72,
+      "word": "local"
+    },
+    {
+      "end": 57.44,
+      "start": 57.1,
+      "word": "test"
+    },
+    {
+      "end": 57.94,
+      "start": 57.44,
+      "word": "SMTP"
+    },
+    {
+      "end": 58.36,
+      "start": 57.94,
+      "word": "server"
+    },
+    {
+      "end": 59.54,
+      "start": 59.42,
+      "word": "Activate"
+    },
+    {
+      "end": 59.78,
+      "start": 59.54,
+      "word": "the"
+    },
+    {
+      "end": 60.24,
+      "start": 59.78,
+      "word": "SMTP"
+    },
+    {
+      "end": 60.64,
+      "start": 60.24,
+      "word": "account"
+    },
+    {
+      "end": 60.86,
+      "start": 60.64,
+      "word": "in"
+    },
+    {
+      "end": 61.04,
+      "start": 60.86,
+      "word": "the"
+    },
+    {
+      "end": 61.36,
+      "start": 61.04,
+      "word": "composed"
+    },
+    {
+      "end": 61.8,
+      "start": 61.36,
+      "word": "config"
+    },
+    {
+      "end": 62.8,
+      "start": 62.64,
+      "word": "Then"
+    },
+    {
+      "end": 63.26,
+      "start": 62.8,
+      "word": "bootstrap"
+    },
+    {
+      "end": 63.58,
+      "start": 63.26,
+      "word": "the"
+    },
+    {
+      "end": 63.8,
+      "start": 63.58,
+      "word": "Arbiter"
+    },
+    {
+      "end": 64.04,
+      "start": 63.8,
+      "word": "end"
+    },
+    {
+      "end": 64.36,
+      "start": 64.04,
+      "word": "file"
+    },
+    {
+      "end": 65.28,
+      "start": 65.28,
+      "word": "Open"
+    },
+    {
+      "end": 65.98,
+      "start": 65.28,
+      "word": "arbiter"
+    },
+    {
+      "end": 66.42,
+      "start": 65.98,
+      "word": "end"
+    },
+    {
+      "end": 66.9,
+      "start": 66.42,
+      "word": "and"
+    },
+    {
+      "end": 67.16,
+      "start": 66.9,
+      "word": "enter"
+    },
+    {
+      "end": 67.44,
+      "start": 67.16,
+      "word": "the"
+    },
+    {
+      "end": 67.92,
+      "start": 67.44,
+      "word": "SMTP"
+    },
+    {
+      "end": 68.4,
+      "start": 67.92,
+      "word": "username"
+    },
+    {
+      "end": 68.68,
+      "start": 68.4,
+      "word": "and"
+    },
+    {
+      "end": 68.98,
+      "start": 68.68,
+      "word": "password"
+    },
+    {
+      "end": 69.26,
+      "start": 68.98,
+      "word": "from"
+    },
+    {
+      "end": 69.42,
+      "start": 69.26,
+      "word": "the"
+    },
+    {
+      "end": 69.7,
+      "start": 69.42,
+      "word": "test"
+    },
+    {
+      "end": 69.86,
+      "start": 69.7,
+      "word": "mail"
+    },
+    {
+      "end": 70.16,
+      "start": 69.86,
+      "word": "lab"
+    },
+    {
+      "end": 70.98,
+      "start": 70.82,
+      "word": "To"
+    },
+    {
+      "end": 71.24,
+      "start": 70.98,
+      "word": "test"
+    },
+    {
+      "end": 71.62,
+      "start": 71.24,
+      "word": "mail"
+    },
+    {
+      "end": 71.86,
+      "start": 71.62,
+      "word": "sending"
+    },
+    {
+      "end": 72.18,
+      "start": 71.86,
+      "word": "end"
+    },
+    {
+      "end": 72.24,
+      "start": 72.18,
+      "word": "to"
+    },
+    {
+      "end": 72.56,
+      "start": 72.24,
+      "word": "end"
+    },
+    {
+      "end": 73.02,
+      "start": 72.94,
+      "word": "add"
+    },
+    {
+      "end": 73.58,
+      "start": 73.02,
+      "word": "the"
+    },
+    {
+      "end": 73.58,
+      "start": 73.58,
+      "word": "matching"
+    },
+    {
+      "end": 73.9,
+      "start": 73.58,
+      "word": "IMAP"
+    },
+    {
+      "end": 74.2,
+      "start": 73.9,
+      "word": "account"
+    },
+    {
+      "end": 74.58,
+      "start": 74.2,
+      "word": "too"
+    },
+    {
+      "end": 75.36,
+      "start": 75.22,
+      "word": "The"
+    },
+    {
+      "end": 75.66,
+      "start": 75.36,
+      "word": "IMAP"
+    },
+    {
+      "end": 76.14,
+      "start": 75.66,
+      "word": "bootstrap"
+    },
+    {
+      "end": 76.44,
+      "start": 76.14,
+      "word": "uses"
+    },
+    {
+      "end": 76.66,
+      "start": 76.44,
+      "word": "the"
+    },
+    {
+      "end": 77.0,
+      "start": 76.66,
+      "word": "default"
+    },
+    {
+      "end": 77.36,
+      "start": 77.0,
+      "word": "open"
+    },
+    {
+      "end": 77.7,
+      "start": 77.36,
+      "word": "variant"
+    },
+    {
+      "end": 78.34,
+      "start": 78.16,
+      "word": "which"
+    },
+    {
+      "end": 78.58,
+      "start": 78.34,
+      "word": "starts"
+    },
+    {
+      "end": 78.82,
+      "start": 78.58,
+      "word": "with"
+    },
+    {
+      "end": 79.14,
+      "start": 78.82,
+      "word": "broad"
+    },
+    {
+      "end": 79.42,
+      "start": 79.14,
+      "word": "folder"
+    },
+    {
+      "end": 79.88,
+      "start": 79.42,
+      "word": "access"
+    },
+    {
+      "end": 80.38,
+      "start": 79.88,
+      "word": "and"
+    },
+    {
+      "end": 80.52,
+      "start": 80.38,
+      "word": "lets"
+    },
+    {
+      "end": 80.68,
+      "start": 80.52,
+      "word": "you"
+    },
+    {
+      "end": 80.9,
+      "start": 80.68,
+      "word": "add"
+    },
+    {
+      "end": 81.2,
+      "start": 80.9,
+      "word": "deny"
+    },
+    {
+      "end": 81.44,
+      "start": 81.2,
+      "word": "rules"
+    },
+    {
+      "end": 81.76,
+      "start": 81.44,
+      "word": "later"
+    },
+    {
+      "end": 82.8,
+      "start": 82.58,
+      "word": "Inspect"
+    },
+    {
+      "end": 83.1,
+      "start": 82.8,
+      "word": "the"
+    },
+    {
+      "end": 83.44,
+      "start": 83.1,
+      "word": "generated"
+    },
+    {
+      "end": 83.84,
+      "start": 83.44,
+      "word": "IMAP"
+    },
+    {
+      "end": 84.2,
+      "start": 83.84,
+      "word": "account"
+    },
+    {
+      "end": 84.94,
+      "start": 84.64,
+      "word": "The"
+    },
+    {
+      "end": 85.24,
+      "start": 84.94,
+      "word": "IMAP"
+    },
+    {
+      "end": 85.72,
+      "start": 85.24,
+      "word": "policy"
+    },
+    {
+      "end": 86.06,
+      "start": 85.72,
+      "word": "allows"
+    },
+    {
+      "end": 86.38,
+      "start": 86.06,
+      "word": "read"
+    },
+    {
+      "end": 86.6,
+      "start": 86.38,
+      "word": "and"
+    },
+    {
+      "end": 86.82,
+      "start": 86.6,
+      "word": "search"
+    },
+    {
+      "end": 87.14,
+      "start": 86.82,
+      "word": "broadly"
+    },
+    {
+      "end": 87.78,
+      "start": 87.7,
+      "word": "and"
+    },
+    {
+      "end": 88.02,
+      "start": 87.78,
+      "word": "this"
+    },
+    {
+      "end": 88.24,
+      "start": 88.02,
+      "word": "demo"
+    },
+    {
+      "end": 88.52,
+      "start": 88.24,
+      "word": "edits"
+    },
+    {
+      "end": 88.76,
+      "start": 88.52,
+      "word": "it"
+    },
+    {
+      "end": 88.96,
+      "start": 88.76,
+      "word": "to"
+    },
+    {
+      "end": 89.08,
+      "start": 88.96,
+      "word": "allow"
+    },
+    {
+      "end": 89.4,
+      "start": 89.08,
+      "word": "writes"
+    },
+    {
+      "end": 89.7,
+      "start": 89.4,
+      "word": "as"
+    },
+    {
+      "end": 89.88,
+      "start": 89.7,
+      "word": "well"
+    },
+    {
+      "end": 90.74,
+      "start": 90.74,
+      "word": "Edit"
+    },
+    {
+      "end": 90.98,
+      "start": 90.74,
+      "word": "the"
+    },
+    {
+      "end": 91.24,
+      "start": 90.98,
+      "word": "IMAP"
+    },
+    {
+      "end": 91.56,
+      "start": 91.24,
+      "word": "files"
+    },
+    {
+      "end": 91.8,
+      "start": 91.56,
+      "word": "for"
+    },
+    {
+      "end": 91.94,
+      "start": 91.8,
+      "word": "the"
+    },
+    {
+      "end": 92.22,
+      "start": 91.94,
+      "word": "local"
+    },
+    {
+      "end": 92.52,
+      "start": 92.22,
+      "word": "test"
+    },
+    {
+      "end": 92.76,
+      "start": 92.52,
+      "word": "server"
+    },
+    {
+      "end": 93.92,
+      "start": 93.8,
+      "word": "Activate"
+    },
+    {
+      "end": 94.1,
+      "start": 93.92,
+      "word": "the"
+    },
+    {
+      "end": 94.4,
+      "start": 94.1,
+      "word": "IMAP"
+    },
+    {
+      "end": 94.76,
+      "start": 94.4,
+      "word": "account"
+    },
+    {
+      "end": 95.86,
+      "start": 95.58,
+      "word": "Rerun"
+    },
+    {
+      "end": 96.1,
+      "start": 95.86,
+      "word": "env"
+    },
+    {
+      "end": 96.58,
+      "start": 96.1,
+      "word": "bootstrap"
+    },
+    {
+      "end": 97.08,
+      "start": 97.02,
+      "word": "It"
+    },
+    {
+      "end": 97.3,
+      "start": 97.08,
+      "word": "is"
+    },
+    {
+      "end": 97.66,
+      "start": 97.3,
+      "word": "incremental"
+    },
+    {
+      "end": 98.26,
+      "start": 98.16,
+      "word": "so"
+    },
+    {
+      "end": 98.64,
+      "start": 98.26,
+      "word": "it"
+    },
+    {
+      "end": 98.64,
+      "start": 98.64,
+      "word": "adds"
+    },
+    {
+      "end": 98.84,
+      "start": 98.64,
+      "word": "the"
+    },
+    {
+      "end": 99.08,
+      "start": 98.84,
+      "word": "new"
+    },
+    {
+      "end": 99.36,
+      "start": 99.08,
+      "word": "IMAP"
+    },
+    {
+      "end": 99.82,
+      "start": 99.36,
+      "word": "variables"
+    },
+    {
+      "end": 100.44,
+      "start": 99.84,
+      "word": "without"
+    },
+    {
+      "end": 100.72,
+      "start": 100.44,
+      "word": "throwing"
+    },
+    {
+      "end": 101.02,
+      "start": 100.72,
+      "word": "away"
+    },
+    {
+      "end": 101.3,
+      "start": 101.02,
+      "word": "the"
+    },
+    {
+      "end": 101.72,
+      "start": 101.3,
+      "word": "SMTP"
+    },
+    {
+      "end": 102.16,
+      "start": 101.72,
+      "word": "values"
+    },
+    {
+      "end": 103.2,
+      "start": 102.9,
+      "word": "Open"
+    },
+    {
+      "end": 103.78,
+      "start": 103.2,
+      "word": "arbiter"
+    },
+    {
+      "end": 104.26,
+      "start": 103.78,
+      "word": "env"
+    },
+    {
+      "end": 104.52,
+      "start": 104.26,
+      "word": "again"
+    },
+    {
+      "end": 105.0,
+      "start": 104.52,
+      "word": "and"
+    },
+    {
+      "end": 105.24,
+      "start": 105.0,
+      "word": "add"
+    },
+    {
+      "end": 105.44,
+      "start": 105.24,
+      "word": "the"
+    },
+    {
+      "end": 105.76,
+      "start": 105.44,
+      "word": "IMAP"
+    },
+    {
+      "end": 106.22,
+      "start": 105.76,
+      "word": "username"
+    },
+    {
+      "end": 106.5,
+      "start": 106.22,
+      "word": "and"
+    },
+    {
+      "end": 106.82,
+      "start": 106.5,
+      "word": "password"
+    },
+    {
+      "end": 107.82,
+      "start": 107.58,
+      "word": "Now"
+    },
+    {
+      "end": 107.98,
+      "start": 107.82,
+      "word": "run"
+    },
+    {
+      "end": 108.14,
+      "start": 107.98,
+      "word": "a"
+    },
+    {
+      "end": 108.42,
+      "start": 108.14,
+      "word": "normal"
+    },
+    {
+      "end": 108.76,
+      "start": 108.42,
+      "word": "config"
+    },
+    {
+      "end": 109.02,
+      "start": 108.76,
+      "word": "check"
+    },
+    {
+      "end": 109.66,
+      "start": 109.44,
+      "word": "It"
+    },
+    {
+      "end": 110.06,
+      "start": 109.66,
+      "word": "validates"
+    },
+    {
+      "end": 110.3,
+      "start": 110.06,
+      "word": "the"
+    },
+    {
+      "end": 110.66,
+      "start": 110.3,
+      "word": "composed"
+    },
+    {
+      "end": 110.96,
+      "start": 110.66,
+      "word": "YAML"
+    },
+    {
+      "end": 111.24,
+      "start": 110.96,
+      "word": "and"
+    },
+    {
+      "end": 111.96,
+      "start": 111.24,
+      "word": "schemas"
+    },
+    {
+      "end": 112.62,
+      "start": 111.96,
+      "word": "Finally"
+    },
+    {
+      "end": 113.18,
+      "start": 113.1,
+      "word": "run"
+    },
+    {
+      "end": 113.3,
+      "start": 113.18,
+      "word": "a"
+    },
+    {
+      "end": 113.6,
+      "start": 113.3,
+      "word": "live"
+    },
+    {
+      "end": 113.9,
+      "start": 113.6,
+      "word": "config"
+    },
+    {
+      "end": 114.2,
+      "start": 113.9,
+      "word": "check"
+    },
+    {
+      "end": 114.72,
+      "start": 114.66,
+      "word": "This"
+    },
+    {
+      "end": 115.1,
+      "start": 114.72,
+      "word": "also"
+    },
+    {
+      "end": 115.34,
+      "start": 115.1,
+      "word": "logs"
+    },
+    {
+      "end": 115.56,
+      "start": 115.34,
+      "word": "into"
+    },
+    {
+      "end": 115.7,
+      "start": 115.56,
+      "word": "the"
+    },
+    {
+      "end": 116.06,
+      "start": 115.7,
+      "word": "test"
+    },
+    {
+      "end": 116.38,
+      "start": 116.06,
+      "word": "IMAP"
+    },
+    {
+      "end": 116.6,
+      "start": 116.38,
+      "word": "and"
+    },
+    {
+      "end": 117.18,
+      "start": 116.6,
+      "word": "SMTP"
+    },
+    {
+      "end": 117.56,
+      "start": 117.18,
+      "word": "servers"
     }
   ]
 }

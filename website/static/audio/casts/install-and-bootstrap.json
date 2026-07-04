@@ -1,6 +1,6 @@
 {
   "audio": "website/static/audio/casts/install-and-bootstrap.mp3",
-  "duration": 88.392,
+  "duration": 172.752,
   "recording": "install-and-bootstrap",
   "segments": [
     {
@@ -115,41 +115,126 @@
         {
           "id": "server",
           "marker": "@server@",
-          "text_offset": 319
+          "text_offset": 277
         },
         {
-          "id": "account",
-          "marker": "@account@",
-          "text_offset": 359
+          "id": "server_show",
+          "marker": "@server_show@",
+          "text_offset": 314
         },
         {
-          "id": "inspect",
-          "marker": "@inspect@",
-          "text_offset": 422
+          "id": "smtp_account",
+          "marker": "@smtp_account@",
+          "text_offset": 469
+        },
+        {
+          "id": "smtp_show",
+          "marker": "@smtp_show@",
+          "text_offset": 645
+        },
+        {
+          "id": "smtp_policy_show",
+          "marker": "@smtp_policy_show@",
+          "text_offset": 703
+        },
+        {
+          "id": "smtp_edit",
+          "marker": "@smtp_edit@",
+          "text_offset": 856
+        },
+        {
+          "id": "smtp_activate",
+          "marker": "@smtp_activate@",
+          "text_offset": 930
+        },
+        {
+          "id": "smtp_env",
+          "marker": "@smtp_env@",
+          "text_offset": 980
+        },
+        {
+          "id": "smtp_secret",
+          "marker": "@smtp_secret@",
+          "text_offset": 1017
+        },
+        {
+          "id": "imap_account",
+          "marker": "@imap_account@",
+          "text_offset": 1100
+        },
+        {
+          "id": "imap_show",
+          "marker": "@imap_show@",
+          "text_offset": 1291
+        },
+        {
+          "id": "imap_policy_show",
+          "marker": "@imap_policy_show@",
+          "text_offset": 1327
+        },
+        {
+          "id": "imap_edit",
+          "marker": "@imap_edit@",
+          "text_offset": 1423
+        },
+        {
+          "id": "imap_activate",
+          "marker": "@imap_activate@",
+          "text_offset": 1470
+        },
+        {
+          "id": "imap_env",
+          "marker": "@imap_env@",
+          "text_offset": 1497
+        },
+        {
+          "id": "imap_secret",
+          "marker": "@imap_secret@",
+          "text_offset": 1611
+        },
+        {
+          "id": "check",
+          "marker": "@check@",
+          "text_offset": 1675
+        },
+        {
+          "id": "live_check",
+          "marker": "@live_check@",
+          "text_offset": 1750
         }
       ],
-      "audio": "media/cache/audio/install-and-bootstrap/bootstrap-config-0c0f12f688508b24.mp3",
-      "duration": 33.504,
+      "audio": "media/cache/audio/install-and-bootstrap/bootstrap-config-71044f671722fb4e.mp3",
+      "duration": 117.864,
       "guide": {
         "commands": [
           "reploy app bootstrap server",
-          "reploy app bootstrap --plugins imap,smtp --account bot",
-          "find conf -maxdepth 5 -type f | sort"
+          "reploy app bootstrap --plugin smtp --account mail-demo",
+          "reploy app config activate --plugin smtp --account mail-demo",
+          "reploy app env bootstrap",
+          "reploy app bootstrap --plugin imap --account mail-demo --variant default-open",
+          "reploy app config activate --plugin imap --account mail-demo",
+          "reploy app env bootstrap",
+          "reploy app config check",
+          "reploy app config check --live"
         ],
-        "success_hint": "You should see server, account, and policy YAML files under conf/."
+        "success_hint": "The normal and live config checks should both pass."
       },
       "heading": "Bootstrap Arbiter Config",
       "id": "bootstrap-config",
       "offset": 54.888,
       "pause_after": 1.0,
-      "text": "Arbiter uses Hydra as its configuration framework. Hydra composes Arbiter's runtime configuration from YAML files in the `conf` directory, then validates it against schemas provided by Arbiter and its plugins. Arbiter provides bootstrap commands that create initial configuration files you can edit to match your needs. First, create the server configuration. Then bootstrap the IMAP and SMTP account and policy templates. These files are starting points. Edit them to match your accounts, folders, and policy boundaries.",
+      "text": "In this section, we will configure Arbiter to use the local test SMTP and IMAP servers. We will create one account named mail-demo in each plugin, with broad access so the demo can focus on installation and smoke testing, not on every policy option exposed by the mail plugins. Start by creating the server config. Take a quick look at arbiter-server.yaml. This file is the Hydra entry point: it selects the server schema, plugin list, and the env file used at startup. Next, bootstrap the SMTP account and policy. SMTP's generated policy is broad by default: empty recipient allow and block lists mean Arbiter is not restricting recipients yet. The account file points at the SMTP host and credentials. The policy keeps rate limits visible, leaves recipient restrictions open, and warns instead of failing if the matching IMAP Sent copy cannot be written. For the recording, we edit these files to use the local test SMTP server. Activate the SMTP account in the composed config. Then bootstrap the Arbiter env file. Open .arbiter.env and enter the SMTP username and password from the test mail lab. To test mail sending end to end, add the matching IMAP account too. The IMAP bootstrap uses the default-open variant, which starts with broad folder access and lets you add deny rules later. Inspect the generated IMAP account. The IMAP policy allows read and search broadly, and this demo edits it to allow writes as well. Edit the IMAP files for the local test server. Activate the IMAP account. Re-run env bootstrap; it is incremental, so it adds the new IMAP variables without throwing away the SMTP values. Open .arbiter.env again and add the IMAP username and password. Now run a normal config check. It validates the composed YAML and schemas. Finally, run a live config check; this also logs into the test IMAP and SMTP servers.",
       "timestamps": "website/static/audio/casts/install-and-bootstrap.bootstrap-config.timestamps.json",
       "waits": [
         {
+          "audio_second": 19.62,
           "gap_seconds": 0.0,
           "marker": "@wait:bootstrap-server@",
+          "pause_seconds": 9.997,
+          "presentation_end": 76.283,
+          "presentation_start": 66.286,
           "target": "bootstrap-server",
-          "text_offset": 359
+          "text_offset": 314
         }
       ]
     }

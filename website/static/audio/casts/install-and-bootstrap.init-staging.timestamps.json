@@ -3,7 +3,12 @@
   "recording": "install-and-bootstrap",
   "segment": "init-staging",
   "source_text": "Use Reploy to create the staging directory. Then enter it; the rest of the setup runs from inside that staged deployment.",
+  "timestamp_granularities": [
+    "word",
+    "segment"
+  ],
   "transcript": "Use replay to create the staging directory, then enter it. The rest of the setup runs from inside that stage deployment.",
+  "transcription_model": "whisper-1",
   "words": [
     {
       "end": 0.48,
