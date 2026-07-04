@@ -2822,17 +2822,16 @@ def test_cli_bootstrap_server_uses_default_config_dir(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
 
     assert main(["bootstrap", "--server"]) == 0
 
-    config_dir = tmp_path / ".arbiter"
+    config_dir = tmp_path / "conf"
     assert (config_dir / "arbiter-server.yaml").exists()
     assert (config_dir / "plugins.yaml").exists()
     assert capsys.readouterr().out == (
-        f"wrote {config_dir / 'arbiter-server.yaml'}\n"
-        f"wrote {config_dir / 'plugins.yaml'}\n"
+        "wrote conf/arbiter-server.yaml\n"
+        "wrote conf/plugins.yaml\n"
     )
 
 
@@ -3826,6 +3825,7 @@ def test_cli_config_activate_help_shows_account_target_shape(
     assert (
         "usage: arbiter-server config activate " "[--plugin PLUGIN --account NAME]\n"
     ) in stdout
+    assert "main defaults list" not in stdout
     assert "Show account activation status when no target is provided." in stdout
     assert "arbiter-server config activate\n" in stdout
     assert (
@@ -3835,6 +3835,14 @@ def test_cli_config_activate_help_shows_account_target_shape(
         "arbiter-server config activate --plugins imap,smtp --account my_account\n"
         in stdout
     )
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(["config", "--help"])
+
+    assert exc_info.value.code == 0
+    stdout = capsys.readouterr().out
+    assert "activate an account in plugins.yaml" in stdout
+    assert "main defaults list" not in stdout
 
 
 def test_cli_config_activate_rejects_positional_target(

@@ -114,8 +114,8 @@ arbiter-server serve arbiter.server.bind.port=8075
 That command starts the server on port `8075` for that process only.
 
 Hydra also supports config group overrides. Arbiter uses config groups for
-server settings, accounts, and policies, but normal account activation should go
-through `arbiter-server config activate` so `plugins.yaml` remains consistent.
+accounts and policies, but normal account activation should go through
+`arbiter-server config activate` so `plugins.yaml` remains consistent.
 
 ## Server TLS
 

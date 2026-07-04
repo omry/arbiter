@@ -3471,7 +3471,7 @@ def _find_defaults_group(lines: Sequence[str], group: str) -> tuple[int, int] | 
 
 def _insert_defaults_group(lines: list[str], group: str, items: Sequence[str]) -> None:
     if "  - _self_\n" not in lines:
-        raise ValueError("main config defaults list must contain _self_")
+        raise ValueError("defaults list must contain _self_")
     self_index = lines.index("  - _self_\n")
     lines[self_index:self_index] = [
         f"  - {group}:\n",
@@ -4264,12 +4264,12 @@ def _build_parser() -> argparse.ArgumentParser:
         action_description = (
             "Show account activation status when no target is provided. "
             f"With a target, {activation_action} an account for one or more "
-            "comma-separated plugins."
+            "comma-separated plugins by updating plugins.yaml."
         )
         activation = config_subcommands.add_parser(
             activation_action,
             usage=f"%(prog)s [--plugin PLUGIN --account NAME]",
-            help=f"{activation_action} a config object in the main defaults list",
+            help=f"{activation_action} an account in plugins.yaml",
             description=action_description,
             epilog=(
                 "Examples:\n"
