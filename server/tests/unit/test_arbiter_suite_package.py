@@ -114,25 +114,35 @@ def test_server_wheel_contains_minimal_reploy_deployment_pack(tmp_path: Path) ->
             )
 
 
+def test_reploy_blueprint_requires_command_defaults_capable_reploy() -> None:
+    blueprint = _load_server_blueprint()
+
+    assert blueprint["blueprint"]["requires_reploy"] == ">=0.4.6.dev1"
+
+
 def test_reploy_blueprints_forward_option_based_bootstrap() -> None:
-    expected = (
-        "    bootstrap:\n"
-        "      trigger:\n"
-        "        - bootstrap\n"
-        "      app_command: true\n"
-        "      forward_args: true\n"
-        "      container:\n"
-        "        argv:\n"
-        "          - arbiter-server\n"
-        "          - --config-dir\n"
-        "          - /config/conf\n"
-        "          - --config-name\n"
-        "          - ${ARBITER_CONFIG_NAME}\n"
-        "          - bootstrap\n"
-    )
-    assert expected in (SERVER_PACK_ROOT / "arbiter.blueprint.yaml").read_text(
-        encoding="utf-8"
-    )
+    blueprint = _load_server_blueprint()
+    docker = blueprint["docker"]
+    assert isinstance(docker, dict)
+
+    assert docker["command_defaults"] == {
+        "app_command": True,
+        "deployed_command": True,
+        "container": {
+            "argv_prefix": [
+                "arbiter-server",
+                "--config-dir",
+                "/config/conf",
+                "--config-name",
+                "${ARBITER_CONFIG_NAME}",
+            ],
+        },
+    }
+
+    bootstrap = docker["commands"]["bootstrap"]
+    assert bootstrap["deployed_command"] is False
+    assert bootstrap["forward_args"] is True
+    assert bootstrap["container"]["argv_suffix"] == ["bootstrap"]
 
 
 def test_reploy_blueprint_preserves_top_level_env_file() -> None:
@@ -151,9 +161,8 @@ def test_reploy_blueprints_expose_activate_alias() -> None:
 
     activate = docker["commands"]["activate"]
     assert activate["trigger"] == ["activate"]
-    assert activate["app_command"] is True
     assert activate["forward_args"] is True
-    assert activate["container"]["argv"][-2:] == ["config", "activate"]
+    assert activate["container"]["argv_suffix"] == ["config", "activate"]
 
 
 def test_reploy_blueprint_declares_install_hooks_and_success_message() -> None:
@@ -231,12 +240,13 @@ def test_reploy_blueprint_exposes_deployed_operator_commands() -> None:
     assert isinstance(docker, dict)
 
     commands = docker["commands"]
-    deployed = {
-        name
-        for name, command in commands.items()
-        if command.get("deployed_command") is True
-    }
-    assert {
+    assert docker["command_defaults"]["app_command"] is True
+    assert docker["command_defaults"]["deployed_command"] is True
+    assert commands["bootstrap"]["deployed_command"] is False
+    assert commands["bootstrap_server"]["deployed_command"] is False
+
+    deployed = set(commands) - {"bootstrap", "bootstrap_server"}
+    assert deployed == {
         "activate",
         "config_activate",
         "config_check",
@@ -245,13 +255,16 @@ def test_reploy_blueprint_exposes_deployed_operator_commands() -> None:
         "env_bootstrap",
         "env_check",
         "plugins_list",
+        "serve",
         "version",
-    }.issubset(deployed)
+    }
 
-    for command_name in deployed:
-        assert commands[command_name]["app_command"] is True
-
-    assert commands["config_show"]["trigger"] == ["config", "show"]
-    assert commands["env_check"]["trigger"] == ["env", "check"]
-    assert commands["plugins_list"]["trigger"] == ["plugins", "list"]
-    assert commands["version"]["trigger"] == ["version"]
+    assert commands["activate"]["trigger"] == ["activate"]
+    assert "trigger" not in commands["config_show"]
+    assert "trigger" not in commands["env_check"]
+    assert "trigger" not in commands["plugins_list"]
+    assert "trigger" not in commands["version"]
+    assert commands["config_show"]["container"]["argv_suffix"] == ["config", "show"]
+    assert commands["env_check"]["container"]["argv_suffix"] == ["env", "check"]
+    assert commands["plugins_list"]["container"]["argv_suffix"] == ["plugins", "list"]
+    assert commands["version"]["container"]["argv_suffix"] == ["version"]

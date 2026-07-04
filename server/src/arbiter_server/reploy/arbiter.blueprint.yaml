@@ -1,7 +1,7 @@
 blueprint:
   schema: 1
   version: 0.1.0
-  requires_reploy: ">=0.1.0"
+  requires_reploy: ">=0.4.6.dev1"
 
 app:
   id: arbiter
@@ -108,186 +108,90 @@ docker:
     path: /_health_
     tls_verify: false
   default_command: serve
+  command_defaults:
+    app_command: true
+    deployed_command: true
+    container:
+      argv_prefix:
+        - arbiter-server
+        - --config-dir
+        - /config/conf
+        - --config-name
+        - ${ARBITER_CONFIG_NAME}
   commands:
     serve:
       container:
-        argv:
-          - arbiter-server
-          - --config-dir
-          - /config/conf
-          - --config-name
-          - ${ARBITER_CONFIG_NAME}
+        argv_suffix:
           - serve
     config_check:
-      trigger:
-        - config
-        - check
-      app_command: true
-      deployed_command: true
       forward_flags:
         - --live
       container:
-        argv:
-          - arbiter-server
-          - --config-dir
-          - /config/conf
-          - --config-name
-          - ${ARBITER_CONFIG_NAME}
+        argv_suffix:
           - config
           - check
     bootstrap_server:
-      trigger:
-        - bootstrap
-        - server
-      app_command: true
+      deployed_command: false
       forward_flags:
         - --force
       container:
-        argv:
-          - arbiter-server
-          - --config-dir
-          - /config/conf
-          - --config-name
-          - ${ARBITER_CONFIG_NAME}
+        argv_suffix:
           - bootstrap
           - --server
     bootstrap:
-      trigger:
-        - bootstrap
-      app_command: true
+      deployed_command: false
       forward_args: true
       container:
-        argv:
-          - arbiter-server
-          - --config-dir
-          - /config/conf
-          - --config-name
-          - ${ARBITER_CONFIG_NAME}
+        argv_suffix:
           - bootstrap
     config_activate:
-      trigger:
-        - config
-        - activate
-      app_command: true
-      deployed_command: true
       forward_args: true
       container:
-        argv:
-          - arbiter-server
-          - --config-dir
-          - /config/conf
-          - --config-name
-          - ${ARBITER_CONFIG_NAME}
+        argv_suffix:
           - config
           - activate
     config_deactivate:
-      trigger:
-        - config
-        - deactivate
-      app_command: true
-      deployed_command: true
       forward_args: true
       container:
-        argv:
-          - arbiter-server
-          - --config-dir
-          - /config/conf
-          - --config-name
-          - ${ARBITER_CONFIG_NAME}
+        argv_suffix:
           - config
           - deactivate
     activate:
       trigger:
         - activate
-      app_command: true
-      deployed_command: true
       forward_args: true
       container:
-        argv:
-          - arbiter-server
-          - --config-dir
-          - /config/conf
-          - --config-name
-          - ${ARBITER_CONFIG_NAME}
+        argv_suffix:
           - config
           - activate
     config_show:
-      trigger:
-        - config
-        - show
-      app_command: true
-      deployed_command: true
       forward_args: true
       container:
-        argv:
-          - arbiter-server
-          - --config-dir
-          - /config/conf
-          - --config-name
-          - ${ARBITER_CONFIG_NAME}
+        argv_suffix:
           - config
           - show
     env_bootstrap:
-      trigger:
-        - env
-        - bootstrap
-      app_command: true
-      deployed_command: true
       forward_args: true
       container:
-        argv:
-          - arbiter-server
-          - --config-dir
-          - /config/conf
-          - --config-name
-          - ${ARBITER_CONFIG_NAME}
+        argv_suffix:
           - env
           - bootstrap
     env_check:
-      trigger:
-        - env
-        - check
-      app_command: true
-      deployed_command: true
       forward_args: true
       container:
-        argv:
-          - arbiter-server
-          - --config-dir
-          - /config/conf
-          - --config-name
-          - ${ARBITER_CONFIG_NAME}
+        argv_suffix:
           - env
           - check
     version:
-      trigger:
-        - version
-      app_command: true
-      deployed_command: true
       forward_flags:
         - --json
       container:
-        argv:
-          - arbiter-server
-          - --config-dir
-          - /config/conf
-          - --config-name
-          - ${ARBITER_CONFIG_NAME}
+        argv_suffix:
           - version
     plugins_list:
-      trigger:
-        - plugins
-        - list
-      app_command: true
-      deployed_command: true
       forward_flags:
         - --json
       container:
-        argv:
-          - arbiter-server
-          - --config-dir
-          - /config/conf
-          - --config-name
-          - ${ARBITER_CONFIG_NAME}
+        argv_suffix:
           - plugins
           - list
