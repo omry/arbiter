@@ -145,13 +145,20 @@ def test_reploy_blueprints_forward_option_based_bootstrap() -> None:
     assert bootstrap["container"]["argv_suffix"] == ["bootstrap"]
 
 
-def test_reploy_blueprint_preserves_top_level_env_file() -> None:
+def test_reploy_blueprint_preserves_config_and_env_separately() -> None:
     blueprint = _load_server_blueprint()
     install = blueprint["install"]
     docker = blueprint["docker"]
 
     assert docker["deployment_dirs"]["config"] == "conf"
-    assert ".arbiter.env" in install["upgrade"]["artifacts"]["config"]["paths"]
+    assert install["upgrade"]["artifacts"]["config"] == {
+        "default": "preserve",
+        "paths": ["conf/"],
+    }
+    assert install["upgrade"]["artifacts"]["env"] == {
+        "default": "preserve",
+        "paths": [".arbiter.env"],
+    }
 
 
 def test_reploy_blueprints_expose_activate_alias() -> None:
@@ -216,7 +223,8 @@ def test_reploy_blueprint_declares_install_defaults() -> None:
         },
         "upgrade": {
             "artifacts": {
-                "config": {"default": "preserve", "paths": ["conf/", ".arbiter.env"]},
+                "config": {"default": "preserve", "paths": ["conf/"]},
+                "env": {"default": "preserve", "paths": [".arbiter.env"]},
                 "data": {"default": "preserve", "paths": ["data/"]},
             }
         },

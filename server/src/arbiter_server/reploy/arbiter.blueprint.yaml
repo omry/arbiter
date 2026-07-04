@@ -40,6 +40,9 @@ install:
         default: preserve
         paths:
           - conf/
+      env:
+        default: preserve
+        paths:
           - .arbiter.env
       data:
         default: preserve
