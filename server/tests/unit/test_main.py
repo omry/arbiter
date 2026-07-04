@@ -2311,8 +2311,7 @@ def test_cli_default_config_dir_keeps_env_in_deployment_root(
     assert (tmp_path / "conf" / "arbiter-server.yaml").exists()
     assert (tmp_path / "conf" / "plugins.yaml").exists()
     assert capsys.readouterr().out == (
-        "wrote conf/arbiter-server.yaml\n"
-        "wrote conf/plugins.yaml\n"
+        "wrote conf/arbiter-server.yaml\n" "wrote conf/plugins.yaml\n"
     )
 
     assert main(["env", "bootstrap"]) == 0
@@ -2854,8 +2853,7 @@ def test_cli_bootstrap_server_uses_default_config_dir(
     assert (config_dir / "arbiter-server.yaml").exists()
     assert (config_dir / "plugins.yaml").exists()
     assert capsys.readouterr().out == (
-        "wrote conf/arbiter-server.yaml\n"
-        "wrote conf/plugins.yaml\n"
+        "wrote conf/arbiter-server.yaml\n" "wrote conf/plugins.yaml\n"
     )
 
 

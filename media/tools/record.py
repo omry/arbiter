@@ -1107,9 +1107,7 @@ def terminal_animation_rule_for_line(
     return None
 
 
-def collapse_terminal_animation_lines(
-    text: str, rules: list[dict[str, Any]]
-) -> str:
+def collapse_terminal_animation_lines(text: str, rules: list[dict[str, Any]]) -> str:
     lines = text.splitlines(keepends=True)
     collapsed: list[str] = []
     pending: list[str] = []
