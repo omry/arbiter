@@ -60,6 +60,7 @@ def update_account_files(config_dir: Path, *, account: str, plugins: set[str]) -
                 "password": f"${{oc.env:IMAP_{env_suffix}_PASSWORD}}",
                 "tls": "none",
                 "verify_peer": False,
+                "timeout_seconds": 2,
                 "default_folder": "INBOX",
                 "folders": {
                     "INBOX": {
@@ -93,6 +94,7 @@ def update_account_files(config_dir: Path, *, account: str, plugins: set[str]) -
                 "from_name": "Arbiter",
                 "tls": "none",
                 "verify_peer": False,
+                "timeout_seconds": 2,
             }
         )
         write_yaml(smtp_account, smtp, package=f"arbiter.account.smtp.{account}")

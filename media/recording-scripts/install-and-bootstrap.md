@@ -269,35 +269,22 @@ beat:
   id: bootstrap-config
   heading: Bootstrap Arbiter Config
   narration: >-
-    In this section, we will configure Arbiter to use the local test SMTP and
-    IMAP servers. We will create one account named mail-demo in each plugin,
-    with broad access so the demo can focus on installation and smoke testing,
-    not on every policy option exposed by the mail plugins. @server@ Start by
-    creating the server config. @wait:bootstrap-server@ @server_show@ Take a
-    quick look at arbiter-server.yaml. This file is the Hydra entry point:
-    it selects the server schema, plugin list, and the env file used at
-    startup. @smtp_account@ Next, bootstrap the SMTP account and policy.
-    SMTP's generated policy is broad by default: empty recipient allow and
-    block lists mean Arbiter is not restricting recipients yet. @smtp_show@
-    The account file points at the SMTP host and credentials. @smtp_policy_show@
-    The policy keeps rate limits visible, leaves recipient restrictions open,
-    and warns instead of failing if the matching IMAP Sent copy cannot be
-    written. @smtp_edit@ For the recording, we edit these files to use the
-    local test SMTP server. @smtp_activate@ Activate the SMTP account in the
-    composed config. @smtp_env@ Then bootstrap the Arbiter env file. @smtp_secret@
-    Open .arbiter.env and enter the SMTP username and password from the test
-    mail lab. @imap_account@ To test mail sending end to end, add the matching
-    IMAP account too. The IMAP bootstrap uses the default-open variant, which
-    starts with broad folder access and lets you add deny rules later.
-    @imap_show@ Inspect the generated IMAP account. @imap_policy_show@ The IMAP
-    policy allows read and search broadly, and this demo edits it to allow
-    writes as well. @imap_edit@ Edit the IMAP files for the local test server.
-    @imap_activate@ Activate the IMAP account. @imap_env@ Re-run env bootstrap;
-    it is incremental, so it adds the new IMAP variables without throwing away
-    the SMTP values. @imap_secret@ Open .arbiter.env again and add the IMAP
-    username and password. @check@ Now run a normal config check. It validates
-    the composed YAML and schemas. @live_check@ Finally, run a live config
-    check; this also logs into the test IMAP and SMTP servers.
+    Arbiter uses Hydra to compose one validated runtime config from YAML files
+    in the conf directory. In this section, we will generate starter config,
+    edit it for the local mail lab, and verify that Arbiter can load it.
+    @server@ Start with the server config. @smtp_account@ Add the SMTP account
+    and policy. @smtp_edit@ The generated files are meant to be edited, so point
+    them at the local SMTP server. @smtp_activate@ Activate the account.
+    @show_config@ Now inspect the composed config, which is what Arbiter will
+    actually run with. @smtp_env@ Create the env file for secrets. @env_show@
+    It starts with empty variables. @smtp_secret@ Fill in the SMTP credentials
+    from the local mail lab. @imap_account@ Add the matching IMAP account.
+    @imap_edit@ Edit it for the same local mail lab. @imap_activate@ Activate
+    IMAP. @imap_env@ Bootstrap the env file again; this adds the new IMAP
+    variables without losing the SMTP values. @imap_secret@ Fill in the IMAP
+    credentials. @check@ The normal config check validates composition and
+    schemas. @live_check@ The live check goes further and logs into the test
+    IMAP and SMTP servers.
   marker: bootstrap-config
   caption: Bootstrap editable Arbiter config files.
   actions:
@@ -305,30 +292,24 @@ beat:
     - id: bootstrap-server
       run: reploy app bootstrap server
       after: "@server@"
-    - run: recording_show_yaml conf/arbiter-server.yaml 1 80
-      after: "@server_show@"
     - run: reploy app bootstrap --plugin smtp --account mail-demo
       after: "@smtp_account@"
-    - run: recording_show_yaml conf/arbiter/account/smtp/mail-demo.yaml 1 80
-      after: "@smtp_show@"
-    - run: recording_show_yaml conf/arbiter/policy/smtp/mail-demo_policy.yaml 1 80
-      after: "@smtp_policy_show@"
     - run: recording_apply_mail_lab_config --account mail-demo --plugins smtp
       display: "$EDITOR conf/arbiter/account/smtp/mail-demo.yaml conf/arbiter/policy/smtp/mail-demo_policy.yaml"
       after: "@smtp_edit@"
     - run: reploy app config activate --plugin smtp --account mail-demo
       after: "@smtp_activate@"
+    - run: reploy app config show
+      after: "@show_config@"
     - run: reploy app env bootstrap
       after: "@smtp_env@"
+    - run: sed -n '1,80p' .arbiter.env
+      after: "@env_show@"
     - run: recording_apply_mail_lab_config --account mail-demo --plugins smtp --update-env
       display: "$EDITOR .arbiter.env"
       after: "@smtp_secret@"
     - run: reploy app bootstrap --plugin imap --account mail-demo --variant default-open
       after: "@imap_account@"
-    - run: recording_show_yaml conf/arbiter/account/imap/mail-demo.yaml 1 90
-      after: "@imap_show@"
-    - run: recording_show_yaml conf/arbiter/policy/imap/mail-demo_policy.yaml 1 120
-      after: "@imap_policy_show@"
     - run: recording_apply_mail_lab_config --account mail-demo --plugins imap
       display: "$EDITOR conf/arbiter/account/imap/mail-demo.yaml conf/arbiter/policy/imap/mail-demo_policy.yaml"
       after: "@imap_edit@"
@@ -341,7 +322,8 @@ beat:
       after: "@imap_secret@"
     - run: reploy app config check
       after: "@check@"
-    - run: reploy app config check --live
+    - run: recording_live_config_check
+      display: arbiter-server --config-dir conf --config-name arbiter-server config check --live
       after: "@live_check@"
       retime: realtime
       post_command_pause: 0.0
@@ -359,12 +341,17 @@ beat:
     commands:
     - reploy app bootstrap server
     - reploy app bootstrap --plugin smtp --account mail-demo
+    - "$EDITOR conf/arbiter/account/smtp/mail-demo.yaml conf/arbiter/policy/smtp/mail-demo_policy.yaml"
     - reploy app config activate --plugin smtp --account mail-demo
+    - reploy app config show
     - reploy app env bootstrap
+    - "$EDITOR .arbiter.env"
     - reploy app bootstrap --plugin imap --account mail-demo --variant default-open
+    - "$EDITOR conf/arbiter/account/imap/mail-demo.yaml conf/arbiter/policy/imap/mail-demo_policy.yaml"
     - reploy app config activate --plugin imap --account mail-demo
     - reploy app env bootstrap
+    - "$EDITOR .arbiter.env"
     - reploy app config check
-    - reploy app config check --live
+    - arbiter-server --config-dir conf --config-name arbiter-server config check --live
     success_hint: The normal and live config checks should both pass.
 ```

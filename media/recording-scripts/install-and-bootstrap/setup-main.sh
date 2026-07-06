@@ -504,6 +504,13 @@ recording_apply_mail_lab_config() {
     --config-dir ./conf "$@"
 }
 
+recording_live_config_check() {
+  set -a
+  . ./.arbiter.env
+  set +a
+  arbiter-server --config-dir conf --config-name arbiter-server config check --live
+}
+
 recording_show_yaml() {
   local path="$1"
   local start="${2:-1}"
@@ -633,7 +640,7 @@ mail_lab_ready="$recording_tmp/mail-lab.ready"
 mail_lab_log="$recording_tmp/mail-lab.log"
 "$recording_python" "$recording_repo/media/recording-scripts/install-and-bootstrap/mail_lab.py" \
   --host 0.0.0.0 \
-  --container-host host.docker.internal \
+  --container-host 127.0.0.1 \
   --env-file "$mail_lab_env" \
   --ready-file "$mail_lab_ready" \
   --seed \
