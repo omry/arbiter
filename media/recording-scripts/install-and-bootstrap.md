@@ -101,13 +101,8 @@ recording:
       - $MAIL_LAB_ENV_FILE
     run_file: media/recording-scripts/install-and-bootstrap/setup-main.sh
   cleanup:
-  - name: Stop Docker staging deployment
-    run: |
-      if [[ -f ./arbiterctl && -x ./arbiterctl ]]; then
-        COMPOSE_PROGRESS=quiet ./arbiterctl down 2> >(recording_filter_docker_compose_progress >&2)
-      elif [[ -f reploy-staging/arbiterctl && -x reploy-staging/arbiterctl ]]; then
-        (cd reploy-staging && COMPOSE_PROGRESS=quiet ./arbiterctl down 2> >(recording_filter_docker_compose_progress >&2))
-      fi
+  - name: Stop Docker staging deployment and clean generated Reploy artifacts
+    run_file: media/recording-scripts/install-and-bootstrap/cleanup-main.sh
 ```
 
 

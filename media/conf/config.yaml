@@ -27,11 +27,17 @@ runs_since: null
 runs_limit: 10
 
 studio:
+  data_dir: media
   keep_output_dir: true
+
+publish:
+  on_build: true
+  build_surfaces:
+    - docusaurus
 
 hydra:
   output_subdir: null
   run:
-    dir: ${studio_run_dir:${action},${step},${dry_run},${recording},${now:%Y%m%d-%H%M%S}}
+    dir: ${studio_run_dir:${studio.data_dir},${action},${step},${dry_run},${recording},${now:%Y%m%d-%H%M%S}}
   job:
     chdir: false

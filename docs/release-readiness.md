@@ -148,8 +148,8 @@ points, config shape, version expectations, and security claims.
 For release media, run the media alignment gate for each published recording:
 
 ```bash
-media/tools/record.py recording=install-and-bootstrap action=check
-media/tools/align_cast.py recording=install-and-bootstrap action=align
+studio recording=install-and-bootstrap step=record_check
+studio recording=install-and-bootstrap step=align
 ```
 
 Any misalignment requires manual review. Decide whether to refresh the base

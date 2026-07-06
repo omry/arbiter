@@ -89,6 +89,19 @@ for (const recordingId of recordingIds) {
     continue;
   }
 
+  const dependencyPaths = new Set(
+    fingerprint.dependencies
+      .map((dependency) => dependency?.path)
+      .filter((path) => typeof path === "string"),
+  );
+  const recordingSource = relativePath(join(recordingDir, `${recordingId}.md`));
+  if (!dependencyPaths.has(recordingSource)) {
+    recordFailure(
+      recordingId,
+      `stale artifact: recording fingerprint does not include ${recordingSource}`,
+    );
+  }
+
   for (const dependency of fingerprint.dependencies) {
     if (
       !dependency ||
@@ -122,7 +135,7 @@ if (failed) {
     "Regenerate stale recordings before publishing the website, for example:",
   );
   console.error(
-    "  cd .. && media/tools/studio recording=install-and-bootstrap action=build",
+    "  cd .. && studio recording=install-and-bootstrap action=build",
   );
   console.error("");
   console.error(

@@ -499,7 +499,8 @@ recording_apply_mail_lab_config() {
   set -a
   . "$MAIL_LAB_ENV_FILE"
   set +a
-  "$recording_python" "$recording_repo/media/tools/apply_mail_lab_config.py" \
+  "$recording_python" \
+    "$recording_repo/media/recording-scripts/install-and-bootstrap/apply_mail_lab_config.py" \
     --config-dir ./conf "$@"
 }
 
@@ -630,7 +631,7 @@ recording_clean_or_assert_staging_networks_available
 mail_lab_env="$recording_tmp/mail-lab.env"
 mail_lab_ready="$recording_tmp/mail-lab.ready"
 mail_lab_log="$recording_tmp/mail-lab.log"
-"$recording_python" "$recording_repo/media/tools/mail_lab.py" \
+"$recording_python" "$recording_repo/media/recording-scripts/install-and-bootstrap/mail_lab.py" \
   --host 0.0.0.0 \
   --container-host host.docker.internal \
   --env-file "$mail_lab_env" \

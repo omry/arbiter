@@ -1,9 +1,10 @@
 # Arbiter Media Studio
 
-This directory is the source workspace for Arbiter documentation media. The
+This directory is the Arbiter project workspace for documentation media. The
 website is the cinema: it publishes finished casts, images, audio, transcripts,
-and embeds. This directory is the studio: it owns the scripts, plans, tooling,
-and repeatable production workflow that generate those finished assets.
+and embeds. OmegaFlow Studio provides the reusable production tooling; this
+directory owns Arbiter's scripts, plans, inputs, caches, and generated run
+outputs.
 
 ## Vision
 
@@ -106,13 +107,13 @@ The `studio` frontend composes a Hydra config from `media/conf/` and is the
 single entry point for normal recording work:
 
 ```bash
-media/tools/studio recording=install-and-bootstrap
-media/tools/studio recording=install-and-bootstrap action=check
-media/tools/studio recording=install-and-bootstrap action=build
-media/tools/studio recording=install-and-bootstrap action=build dry_run=true
-media/tools/studio recording=install-and-bootstrap action=clean
-media/tools/studio recording=install-and-bootstrap step=record +script_params.arbiter_source=0.9.2.dev1
-media/tools/studio recording=install-and-bootstrap step=record +script_params.arbiter_source=local
+studio recording=install-and-bootstrap
+studio recording=install-and-bootstrap action=check
+studio recording=install-and-bootstrap action=build
+studio recording=install-and-bootstrap action=build dry_run=true
+studio recording=install-and-bootstrap action=clean
+studio recording=install-and-bootstrap step=record +script_params.arbiter_source=0.9.2.dev1
+studio recording=install-and-bootstrap step=record +script_params.arbiter_source=local
 ```
 
 `action=build` runs the normal end-to-end production chain: refresh the terminal
@@ -237,7 +238,7 @@ the Markdown script directly.
 Hydra creates a per-job output directory from `hydra.run.dir`. Jobs that
 produce or preserve a terminal recording use `media/runs/<scene>/<run-id>/`.
 Helper jobs such as `inspect`, `output`, `play`, `runs`, `check`, and build dry
-runs use `media/studio-runs/<action>/<scene>/<run-id>/` so they do not pollute
+runs use `media/runs/.scratch/<action>/<scene>/<run-id>/` so they do not pollute
 the preserved recording history. The recorder uses the real recording output
 directory for per-run operator workspace, mail-lab state, logs, and
 intermediate files. Finished casts and timeline sidecars are swapped into the
@@ -254,7 +255,7 @@ subshell in the operator workspace with the recording's operator virtualenv
 activated:
 
 ```bash
-media/tools/studio recording=install-and-bootstrap action=inspect run_id=<run-id>
+studio recording=install-and-bootstrap action=inspect run_id=<run-id>
 ```
 
 For PyPI-backed recordings, the operator virtualenv is cached under
@@ -267,31 +268,31 @@ successful cast length, or failure reason. The default is the latest 10
 completed jobs; override by count, by age, or both:
 
 ```bash
-media/tools/studio action=runs
-media/tools/studio recording=install-and-bootstrap action=runs
-media/tools/studio action=runs runs_limit=25
-media/tools/studio action=runs runs_since=30m
+studio action=runs
+studio recording=install-and-bootstrap action=runs
+studio action=runs runs_limit=25
+studio action=runs runs_since=30m
 ```
 
 Use the play action without a run id to replay the newest preserved run cast
 across all recordings:
 
 ```bash
-media/tools/studio action=play
+studio action=play
 ```
 
 Pass a run id to replay a specific preserved run cast. The recording id is
 deduced from the run id unless the run id is ambiguous across recordings:
 
 ```bash
-media/tools/studio action=play run_id=<run-id>
+studio action=play run_id=<run-id>
 ```
 
 Pass an explicit recording id without a run id to play the newest preserved
 run cast for that scene:
 
 ```bash
-media/tools/studio recording=install-and-bootstrap action=play
+studio recording=install-and-bootstrap action=play
 ```
 
 Use the watch action to open the built, retimed recording with synchronized
@@ -299,14 +300,14 @@ audio in a local browser player. This previews the recording artifacts directly
 and does not depend on the configured publish surface:
 
 ```bash
-media/tools/studio recording=install-and-bootstrap action=watch
+studio recording=install-and-bootstrap action=watch
 ```
 
 Use the output action to review the captured failure output. It opens a pager in
 an interactive terminal and streams the output otherwise:
 
 ```bash
-media/tools/studio recording=install-and-bootstrap action=output run_id=<run-id>
+studio recording=install-and-bootstrap action=output run_id=<run-id>
 ```
 
 The recorder produces the baseline cast and a `.timeline.jsonl` sidecar. For
@@ -314,8 +315,8 @@ release media, prefer a fast baseline capture and then generate the watchable
 presentation timing as a separate step:
 
 ```bash
-media/tools/studio recording=install-and-bootstrap step=retime_check
-media/tools/studio recording=install-and-bootstrap step=retime
+studio recording=install-and-bootstrap step=retime_check
+studio recording=install-and-bootstrap step=retime
 ```
 
 The retimer uses visible timeline markers to synthesize command typing, insert
@@ -339,7 +340,7 @@ The alignment proof-of-concept compares a finished cast back to its config by
 matching visible captions and command lines:
 
 ```bash
-media/tools/studio recording=install-and-bootstrap step=align
+studio recording=install-and-bootstrap step=align
 ```
 
 Treat alignment as a review gate. If the command reports misalignment, stop and
@@ -448,7 +449,7 @@ The audio tools read narration directly from the Markdown script. To materialize
 the extracted narration as generated data for review, run:
 
 ```bash
-media/tools/studio recording=install-and-bootstrap step=sync_narration
+studio recording=install-and-bootstrap step=sync_narration
 ```
 
 The generated file lives under `media/generated/narration/`. It is a cache of
@@ -460,10 +461,10 @@ The audio generator combines script narration with the recording's `audio`
 settings and writes cached TTS segments:
 
 ```bash
-media/tools/studio recording=install-and-bootstrap step=audio_check
-media/tools/studio recording=install-and-bootstrap step=audio_dry_run
-media/tools/studio recording=install-and-bootstrap step=audio_generate
-media/tools/studio recording=install-and-bootstrap step=audio_publish
+studio recording=install-and-bootstrap step=audio_check
+studio recording=install-and-bootstrap step=audio_dry_run
+studio recording=install-and-bootstrap step=audio_generate
+studio recording=install-and-bootstrap step=audio_publish
 ```
 
 Use `step=audio_check` to validate script narration, source-script hash, and
@@ -481,7 +482,7 @@ example `OPENAI_ARBITER_CINEMA_AUDIO_API_KEY`.
 To also request transcription timestamps for generated audio, use:
 
 ```bash
-media/tools/studio recording=install-and-bootstrap step=audio_generate timestamps=true
+studio recording=install-and-bootstrap step=audio_generate timestamps=true
 ```
 
 The timestamp step writes `*.timeline.json` sidecars next to the cached audio
@@ -503,14 +504,6 @@ Audio segment cache files are written under `media/cache/audio/` by default and
 are ignored by git. Cache keys include the normalized narration text plus the
 provider, model, voice, format, and generation instructions so unchanged
 segments can be reused across script edits.
-
-For quick sentence-boundary experiments, the studio includes a small demo that
-generates one chained narration file, transcribes it, derives sentence spans,
-and writes per-sentence clips:
-
-```bash
-.venv/bin/python media/tools/sentence_timing_demo.py
-```
 
 Rendered GIF or image outputs are not part of the first media baseline. If a
 later website or distribution path needs static renders, choose and document a
@@ -634,12 +627,11 @@ media/
   README.md                 # studio vision and workflow
   conf/                     # Hydra config defaults
   recording-scripts/        # human movie scripts and shot lists
-  tools/                    # local studio runners and generators
 ```
 
-Hydra job directories under `media/runs/` and `media/studio-runs/` are scratch
-space, not published assets. `media/runs/` is reserved for preserved recording
-jobs; `media/studio-runs/` is for helper invocations that should not appear in
+Hydra job directories under `media/runs/` are scratch space, not published
+assets. `media/runs/` is reserved for preserved recording jobs;
+`media/runs/.scratch/` is for helper invocations that should not appear in
 the recording job list. Future tooling can add directories for generated
 command files, TTS inputs, caption manifests, or render manifests. Finished
 website assets should still land under `website/static/`, and published

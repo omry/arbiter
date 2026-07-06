@@ -13,7 +13,7 @@ terminal recordings cannot silently drift from their source scripts. If a
 recording is stale, regenerate it first:
 
 ```bash
-cd .. && media/tools/studio recording=install-and-bootstrap action=build
+cd .. && studio recording=install-and-bootstrap action=build
 ```
 
 For a known temporary breakage, such as an in-progress deployment-flow rewrite,

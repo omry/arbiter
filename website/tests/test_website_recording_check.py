@@ -14,7 +14,11 @@ CHECK_RECORDINGS = REPO_ROOT / "website" / "scripts" / "check-recordings.js"
 
 
 def write_recording_tree(
-    root: Path, *, script_text: str, stored_sha: str | None = None
+    root: Path,
+    *,
+    script_text: str,
+    stored_sha: str | None = None,
+    fingerprint_path: str = "media/recording-scripts/demo.md",
 ) -> None:
     recording_dir = root / "media" / "recording-scripts"
     casts_dir = root / "website" / "static" / "casts"
@@ -39,7 +43,7 @@ def write_recording_tree(
             {
                 "dependencies": [
                     {
-                        "path": "media/recording-scripts/demo.md",
+                        "path": fingerprint_path,
                         "sha256": digest,
                     }
                 ],
@@ -92,3 +96,24 @@ def test_website_recording_check_rejects_missing_artifact(tmp_path: Path) -> Non
 
     assert result.returncode == 1
     assert "missing artifact: website/static/casts/demo.retimed.cast" in result.stderr
+
+
+def test_website_recording_check_rejects_old_studio_source_fingerprint(
+    tmp_path: Path,
+) -> None:
+    write_recording_tree(
+        tmp_path,
+        script_text="# Demo\n",
+        fingerprint_path="studio/recordings/demo.md",
+    )
+    old_source = tmp_path / "studio" / "recordings"
+    old_source.mkdir(parents=True)
+    (old_source / "demo.md").write_text("# Demo\n", encoding="utf-8")
+
+    result = run_check(tmp_path)
+
+    assert result.returncode == 1
+    assert (
+        "stale artifact: recording fingerprint does not include "
+        "media/recording-scripts/demo.md"
+    ) in result.stderr

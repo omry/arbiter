@@ -227,12 +227,8 @@
       "timestamps": "website/static/audio/casts/install-and-bootstrap.bootstrap-config.timestamps.json",
       "waits": [
         {
-          "audio_second": 19.62,
           "gap_seconds": 0.0,
           "marker": "@wait:bootstrap-server@",
-          "pause_seconds": 9.997,
-          "presentation_end": 76.283,
-          "presentation_start": 66.286,
           "target": "bootstrap-server",
           "text_offset": 314
         }
