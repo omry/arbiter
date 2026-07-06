@@ -160,13 +160,15 @@ def test_reploy_blueprint_preserves_config_and_env_separately() -> None:
     ]
 
 
-def test_reploy_blueprints_expose_activate_alias() -> None:
+def test_reploy_blueprints_expose_canonical_config_activate_command() -> None:
     blueprint = _load_server_blueprint()
     docker = blueprint["docker"]
     assert isinstance(docker, dict)
 
-    activate = docker["commands"]["activate"]
-    assert activate["trigger"] == ["activate"]
+    commands = docker["commands"]
+    assert "activate" not in commands
+    activate = commands["config_activate"]
+    assert activate["trigger"] == ["config", "activate"]
     assert activate["forward_args"] is True
     assert activate["container"]["argv_suffix"] == ["config", "activate"]
 
@@ -253,26 +255,27 @@ def test_reploy_blueprint_exposes_deployed_operator_commands() -> None:
     assert docker["command_defaults"]["deployed_command"] is True
     assert commands["bootstrap"]["deployed_command"] is False
     assert commands["bootstrap_server"]["deployed_command"] is False
+    assert commands["env_bootstrap"]["deployed_command"] is False
 
-    deployed = set(commands) - {"bootstrap", "bootstrap_server"}
+    deployed = set(commands) - {"bootstrap", "bootstrap_server", "env_bootstrap"}
     assert deployed == {
-        "activate",
         "config_activate",
         "config_check",
         "config_deactivate",
         "config_show",
-        "env_bootstrap",
         "env_check",
         "plugins_list",
         "serve",
         "version",
     }
 
-    assert commands["activate"]["trigger"] == ["activate"]
-    assert "trigger" not in commands["config_show"]
-    assert "trigger" not in commands["env_check"]
-    assert "trigger" not in commands["plugins_list"]
-    assert "trigger" not in commands["version"]
+    assert commands["bootstrap"]["trigger"] == ["bootstrap"]
+    assert commands["bootstrap_server"]["trigger"] == ["bootstrap", "server"]
+    assert commands["config_show"]["trigger"] == ["config", "show"]
+    assert commands["env_bootstrap"]["trigger"] == ["env", "bootstrap"]
+    assert commands["env_check"]["trigger"] == ["env", "check"]
+    assert commands["plugins_list"]["trigger"] == ["plugins", "list"]
+    assert commands["version"]["trigger"] == ["version"]
     assert commands["config_show"]["container"]["argv_suffix"] == ["config", "show"]
     assert commands["env_check"]["container"]["argv_suffix"] == ["env", "check"]
     assert commands["plugins_list"]["container"]["argv_suffix"] == ["plugins", "list"]

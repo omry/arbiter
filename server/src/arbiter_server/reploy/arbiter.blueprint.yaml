@@ -125,6 +125,9 @@ docker:
         argv_suffix:
           - serve
     config_check:
+      trigger:
+        - config
+        - check
       forward_flags:
         - --live
       container:
@@ -132,6 +135,9 @@ docker:
           - config
           - check
     bootstrap_server:
+      trigger:
+        - bootstrap
+        - server
       deployed_command: false
       forward_flags:
         - --force
@@ -140,56 +146,71 @@ docker:
           - bootstrap
           - --server
     bootstrap:
+      trigger:
+        - bootstrap
       deployed_command: false
       forward_args: true
       container:
         argv_suffix:
           - bootstrap
     config_activate:
-      forward_args: true
-      container:
-        argv_suffix:
-          - config
-          - activate
-    config_deactivate:
-      forward_args: true
-      container:
-        argv_suffix:
-          - config
-          - deactivate
-    activate:
       trigger:
+        - config
         - activate
       forward_args: true
       container:
         argv_suffix:
           - config
           - activate
+    config_deactivate:
+      trigger:
+        - config
+        - deactivate
+      forward_args: true
+      container:
+        argv_suffix:
+          - config
+          - deactivate
     config_show:
+      trigger:
+        - config
+        - show
       forward_args: true
       container:
         argv_suffix:
           - config
           - show
     env_bootstrap:
+      trigger:
+        - env
+        - bootstrap
+      deployed_command: false
       forward_args: true
       container:
         argv_suffix:
           - env
           - bootstrap
     env_check:
+      trigger:
+        - env
+        - check
       forward_args: true
       container:
         argv_suffix:
           - env
           - check
     version:
+      trigger:
+        - version
       forward_flags:
         - --json
       container:
         argv_suffix:
           - version
     plugins_list:
+      trigger:
+        - plugins
+        - list
       forward_flags:
         - --json
       container:
