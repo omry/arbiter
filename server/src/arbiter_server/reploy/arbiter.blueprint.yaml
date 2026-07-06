@@ -46,6 +46,7 @@ install:
       - path: data
         update: preserve
         mount: /{{ path }}
+        runtime_readonly: false
 
 bundle:
   options:
