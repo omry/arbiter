@@ -4,7 +4,7 @@ import os
 import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from types import ModuleType
 from types import SimpleNamespace
 from typing import Any, cast
@@ -2906,6 +2906,10 @@ def test_cli_bootstrap_server_writes_main_config(
     env_file = tmp_path / ".arbiter.env"
     env_file.write_text("", encoding="utf-8")
     env_file.chmod(0o600)
+    monkeypatch.setattr(
+        "arbiter_server.main.ensure_runtime_config_permissions",
+        lambda **_kwargs: None,
+    )
 
     assert main(["--config-dir", str(config_dir), "config", "check"]) == 1
     captured = capsys.readouterr()
@@ -3043,6 +3047,13 @@ def test_reploy_config_display_dir_handles_windows_separators(
     assert (
         _display_config_path(Path(r"C:\reploy\conf\arbiter-server.yaml"))
         == "reploy-staging/conf/arbiter-server.yaml"
+    )
+
+
+def test_display_config_path_normalizes_relative_windows_separators() -> None:
+    assert (
+        _display_config_path(PureWindowsPath("conf/arbiter-server.yaml"))
+        == "conf/arbiter-server.yaml"
     )
 
 

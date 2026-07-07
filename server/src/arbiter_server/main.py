@@ -24,7 +24,7 @@ from collections.abc import (
 )
 from dataclasses import asdict, dataclass, is_dataclass
 from ipaddress import ip_address
-from pathlib import Path
+from pathlib import Path, PurePath
 from tempfile import mkstemp
 from typing import Any, Literal, cast
 from urllib.parse import parse_qs, quote, urlparse
@@ -3126,9 +3126,11 @@ def _ensure_config_dir(config_dir: str | None) -> Path | None:
     return Path(DEFAULT_CONFIG_DIR if config_dir is None else config_dir).expanduser()
 
 
-def _display_config_path(path: Path) -> str:
+def _display_config_path(path: PurePath) -> str:
     display_dir = os.environ.get("REPLOY_CONFIG_DISPLAY_DIR")
     if not display_dir:
+        if not path.is_absolute():
+            return str(path).replace("\\", "/")
         return str(path)
     container_dir = os.environ.get("REPLOY_CONFIG_CONTAINER_DIR", "/config")
     container_dir = container_dir.replace("\\", "/").rstrip("/") or "/"
