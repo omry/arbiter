@@ -2,7 +2,7 @@
   "dependencies": [
     {
       "path": "media/recording-scripts/install-and-bootstrap.md",
-      "sha256": "86c4db9df0d1013e36d85364fd2fd4f8fd291cb53e52d01554a503851313da04"
+      "sha256": "72502424eb1677c3842075a47563c13d08b4bebb5661042ff08cb61d63b18adc"
     },
     {
       "path": "media/recording-scripts/install-and-bootstrap/cleanup-main.sh",
@@ -13,8 +13,8 @@
       "sha256": "3de0331c3256048e74f0b5f02085750bcd5e16f045d9a5426ae614bfe94471fa"
     }
   ],
-  "fingerprint": "80af3bde3e8b146eab75f16bdafeb6ee998a0a5b24f7e1f4821cbb89a41d3ba7",
+  "fingerprint": "1163b50f70a45242ae3103d5f3276ec64faf290f7b0fa1a019b09293e962f073",
   "recording": "install-and-bootstrap",
-  "spec_sha256": "9c615dc68f91a91f13f90df865c2bdf5ee34a4b4cbe63b5eefae639ea26010c4",
+  "spec_sha256": "27023d0722baad9c34b2b1bf3bca73431557bc26983b04ae336a7e6d944e8e89",
   "version": 2
 }

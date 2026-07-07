@@ -272,9 +272,10 @@ beat:
     Arbiter uses Hydra to compose one validated runtime config from YAML files
     in the conf directory. In this section, we will generate starter config,
     edit it for the local mail lab, and verify that Arbiter can load it.
-    @server@ Start with the server config. @smtp_account@ Add the SMTP account
-    and policy. @smtp_edit@ The generated files are meant to be edited, so point
-    them at the local SMTP server. @smtp_activate@ Activate the account.
+    @server@ @wait:bootstrap-server@ Start with the server config.
+    @smtp_account@ Add the SMTP account and policy. @smtp_edit@ The generated
+    files are meant to be edited, so point them at the local SMTP server.
+    @smtp_activate@ Activate the account.
     @show_config@ Now inspect the composed config, which is what Arbiter will
     actually run with. @smtp_env@ Create the env file for secrets. @env_show@
     It starts with empty variables. @smtp_secret@ Fill in the SMTP credentials
