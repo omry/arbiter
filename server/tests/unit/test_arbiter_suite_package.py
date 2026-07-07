@@ -156,7 +156,12 @@ def test_reploy_blueprint_preserves_config_and_env_separately() -> None:
     ]
     assert install["managed_paths"]["dirs"] == [
         {"path": "conf", "update": "preserve", "mount": "/{{ path }}"},
-        {"path": "data", "update": "preserve", "mount": "/{{ path }}"},
+        {
+            "path": "data",
+            "update": "preserve",
+            "mount": "/{{ path }}",
+            "runtime_readonly": False,
+        },
     ]
 
 
@@ -228,7 +233,12 @@ def test_reploy_blueprint_declares_install_defaults() -> None:
             ],
             "dirs": [
                 {"path": "conf", "update": "preserve", "mount": "/{{ path }}"},
-                {"path": "data", "update": "preserve", "mount": "/{{ path }}"},
+                {
+                    "path": "data",
+                    "update": "preserve",
+                    "mount": "/{{ path }}",
+                    "runtime_readonly": False,
+                },
             ],
         },
     }
