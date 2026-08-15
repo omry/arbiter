@@ -117,7 +117,7 @@ def test_server_wheel_contains_minimal_reploy_deployment_pack(tmp_path: Path) ->
 def test_reploy_blueprint_requires_command_defaults_capable_reploy() -> None:
     blueprint = _load_server_blueprint()
 
-    assert blueprint["blueprint"]["requires_reploy"] == ">=0.4.6.dev1"
+    assert blueprint["blueprint"]["requires_reploy"] == ">=0.5.0.dev1"
 
 
 def test_reploy_blueprints_forward_option_based_bootstrap() -> None:
@@ -160,7 +160,7 @@ def test_reploy_blueprint_preserves_config_and_env_separately() -> None:
             "path": "data",
             "update": "preserve",
             "mount": "/{{ path }}",
-            "runtime_readonly": False,
+            "writeable": True,
         },
     ]
 
@@ -237,7 +237,7 @@ def test_reploy_blueprint_declares_install_defaults() -> None:
                     "path": "data",
                     "update": "preserve",
                     "mount": "/{{ path }}",
-                    "runtime_readonly": False,
+                    "writeable": True,
                 },
             ],
         },
