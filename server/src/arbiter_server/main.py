@@ -3977,13 +3977,12 @@ def _display_command_prefix(*, config_dir: Path) -> str:
     app_command_prefix = os.environ.get("REPLOY_APP_COMMAND_PREFIX", "").strip()
     if app_command_prefix:
         return app_command_prefix
+    if config_dir == Path("/deployment/conf"):
+        return "./appctl"
     return f"arbiter-server --config-dir {config_dir}"
 
 
 def _display_activation_command_prefix(*, config_dir: Path) -> str:
-    app_command_prefix = os.environ.get("REPLOY_APP_COMMAND_PREFIX", "").strip()
-    if app_command_prefix:
-        return f"{app_command_prefix} activate"
     return f"{_display_command_prefix(config_dir=config_dir)} config activate"
 
 

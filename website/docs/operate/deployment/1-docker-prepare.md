@@ -25,8 +25,9 @@ PyPI:
 python3 -m pip install reploy
 ```
 
-The installed `reploy` command creates the staging directory and writes a
-deployment-local `./arbiterctl` app control script into it.
+The installed `reploy` command creates the staging directory and writes the
+standard deployment-local `appctl` control script. The commands below use
+`reploy` directly so the staging and installed workflows stay explicit.
 
 ## Create the directory
 
@@ -35,8 +36,8 @@ reploy stage arbiter-server
 ```
 
 By default this creates `./reploy-staging`, including a deployment-local
-`arbiterctl` script for controlling the staged Arbiter Docker service. `stage`
-refuses to overwrite existing managed files.
+`appctl` script for the staged Arbiter Docker service. `stage` records desired
+state and generates control files; it does not build the application image.
 
 For an existing staging directory, refresh the generated deployment files with:
 
@@ -44,83 +45,97 @@ For an existing staging directory, refresh the generated deployment files with:
 reploy stage --update --dir reploy-staging
 ```
 
-Use `--force` to replace generated files that have local edits.
+Use `--force` only to recover incompatible or foreign staging state, or when an
+active operation must be stopped for recovery.
 
 <details>
-<summary>Files created by stage</summary>
+<summary>Deployment layout</summary>
 
-Most operators should use `reploy` for deployment management and the
-deployment-local `./arbiterctl` script for staged app control instead of
-editing generated deployment files directly.
+Most operators should use `reploy` instead of editing generated deployment
+files directly.
 
-- `conf/`: deployment config directory.
-- `arbiterctl`: local app control script for this deployment.
-- `.reploy/`: Reploy-managed files, including generated Compose config,
-  Docker env, bundle option metadata, runtime requirements projection, state,
-  manifest, vendored binary, runtime cache, and prepared bundle contents.
-- `data/server/`: writable server-owned runtime state, such as the generated
-  self-signed TLS certificate and private key.
-- `data/plugins/`: writable server runtime state for plugins, such as
-  idempotency records and temporary artifacts.
+- `conf/`: operator config directory, populated by bootstrap or copied from an
+  existing configuration.
+- `appctl`: local lifecycle and app-command wrapper.
+- `.reploy/state.json`: versioned deployment state.
+- `.reploy/staged-control.json`: generated control metadata.
+- `.reploy/`: Reploy-managed build locks, provider artifacts, runtime files,
+  operation locks, and its deployment-local runtime binary. Files such as the
+  Compose configuration are materialized when the environment is built.
+- `data/server/`: server-owned runtime state created as needed, such as the
+  generated self-signed TLS certificate and private key.
+- `data/plugins/`: runtime state created by plugins, such as idempotency records
+  and temporary artifacts.
 
 </details>
 
 Prepared Docker directories are staged deployments. They use staging-specific
-Docker names and ports so they can run next to an installed Arbiter. During
-install, the copied directory is marked as the installed deployment.
+Docker names and ports so they can run next to an installed Arbiter. Install
+transfers the selected build and managed paths into a separate state-v1
+installed deployment.
 
 ## Select the bundle
 
-The bundle is the container runtime install set: selected Arbiter packages plus
-a local wheelhouse with their exact dependencies. Select the packages during
-staging; Reploy builds or refreshes the installation bundle automatically when a
-staging or app command needs it. Container starts then install from the
-wheelhouse, isolating the deployment from PyPI package changes and eliminating
-the Internet connection requirement for starting Arbiter.
+The bundle request overlay selects optional Arbiter components and direct
+package additions. Building resolves that request, materializes a validated
+application image, and records the closed provider artifact set used to
+reproduce it.
 
 ### Select plugins
 
 Choose the Arbiter service plugins for this deployment:
 
 ```bash
-reploy bundle list-options          # show addable options and descriptions
-reploy bundle add --name imap,smtp  # IMAP receive + SMTP send support
-reploy bundle remove smtp           # remove SMTP if it is not needed
+reploy bundle options                    # show component-qualified options
+reploy bundle add application/imap,smtp  # IMAP receive + SMTP send support
+reploy bundle remove application/smtp    # remove SMTP if it is not needed
+reploy bundle list                       # show the current request overlay
 ```
 
-Use `bundle add --name arbiter-suite` or `bundle remove arbiter-suite` to add or
-remove all plugins in the suite meta package. `arbiter-server` is the Reploy
-blueprint; `arbiter-suite` is an Arbiter package bundle option.
+Use `bundle add application/arbiter-suite` or `bundle remove
+application/arbiter-suite` to add or remove all plugins in the suite meta
+package. `arbiter-server` is the Reploy blueprint; `arbiter-suite` is an
+Arbiter package bundle option.
 
-### Automatic bundle preparation
+### Build the environment
 
-Most operators do not need an explicit build step: `./arbiterctl up`,
-`reploy test`, and `reploy app ...` prepare the installation bundle
-automatically when the selected package set is missing or out of date.
-
-Each automatic preparation prunes stale wheels that are no longer part of the
-resolved runtime install set. When the staging directory is in an Arbiter
-repository checkout, normal preparation refreshes local Arbiter wheels from
-that checkout before resolving the wheelhouse.
-
-### Upgrade selected versions
-
-For an existing deployment, refresh selected package versions and mark the
-installation bundle for refresh:
+Build after changing the blueprint, bundle overlay, or development overrides:
 
 ```bash
-reploy bundle upgrade                         # upgrade selected packages
-reploy bundle upgrade arbiter-smtp             # upgrade one package
-reploy bundle upgrade arbiter-smtp==0.9.4      # select one version
+reploy build
 ```
 
-Skip this step when you want to keep the versions already recorded in
-`.reploy/requirements.txt`.
+`reploy up` and `reploy restart` also build when needed. App, shell, test, and
+inspection commands require a current build and tell you to run `reploy build`
+when it is missing or stale. Use `reploy verify` for a read-only audit of the
+current build.
+
+### Change package selections
+
+The current Reploy interface has no `bundle upgrade` command. Change an option,
+blueprint requirement, or direct component-qualified package request, then
+build again. For example, a third-party Python plugin can be added directly to
+the application component:
+
+```bash
+reploy bundle add-package application/application/python my-arbiter-plugin==1.0.0
+reploy build
+```
+
+Use `reploy bundle remove-package` with the same component and requirement to
+remove a direct addition.
 
 ## Configure the deployment
 Configure Arbiter and the accounts and policies for the enabled plugins. You
 can bootstrap a new config and edit it, or copy in an existing config
 directory.
+
+Reploy gives bootstrap, activation, deactivation, `env bootstrap`, and
+`config check` commands write access to the deployment directory. Display,
+`env check`, version, and plugin-list commands mount the same directory
+read-only, so they can run concurrently without mutating operator
+configuration. Live config checks retain write access because plugins may
+record operational test state.
 
 Bootstrap the main Arbiter config through Reploy. These commands run inside the
 deployment runtime, using the Arbiter server installed in the deployment
@@ -133,13 +148,13 @@ reploy app bootstrap server
 Then create IMAP and SMTP accounts named `bot` with corresponding policies:
 
 ```bash
-reploy app bootstrap --plugins imap,smtp --account bot
+reploy app bootstrap --plugins=imap,smtp --account=bot
 ```
 
 Edit the generated account and policy files, then activate both accounts:
 
 ```bash
-reploy app config activate --plugins imap,smtp --account bot
+reploy app config activate --plugins=imap,smtp --account=bot
 ```
 
 Then inspect the composed config with:
@@ -170,8 +185,8 @@ Run this again after adding plugins, accounts, or policies. New plugin config
 can introduce new credential variables, and `env bootstrap` adds the new
 placeholders without removing the values you already filled in.
 
-Keep `docker.env` separate from `.arbiter.env`: `docker.env` controls the
-Compose wrapper, while `.arbiter.env` is created by Arbiter env tooling and
+Keep `.reploy/docker.env` separate from `.arbiter.env`: the former is generated
+runtime metadata, while `.arbiter.env` is created by Arbiter env tooling and
 belongs to the Arbiter server config.
 
 ## Start and test
@@ -180,13 +195,13 @@ After adding config and env, start the staged service and smoke test the
 Arbiter server:
 
 ```bash
-./arbiterctl up
+reploy up
 reploy test
 ```
 
-`up` starts or updates the staged Docker service. `reploy test` calls the
-staged Arbiter health endpoint through the configured staging URL and retries
-through transient startup failures.
+`up` builds when needed, then starts or updates the staged Docker service.
+`reploy test` calls the staged Arbiter health endpoint through the configured
+staging URL.
 
 You can also verify plugin discovery and plugin versions through the normal
 Arbiter client. Use the staging URL:

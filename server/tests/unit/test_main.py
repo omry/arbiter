@@ -31,6 +31,7 @@ from arbiter_server.main import (
     _artifact_base_url,
     _config_check_output_width,
     _display_config_path,
+    _display_command_prefix,
     _config_check_tree_lines,
     _run_config_check,
     _run_config_show,
@@ -3452,13 +3453,13 @@ def test_cli_bootstrap_rejects_positional_targets(
         assert f"unrecognized arguments: {target}" in captured.err
 
 
-def test_cli_bootstrap_plugin_uses_reploy_app_command_prefix_in_hints(
+def test_cli_bootstrap_plugin_uses_control_script_prefix_in_hints(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config_dir = tmp_path / "conf"
-    monkeypatch.setenv("REPLOY_APP_COMMAND_PREFIX", "reploy app")
+    monkeypatch.setenv("REPLOY_APP_COMMAND_PREFIX", "./arbiter")
 
     assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
     capsys.readouterr()
@@ -3468,11 +3469,21 @@ def test_cli_bootstrap_plugin_uses_reploy_app_command_prefix_in_hints(
     )
 
     stdout = capsys.readouterr().out
-    assert "  reploy app env bootstrap\n" in stdout
-    assert "  reploy app activate\n" in stdout
-    assert "  reploy app activate --plugins imap,smtp --account default\n" in stdout
-    assert "  reploy app config show\n" in stdout
+    assert "  ./arbiter env bootstrap\n" in stdout
+    assert "  ./arbiter config activate\n" in stdout
+    assert (
+        "  ./arbiter config activate --plugins imap,smtp --account default\n" in stdout
+    )
+    assert "  ./arbiter config show\n" in stdout
     assert "arbiter-server --config-dir" not in stdout
+
+
+def test_display_command_prefix_uses_control_script_for_reploy_deployment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("REPLOY_APP_COMMAND_PREFIX", raising=False)
+
+    assert _display_command_prefix(config_dir=Path("/deployment/conf")) == "./appctl"
 
 
 def test_cli_bootstrap_plugin_account_refuses_existing_policy_without_partial_write(
@@ -3713,7 +3724,7 @@ def test_cli_config_activate_lists_installed_plugin_status(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config_dir = tmp_path / "conf"
-    monkeypatch.setenv("REPLOY_APP_COMMAND_PREFIX", "./reploy app")
+    monkeypatch.setenv("REPLOY_APP_COMMAND_PREFIX", "./arbiter")
     monkeypatch.setattr(
         "arbiter_server.main.discover_service_plugins",
         lambda: _test_service_plugins(),
@@ -3749,7 +3760,7 @@ def test_cli_config_activate_lists_installed_plugin_status(
         "accounts:\n"
         "  default: ✓ imap  ✗ smtp\n"
         "    activate:\n"
-        "      ./reploy app config activate --plugin smtp --account default\n"
+        "      ./arbiter config activate --plugin smtp --account default\n"
     )
 
     assert (
@@ -3786,7 +3797,7 @@ def test_cli_config_activate_lists_empty_account_status_consistently(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config_dir = tmp_path / "conf"
-    monkeypatch.setenv("REPLOY_APP_COMMAND_PREFIX", "reploy app")
+    monkeypatch.setenv("REPLOY_APP_COMMAND_PREFIX", "./arbiter")
     monkeypatch.setattr(
         "arbiter_server.main.discover_service_plugins",
         lambda: _test_service_plugins(),
@@ -3801,9 +3812,9 @@ def test_cli_config_activate_lists_empty_account_status_consistently(
         "  imap\n"
         "  smtp\n"
         "create account configs:\n"
-        "  single plugin: reploy app bootstrap --plugin imap --account my_account\n"
-        "  batch: reploy app bootstrap --plugins imap,smtp --account my_account\n"
-        "  preview: reploy app bootstrap --plugins imap,smtp --account my_account --dry-mode\n"
+        "  single plugin: ./arbiter bootstrap --plugin imap --account my_account\n"
+        "  batch: ./arbiter bootstrap --plugins imap,smtp --account my_account\n"
+        "  preview: ./arbiter bootstrap --plugins imap,smtp --account my_account --dry-mode\n"
         "  account name is optional; default is used when omitted\n"
     )
 
