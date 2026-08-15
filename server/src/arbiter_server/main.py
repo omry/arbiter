@@ -3889,18 +3889,38 @@ def _run_config_activation_summary(*, config_dir: str, config_name: str) -> int:
         print("create account configs:")
         plugins = ",".join(installed_plugins)
         if installed_plugins:
+            plugin_option = _display_command_option(
+                config_dir=config_dir_path,
+                option="--plugin",
+                value=installed_plugins[0],
+            )
+            account_option = _display_command_option(
+                config_dir=config_dir_path,
+                option="--account",
+                value="my_account",
+            )
             print(
                 f"  single plugin: {command_prefix} bootstrap "
-                f"--plugin {installed_plugins[0]} --account my_account"
+                f"{plugin_option} {account_option}"
             )
         if len(installed_plugins) > 1:
+            plugins_option = _display_command_option(
+                config_dir=config_dir_path,
+                option="--plugins",
+                value=plugins,
+            )
+            account_option = _display_command_option(
+                config_dir=config_dir_path,
+                option="--account",
+                value="my_account",
+            )
             print(
                 f"  batch: {command_prefix} bootstrap "
-                f"--plugins {plugins} --account my_account"
+                f"{plugins_option} {account_option}"
             )
             print(
                 f"  preview: {command_prefix} bootstrap "
-                f"--plugins {plugins} --account my_account --dry-mode"
+                f"{plugins_option} {account_option} --dry-mode"
             )
         print("  account name is optional; default is used when omitted")
         return 0
@@ -3927,9 +3947,19 @@ def _run_config_activation_summary(*, config_dir: str, config_name: str) -> int:
         if inactive_plugins:
             print("    activate:")
             for plugin in inactive_plugins:
+                plugin_option = _display_command_option(
+                    config_dir=config_dir_path,
+                    option="--plugin",
+                    value=plugin,
+                )
+                account_option = _display_command_option(
+                    config_dir=config_dir_path,
+                    option="--account",
+                    value=account,
+                )
                 print(
                     f"      {command_prefix} config activate "
-                    f"--plugin {plugin} --account {account}"
+                    f"{plugin_option} {account_option}"
                 )
     return 0
 
@@ -3977,13 +4007,20 @@ def _display_command_prefix(*, config_dir: Path) -> str:
     app_command_prefix = os.environ.get("REPLOY_APP_COMMAND_PREFIX", "").strip()
     if app_command_prefix:
         return app_command_prefix
+    if config_dir == Path("/deployment/conf"):
+        return "./appctl"
     return f"arbiter-server --config-dir {config_dir}"
 
 
-def _display_activation_command_prefix(*, config_dir: Path) -> str:
+def _display_command_option(*, config_dir: Path, option: str, value: str) -> str:
     app_command_prefix = os.environ.get("REPLOY_APP_COMMAND_PREFIX", "").strip()
-    if app_command_prefix:
-        return f"{app_command_prefix} activate"
+    separator = (
+        "=" if app_command_prefix or config_dir == Path("/deployment/conf") else " "
+    )
+    return f"{option}{separator}{value}"
+
+
+def _display_activation_command_prefix(*, config_dir: Path) -> str:
     return f"{_display_command_prefix(config_dir=config_dir)} config activate"
 
 
@@ -4023,10 +4060,17 @@ def _print_bootstrap_activation_hint(
             print("")
             print("Activate the accounts when ready:")
         plugin_flag = "--plugin" if len(plugins) == 1 else "--plugins"
-        print(
-            f"  {activation_command_prefix} "
-            f"{plugin_flag} {','.join(plugins)} --account {name}"
+        plugin_option = _display_command_option(
+            config_dir=config_dir,
+            option=plugin_flag,
+            value=",".join(plugins),
         )
+        account_option = _display_command_option(
+            config_dir=config_dir,
+            option="--account",
+            value=name,
+        )
+        print(f"  {activation_command_prefix} " f"{plugin_option} {account_option}")
         print("")
         print("Then inspect the composed config with:")
         print(f"  {command_prefix} config show")

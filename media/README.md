@@ -648,6 +648,11 @@ a disposable working config.
 
 The first script lives at `media/recording-scripts/install-and-bootstrap.md`.
 
+The next rebuild is deferred until OmegaFlow Studio stabilizes. Before that
+rebuild, synchronize the recording script and its setup/cleanup helpers with the
+state-v1 Reploy workflow under `website/docs/operate/deployment/`; the existing
+cast is not command-reference evidence for current Reploy.
+
 ## Production Principles
 
 - Keep the movie script as the source of truth.

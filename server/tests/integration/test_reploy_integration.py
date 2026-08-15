@@ -59,33 +59,39 @@ def test_reploy_stages_arbiter_from_local_blueprint(tmp_path: Path) -> None:
 
     assert stage.returncode == 0, stage.stderr
     assert "created staging directory for arbiter" in stage.stdout
-    assert (staging_dir / "arbiterctl").is_file()
+    assert (staging_dir / "appctl").is_file()
     assert (staging_dir / ".reploy" / "state.json").is_file()
-    assert (staging_dir / ".reploy" / "manifest.json").is_file()
-    assert (staging_dir / ".reploy" / "runtime" / "compose.yaml").is_file()
+    assert (staging_dir / ".reploy" / "staged-control.json").is_file()
 
-    options = _run_reploy("bundle", "list-options", "--dir", str(staging_dir))
+    options = _run_reploy("bundle", "options", "--dir", str(staging_dir))
 
     assert options.returncode == 0, options.stderr
-    assert "arbiter-suite\tInstall the full Arbiter suite." in options.stdout
-    assert "imap\tReceive email through IMAP." in options.stdout
-    assert "smtp\tSend email through SMTP." in options.stdout
+    assert (
+        "application/arbiter-suite\tInstall the full Arbiter suite." in options.stdout
+    )
+    assert "application/imap\tReceive email through IMAP." in options.stdout
+    assert "application/smtp\tSend email through SMTP." in options.stdout
 
     add_plugins = _run_reploy(
         "bundle",
         "add",
         "--dir",
         str(staging_dir),
-        "--name",
-        "imap,smtp",
+        "application/imap,smtp",
     )
 
     assert add_plugins.returncode == 0, add_plugins.stderr
-    assert "selected Python packages: arbiter-imap, arbiter-smtp" in add_plugins.stdout
+    assert add_plugins.stdout == "bundle overlay updated\n"
 
-    requirements = (staging_dir / ".reploy" / "requirements.txt").read_text(
-        encoding="utf-8"
+    selected = _run_reploy(
+        "bundle",
+        "list",
+        "--dir",
+        str(staging_dir),
     )
-    assert "arbiter-server\n" in requirements
-    assert "arbiter-imap\n" in requirements
-    assert "arbiter-smtp\n" in requirements
+
+    assert selected.returncode == 0, selected.stderr
+    assert selected.stdout.splitlines() == [
+        "option\tapplication/imap",
+        "option\tapplication/smtp",
+    ]
