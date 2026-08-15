@@ -160,7 +160,7 @@ def test_reploy_blueprint_preserves_config_and_env_separately() -> None:
             "path": "data",
             "update": "preserve",
             "mount": "/{{ path }}",
-            "runtime_readonly": False,
+            "writeable": True,
         },
     ]
 
@@ -237,7 +237,7 @@ def test_reploy_blueprint_declares_install_defaults() -> None:
                     "path": "data",
                     "update": "preserve",
                     "mount": "/{{ path }}",
-                    "runtime_readonly": False,
+                    "writeable": True,
                 },
             ],
         },
