@@ -114,160 +114,204 @@ def test_server_wheel_contains_minimal_reploy_deployment_pack(tmp_path: Path) ->
             )
 
 
-def test_reploy_blueprint_requires_command_defaults_capable_reploy() -> None:
+def test_reploy_blueprint_requires_current_environment_schema() -> None:
     blueprint = _load_server_blueprint()
 
-    assert blueprint["blueprint"]["requires_reploy"] == ">=0.5.0.dev1"
+    assert blueprint["blueprint"] == {
+        "schema": 1,
+        "version": "0.1.0",
+        "requires_reploy": ">=0.7.0.dev1",
+        "compatibility": {"platforms": ["linux/amd64", "linux/arm64"]},
+    }
+    assert "control_script" not in blueprint["environment"]
 
 
 def test_reploy_blueprints_forward_option_based_bootstrap() -> None:
     blueprint = _load_server_blueprint()
-    docker = blueprint["docker"]
-    assert isinstance(docker, dict)
+    environment = blueprint["environment"]
+    application = environment["applications"]["application"]
 
-    assert docker["command_defaults"] == {
-        "app_command": True,
-        "deployed_command": True,
-        "container": {
-            "argv_prefix": [
-                "arbiter-server",
-                "--config-dir",
-                "/conf",
-                "--config-name",
-                "${ARBITER_CONFIG_NAME}",
-            ],
+    assert application["packages"]["python"]["requirements"] == ["arbiter-server"]
+    assert application["executables"]["server"]["argv_prefix"] == [
+        "--config-dir",
+        "/deployment/conf",
+        "--config-name",
+        "arbiter-server",
+    ]
+
+    bootstrap = environment["commands"]["bootstrap"]
+    assert bootstrap["native_command"] is True
+    assert "deployed_command" not in bootstrap
+    assert bootstrap["forward_flags"] == [
+        "--plugin",
+        "--plugins",
+        "--account",
+        "--accounts",
+        "--policy",
+        "--policies",
+        "--variant",
+        "--list-variants",
+        "--force",
+        "--dry-mode",
+    ]
+    assert bootstrap["argv"] == ["bootstrap"]
+    assert bootstrap["order"] == ["binary", "prefix", "command", "forwarded"]
+
+
+def test_reploy_blueprint_preserves_deployment_state_together() -> None:
+    blueprint = _load_server_blueprint()
+    environment = blueprint["environment"]
+    docker = blueprint["docker"]
+
+    assert environment["mounts"] == {
+        "deployment": {
+            "target": "/deployment",
+            "writable": True,
+            "update_policy": "preserve",
         },
     }
-
-    bootstrap = docker["commands"]["bootstrap"]
-    assert bootstrap["deployed_command"] is False
-    assert bootstrap["forward_args"] is True
-    assert bootstrap["container"]["argv_suffix"] == ["bootstrap"]
-
-
-def test_reploy_blueprint_preserves_config_and_env_separately() -> None:
-    blueprint = _load_server_blueprint()
-    install = blueprint["install"]
-    docker = blueprint["docker"]
-
-    assert docker["deployment_dirs"]["config"] == "conf"
-    assert install["managed_paths"]["files"] == [
-        {"path": ".arbiter.env", "update": "preserve", "mount": "/{{ path }}"},
-    ]
-    assert install["managed_paths"]["dirs"] == [
-        {"path": "conf", "update": "preserve", "mount": "/{{ path }}"},
-        {
-            "path": "data",
-            "update": "preserve",
-            "mount": "/{{ path }}",
-            "writeable": True,
+    assert docker["mounts"] == {
+        "deployment": {
+            "extends": "environment.mounts.deployment",
+            "mode": "managed-bind",
+            "source": ".",
         },
+    }
+    suffix = environment["applications"]["application"]["executables"]["server"][
+        "argv_suffix"
     ]
+    assert "arbiter.storage.server_data_dir=/deployment/data/server" in suffix
+    assert "arbiter.storage.plugin_data_dir=/deployment/data/plugins" in suffix
+
+
+def test_reploy_blueprint_makes_non_mutating_commands_read_only() -> None:
+    blueprint = _load_server_blueprint()
+    commands = blueprint["environment"]["commands"]
+
+    for name in ["config_show", "env_check", "version", "plugins_list"]:
+        assert commands[name]["mounts"] == {
+            "deployment": {"writable": False},
+        }
+
+    for name in [
+        "serve",
+        "config_check",
+        "bootstrap_server",
+        "bootstrap",
+        "config_activate",
+        "config_deactivate",
+        "env_bootstrap",
+    ]:
+        assert "mounts" not in commands[name]
+
+
+def test_reploy_blueprint_allows_public_and_local_mail_network_access() -> None:
+    blueprint = _load_server_blueprint()
+
+    assert blueprint["environment"]["runtime"] == {
+        "network": {"public": "allow", "local": "allow"},
+    }
 
 
 def test_reploy_blueprints_expose_canonical_config_activate_command() -> None:
     blueprint = _load_server_blueprint()
-    docker = blueprint["docker"]
-    assert isinstance(docker, dict)
+    environment = blueprint["environment"]
 
-    commands = docker["commands"]
+    commands = environment["commands"]
     assert "activate" not in commands
     activate = commands["config_activate"]
     assert activate["trigger"] == ["config", "activate"]
-    assert activate["forward_args"] is True
-    assert activate["container"]["argv_suffix"] == ["config", "activate"]
+    assert activate["native_command"] is True
+    assert activate["deployed_command"] is True
+    assert activate["forward_flags"] == [
+        "--plugin",
+        "--plugins",
+        "--account",
+        "--accounts",
+    ]
+    assert activate["argv"] == ["config", "activate"]
+    assert activate["order"] == ["binary", "prefix", "command", "forwarded"]
 
 
 def test_reploy_blueprint_declares_install_hooks_and_success_message() -> None:
     blueprint = _load_server_blueprint()
-    docker = blueprint["docker"]
-    assert isinstance(docker, dict)
+    environment = blueprint["environment"]
 
-    assert docker["install"] == {
-        "success": {
-            "vars": {
-                "server_url": {
-                    "server_url": True,
-                }
+    assert environment["install"]["success"]["lines"] == [
+        "server url: {{ environment.workload.endpoints.https.scheme }}://{{ reploy.workload.endpoints.https.publish.address }}:{{ reploy.workload.endpoints.https.publish.port }}",
+        "client command: arbiter arbiter.url={{ environment.workload.endpoints.https.scheme }}://{{ reploy.workload.endpoints.https.publish.address }}:{{ reploy.workload.endpoints.https.publish.port }} info server",
+    ]
+    assert environment["workload"]["runtime"] == {
+        "before_start": [
+            {"actions": [{"environment": ["config", "check"]}]},
+        ],
+        "after_start": [
+            {
+                "requires": {"endpoints": ["https"]},
+                "actions": [{"environment": ["config", "check", "--live"]}],
             },
-            "lines": [
-                "server url: ${server_url}",
-                "client command: arbiter arbiter.url=${server_url} info server",
-            ],
-        },
-        "hooks": {
-            "before_start": [{"app": ["config", "check"]}],
-            "after_start": [
-                {"health_check": {"wait": True}},
-                {"app": ["config", "check", "--live"]},
-            ],
-        },
+        ],
     }
 
 
 def test_reploy_blueprint_declares_install_defaults() -> None:
     blueprint = _load_server_blueprint()
 
-    assert blueprint["install"] == {
-        "target": {"default_path": "/opt/{{ app.id }}"},
-        "owner": {"user": "arbiter", "group": "arbiter"},
-        "ports": {
-            "deployed": {
-                "https": {
-                    "host_bind": "127.0.0.1",
-                    "host_port": 8075,
-                    "container_port": 8075,
-                }
-            },
-            "staging": {
-                "https": {
-                    "host_bind": "127.0.0.1",
-                    "host_port": 18075,
-                    "container_port": 8075,
-                }
-            },
+    assert blueprint["environment"]["install"] == {
+        "target": {"default_path": "/opt/{{ environment.id }}"},
+        "system": {
+            "account": {
+                "user": "arbiter",
+                "group": "arbiter",
+                "on_missing": "create",
+            }
         },
-        "managed_paths": {
-            "files": [
-                {"path": ".arbiter.env", "update": "preserve", "mount": "/{{ path }}"}
-            ],
-            "dirs": [
-                {"path": "conf", "update": "preserve", "mount": "/{{ path }}"},
-                {
-                    "path": "data",
-                    "update": "preserve",
-                    "mount": "/{{ path }}",
-                    "writeable": True,
-                },
-            ],
+        "success": {
+            "lines": [
+                "server url: {{ environment.workload.endpoints.https.scheme }}://{{ reploy.workload.endpoints.https.publish.address }}:{{ reploy.workload.endpoints.https.publish.port }}",
+                "client command: arbiter arbiter.url={{ environment.workload.endpoints.https.scheme }}://{{ reploy.workload.endpoints.https.publish.address }}:{{ reploy.workload.endpoints.https.publish.port }} info server",
+            ]
         },
     }
 
 
 def test_reploy_blueprint_uses_current_docker_service_shape() -> None:
     blueprint = _load_server_blueprint()
+    environment = blueprint["environment"]
     docker = blueprint["docker"]
-    assert isinstance(docker, dict)
 
-    assert docker["service"] == {
-        "image": "python:3.11-slim",
-        "container_host": "0.0.0.0",
+    assert environment["base"] == {"image": "python:3.11-slim"}
+    assert environment["workload"]["endpoints"]["https"] == {
+        "scheme": "https",
+        "port": 8075,
+        "readiness": {"path": "/_health_", "tls_verify": False},
+    }
+    assert docker["workload"]["endpoints"]["https"] == {
+        "extends": "environment.workload.endpoints.https",
+        "bind": {"address": "0.0.0.0"},
+        "publish": {
+            "address": "127.0.0.1",
+            "staging": 18075,
+            "deployed": 8075,
+        },
     }
 
 
 def test_reploy_blueprint_exposes_deployed_operator_commands() -> None:
     blueprint = _load_server_blueprint()
-    docker = blueprint["docker"]
-    assert isinstance(docker, dict)
+    environment = blueprint["environment"]
 
-    commands = docker["commands"]
-    assert docker["command_defaults"]["app_command"] is True
-    assert docker["command_defaults"]["deployed_command"] is True
-    assert commands["bootstrap"]["deployed_command"] is False
-    assert commands["bootstrap_server"]["deployed_command"] is False
-    assert commands["env_bootstrap"]["deployed_command"] is False
+    commands = environment["commands"]
+    assert commands["bootstrap"]["native_command"] is True
+    assert "deployed_command" not in commands["bootstrap"]
+    assert commands["bootstrap_server"]["native_command"] is True
+    assert "deployed_command" not in commands["bootstrap_server"]
+    assert commands["env_bootstrap"]["native_command"] is True
+    assert "deployed_command" not in commands["env_bootstrap"]
 
-    deployed = set(commands) - {"bootstrap", "bootstrap_server", "env_bootstrap"}
+    deployed = {
+        name for name, command in commands.items() if command.get("deployed_command")
+    }
     assert deployed == {
         "config_activate",
         "config_check",
@@ -275,7 +319,6 @@ def test_reploy_blueprint_exposes_deployed_operator_commands() -> None:
         "config_show",
         "env_check",
         "plugins_list",
-        "serve",
         "version",
     }
 
@@ -286,7 +329,19 @@ def test_reploy_blueprint_exposes_deployed_operator_commands() -> None:
     assert commands["env_check"]["trigger"] == ["env", "check"]
     assert commands["plugins_list"]["trigger"] == ["plugins", "list"]
     assert commands["version"]["trigger"] == ["version"]
-    assert commands["config_show"]["container"]["argv_suffix"] == ["config", "show"]
-    assert commands["env_check"]["container"]["argv_suffix"] == ["env", "check"]
-    assert commands["plugins_list"]["container"]["argv_suffix"] == ["plugins", "list"]
-    assert commands["version"]["container"]["argv_suffix"] == ["version"]
+    assert commands["config_show"]["argv"] == ["config", "show"]
+    assert commands["env_check"]["argv"] == ["env", "check"]
+    assert commands["plugins_list"]["argv"] == ["plugins", "list"]
+    assert commands["version"]["argv"] == ["version"]
+    assert commands["plugins_list"]["order"] == [
+        "binary",
+        "prefix",
+        "command",
+        "forwarded",
+    ]
+    assert commands["version"]["order"] == [
+        "binary",
+        "prefix",
+        "command",
+        "forwarded",
+    ]

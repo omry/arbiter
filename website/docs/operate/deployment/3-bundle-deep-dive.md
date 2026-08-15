@@ -2,199 +2,115 @@
 title: Bundle deep-dive
 ---
 
-This is the package reference behind
+This is the package-selection reference behind
 [Prepare Docker Deployment](./1-docker-prepare.md). The runbook owns the command
-sequence; this page explains what the package bundle is and how to reason about
-it.
+sequence; this page explains how current Reploy turns requested Arbiter
+components into a validated environment image.
 
-The bundle has two deployment-owned pieces:
+## Request overlay
 
-- `.reploy/requirements.txt`: root Arbiter packages selected for this
-  deployment.
-- `.reploy/bundle/`: the complete wheelhouse used by the container at startup.
+The blueprint declares the base `arbiter-server` requirement and optional
+`arbiter-suite`, `imap`, and `smtp` package contributions. A staging
+deployment's request overlay records which options and direct package additions
+the operator selected; it does not store a hand-maintained requirements file or
+wheelhouse.
 
-The goal is reproducible container creation. Reploy resolves package versions
-and prepares wheels during staging before the runtime container needs them, so
-Docker can create or recreate the runtime container without reaching PyPI.
+List the available component-qualified options and current overlay:
 
-## Package roots
-
-`.reploy/requirements.txt` records the root packages for the deployment. Normal
-package roots are exact pins:
-
-```text title=".reploy/requirements.txt"
-arbiter-server==<version>
-arbiter-imap==<version>
-arbiter-smtp==<version>
+```bash
+reploy bundle options
+reploy bundle list
 ```
 
-Unpinned names and version ranges are rejected for runtime deployment state.
-Use the bundle commands in the prepare runbook to select plugins or upgrade
-versions.
+Select or deselect options with their application prefix:
 
-By default, `reploy stage arbiter-server` seeds the bundle with the
-Arbiter server package root. When the installation bundle is prepared, Reploy
-resolves the package root to the exact version selected for the deployment.
+```bash
+reploy bundle add application/imap,smtp
+reploy bundle remove application/smtp
+reploy bundle add application/arbiter-suite
+```
 
-`bundle add` and `bundle remove` update `.reploy/requirements.txt`. Adding
-`arbiter-suite` selects all plugins in the suite meta package. When the suite
-must be represented as concrete runtime roots, Arbiter expands it into
-`arbiter-server` plus the selected plugin packages.
+Selections are normalized, validated together, and applied atomically. Changing
+the overlay makes the current build stale but does not build automatically.
 
-Custom service plugins do not need to be known to Reploy's Arbiter blueprint.
-They must be Python packages that expose an Arbiter service entry point:
+## Direct package additions
+
+Custom Arbiter service plugins must be Python packages that expose an Arbiter
+service entry point:
 
 ```toml title="pyproject.toml"
 [project.entry-points."arbiter.services"]
 my_plugin = "my_package:plugin"
 ```
 
-For a plugin available from a package index, add an exact package pin:
+Add an exact direct Python request to the blueprint's application contribution:
 
 ```bash
-reploy bundle add my-arbiter-plugin==1.0.0
+reploy bundle add-package \
+  application/application/python \
+  my-arbiter-plugin==1.0.0
 ```
 
-After adding custom package roots, the next staging or app command prepares the
-installation bundle automatically. Published package pins may still need
-package-index access during preparation, and any missing transitive dependency
-wheels still have to be resolved during preparation.
+Remove it by supplying the same component and normalized request:
+
+```bash
+reploy bundle remove-package \
+  application/application/python \
+  my-arbiter-plugin==1.0.0
+```
 
 The package named `arbiter` on PyPI is unrelated to this project. Use
 `arbiter-suite` or concrete packages such as `arbiter-server`, `arbiter-smtp`,
 and `arbiter-imap`.
 
-## Wheelhouse
+## Build and provider store
 
-Reploy automatically validates `.reploy/requirements.txt`, resolves the full
-runtime install set with the configured runtime image, and writes all required
-wheels to `.reploy/bundle/` when the bundle is missing or out of date. Each
-preparation expands the wheelhouse fully and prunes stale wheels that are no
-longer part of the resolved install set.
-
-When the staging directory is in an Arbiter repository checkout, normal
-preparation first rebuilds local Arbiter wheels from that checkout. Use
-`bundle build --pypi-only` only when the selected Arbiter package names should
-come from the package index instead of the checkout.
-
-The generated Compose file mounts `.reploy/bundle` at `/bundle`. During
-container startup, the install command uses `/bundle`, so startup does not
-depend on package-index access.
-
-Staging and app commands prepare the wheelhouse automatically when it is missing
-or out of date. Use `bundle build` only when you want to force that preparation
-early. Use `bundle check` to validate an already-prepared wheelhouse without
-downloading packages or building wheels. Use `bundle list all` after preparation
-to show every wheelhouse package, marked as `root` or `transitive`.
-
-The default Docker env keeps the wheelhouse inside the deployment directory:
-`REPLOY_BUNDLE_DIR=./.reploy/bundle`. Keep runtime paths relative to the
-deployment directory; Linux install rejects absolute host paths for runtime
-files.
-
-Server-owned runtime state is kept under the deployment directory by default:
-`ARBITER_SERVER_DATA_DIR=./data/server`. Docker mounts that host directory at
-`/data/server`, and the generated Compose command passes it to Arbiter as
-`arbiter.storage.server_data_dir=/data/server`. Self-signed TLS material lives
-there.
-
-Plugin writable state is separate:
-`ARBITER_PLUGIN_DATA_DIR=./data/plugins`. Docker mounts that host directory at
-`/data/plugins`, and the generated Compose command passes it to Arbiter as
-`arbiter.storage.plugin_data_dir=/data/plugins`.
-
-## Upgrades
-
-`bundle upgrade` upgrades root package requirements and marks the installation
-bundle for refresh. It reports changed root packages first, followed by
-changed transitive packages after the refreshed bundle is prepared.
-
-For an installed Linux systemd deployment, prepare and test the staging
-directory first, then run `install` again.
-
-Common upgrade targets are: no argument for all selected packages, a release
-line such as `0.9`, a package such as `arbiter-smtp`, or an exact pin such as
-`arbiter-smtp==0.9.4`.
-Prerelease pins such as `0.9.0.dev1` are useful for validating a release line
-before the final package release.
-
-Skip upgrade when you want to keep the versions already recorded in
-`.reploy/requirements.txt`.
-
-<details>
-<summary>Explicit package roots</summary>
-
-Most deployments should use the bundle menu. To seed exact package roots during
-staging, pass repeated `--requirement` values with the Arbiter server app
-reference:
+Run `reploy build` after changing the blueprint, request overlay, or development
+overrides. Reploy resolves each provider request, records immutable artifacts in
+the deployment-local provider store, materializes the cumulative environment
+layers, validates the final application image, and commits a build lock that
+binds the blueprint, platform, overlay, inputs, and outputs.
 
 ```bash
-reploy stage arbiter-server \
-  --requirement arbiter-server==<version> \
-  --requirement arbiter-smtp==<version>
+reploy build
 ```
 
-The same mechanism can express a curated suite plus an override:
+`reploy up` and `reploy restart` ensure the build automatically. App commands,
+shells, tests, and observations consume the committed image and reject a
+missing or stale build instead of resolving packages implicitly.
 
-```bash
-reploy stage arbiter-server \
-  --requirement arbiter-suite==<version> \
-  --requirement arbiter-smtp==<version>
-```
+Use `reploy verify` to audit the current build without changing state. It hashes
+the reachable provider-store closure, re-inspects the image and layers, reruns
+provider checks in temporary network-disabled containers, and verifies that the
+declared runtime commands still resolve.
 
-Arbiter expands that selection to concrete package pins so pip does not see
-conflicting meta-package dependencies:
+`reploy bundle clean` removes the deployment-local provider cache. It does not
+invalidate an already committed image, but a later build may need to reacquire
+artifacts.
 
-```text title=".reploy/requirements.txt"
-arbiter-server==<version>
-arbiter-smtp==<version>
-arbiter-imap==<version>
-```
+## Updating versions
 
-For explicit local artifact bundles, `.reploy/requirements.txt` can also name
-container wheel paths directly:
+Current Reploy intentionally has no `bundle upgrade` command. Change the
+blueprint constraint, an exact direct package request, or a development
+override, then run `reploy build`. This keeps version intent in the owning
+input instead of rewriting a generated requirements projection.
 
-```text title=".reploy/requirements.txt"
-/bundle/arbiter_server-<version>-py3-none-any.whl
-/bundle/arbiter_smtp-<version>-py3-none-any.whl
-```
+For an installed system deployment, make and test the change in staging first,
+then run `reploy install --scope system` again. Install ensures the staged build
+is current and transfers only the selected build closure and managed deployment
+state.
 
-</details>
+## Local checkout testing
 
-<details>
-<summary>Local checkout testing</summary>
-
-Arbiter's blueprint declares local source mappings for the packages in this
-repository. When you stage from the local blueprint file, Reploy uses those
-`local_sources` entries to build the selected Arbiter packages from the
-checkout during bundle preparation:
+A local blueprint reference selects the blueprint from the checkout:
 
 ```bash
 reploy stage file:server/src/arbiter_server/reploy/arbiter.blueprint.yaml
 ```
 
-Use package pins for third-party plugins. Persistent `/source/...` roots are
-not installable, and `doctor --preinstall` rejects them so the installed
-deployment never depends on a host checkout mount.
-
-</details>
-
-<details>
-<summary>Maintainer package-index refresh</summary>
-
-`--pypi-only` is intended for maintainers preparing package-index bundles. It
-resolves selected Arbiter package names from the package index instead of the
-checked-out repository packages.
-
-For `bundle build --pypi-only`, the helper also rejects local path roots such
-as `/source/app/...`, ignores the existing deployment wheelhouse, rewrites
-`.reploy/requirements.txt` to the resolved exact versions, and builds a fresh
-wheelhouse from package-index results.
-
-For `bundle upgrade --pypi-only`, the helper skips the local repo wheel refresh
-step and resolves upgrade targets from the package index.
-
-Use this only when the selected Arbiter packages are expected to be available
-from the package index.
-
-</details>
+Local package sources are explicit development overrides, not blueprint-owned
+path mappings. Run `reploy overrides` in the staging deployment and select the
+local `arbiter-server`, client, plugin, or suite projects that should replace
+their published package sources. Reploy stores those choices in the staging
+deployment's `overrides.yaml`; they participate in build identity but are not
+installed as persistent host source mounts.
