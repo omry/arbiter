@@ -8,7 +8,7 @@ const config = {
   tagline: 'A capability firewall between AI agents and services',
   favicon: 'img/logo-mark.svg',
 
-  url: 'https://arbiter.yadan.net',
+  url: 'https://arbiter.cli.dev',
   baseUrl: '/',
 
   organizationName: 'omry',
