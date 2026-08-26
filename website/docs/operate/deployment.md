@@ -14,7 +14,7 @@ app commands, and installs a checked staging directory as a Linux service.
 Install Reploy on the operator machine before starting:
 
 ```bash
-curl -fsSL https://reploy.yadan.net/install.sh | sh
+curl -fsSL https://reploy.cli.dev/install.sh | sh
 ```
 
 If you prefer to install through Python packaging, Reploy is also available on

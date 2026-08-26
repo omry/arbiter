@@ -6,7 +6,7 @@ Reploy is the deployment tool used by Arbiter's Docker install path. Install it
 before creating a deployment directory:
 
 ```bash
-curl -fsSL https://reploy.yadan.net/install.sh | sh
+curl -fsSL https://reploy.cli.dev/install.sh | sh
 ```
 
 If you prefer to install through Python packaging, Reploy is also available on
