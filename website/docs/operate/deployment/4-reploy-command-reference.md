@@ -13,7 +13,7 @@ If you prefer to install through Python packaging, Reploy is also available on
 PyPI:
 
 ```bash
-python3 -m pip install reploy
+python3 -m pip install 'reploy>=0.8.0.dev2'
 ```
 
 Use the installed `reploy` command for bundle selection, builds, app commands,

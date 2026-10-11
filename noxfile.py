@@ -94,7 +94,7 @@ def install_project(session: nox.Session) -> None:
 
 def install_reploy_if_supported(session: nox.Session) -> None:
     if platform.system() == "Linux":
-        session.install("reploy")
+        session.install("reploy==0.8.0.dev2")
 
 
 @nox.session

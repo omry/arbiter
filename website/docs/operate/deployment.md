@@ -11,7 +11,7 @@ Reploy is the deployment tool used by Arbiter's Docker install path. It creates
 the staging directory, manages generated Docker files, runs deployment-scoped
 app commands, and installs a checked staging directory as a Linux service.
 
-Install Reploy on the operator machine before starting:
+Install Reploy 0.8.0.dev2 or newer on the operator machine before starting:
 
 ```bash
 curl -fsSL https://reploy.cli.dev/install.sh | sh
@@ -21,7 +21,7 @@ If you prefer to install through Python packaging, Reploy is also available on
 PyPI:
 
 ```bash
-python3 -m pip install reploy
+python3 -m pip install 'reploy>=0.8.0.dev2'
 ```
 
 The staging directory is ordinary user-owned state: it contains the selected
