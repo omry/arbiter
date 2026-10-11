@@ -392,27 +392,14 @@ func TestResolveClientConfigUsesTLSCAFile(t *testing.T) {
 	}
 }
 
-func TestResolveClientConfigOverrideSkipsMalformedClientConfig(t *testing.T) {
+func TestResolveClientConfigOverrideValidatesClientConfig(t *testing.T) {
 	env := testutil.NewCLIEnvironment(t)
 	env.WriteClientConfig("unsupported:\n  key: value\n")
-
-	resolved, err := cli.ResolveClientConfig(
-		[]string{"arbiter.url=https://override.test"},
-		env.LookupEnv,
-		env.HomeDir,
+	_, err := cli.ResolveClientConfig(
+		[]string{"arbiter.url=https://override.test"}, env.LookupEnv, env.HomeDir,
 	)
-
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resolved.URL != "https://override.test" {
-		t.Fatalf("unexpected URL: %q", resolved.URL)
-	}
-	if resolved.Source != "override" {
-		t.Fatalf("unexpected source: %q", resolved.Source)
-	}
-	if resolved.TLSCAFile != "" {
-		t.Fatalf("unexpected TLS CA file: %q", resolved.TLSCAFile)
+	if err == nil {
+		t.Fatal("expected URL override to retain config validation")
 	}
 }
 

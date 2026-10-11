@@ -14,6 +14,11 @@ Current scope:
 - URL resolution from command-line override, environment, or client config
 - native HTTP transport
 - `info`, `op`, and explicit `artifact` commands
+- independent connection and API response timeouts, plugin/operation response
+  budgets, and artifact download inactivity limits (no total transfer deadline)
+
+See the [client reference](../../website/docs/reference/client.md#timeouts) for
+the timeout configuration and command-line override contract.
 
 ## Build
 

@@ -465,13 +465,13 @@ func installFakeArbiterClient(t *testing.T) *fakeArbiterClient {
 		operationDetails:     map[string]map[string]any{},
 		runResults:           map[string]map[string]any{},
 	}
-	previous := newArbiterClient
-	newArbiterClient = func(url string) arbiterClient {
-		fake.url = url
-		return fake
+	previous := newArbiterClientWithConfig
+	newArbiterClientWithConfig = func(config ResolvedClientConfig) (arbiterClient, error) {
+		fake.url = config.URL
+		return fake, nil
 	}
 	t.Cleanup(func() {
-		newArbiterClient = previous
+		newArbiterClientWithConfig = previous
 	})
 	return fake
 }

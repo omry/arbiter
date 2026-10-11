@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"time"
 )
 
 const apiPrefix = "/api/v1"
@@ -46,10 +45,11 @@ func NewClientInsecureTLS(baseURL string) *Client {
 func NewHTTPClientInsecureTLS() *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec
-	return &http.Client{
-		Timeout:   30 * time.Second,
+	client := &http.Client{
 		Transport: transport,
 	}
+	ConfigureTimeouts(client, DefaultConnectTimeout, DefaultTimeout, DefaultDownloadIdleTimeout)
+	return client
 }
 
 func NewClientWithTLSCAFile(baseURL string, caFile string) (*Client, error) {
@@ -74,15 +74,17 @@ func NewHTTPClientWithTLSCAFile(caFile string) (*http.Client, error) {
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{RootCAs: roots}
-	return &http.Client{
-		Timeout:   30 * time.Second,
+	client := &http.Client{
 		Transport: transport,
-	}, nil
+	}
+	ConfigureTimeouts(client, DefaultConnectTimeout, DefaultTimeout, DefaultDownloadIdleTimeout)
+	return client, nil
 }
 
 func NewClientWithHTTP(baseURL string, httpClient *http.Client) *Client {
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 30 * time.Second}
+		httpClient = &http.Client{}
+		ConfigureTimeouts(httpClient, DefaultConnectTimeout, DefaultTimeout, DefaultDownloadIdleTimeout)
 	}
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
@@ -149,7 +151,9 @@ func (c *Client) post(ctx context.Context, path string, payload any) (map[string
 
 func (c *Client) do(req *http.Request) (map[string]any, error) {
 	req.Header.Set("Accept", "application/json")
-	resp, err := c.http.Do(req)
+	requestCtx, requestState := newAPIRequestContext(req.Context())
+	defer requestState.close()
+	resp, err := c.http.Do(req.WithContext(requestCtx))
 	if err != nil {
 		return nil, err
 	}

@@ -16,6 +16,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/omry/arbiter/client/go-cli/internal/arbiterhttp"
 )
 
 type artifactRoundTripFunc func(*http.Request) (*http.Response, error)
@@ -26,33 +28,26 @@ func (fn artifactRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, er
 
 func TestWriteArtifactToStdoutStreamsTextArtifactWithFakeHTTPClient(t *testing.T) {
 	var requests []string
-	previous := newArtifactHTTPClient
-	newArtifactHTTPClient = func() *http.Client {
-		return &http.Client{
-			Transport: artifactRoundTripFunc(func(req *http.Request) (*http.Response, error) {
-				requests = append(requests, req.Method+" "+req.URL.Path)
-				switch req.Method {
-				case http.MethodHead:
-					return artifactResponse(200, "text/plain", 12, ""), nil
-				case http.MethodGet:
-					return artifactResponse(200, "text/plain", 12, "hello world\n"), nil
-				default:
-					t.Fatalf("unexpected method: %s", req.Method)
-				}
-				return nil, nil
-			}),
-		}
+	httpClient := &http.Client{
+		Transport: artifactRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+			requests = append(requests, req.Method+" "+req.URL.Path)
+			switch req.Method {
+			case http.MethodHead:
+				return artifactResponse(200, "text/plain", 12, ""), nil
+			case http.MethodGet:
+				return artifactResponse(200, "text/plain", 12, "hello world\n"), nil
+			default:
+				t.Fatalf("unexpected method: %s", req.Method)
+			}
+			return nil, nil
+		}),
 	}
-	t.Cleanup(func() {
-		newArtifactHTTPClient = previous
-	})
-
 	var stdout bytes.Buffer
 	err := writeArtifactToStdout(
 		context.Background(),
 		"http://arbiter.test/api/v1/artifacts/art-1/content?nonce=nonce",
 		1024,
-		newArtifactHTTPClient(),
+		httpClient,
 		&stdout,
 	)
 
@@ -96,7 +91,7 @@ func TestArtifactHTTPClientUsesConfiguredTLSCAFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	transport, ok := httpClient.Transport.(*http.Transport)
+	transport, ok := httpClient.Transport.(*arbiterhttp.TimeoutTransport).Base.(*http.Transport)
 	if !ok {
 		t.Fatalf("expected HTTP transport, got %T", httpClient.Transport)
 	}
@@ -135,6 +130,18 @@ func TestAllowLocalSelfSignedTLSOnlyForLoopbackHTTPS(t *testing.T) {
 	}
 }
 
+func TestGlobalOverridesPreserveArtifactChildArguments(t *testing.T) {
+	child := []string{"--", "child", "arbiter.timeout=1s", "arbiter.connect_timeout=2s", "arbiter.url=http://child.test", "--config-dir", "child-config"}
+	args := append([]string{"artifact", "with-stdin", "http://arbiter.test/artifact", "arbiter.timeout=5m"}, child...)
+	options, remaining, err := parseGlobalOptions(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(options.Overrides, "|") != "arbiter.timeout=5m" || strings.Join(remaining[3:], "|") != strings.Join(child, "|") {
+		t.Fatalf("global parsing consumed child argv: overrides=%v remaining=%v", options.Overrides, remaining)
+	}
+}
+
 func TestArtifactHTTPClientVerifiesRemoteHTTPSByDefault(t *testing.T) {
 	httpClient, err := artifactHTTPClient(
 		defaultGlobalOptions(),
@@ -147,7 +154,7 @@ func TestArtifactHTTPClientVerifiesRemoteHTTPSByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	if httpClient.Transport != nil {
-		transport, ok := httpClient.Transport.(*http.Transport)
+		transport, ok := httpClient.Transport.(*arbiterhttp.TimeoutTransport).Base.(*http.Transport)
 		if !ok {
 			t.Fatalf("expected HTTP transport, got %T", httpClient.Transport)
 		}
