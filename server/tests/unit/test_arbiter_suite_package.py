@@ -120,7 +120,7 @@ def test_reploy_blueprint_requires_current_environment_schema() -> None:
     assert blueprint["blueprint"] == {
         "schema": 1,
         "version": "0.1.0",
-        "requires_reploy": ">=0.7.0.dev1",
+        "requires_reploy": ">=0.8.0.dev2",
         "compatibility": {"platforms": ["linux/amd64", "linux/arm64"]},
     }
     assert "control_script" not in blueprint["environment"]
