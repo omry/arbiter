@@ -40,6 +40,9 @@ The client accepts Arbiter's local self-signed TLS certificates by default.
 Configure `arbiter.tls_ca_file` in the client config when you want certificate
 verification against a specific certificate authority file.
 
+URL overrides, including `ARBITER_URL`, replace only the URL. The client still
+reads and validates the config file and applies its CA and timeout settings.
+
 When the server reports `deployment_scope=staged`, the client prints a small
 heads-up on stderr so you know you are talking to a staged deployment.
 
@@ -55,6 +58,59 @@ Example:
 arbiter:
   url: https://127.0.0.1:8075
 ```
+
+## Timeouts
+
+The client separates connection setup, API responses, and artifact download
+inactivity:
+
+```yaml
+arbiter:
+  timeout: 30s
+  connect_timeout: 10s
+  download_idle_timeout: 30s
+  plugins:
+    imap:
+      timeout:
+        default: 30s
+        search_messages: 5m
+    smtp:
+      timeout: 30s
+```
+
+- `connect_timeout` bounds connection acquisition, including DNS, TCP, and TLS
+  setup. Its default is `10s`.
+- `timeout` bounds each API response after connection setup completes, including
+  sending the request, waiting for headers, and reading the response body. Its
+  default is `30s`. Connection time does not consume this budget.
+- `download_idle_timeout` bounds waiting for artifact response headers or for
+  more body data during a read. Its default is `30s`. Incoming body data allows
+  the next read a fresh inactivity budget. Local processing between reads does
+  not consume it. Artifact downloads have no total transfer deadline and do not
+  use `timeout`.
+
+Plugin timeouts apply to `op run`. A scalar is the plugin default; a mapping can
+contain the reserved `default` key and operation names, without the plugin
+prefix. A missing plugin default inherits `arbiter.timeout`. Discovery requests
+use the global API budget.
+
+For operation execution, precedence is **command-line API timeout → operation
+timeout → plugin default → global default**. These select one response budget;
+they do not impose cumulative limits.
+
+Override any global timeout for one command using the same syntax as the URL:
+
+```bash
+arbiter op run imap:search_messages --args '{"account":"bot","query":"ALL"}' arbiter.timeout=5m
+arbiter info server arbiter.connect_timeout=15s
+arbiter artifact save '<artifact-url>' ./artifact.bin arbiter.download_idle_timeout=1m
+```
+
+Timeout values must be positive durations with units, such as `250ms`, `30s`,
+`5m`, or `1h30m`. Zero, negative, overflowing, and unitless values are rejected.
+There are no timeout environment variables. A timeout limits the client's wait;
+it does not guarantee that the server stopped an operation. The client does not
+automatically retry a timed-out operation.
 
 ## bootstrap
 

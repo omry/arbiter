@@ -41,9 +41,14 @@ type ResolvedURL struct {
 }
 
 type ResolvedClientConfig struct {
-	URL       string
-	Source    string
-	TLSCAFile string
+	URL                 string
+	Source              string
+	TLSCAFile           string
+	Timeout             time.Duration
+	ConnectTimeout      time.Duration
+	DownloadIdleTimeout time.Duration
+	PluginTimeouts      map[string]PluginTimeout
+	TimeoutOverride     bool
 }
 
 type arbiterClient interface {
@@ -58,26 +63,31 @@ type arbiterClient interface {
 	RunOperation(context.Context, string, map[string]any) (map[string]any, error)
 }
 
-var newArbiterClient = func(url string) arbiterClient {
-	if allowLocalSelfSignedTLS(url) {
-		return arbiterhttp.NewClientInsecureTLS(url)
+var newArbiterClientWithConfig = func(config ResolvedClientConfig) (arbiterClient, error) {
+	httpClient, err := configuredHTTPClient(config, config.URL, false)
+	if err != nil {
+		return nil, err
 	}
-	return arbiterhttp.NewClient(url)
+	return arbiterhttp.NewClientWithHTTP(config.URL, httpClient), nil
 }
 
-var newArbiterClientWithConfig = func(config ResolvedClientConfig) (arbiterClient, error) {
+func configuredHTTPClient(config ResolvedClientConfig, targetURL string, download bool) (*http.Client, error) {
+	httpClient := &http.Client{}
+	var err error
 	if config.TLSCAFile != "" {
-		client, err := arbiterhttp.NewClientWithTLSCAFile(config.URL, config.TLSCAFile)
+		httpClient, err = arbiterhttp.NewHTTPClientWithTLSCAFile(config.TLSCAFile)
 		if err != nil {
 			return nil, err
 		}
-		return client, nil
+	} else if allowLocalSelfSignedTLS(targetURL) {
+		httpClient = arbiterhttp.NewHTTPClientInsecureTLS()
 	}
-	return newArbiterClient(config.URL), nil
-}
-
-var newArtifactHTTPClient = func() *http.Client {
-	return &http.Client{Timeout: 30 * time.Second}
+	responseTimeout := config.Timeout
+	if download {
+		responseTimeout = 0
+	}
+	arbiterhttp.ConfigureTimeouts(httpClient, config.ConnectTimeout, responseTimeout, config.DownloadIdleTimeout)
+	return httpClient, nil
 }
 
 func artifactHTTPClient(
@@ -90,13 +100,7 @@ func artifactHTTPClient(
 	if err != nil {
 		return nil, err
 	}
-	if config.TLSCAFile != "" {
-		return arbiterhttp.NewHTTPClientWithTLSCAFile(config.TLSCAFile)
-	}
-	if allowLocalSelfSignedTLS(artifactURL) {
-		return arbiterhttp.NewHTTPClientInsecureTLS(), nil
-	}
-	return newArtifactHTTPClient(), nil
+	return configuredHTTPClient(config, artifactURL, true)
 }
 
 func allowLocalSelfSignedTLS(rawURL string) bool {
@@ -350,7 +354,29 @@ func runBootstrap(
 	} else if value, ok := lookupEnv(URLEnvVar); ok && value != "" {
 		serverURL = value
 	}
+	settings := defaultResolvedClientConfig()
+	if err := applyTimeoutOverrides(&settings, options.Overrides); err != nil {
+		fmt.Fprintf(stderr, "Arbiter client config error: %v\n", err)
+		return 1
+	}
 	content := fmt.Sprintf("arbiter:\n  url: %q\n", serverURL)
+	written := map[string]bool{}
+	for _, arg := range options.Overrides {
+		if isTimeoutOverride(arg) {
+			key, _, _ := strings.Cut(arg, "=")
+			if written[key] {
+				continue
+			}
+			written[key] = true
+			value := settings.Timeout
+			if key == "arbiter.connect_timeout" {
+				value = settings.ConnectTimeout
+			} else if key == "arbiter.download_idle_timeout" {
+				value = settings.DownloadIdleTimeout
+			}
+			content += fmt.Sprintf("  %s: %q\n", strings.TrimPrefix(key, "arbiter."), value.String())
+		}
+	}
 	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
 		fmt.Fprintf(stderr, "Arbiter client config error: %v\n", err)
 		return 1
@@ -644,42 +670,39 @@ func ResolveClientConfig(
 		configOptions = options[0]
 	}
 
-	if override, ok := urlOverride(args); ok {
-		return ResolvedClientConfig{
-			URL:    override,
-			Source: "override",
-		}, nil
-	}
-
-	if value, ok := lookupEnv(URLEnvVar); ok && value != "" {
-		return ResolvedClientConfig{
-			URL:    value,
-			Source: URLEnvVar,
-		}, nil
-	}
-
 	configPath, err := clientConfigPath(configOptions, homeDir)
 	if err != nil {
 		return ResolvedClientConfig{}, err
 	}
-	config, configFound, err := readClientConfig(configPath)
+	config, _, err := readClientConfig(configPath)
 	if err != nil {
 		return ResolvedClientConfig{}, err
 	}
-
-	if configFound && config.URL != "" {
-		return ResolvedClientConfig{
-			URL:       config.URL,
-			Source:    configPath,
-			TLSCAFile: config.TLSCAFile,
-		}, nil
+	resolved := defaultResolvedClientConfig()
+	resolved.TLSCAFile = config.TLSCAFile
+	resolved.PluginTimeouts = config.PluginTimeouts
+	if config.Timeout > 0 {
+		resolved.Timeout = config.Timeout
 	}
-
-	return ResolvedClientConfig{
-		URL:       DefaultURL,
-		Source:    "default",
-		TLSCAFile: config.TLSCAFile,
-	}, nil
+	if config.ConnectTimeout > 0 {
+		resolved.ConnectTimeout = config.ConnectTimeout
+	}
+	if config.DownloadIdleTimeout > 0 {
+		resolved.DownloadIdleTimeout = config.DownloadIdleTimeout
+	}
+	if config.URL != "" {
+		resolved.URL, resolved.Source = config.URL, configPath
+	}
+	if value, ok := lookupEnv(URLEnvVar); ok && value != "" {
+		resolved.URL, resolved.Source = value, URLEnvVar
+	}
+	if override, ok := urlOverride(args); ok {
+		resolved.URL, resolved.Source = override, "override"
+	}
+	if err := applyTimeoutOverrides(&resolved, args); err != nil {
+		return ResolvedClientConfig{}, err
+	}
+	return resolved, nil
 }
 
 func urlOverride(args []string) (string, bool) {
@@ -736,6 +759,10 @@ func parseGlobalOptions(args []string) (globalOptions, []string, error) {
 			skipNext = true
 			continue
 		}
+		if arg == "--" {
+			remaining = append(remaining, args[index:]...)
+			break
+		}
 		switch {
 		case arg == "--config-dir":
 			if index+1 >= len(args) {
@@ -753,7 +780,7 @@ func parseGlobalOptions(args []string) (globalOptions, []string, error) {
 			index++
 		case strings.HasPrefix(arg, "--config-name="):
 			options.ConfigName = strings.TrimPrefix(arg, "--config-name=")
-		case strings.HasPrefix(arg, "arbiter.url="):
+		case strings.HasPrefix(arg, "arbiter.url=") || isTimeoutOverride(arg):
 			options.Overrides = append(options.Overrides, arg)
 		default:
 			remaining = append(remaining, arg)
@@ -1467,7 +1494,11 @@ func callToolPayload(
 	lookupEnv EnvLookup,
 	homeDir HomeDirFunc,
 ) (any, error) {
-	client, err := newInitializedArbiterClient(options, lookupEnv, homeDir)
+	operationID := ""
+	if name == "run_op" {
+		operationID, _ = arguments["id"].(string)
+	}
+	client, err := newInitializedArbiterClient(options, lookupEnv, homeDir, operationID)
 	if err != nil {
 		return nil, err
 	}
@@ -1504,10 +1535,14 @@ func newInitializedArbiterClient(
 	options globalOptions,
 	lookupEnv EnvLookup,
 	homeDir HomeDirFunc,
+	operationID ...string,
 ) (arbiterClient, error) {
 	resolved, err := ResolveClientConfig(options.Overrides, lookupEnv, homeDir, options)
 	if err != nil {
 		return nil, err
+	}
+	if len(operationID) > 0 && operationID[0] != "" {
+		resolved.Timeout = resolved.operationTimeout(operationID[0])
 	}
 	return newArbiterClientWithConfig(resolved)
 }
@@ -1903,8 +1938,12 @@ func readURLFromConfig(path string) (string, bool, error) {
 }
 
 type clientConfig struct {
-	URL       string
-	TLSCAFile string
+	URL                 string
+	TLSCAFile           string
+	Timeout             time.Duration
+	ConnectTimeout      time.Duration
+	DownloadIdleTimeout time.Duration
+	PluginTimeouts      map[string]PluginTimeout
 }
 
 func readClientConfig(path string) (clientConfig, bool, error) {
@@ -1926,68 +1965,7 @@ func parseURLConfig(path string, data string) (string, bool, error) {
 }
 
 func parseClientConfig(path string, data string) (clientConfig, bool, error) {
-	inArbiter := false
-	foundArbiter := false
-	foundURL := false
-	foundTLSCAFile := false
-	config := clientConfig{}
-	for _, line := range strings.Split(data, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		indented := strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t")
-		if !indented {
-			key, value, ok := strings.Cut(trimmed, ":")
-			if !ok {
-				return clientConfig{}, false, fmt.Errorf("unsupported client config entry in %s: %s", path, trimmed)
-			}
-			key = strings.TrimSpace(key)
-			value = strings.TrimSpace(value)
-			if key != "arbiter" {
-				return clientConfig{}, false, fmt.Errorf("unsupported client config key(s) in %s: %s", path, key)
-			}
-			if foundArbiter {
-				return clientConfig{}, false, fmt.Errorf("duplicate client config key in %s: arbiter", path)
-			}
-			foundArbiter = true
-			if value != "" {
-				return clientConfig{}, false, fmt.Errorf("client config arbiter must be a mapping: %s", path)
-			}
-			inArbiter = true
-			continue
-		}
-
-		if !inArbiter {
-			return clientConfig{}, false, fmt.Errorf("unsupported indented client config entry in %s: %s", path, trimmed)
-		}
-		key, value, ok := strings.Cut(trimmed, ":")
-		if !ok {
-			return clientConfig{}, false, fmt.Errorf("unsupported client config arbiter entry in %s: %s", path, trimmed)
-		}
-		key = strings.TrimSpace(key)
-		if key != "url" && key != "tls_ca_file" {
-			return clientConfig{}, false, fmt.Errorf("unsupported client config arbiter key(s) in %s: %s", path, key)
-		}
-		parsedValue, err := parseConfigStringScalar(strings.TrimSpace(value), path, "arbiter."+key)
-		if err != nil {
-			return clientConfig{}, false, err
-		}
-		if key == "tls_ca_file" {
-			if foundTLSCAFile {
-				return clientConfig{}, false, fmt.Errorf("duplicate client config arbiter key in %s: tls_ca_file", path)
-			}
-			foundTLSCAFile = true
-			config.TLSCAFile = parsedValue
-			continue
-		}
-		if foundURL {
-			return clientConfig{}, false, fmt.Errorf("duplicate client config arbiter key in %s: url", path)
-		}
-		foundURL = true
-		config.URL = parsedValue
-	}
-	return config, foundURL || foundTLSCAFile, nil
+	return parseTimeoutClientConfig(path, data)
 }
 
 func parseConfigStringScalar(value string, path string, key string) (string, error) {
@@ -2057,6 +2035,11 @@ func printExtendedHelp(w io.Writer) {
 	fmt.Fprintln(w, "setup:")
 	fmt.Fprintln(w, "  bootstrap client create the Arbiter client config")
 	fmt.Fprintln(w, "  config url   print the resolved URL and source")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "timeout overrides (positive durations, for example 30s or 5m):")
+	fmt.Fprintln(w, "  arbiter.timeout=30s                API response budget after connection setup")
+	fmt.Fprintln(w, "  arbiter.connect_timeout=10s        separate connection setup limit")
+	fmt.Fprintln(w, "  arbiter.download_idle_timeout=30s  artifact inactivity limit; no total deadline")
 }
 
 func helpArgsIncludeExtended(args []string) bool {

@@ -178,7 +178,7 @@ func TestClientMapsErrorEnvelope(t *testing.T) {
 func TestInsecureTLSClientDisablesCertificateVerification(t *testing.T) {
 	client := NewClientInsecureTLS("https://arbiter.test")
 
-	transport, ok := client.http.Transport.(*http.Transport)
+	transport, ok := client.http.Transport.(*TimeoutTransport).Base.(*http.Transport)
 	if !ok {
 		t.Fatalf("expected HTTP transport, got %T", client.http.Transport)
 	}
