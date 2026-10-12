@@ -47,6 +47,7 @@ from .policy import (
 )
 from .errors import imap_operation_error
 from .wire import validate_imap_string
+from .discovery import public_account_config, public_policy_config
 
 from .runtime_policy import (
     _IMAPRuntimePolicyMixin,
@@ -1512,6 +1513,9 @@ folders:
 
 
 class IMAPServicePlugin:
+    public_account_config = staticmethod(public_account_config)
+    public_policy_config = staticmethod(public_policy_config)
+
     name = "imap"
     version = distribution_version("arbiter-imap", package_file=__file__)
     server_api_version = SERVER_API_VERSION

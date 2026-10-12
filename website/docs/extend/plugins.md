@@ -265,6 +265,19 @@ checks:
 - `test_accounts()` verifies configured accounts. For some services this is a
   local validation; for others it may be a live connection check.
 
+For native account and policy detail discovery, plugins can optionally implement
+`public_account_config(config)` and `public_policy_config(config)`. Each receives
+the relevant configured object and returns a plain mapping of explicitly chosen
+public fields. Without a hook, the server exposes an empty `config` or `rules`
+object. Keep public metadata and all discovery hooks free of secrets.
+
+Build these projections field by field, including nested objects. Never return
+the original config, serialize a complete dataclass or OmegaConf tree, or use
+a key-name blacklist to guess which fields are private. New schema fields must
+remain private until deliberately added to a projection. SMTP and IMAP publish
+sender/folder metadata and operation policy while withholding connection settings
+and credentials.
+
 Use warnings for questionable but allowed config. Raise a config-check error
 for config that cannot work.
 
