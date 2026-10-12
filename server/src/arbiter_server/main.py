@@ -53,6 +53,7 @@ from .config import (
     service_policies_for,
 )
 from .file_protection import ensure_runtime_config_permissions
+from .errors import ERROR_STATUS, OperationError, log_unexpected
 from .plugins import discover_service_plugins
 from .services import (
     SERVER_API_VERSION,
@@ -1784,6 +1785,20 @@ def _native_exception_response(
     *,
     validation_status_code: int = 400,
 ) -> object:
+    if isinstance(exc, OperationError):
+        from starlette.responses import Response
+
+        body = json.dumps(
+            exc.to_dict(),
+            ensure_ascii=True,
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return Response(
+            body,
+            status_code=ERROR_STATUS[exc.code],
+            media_type="application/json",
+        )
     if isinstance(exc, ArtifactConsumed):
         return _native_error_response(
             status_code=410,
@@ -1817,7 +1832,7 @@ def _native_exception_response(
             code=code,
             message=message,
         )
-    LOGGER.exception("native HTTP request failed", exc_info=exc)
+    log_unexpected(LOGGER, exc)
     return _native_error_response(
         status_code=500,
         code="internal_error",

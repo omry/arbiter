@@ -2088,8 +2088,10 @@ def test_cli_env_bootstrap_configures_default_env_file(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    config_dir = tmp_path / "conf"
+    config_dir.mkdir()
     monkeypatch.delenv("SMTP_PRIMARY_ACCOUNT_PASSWORD", raising=False)
-    (tmp_path / "arbiter-server.yaml").write_text(
+    (config_dir / "arbiter-server.yaml").write_text(
         "arbiter:\n"
         "  account:\n"
         "    smtp:\n"
@@ -2099,9 +2101,9 @@ def test_cli_env_bootstrap_configures_default_env_file(
         encoding="utf-8",
     )
 
-    assert main(["--config-dir", str(tmp_path), "env", "bootstrap"]) == 0
+    assert main(["--config-dir", str(config_dir), "env", "bootstrap"]) == 0
 
-    assert (tmp_path / "arbiter-server.yaml").read_text(encoding="utf-8") == (
+    assert (config_dir / "arbiter-server.yaml").read_text(encoding="utf-8") == (
         "arbiter:\n"
         "  env_file: ../.arbiter.env\n"
         "  account:\n"
@@ -2110,14 +2112,14 @@ def test_cli_env_bootstrap_configures_default_env_file(
         "        username: ${oc.env:SMTP_PRIMARY_ACCOUNT_USERNAME}\n"
         "        password: ${oc.env:SMTP_PRIMARY_ACCOUNT_PASSWORD}\n"
     )
-    assert (tmp_path.parent / ".arbiter.env").read_text(encoding="utf-8") == (
+    assert (tmp_path / ".arbiter.env").read_text(encoding="utf-8") == (
         "# arbiter-smtp\n"
         "SMTP_PRIMARY_ACCOUNT_USERNAME=\n"
         "SMTP_PRIMARY_ACCOUNT_PASSWORD=\n"
     )
-    _assert_posix_mode(tmp_path / "arbiter-server.yaml", 0o640)
-    _assert_posix_mode(tmp_path.parent / ".arbiter.env", 0o600)
-    assert capsys.readouterr().out == f"wrote {tmp_path.parent / '.arbiter.env'}\n"
+    _assert_posix_mode(config_dir / "arbiter-server.yaml", 0o640)
+    _assert_posix_mode(tmp_path / ".arbiter.env", 0o600)
+    assert capsys.readouterr().out == f"wrote {tmp_path / '.arbiter.env'}\n"
 
 
 def test_cli_env_bootstrap_reports_reploy_display_path_for_written_env_file(

@@ -4,6 +4,8 @@ import asyncio
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 import json
+import logging
+import pytest
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import quote, urlparse
@@ -13,9 +15,12 @@ from omegaconf import OmegaConf
 from arbiter_server.artifacts import PluginArtifactStore
 from arbiter_server.config import AppConfig
 from arbiter_server.main import build_server
+from arbiter_server.errors import OperationError, OperationValidationError
 from arbiter_server.services import (
     CapabilityDescriptor,
     OperationDescriptor,
+    OperationCatalog,
+    RuntimeRegistry,
     ServicePlugin,
     ServicePluginContext,
     ServiceRuntimeContext,
@@ -36,6 +41,14 @@ ASGIApp = Callable[
 class RepeatInput:
     text: str = field(metadata={"description": "Text to repeat."})
     times: int = field(default=1, metadata={"description": "Repeat count."})
+
+
+@dataclass(frozen=True)
+class ConstructorValidatedInput:
+    text: str
+
+    def __post_init__(self) -> None:
+        raise ValueError(f"Invalid submitted text: {self.text}")
 
 
 @dataclass(frozen=True)
@@ -364,6 +377,151 @@ def test_native_http_protocol_invokes_operations_and_returns_error_envelopes(
     missing = client.get("/api/v1/operations/echo:missing")
     assert missing.status_code == 404
     assert missing.json()["error"]["code"] == "not_found"
+
+
+@pytest.mark.parametrize(
+    "code,status",
+    [
+        ("policy_denied", 403),
+        ("upstream_auth_failed", 500),
+        ("upstream_timeout", 504),
+        ("partial_failure", 500),
+        ("plugin_error", 500),
+        ("rate_limited", 429),
+    ],
+)
+def test_native_http_preserves_plugin_classification(
+    tmp_path, monkeypatch, code, status
+):
+    error = OperationError(
+        code,
+        "Selected public explanation.",
+        plugin="echo",
+        domain_code="plugin_owned_reason",
+        details={"steps": {"first": "succeeded", "second": "failed"}},
+        transient="yes",
+        replay="unknown",
+    )
+
+    def fail(*_args):
+        raise error
+
+    monkeypatch.setattr(FakePlugin, "invoke_operation", fail)
+    response = _client(tmp_path).post(
+        "/api/v1/operations/echo:repeat", json={"args": {"text": "hello"}}
+    )
+    assert response.status_code == status
+    assert response.json() == error.to_dict()
+
+
+def test_native_http_sanitizes_dataclass_constructor_validation(
+    tmp_path, monkeypatch, caplog
+):
+    secret = "submitted-credential-42a7"
+
+    def describe_operations(*_args):
+        return (
+            OperationDescriptor(
+                name="repeat",
+                description="Validate submitted text.",
+                input_schema=ConstructorValidatedInput,
+            ),
+        )
+
+    monkeypatch.setattr(FakePlugin, "describe_operations", describe_operations)
+    response = _client(tmp_path).post(
+        "/api/v1/operations/echo:repeat", json={"args": {"text": secret}}
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["message"] == "Invalid operation arguments."
+    assert secret not in response.content.decode()
+    assert secret not in "\n".join(caplog.messages)
+
+    catalog = OperationCatalog(
+        [cast(ServicePlugin, FakePlugin())],
+        ServicePluginContext(runtimes=RuntimeRegistry({})),
+        max_account_preview_limit=8,
+        max_operation_preview_limit=8,
+    )
+    with pytest.raises(OperationValidationError, match=secret):
+        catalog.invoke_operation("echo:repeat", {"text": secret})
+
+
+@pytest.mark.parametrize(
+    "arguments,fields",
+    [
+        ({"text": "hello", "extra": "private-value-7c9e"}, ["extra"]),
+        ({"text": "hello", "times": "private-value-7c9e"}, ["times"]),
+    ],
+)
+def test_native_http_validation_identifies_fields_without_values(
+    tmp_path, arguments, fields
+):
+    response = _client(tmp_path).post(
+        "/api/v1/operations/echo:repeat", json={"args": arguments}
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["details"] == {"fields": fields}
+    assert "private-value-7c9e" not in response.content.decode()
+
+
+def test_native_http_renders_typed_error_surrogates_and_unicode(tmp_path, monkeypatch):
+    surrogate = "\ud800"
+    error = OperationError(
+        "plugin_error",
+        f"Public café {surrogate}",
+        plugin=f"echo-{surrogate}",
+        domain_code=f"remote-{surrogate}",
+        details={"summary": f"Details café {surrogate}"},
+        transient="no",
+        replay="safe",
+    )
+
+    def fail(*_args):
+        raise error
+
+    monkeypatch.setattr(FakePlugin, "invoke_operation", fail)
+    response = _client(tmp_path).post(
+        "/api/v1/operations/echo:repeat", json={"args": {"text": "hello"}}
+    )
+
+    assert response.status_code == 500
+    assert response.json() == error.to_dict()
+    assert b"\\ud800" in response.content
+    assert b"caf\\u00e9" in response.content
+
+
+@pytest.mark.parametrize("exception_type", [RuntimeError, OSError])
+def test_unexpected_plugin_errors_do_not_escape_to_response_or_logs(
+    tmp_path, monkeypatch, caplog, exception_type
+):
+    exception_secret = "native-operation-secret-7f9a"
+    local_only_sentinel = "native-operation-local-91bd"
+
+    def fail(*_args):
+        private_local = local_only_sentinel
+        raise exception_type(exception_secret)  # source-only-marker-2c4e
+
+    monkeypatch.setattr(FakePlugin, "invoke_operation", fail)
+    caplog.set_level(logging.ERROR, logger="arbiter_server.main")
+
+    response = _client(tmp_path).post(
+        "/api/v1/operations/echo:repeat", json={"args": {"text": "hello"}}
+    )
+
+    assert response.status_code == 500
+    assert response.json() == {
+        "error": {
+            "code": "internal_error",
+            "message": "Internal Arbiter server error.",
+        }
+    }
+    log_text = "\n".join(caplog.messages)
+    assert exception_type.__name__ in log_text
+    assert "fail" in log_text
+    assert exception_secret not in log_text
+    assert local_only_sentinel not in log_text
+    assert "source-only-marker-2c4e" not in log_text
 
 
 def test_native_http_protocol_returns_artifact_metadata_and_streamed_content(
