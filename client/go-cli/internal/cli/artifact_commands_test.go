@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -43,45 +44,50 @@ func TestArtifactHelp(t *testing.T) {
 			name: "artifact",
 			args: []string{"artifact", "--help"},
 			expected: []string{
-				"usage: arbiter artifact {get,save,with-temp,with-stdin} ...",
+				"usage: arbiter artifact {get,save,with-temp,with-stdin} ... [--json|--yaml]",
 				"get --stdout is text-only and size-bounded",
 				"save is only for when the user explicitly asks to save a file",
+				"--json and --yaml format errors only",
 			},
 		},
 		{
 			name: "get",
 			args: []string{"artifact", "get", "--help"},
 			expected: []string{
-				"usage: arbiter artifact get <url>",
+				"usage: arbiter artifact get <url> --stdout [--max-bytes N] [--json|--yaml]",
 				"--stdout",
 				"--max-bytes",
+				"--json",
 			},
 		},
 		{
 			name: "save",
 			args: []string{"artifact", "save", "--help"},
 			expected: []string{
-				"usage: arbiter artifact save <url> <path>",
+				"usage: arbiter artifact save <url> <path> [--json|--yaml]",
 				"only when the user explicitly requests saving",
 				"never writes artifact bytes to stdout",
+				"successful output is unchanged",
 			},
 		},
 		{
 			name: "with-temp",
 			args: []string{"artifact", "with-temp", "--help"},
 			expected: []string{
-				"usage: arbiter artifact with-temp <url>",
+				"usage: arbiter artifact with-temp <url> [--max-child-stdout-bytes N] [--json|--yaml] -- <argv...>",
 				"Use {} in argv",
 				"without a shell",
+				"successful bytes and child output are unchanged",
 			},
 		},
 		{
 			name: "with-stdin",
 			args: []string{"artifact", "with-stdin", "--help"},
 			expected: []string{
-				"usage: arbiter artifact with-stdin <url>",
+				"usage: arbiter artifact with-stdin <url> [--max-child-stdout-bytes N] [--json|--yaml] -- <argv...>",
 				"streamed to child stdin",
 				"Raw artifact bytes are never written to stdout",
+				"successful bytes and child output are unchanged",
 			},
 		},
 	}
@@ -105,6 +111,60 @@ func TestArtifactHelp(t *testing.T) {
 	}
 }
 
+func TestArtifactConflictingFormatsRejectBeforeSideEffects(t *testing.T) {
+	for _, formatOrder := range [][]string{{"--json", "--yaml"}, {"--yaml", "--json"}} {
+		for _, commandName := range []string{"get", "save", "with-temp", "with-stdin"} {
+			t.Run(commandName+"/"+formatOrder[0][2:]+"-then-"+formatOrder[1][2:], func(t *testing.T) {
+				requests := 0
+				server := testutil.NewHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					requests++
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte("artifact input\n"))
+				}))
+				outputPath := filepath.Join(t.TempDir(), "artifact.bin")
+				args := []string{"artifact"}
+				switch commandName {
+				case "get":
+					args = append(args, "get", server.URL, "--stdout")
+					args = append(args, formatOrder...)
+				case "save":
+					args = append(args, "save", server.URL, outputPath)
+					args = append(args, formatOrder...)
+				case "with-temp":
+					args = append(args, "with-temp", server.URL)
+					args = append(args, formatOrder...)
+					args = append(args, "--")
+					args = append(args, artifactHelperCommand("print-path", "{}")...)
+				case "with-stdin":
+					args = append(args, "with-stdin", server.URL)
+					args = append(args, formatOrder...)
+					args = append(args, "--")
+					args = append(args, artifactHelperCommand("stdin-len")...)
+				}
+
+				result := testutil.RunCLI(t, nil, args...)
+				if result.Code != 2 || result.Stdout != "" {
+					t.Fatalf("conflicting formats were not rejected: %#v", result)
+				}
+				if formatOrder[1] == "--json" {
+					var envelope map[string]map[string]any
+					if err := json.Unmarshal([]byte(result.Stderr), &envelope); err != nil || envelope["error"]["code"] != "usage_error" {
+						t.Fatalf("conflicting formats did not produce JSON usage error: %#v", result)
+					}
+				} else if result.Stderr != "error:\n  code: usage_error\n  message: Invalid CLI arguments.\n" {
+					t.Fatalf("conflicting formats did not produce YAML usage error: %#v", result)
+				}
+				if requests != 0 {
+					t.Fatalf("conflicting formats reached the artifact server: %d requests", requests)
+				}
+				if _, err := os.Stat(outputPath); !os.IsNotExist(err) {
+					t.Fatalf("conflicting formats created output path: %v", err)
+				}
+			})
+		}
+	}
+}
+
 func TestArtifactPipeAliasIsNotAccepted(t *testing.T) {
 	result := testutil.RunCLI(t, nil, "artifact", "pipe", "--help")
 
@@ -114,7 +174,7 @@ func TestArtifactPipeAliasIsNotAccepted(t *testing.T) {
 	if result.Stdout != "" {
 		t.Fatalf("unexpected stdout: %q", result.Stdout)
 	}
-	if !strings.Contains(result.Stderr, "unknown artifact command: pipe") {
+	if !strings.Contains(result.Stderr, "unknown artifact command") {
 		t.Fatalf("unexpected stderr: %q", result.Stderr)
 	}
 }
@@ -320,7 +380,7 @@ func TestArtifactGetUsesConfiguredTLSCAFile(t *testing.T) {
 	if result.Code != 1 {
 		t.Fatalf("expected exit code 1, got %d", result.Code)
 	}
-	if !strings.Contains(result.Stderr, "contains no PEM certificates") {
+	if !strings.Contains(result.Stderr, "Invalid or unavailable client configuration.") {
 		t.Fatalf("unexpected stderr: %q", result.Stderr)
 	}
 }
@@ -385,7 +445,7 @@ func TestArtifactGetRejectsOutputOption(t *testing.T) {
 	if result.Code != 2 {
 		t.Fatalf("expected exit code 2, got %d", result.Code)
 	}
-	if !strings.Contains(result.Stderr, "unknown artifact get argument: --output") {
+	if !strings.Contains(result.Stderr, "unknown artifact get argument") {
 		t.Fatalf("unexpected stderr: %q", result.Stderr)
 	}
 }
@@ -436,6 +496,117 @@ func TestArtifactWithStdinStreamsBinaryToCommand(t *testing.T) {
 	}
 }
 
+func TestArtifactChildStreamsPreserveStructuredSuccessAndFailure(t *testing.T) {
+	for _, outputFormat := range []string{"--json", "--yaml"} {
+		t.Run(outputFormat[2:], func(t *testing.T) {
+			for _, childMode := range []string{"emit-success", "emit-failure"} {
+				t.Run(childMode, func(t *testing.T) {
+					server := testutil.NewHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						w.WriteHeader(http.StatusOK)
+						_, _ = w.Write([]byte("artifact input\n"))
+					}))
+					command := artifactHelperCommand(childMode)
+					result := testutil.RunCLI(
+						t,
+						nil,
+						"artifact",
+						"with-stdin",
+						server.URL,
+						outputFormat,
+						"--",
+						command[0],
+						command[1],
+						command[2],
+						command[3],
+					)
+
+					if childMode == "emit-success" {
+						if result.Code != 0 || result.Stdout != "child-output\n" || result.Stderr != "child-diagnostic\n" {
+							t.Fatalf("successful child streams changed: %#v", result)
+						}
+						return
+					}
+					if result.Code != 1 || result.Stdout != "" {
+						t.Fatalf("failed child streams changed: %#v", result)
+					}
+					if strings.Contains(result.Stderr, "child-output") || strings.Contains(result.Stderr, "child-diagnostic") {
+						t.Fatalf("raw failed-child output leaked: %q", result.Stderr)
+					}
+					if !strings.Contains(result.Stderr, "command failed with exit status 7") {
+						t.Fatalf("child exit status was lost: %q", result.Stderr)
+					}
+					if outputFormat == "--json" {
+						var envelope map[string]map[string]any
+						if err := json.Unmarshal([]byte(result.Stderr), &envelope); err != nil || envelope["error"] == nil {
+							t.Fatalf("failed child did not produce one JSON envelope: %q", result.Stderr)
+						}
+					} else if !strings.HasPrefix(result.Stderr, "error:\n") {
+						t.Fatalf("failed child did not produce one YAML envelope: %q", result.Stderr)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestArtifactChildStreamsPreserveUnformattedSuccessAndFailure(t *testing.T) {
+	for _, test := range []struct {
+		childMode string
+		code      int
+		stderr    string
+	}{
+		{childMode: "emit-success", code: 0, stderr: "child-diagnostic\n"},
+		{childMode: "emit-failure", code: 1, stderr: "child-diagnostic\nArbiter artifact error: command failed with exit status 7\n"},
+	} {
+		t.Run(test.childMode, func(t *testing.T) {
+			server := testutil.NewHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte("artifact input\n"))
+			}))
+			command := artifactHelperCommand(test.childMode)
+			result := testutil.RunCLI(
+				t,
+				nil,
+				"artifact",
+				"with-stdin",
+				server.URL,
+				"--",
+				command[0],
+				command[1],
+				command[2],
+				command[3],
+			)
+			if result.Code != test.code || result.Stdout != "child-output\n" || result.Stderr != test.stderr {
+				t.Fatalf("unformatted child streams changed: %#v", result)
+			}
+		})
+	}
+}
+
+func TestArtifactChildDataAfterDoubleDashIsPreserved(t *testing.T) {
+	server := testutil.NewHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("artifact input\n"))
+	}))
+	command := artifactHelperCommand("print-args")
+	result := testutil.RunCLI(
+		t,
+		nil,
+		"artifact",
+		"with-stdin",
+		server.URL,
+		"--",
+		command[0],
+		command[1],
+		command[2],
+		command[3],
+		"--json",
+	)
+	if result.Code != 0 || result.Stdout != "arg:--json\n" || result.Stderr != "" {
+		t.Fatalf("child data after -- was not preserved: %#v", result)
+	}
+}
+
 func TestArtifactWithStdinRejectsNonTextChildStdout(t *testing.T) {
 	server := testutil.NewHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -468,6 +639,42 @@ func TestArtifactWithStdinRejectsNonTextChildStdout(t *testing.T) {
 	}
 	if !strings.Contains(result.Stderr, "non-text child stdout") {
 		t.Fatalf("unexpected stderr: %q", result.Stderr)
+	}
+}
+
+func TestArtifactStructuredErrorSuppressesRejectedChildStreams(t *testing.T) {
+	for _, outputFormat := range []string{"--json", "--yaml"} {
+		t.Run(outputFormat[2:], func(t *testing.T) {
+			server := testutil.NewHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte("artifact input\n"))
+			}))
+			command := artifactHelperCommand("binary-with-diagnostic")
+			result := testutil.RunCLI(
+				t,
+				nil,
+				"artifact",
+				"with-stdin",
+				server.URL,
+				outputFormat,
+				"--",
+				command[0],
+				command[1],
+				command[2],
+				command[3],
+			)
+			if result.Code != 1 || result.Stdout != "" || strings.Contains(result.Stderr, "child-diagnostic") {
+				t.Fatalf("rejected child streams leaked: %#v", result)
+			}
+			if outputFormat == "--json" {
+				var envelope map[string]map[string]any
+				if err := json.Unmarshal([]byte(result.Stderr), &envelope); err != nil || envelope["error"] == nil {
+					t.Fatalf("rejected child did not produce one JSON envelope: %q", result.Stderr)
+				}
+			} else if !strings.HasPrefix(result.Stderr, "error:\n") {
+				t.Fatalf("rejected child did not produce one YAML envelope: %q", result.Stderr)
+			}
+		})
 	}
 }
 
@@ -509,44 +716,38 @@ func TestArtifactWithStdinRejectsOversizedChildStdout(t *testing.T) {
 }
 
 func TestArtifactWithStdinTerminatesCommandWhenChildStdoutCapIsReached(t *testing.T) {
-	server := testutil.NewHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			fmt.Fprint(w, "hello")
-		default:
-			w.WriteHeader(http.StatusMethodNotAllowed)
-		}
-	}))
-	command := artifactHelperCommand("text-stdout-sleep")
-
-	start := time.Now()
-	result := testutil.RunCLI(
-		t,
-		nil,
-		"artifact",
-		"with-stdin",
-		server.URL+"/artifact",
-		"--max-child-stdout-bytes",
-		"4",
-		"--",
-		command[0],
-		command[1],
-		command[2],
-		command[3],
-	)
-	elapsed := time.Since(start)
-
-	if result.Code != 1 {
-		t.Fatalf("expected exit code 1, got %d", result.Code)
-	}
-	if result.Stdout != "" {
-		t.Fatalf("unexpected stdout: %q", result.Stdout)
-	}
-	if !strings.Contains(result.Stderr, "child stdout larger than 4 bytes") {
-		t.Fatalf("unexpected stderr: %q", result.Stderr)
-	}
-	if elapsed > 2*time.Second {
-		t.Fatalf("expected child command to terminate promptly, elapsed=%s", elapsed)
+	for _, outputFormat := range []string{"", "--json", "--yaml"} {
+		t.Run(outputFormat, func(t *testing.T) {
+			server := testutil.NewHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprint(w, "hello")
+			}))
+			command := artifactHelperCommand("text-stdout-sleep")
+			args := []string{"artifact", "with-stdin", server.URL + "/artifact", "--max-child-stdout-bytes", "4"}
+			if outputFormat != "" {
+				args = append(args, outputFormat)
+			}
+			args = append(args, "--")
+			args = append(args, command...)
+			start := time.Now()
+			result := testutil.RunCLI(t, nil, args...)
+			if result.Code != 1 || result.Stdout != "" {
+				t.Fatalf("expected failure with no stdout: %#v", result)
+			}
+			if !strings.Contains(result.Stderr, "child stdout larger than 4 bytes") {
+				t.Fatalf("missing output-cap diagnosis: %q", result.Stderr)
+			}
+			if outputFormat == "--json" {
+				var envelope map[string]map[string]any
+				if err := json.Unmarshal([]byte(result.Stderr), &envelope); err != nil || envelope["error"] == nil {
+					t.Fatalf("expected one JSON error envelope: %q", result.Stderr)
+				}
+			} else if outputFormat == "--yaml" && !strings.HasPrefix(result.Stderr, "error:\n") {
+				t.Fatalf("expected one YAML error envelope: %q", result.Stderr)
+			}
+			if elapsed := time.Since(start); elapsed > 2*time.Second {
+				t.Fatalf("expected child command to terminate promptly, elapsed=%s", elapsed)
+			}
+		})
 	}
 }
 
@@ -602,7 +803,21 @@ func runArtifactHelper() {
 			os.Exit(1)
 		}
 		fmt.Printf("stdin:%d\n", len(data))
+	case "emit-success":
+		fmt.Fprint(os.Stdout, "child-output\n")
+		fmt.Fprint(os.Stderr, "child-diagnostic\n")
+	case "emit-failure":
+		fmt.Fprint(os.Stdout, "child-output\n")
+		fmt.Fprint(os.Stderr, "child-diagnostic\n")
+		os.Exit(7)
+	case "print-args":
+		for _, arg := range args[1:] {
+			fmt.Fprintf(os.Stdout, "arg:%s\n", arg)
+		}
 	case "binary-stdout":
+		_, _ = os.Stdout.Write([]byte{0x00, 0xff})
+	case "binary-with-diagnostic":
+		fmt.Fprint(os.Stderr, "child-diagnostic\n")
 		_, _ = os.Stdout.Write([]byte{0x00, 0xff})
 	case "text-stdout":
 		fmt.Fprint(os.Stdout, "hello")
