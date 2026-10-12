@@ -5,8 +5,8 @@ title: Writing Plugins
 For operation failures, raise `arbiter_server.errors.OperationError` with a
 shared generic code and a plugin-owned domain code. The plugin chooses the
 closest generic classification; Arbiter preserves it and maps it to HTTP.
-Messages and details must be safe for callers. See the
-[error contract](../reference/errors.md) for retry
+Messages and details must be safe for callers. Unexpected exceptions become
+`internal_error`. See the [error contract](../reference/errors.md) for retry
 guidance, partial outcomes, and the generic catalog.
 
 An Arbiter plugin is a Python package that teaches Arbiter how to use one

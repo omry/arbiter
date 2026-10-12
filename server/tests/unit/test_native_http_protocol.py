@@ -430,7 +430,9 @@ def test_native_http_renders_typed_error_surrogates_and_unicode(tmp_path, monkey
     assert b"caf\\u00e9" in response.content
 
 
-@pytest.mark.parametrize("exception_type", [RuntimeError, OSError])
+@pytest.mark.parametrize(
+    "exception_type", [ValueError, KeyError, RuntimeError, OSError]
+)
 def test_unexpected_plugin_errors_do_not_escape_to_response_or_logs(
     tmp_path, monkeypatch, caplog, exception_type
 ):
@@ -442,7 +444,7 @@ def test_unexpected_plugin_errors_do_not_escape_to_response_or_logs(
         raise exception_type(exception_secret)  # source-only-marker-2c4e
 
     monkeypatch.setattr(FakePlugin, "invoke_operation", fail)
-    caplog.set_level(logging.ERROR, logger="arbiter_server.main")
+    caplog.set_level(logging.ERROR, logger="arbiter_server.services")
 
     response = _client(tmp_path).post(
         "/api/v1/operations/echo:repeat", json={"args": {"text": "hello"}}
@@ -453,6 +455,8 @@ def test_unexpected_plugin_errors_do_not_escape_to_response_or_logs(
         "error": {
             "code": "internal_error",
             "message": "Internal Arbiter server error.",
+            "plugin": "echo",
+            "retry": {"transient": "unknown", "replay": "unknown"},
         }
     }
     log_text = "\n".join(caplog.messages)
