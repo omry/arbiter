@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from contextlib import suppress
 import smtplib
 import ssl
 
 from .config import MailTlsMode, SMTPConfig
+from .errors import SMTPPreSubmissionError
 
 
 class SMTPSubmissionClient:
@@ -16,11 +18,34 @@ class SMTPSubmissionClient:
             self._expect_ok(server.noop(), "NOOP")
 
     def send(self, message_bytes: bytes, sender: str, recipients: list[str]) -> None:
-        with self._connect() as server:
-            self._prepare_session(server)
+        try:
+            server = self._connect()
+        except OSError as exc:
+            if isinstance(
+                exc, (smtplib.SMTPResponseException, smtplib.SMTPNotSupportedError)
+            ):
+                raise
+            raise SMTPPreSubmissionError(exc) from exc
+        try:
+            try:
+                self._prepare_session(server)
+            except OSError as exc:
+                if isinstance(
+                    exc, (smtplib.SMTPResponseException, smtplib.SMTPNotSupportedError)
+                ):
+                    raise
+                raise SMTPPreSubmissionError(exc) from exc
             refused_recipients = server.sendmail(sender, recipients, message_bytes)
             if refused_recipients:
                 raise smtplib.SMTPRecipientsRefused(refused_recipients)
+        finally:
+            # DATA acceptance (or the primary rejection) determines delivery.
+            # QUIT cleanup must not replace that outcome. SMTPException is an
+            # OSError, so this also covers protocol errors while disconnecting.
+            with suppress(OSError):
+                server.quit()
+            with suppress(OSError):
+                server.close()
 
     def _connect(self) -> smtplib.SMTP | smtplib.SMTP_SSL:
         ssl_context = self._build_ssl_context()
