@@ -19,12 +19,19 @@ class FakeServer:
         self.ehlo_calls = 0
         self.ehlo_response: tuple[int, bytes] = (250, b"ok")
         self.refused_recipients: dict[str, tuple[int, bytes]] = {}
+        self.closed = False
 
     def __enter__(self) -> "FakeServer":
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
         return None
+
+    def quit(self) -> tuple[int, bytes]:
+        return 221, b"bye"
+
+    def close(self) -> None:
+        self.closed = True
 
     def ehlo(self) -> tuple[int, bytes]:
         self.ehlo_calls += 1
@@ -289,3 +296,60 @@ def test_send_raises_when_some_recipients_are_refused(monkeypatch) -> None:
     assert excinfo.value.recipients == {
         "bcc@example.com": (550, b"Recipient rejected"),
     }
+
+
+@pytest.mark.parametrize(
+    "cleanup_error",
+    [
+        smtplib.SMTPResponseException(500, b"private-quit"),
+        smtplib.SMTPServerDisconnected("private-disconnect"),
+        TimeoutError("private-timeout"),
+    ],
+)
+def test_send_preserves_acceptance_when_quit_fails(monkeypatch, cleanup_error):
+    class FailingQuitServer(FakeServer):
+        def __exit__(self, exc_type, exc, tb):
+            raise cleanup_error
+
+        def quit(self):
+            raise cleanup_error
+
+    server = FailingQuitServer()
+    monkeypatch.setattr("arbiter_smtp.client.smtplib.SMTP", lambda *a, **k: server)
+    client = SMTPSubmissionClient(_smtp_config(starttls=False))
+    client.send(
+        _message_bytes(), sender="from@example.com", recipients=["to@example.com"]
+    )
+    assert server.sent_message == _message_bytes()
+    assert server.closed
+
+
+@pytest.mark.parametrize(
+    "submission_error",
+    [
+        smtplib.SMTPDataError(550, b"private-data"),
+        smtplib.SMTPRecipientsRefused({"to@example.com": (550, b"private-recipient")}),
+    ],
+)
+def test_send_preserves_primary_rejection_when_quit_fails(
+    monkeypatch, submission_error
+):
+    class FailingSendAndQuitServer(FakeServer):
+        def sendmail(self, *args, **kwargs):
+            raise submission_error
+
+        def __exit__(self, exc_type, exc, tb):
+            raise smtplib.SMTPResponseException(500, b"private-quit")
+
+        def quit(self):
+            raise smtplib.SMTPResponseException(500, b"private-quit")
+
+    server = FailingSendAndQuitServer()
+    monkeypatch.setattr("arbiter_smtp.client.smtplib.SMTP", lambda *a, **k: server)
+    client = SMTPSubmissionClient(_smtp_config(starttls=False))
+    with pytest.raises(type(submission_error)) as caught:
+        client.send(
+            _message_bytes(), sender="from@example.com", recipients=["to@example.com"]
+        )
+    assert caught.value is submission_error
+    assert server.closed
