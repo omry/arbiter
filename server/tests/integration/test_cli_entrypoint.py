@@ -275,6 +275,112 @@ def arbiter_client_command(current_go_client_binary: Path) -> ClientCommand:
     )
 
 
+@pytest.mark.parametrize("output_format", ["json", "yaml"])
+@pytest.mark.parametrize(
+    "message,details",
+    [
+        (
+            "Fixture failure.",
+            {"empty_list": [], "empty_map": {}, "nested": [[], {}, None]},
+        ),
+        ("Fixture failure.", {"text": "before\x00after"}),
+        ("Fixture failure.", {"text": "before\u0085after"}),
+        ("Fixture failure.", {"text": "before\u2028after"}),
+        ("", {"confirmed": False}),
+        ("Fixture failure.", {"large_integer": 9007199254740993}),
+        ("Fixture failure.", {"<<": "literal key"}),
+        (
+            "Fixture failure.",
+            {
+                "%key": "%YAML",
+                "indicators": [
+                    "%directive",
+                    "&anchor",
+                    "*alias",
+                    "!tag",
+                    "|block",
+                    ">fold",
+                    "@reserved",
+                    "`reserved`",
+                    "-dash",
+                    "?question",
+                    ":colon",
+                    "[sequence]",
+                    "{mapping}",
+                    ",comma",
+                    "#comment",
+                ],
+            },
+        ),
+    ],
+    ids=[
+        "empty_collections",
+        "nul",
+        "next_line",
+        "line_separator",
+        "empty_public_message",
+        "large_integer",
+        "merge_key",
+        "yaml_indicators",
+    ],
+)
+def test_arbiter_client_errors_preserve_json_values(
+    arbiter_client_command: ClientCommand,
+    tmp_path: Path,
+    output_format: str,
+    message: str,
+    details: dict[str, object],
+) -> None:
+    payload = {
+        "error": {
+            "code": "plugin_error",
+            "message": message,
+            "plugin": "echo",
+            "domain_code": "fixture",
+            "details": details,
+            "retry": {"transient": "no", "replay": "unknown"},
+        }
+    }
+
+    class ErrorHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            body = json.dumps(payload).encode("utf-8")
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: Any) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), ErrorHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        result = _run_client_command(
+            arbiter_client_command.command,
+            f"arbiter.url=http://127.0.0.1:{server.server_port}",
+            "--config-dir",
+            str(tmp_path / "config"),
+            "plugins",
+            f"--{output_format}",
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    parsed = (
+        json.loads(result.stderr)
+        if output_format == "json"
+        else OmegaConf.to_container(OmegaConf.create(result.stderr), resolve=False)
+    )
+    assert parsed == payload
+
+
 @pytest.fixture(scope="module")
 def packaged_arbiter_client_command(
     tmp_path_factory: pytest.TempPathFactory,
@@ -861,8 +967,10 @@ def test_arbiter_clients_info_server_yaml(
 
     assert yaml_result.returncode == 0
     assert yaml_result.stderr == ""
-    assert "name: arbiter\n" in yaml_result.stdout
-    assert f"server_url: {server.url}\n" in yaml_result.stdout
+    yaml_payload = _yaml_payload(yaml_result.stdout)
+    assert isinstance(yaml_payload, dict)
+    assert yaml_payload["name"] == "arbiter"
+    assert yaml_payload["server_url"] == server.url
 
 
 def test_arbiter_clients_op_list(

@@ -175,6 +175,25 @@ func TestClientMapsErrorEnvelope(t *testing.T) {
 	}
 }
 
+func TestClientPreservesPluginErrorFields(t *testing.T) {
+	err := decodeError(500, []byte(`{"error":{"code":"partial_failure","plugin":"smtp","domain_code":"sent_copy_failed","message":"Sent copy failed.","details":{"steps":{"smtp_submission":"succeeded","sent_copy":"failed"}},"retry":{"transient":"unknown","replay":"unsafe"}}}`)).(APIError)
+	if err.Fields["plugin"] != "smtp" || err.Fields["domain_code"] != "sent_copy_failed" || err.Fields["details"] == nil || err.Fields["retry"] == nil {
+		t.Fatalf("lost structured fields: %#v", err)
+	}
+}
+
+func TestInvalidErrorResponseDoesNotExposeBody(t *testing.T) {
+	for _, body := range []string{
+		"password=secret",
+		`{"error":{"code":"plugin_error","message":"Fixture failure."}} {"password":"secret"}`,
+	} {
+		err := decodeError(500, []byte(body)).(APIError)
+		if err.Code != "invalid_response" || strings.Contains(err.Error(), "secret") {
+			t.Fatalf("invalid body accepted or exposed: %v", err)
+		}
+	}
+}
+
 func TestInsecureTLSClientDisablesCertificateVerification(t *testing.T) {
 	client := NewClientInsecureTLS("https://arbiter.test")
 

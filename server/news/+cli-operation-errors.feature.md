@@ -1,0 +1,1 @@
+Preserve server error fields in native CLI JSON/YAML errors on stderr, retain exit statuses 0/1/2, and sanitize local configuration, transport and usage diagnostics while preserving successful artifact and child-command output. Reject configuration directory paths that point to regular files consistently on every platform.
