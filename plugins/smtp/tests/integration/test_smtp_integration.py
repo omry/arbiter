@@ -19,6 +19,7 @@ from arbiter_server.app import ArbiterApp
 from arbiter_server.services import RuntimeRegistry
 from arbiter_smtp import SMTPRuntime
 from arbiter_smtp.client import SMTPSubmissionClient
+from arbiter_smtp.errors import SMTPPreSubmissionError
 from arbiter_smtp.config import MailTlsMode, SMTPConfig, SMTPServicePolicyConfig
 
 _TEST_CERT_PEM = """-----BEGIN CERTIFICATE-----
@@ -660,8 +661,9 @@ def test_send_email_fails_on_starttls_with_invalid_certificate(
     )
     app = _build_app(smtp_config)
 
-    with pytest.raises(ssl.SSLCertVerificationError):
+    with pytest.raises(SMTPPreSubmissionError) as caught:
         _send_test_message(app)
+    assert isinstance(caught.value.cause, ssl.SSLCertVerificationError)
 
     assert handler.envelopes == []
 
@@ -701,8 +703,9 @@ def test_send_email_fails_on_smtps_with_invalid_certificate(
     )
     app = _build_app(smtp_config)
 
-    with pytest.raises(ssl.SSLCertVerificationError):
+    with pytest.raises(SMTPPreSubmissionError) as caught:
         _send_test_message(app)
+    assert isinstance(caught.value.cause, ssl.SSLCertVerificationError)
 
     assert handler.envelopes == []
 
