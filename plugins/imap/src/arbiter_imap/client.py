@@ -12,7 +12,7 @@ import ssl
 from typing import Any, cast
 
 from .config import IMAPConfig, IMAPSystemFlag, MailTlsMode
-from .errors import IMAPAuthenticationError
+from .errors import IMAPAuthenticationError, imap_operation_error
 from arbiter_server.errors import OperationError, Replay, Transient
 
 
@@ -241,7 +241,12 @@ class IMAPClient:
         message_bytes: bytes,
         flags: Sequence[str] = (IMAPSystemFlag.SEEN.value,),
     ) -> None:
-        with self._session() as server:
+        try:
+            session = self._session()
+        except (imaplib.IMAP4.error, OSError) as exc:
+            # No APPEND command was attempted while establishing the session.
+            raise imap_operation_error(exc, replay="safe") from None
+        with session as server:
             date_time: Any = None
             status, data = server.append(
                 self._quote_mailbox(folder),
