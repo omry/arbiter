@@ -13,6 +13,8 @@ import time
 from urllib.parse import quote
 
 from .storage import ensure_private_dir, plugin_data_dir
+from .errors import OperationError
+from .limits import DEFAULT_MAX_ARTIFACT_BYTES
 
 
 DEFAULT_IDLE_TTL_SECONDS = 10 * 60
@@ -35,6 +37,19 @@ class ArtifactExpired(ArtifactError):
 
 class ArtifactConsumed(ArtifactError):
     pass
+
+
+class ArtifactTooLarge(OperationError):
+    def __init__(self, max_artifact_bytes: int) -> None:
+        super().__init__(
+            "policy_denied",
+            "Artifact exceeds the configured size limit.",
+            details={"max_artifact_bytes": max_artifact_bytes},
+            transient="no",
+            # The store cannot know whether its caller has already performed
+            # other operation steps; do not promise safe operation replay.
+            replay="unknown",
+        )
 
 
 @dataclass(frozen=True)
@@ -77,6 +92,10 @@ class PluginArtifactStore:
         self._plugin = plugin
         self._store = store
 
+    @property
+    def max_artifact_bytes(self) -> int:
+        return self._store.max_artifact_bytes
+
     def create(
         self,
         *,
@@ -102,15 +121,23 @@ class ArtifactStore:
         base_url: str,
         idle_ttl_seconds: int = DEFAULT_IDLE_TTL_SECONDS,
         retention_seconds: int = DEFAULT_RETENTION_SECONDS,
+        max_artifact_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES,
     ) -> None:
         if idle_ttl_seconds < 1:
             raise ValueError("artifact idle_ttl_seconds must be at least 1")
         if retention_seconds < 1:
             raise ValueError("artifact retention_seconds must be at least 1")
+        if type(max_artifact_bytes) is not int or max_artifact_bytes < 1:
+            raise ValueError("artifact max_artifact_bytes must be a positive integer")
         self._root = root
         self._base_url = base_url.rstrip("/")
         self._idle_ttl_seconds = idle_ttl_seconds
         self._retention_seconds = retention_seconds
+        self._max_artifact_bytes = max_artifact_bytes
+
+    @property
+    def max_artifact_bytes(self) -> int:
+        return self._max_artifact_bytes
 
     @property
     def idle_ttl_seconds(self) -> int:
@@ -128,6 +155,8 @@ class ArtifactStore:
         content_type: str,
         source: dict[str, object],
     ) -> ArtifactDescriptor:
+        if len(content) > self._max_artifact_bytes:
+            raise ArtifactTooLarge(self._max_artifact_bytes)
         self.purge_expired()
         artifact_id = secrets.token_urlsafe(24)
         nonce = secrets.token_urlsafe(32)

@@ -131,6 +131,7 @@ and inline message content. Configure it in the server deployment:
 arbiter:
   limits:
     max_request_body_bytes: 1048576
+    max_artifact_bytes: 52428800
 ```
 
 The value must be a positive integer; zero does not disable the limit.
@@ -140,8 +141,21 @@ is absent or understates the body size. The response reports the configured
 ceiling in `error.details.max_request_body_bytes`.
 
 Artifact downloads are responses and are not restricted by this request-body
-ceiling. This setting does not bound message fetching, artifact storage, or
-plugin execution resources.
+ceiling.
+
+`max_artifact_bytes` limits creation of each stored artifact to 50 MiB
+(52,428,800 bytes) by default, regardless of which plugin produces it. It must
+be a positive integer. Oversized artifacts are rejected before hashing or
+writing files, with HTTP `403`, `policy_denied`, and
+`error.details.max_artifact_bytes`. Files within the limit are stored and served
+in full; the limit does not truncate them. Operation discovery publishes the
+configured ceiling in `artifact_policy.max_artifact_bytes`.
+
+This core limit bounds individual artifact writes. Total artifact storage,
+mail fetching and decoding, and plugin execution need separate limits in their
+own domains. Plugin-specific limits do not change core limits. These controls
+apply to trusted plugins using Arbiter's storage API; they do not isolate
+same-process plugin code from the filesystem.
 
 ## Server TLS
 
