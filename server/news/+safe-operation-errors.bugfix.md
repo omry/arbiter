@@ -1,0 +1,1 @@
+Convert unexpected plugin operation exceptions to public-safe internal errors while retaining typed plugin classifications and omitting raw exception text, source code, and local values from operation diagnostics.
