@@ -200,7 +200,11 @@ arbiter plugins <plugin> policy <policy> [--yaml]
 - `plugins <plugin>`: describe one plugin.
 - `plugins <plugin> accounts`: list configured accounts for one plugin.
 - `plugins <plugin> account <account>`: show one account with its policy.
-- `plugins <plugin> policy <policy>`: show one redacted policy.
+- `plugins <plugin> policy <policy>`: show one public policy projection.
+
+Account `config` and policy `rules` contain only fields explicitly published by
+the plugin. They are empty when the plugin provides no public projection;
+these commands do not display raw deployment config or credential references.
 
 ## op
 

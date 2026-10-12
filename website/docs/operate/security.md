@@ -29,6 +29,14 @@ in operator-owned account configuration and environment values. Service plugins
 use those credentials inside the server process after applying policy checks,
 then talk to the upstream service using its native protocol.
 
+Account and policy discovery never exports raw deployment configuration.
+The server returns public account metadata and only the config fields selected
+by explicit plugin projections. Plugins without these projections expose
+empty account `config` and policy `rules` objects. Public fields such as account
+descriptions and guidance are deliberately visible to callers; do not put
+credentials or secret interpolations in those fields. Installed plugins are
+trusted code and must keep their discovery projections free of secrets.
+
 The Arbiter operator is the root administrator for the deployment. Arbiter
 protects configured services from agents and other callers; it does not protect
 account owners from the person or organization that controls the Arbiter host,

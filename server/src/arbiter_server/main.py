@@ -2005,82 +2005,6 @@ def _string_or_none_value(value: object) -> str | None:
     return value if isinstance(value, str) and value != "" else None
 
 
-_REDACTED_CONFIG_VALUE = "<redacted>"
-_SECRET_CONFIG_KEY_PARTS = frozenset(
-    {
-        "api_key",
-        "apikey",
-        "authorization",
-        "credential",
-        "password",
-        "private_key",
-        "secret",
-        "token",
-    }
-)
-_INTERNAL_CONFIG_KEYS = frozenset(
-    {
-        "cache_dir",
-        "directory",
-        "dir",
-        "env_file",
-        "file",
-        "filename",
-        "path",
-    }
-)
-_INTERNAL_CONFIG_KEY_SUFFIXES = ("_dir", "_file", "_path")
-
-
-def _plain_config_value(value: object, *, resolve: bool) -> object:
-    if OmegaConf.is_config(value):
-        return OmegaConf.to_container(value, resolve=resolve, enum_to_str=True)
-    return _jsonable(value)
-
-
-def _is_redacted_config_key(key: str | None) -> bool:
-    if key is None:
-        return False
-    key_lower = key.lower()
-    return (
-        any(part in key_lower for part in _SECRET_CONFIG_KEY_PARTS)
-        or key_lower in _INTERNAL_CONFIG_KEYS
-        or key_lower.endswith(_INTERNAL_CONFIG_KEY_SUFFIXES)
-    )
-
-
-def _redact_config_value(value: object, *, key: str | None = None) -> object:
-    if _is_redacted_config_key(key):
-        return _REDACTED_CONFIG_VALUE
-    if isinstance(value, Mapping):
-        return {
-            str(item_key): _redact_config_value(item_value, key=str(item_key))
-            for item_key, item_value in value.items()
-        }
-    if isinstance(value, list):
-        return [_redact_config_value(item) for item in value]
-    return value
-
-
-def _resolve_redacted_config_value(value: object) -> object:
-    if not isinstance(value, (Mapping, list)):
-        return value
-    try:
-        config_value = dict(value) if isinstance(value, Mapping) else value
-        return OmegaConf.to_container(
-            OmegaConf.create(config_value),
-            resolve=True,
-            enum_to_str=True,
-        )
-    except Exception:
-        return value
-
-
-def _redacted_config_payload(value: object) -> object:
-    unresolved = _plain_config_value(value, resolve=False)
-    return _resolve_redacted_config_value(_redact_config_value(unresolved))
-
-
 def _config_field_string(config: object, field_name: str) -> str:
     if isinstance(config, Mapping):
         value = config.get(field_name, "")
@@ -2156,6 +2080,7 @@ def _native_plugin_accounts_payload(
 
 def _native_policy_payload(
     cfg: HydraConfig,
+    catalog: OperationCatalog,
     plugin: str,
     policy: str,
 ) -> dict[str, object]:
@@ -2166,12 +2091,13 @@ def _native_policy_payload(
         "kind": "policy",
         "plugin": plugin,
         "policy": policy,
-        "rules": _redacted_config_payload(policies[policy]),
+        "rules": catalog.public_config_projection(plugin, "policy", policies[policy]),
     }
 
 
 def _native_account_detail_payload(
     cfg: HydraConfig,
+    catalog: OperationCatalog,
     plugin: str,
     account: str,
 ) -> dict[str, object]:
@@ -2182,14 +2108,14 @@ def _native_account_detail_payload(
     policy = _account_policy_name(account_config)
     policy_payload = None
     if policy is not None:
-        policy_payload = _native_policy_payload(cfg, plugin, policy)
+        policy_payload = _native_policy_payload(cfg, catalog, plugin, policy)
     return {
         "kind": "account",
         "plugin": plugin,
         "account": account,
         "description": _config_field_string(account_config, "description"),
         "guidance": _config_field_string(account_config, "guidance"),
-        "config": _redacted_config_payload(account_config),
+        "config": catalog.public_config_projection(plugin, "account", account_config),
         "policy": policy_payload,
     }
 
@@ -2316,6 +2242,7 @@ def _create_native_http_app(
             return _native_response(
                 _native_account_detail_payload(
                     cfg,
+                    catalog,
                     request.path_params["plugin_id"],
                     request.path_params["account"],
                 )
@@ -2328,6 +2255,7 @@ def _create_native_http_app(
             return _native_response(
                 _native_policy_payload(
                     cfg,
+                    catalog,
                     request.path_params["plugin_id"],
                     request.path_params["policy"],
                 )
