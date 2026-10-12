@@ -5,7 +5,7 @@ title: Error contract
 Structured operation errors use `{"error": {"code": "...", "message": "..."}}`.
 The generic `code` is shared across plugins. A plugin chooses the closest
 generic classification and its own `domain_code`; Arbiter does not guess from
-exception messages. Structured plugin errors also identify `plugin` and may include
+exception messages. Classified plugin errors also identify `plugin` and may include
 deliberately selected `details`.
 
 ## Generic classifications
@@ -93,3 +93,11 @@ Plugins raise `arbiter_server.errors.OperationError` with public-safe
 messages and JSON-compatible details. They own the classification and must
 not include credentials, message contents, raw upstream text, or exception
 strings.
+
+Unexpected exceptions during plugin operation execution become `internal_error`
+with the plugin identity and unknown retry guidance. Arbiter does not invent
+a plugin-domain code for an unexpected implementation failure. The operation
+boundary logs controlled exception types and stack locations while omitting
+exception text, source lines, and local values. This boundary applies to
+operation execution; configuration/account checks and successful results keep
+their existing output formats.
