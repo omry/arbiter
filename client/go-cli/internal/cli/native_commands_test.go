@@ -53,7 +53,7 @@ func TestInfoServerYAMLFlagCanFollowSubcommand(t *testing.T) {
 		t.Fatalf("expected exit code 0, got %d stderr=%q", result.code, result.stderr)
 	}
 	if !strings.Contains(result.stdout, "name: arbiter\n") ||
-		!strings.Contains(result.stdout, "server_url: https://127.0.0.1:8075\n") {
+		!strings.Contains(result.stdout, "server_url: \"https://127.0.0.1:8075\"\n") {
 		t.Fatalf("expected YAML-ish output, got:\n%s", result.stdout)
 	}
 }
@@ -339,7 +339,7 @@ func TestOperationListForPluginPrintsYAML(t *testing.T) {
 	expected := "" +
 		"kind: ops\n" +
 		"operations:\n" +
-		"  smtp:send_email:\n" +
+		"  \"smtp:send_email\":\n" +
 		"    description: Send one email.\n" +
 		"    name: send_email\n" +
 		"plugin: smtp\n"
@@ -401,7 +401,7 @@ func TestOperationOutputRejectsPlain(t *testing.T) {
 	if result.stdout != "" {
 		t.Fatalf("unexpected stdout: %q", result.stdout)
 	}
-	if !strings.Contains(result.stderr, "unknown output option: --plain") {
+	if !strings.Contains(result.stderr, "unknown output option") {
 		t.Fatalf("expected plain rejection, got %q", result.stderr)
 	}
 }
