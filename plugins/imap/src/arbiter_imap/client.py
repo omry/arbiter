@@ -12,7 +12,7 @@ import ssl
 from typing import Any, cast
 
 from .config import IMAPConfig, IMAPSystemFlag, MailTlsMode
-from .errors import IMAPAuthenticationError
+from .errors import IMAPAuthenticationError, imap_operation_error
 from arbiter_server.errors import OperationError, Replay, Transient
 
 
@@ -241,10 +241,24 @@ class IMAPClient:
         message_bytes: bytes,
         flags: Sequence[str] = (IMAPSystemFlag.SEEN.value,),
     ) -> None:
-        with self._session() as server:
+        try:
+            session = self._session()
+        except OperationError:
+            raise
+        except Exception as exc:
+            # No APPEND command was attempted while establishing the session.
+            raise imap_operation_error(exc, replay="safe") from None
+        with session as server:
+            quoted_folder = self._quote_mailbox(folder)
+            try:
+                # This client uses stdlib's ASCII command mode. Validate the
+                # mailbox before APPEND can transmit its command or literal.
+                quoted_folder.encode("ascii")
+            except UnicodeError as exc:
+                raise imap_operation_error(exc, replay="safe") from None
             date_time: Any = None
             status, data = server.append(
-                self._quote_mailbox(folder),
+                quoted_folder,
                 f"({' '.join(flags)})",
                 date_time,
                 message_bytes,
