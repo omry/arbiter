@@ -1298,6 +1298,38 @@ sent_copy:
 
 
 class SMTPServicePlugin:
+    def public_account_config(self, config: object) -> Mapping[str, object]:
+        account = cast(SMTPConfig, config)
+        return {
+            "from_email": account.from_email,
+            "from_name": account.from_name,
+            "sent_copy": {"folder": account.sent_copy.folder},
+        }
+
+    def public_policy_config(self, config: object) -> Mapping[str, object]:
+        policy = cast(SMTPServicePolicyConfig, config)
+        return {
+            "limits": {
+                "max_messages_per_minute": policy.limits.max_messages_per_minute,
+                "max_recipients_per_message": policy.limits.max_recipients_per_message,
+            },
+            "idempotency": {"expiration_days": policy.idempotency.expiration_days},
+            "recipient_policy": {
+                "allowed_recipients": list(policy.recipient_policy.allowed_recipients),
+                "blocked_recipients": list(policy.recipient_policy.blocked_recipients),
+                "allowed_domain_patterns": list(
+                    policy.recipient_policy.allowed_domain_patterns
+                ),
+                "blocked_domain_patterns": list(
+                    policy.recipient_policy.blocked_domain_patterns
+                ),
+            },
+            "sent_copy": {
+                "enabled": policy.sent_copy.enabled,
+                "on_failure": policy.sent_copy.on_failure,
+            },
+        }
+
     name = "smtp"
     version = distribution_version("arbiter-smtp", package_file=__file__)
     server_api_version = SERVER_API_VERSION
