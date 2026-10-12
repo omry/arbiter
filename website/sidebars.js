@@ -69,6 +69,7 @@ const sidebars = {
       items: [
         'reference/server',
         'reference/client',
+        'reference/errors',
       ],
     },
     {

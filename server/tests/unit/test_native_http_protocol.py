@@ -4,6 +4,8 @@ import asyncio
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 import json
+import logging
+import pytest
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import quote, urlparse
@@ -13,6 +15,7 @@ from omegaconf import OmegaConf
 from arbiter_server.artifacts import PluginArtifactStore
 from arbiter_server.config import AppConfig
 from arbiter_server.main import build_server
+from arbiter_server.errors import OperationError
 from arbiter_server.services import (
     CapabilityDescriptor,
     OperationDescriptor,
@@ -364,6 +367,100 @@ def test_native_http_protocol_invokes_operations_and_returns_error_envelopes(
     missing = client.get("/api/v1/operations/echo:missing")
     assert missing.status_code == 404
     assert missing.json()["error"]["code"] == "not_found"
+
+
+@pytest.mark.parametrize(
+    "code,status",
+    [
+        ("policy_denied", 403),
+        ("upstream_auth_failed", 500),
+        ("upstream_timeout", 504),
+        ("partial_failure", 500),
+        ("plugin_error", 500),
+        ("rate_limited", 429),
+    ],
+)
+def test_native_http_preserves_plugin_classification(
+    tmp_path, monkeypatch, code, status
+):
+    error = OperationError(
+        code,
+        "Selected public explanation.",
+        plugin="echo",
+        domain_code="plugin_owned_reason",
+        details={"steps": {"first": "succeeded", "second": "failed"}},
+        transient="yes",
+        replay="unknown",
+    )
+
+    def fail(*_args):
+        raise error
+
+    monkeypatch.setattr(FakePlugin, "invoke_operation", fail)
+    response = _client(tmp_path).post(
+        "/api/v1/operations/echo:repeat", json={"args": {"text": "hello"}}
+    )
+    assert response.status_code == status
+    assert response.json() == error.to_dict()
+
+
+def test_native_http_renders_typed_error_surrogates_and_unicode(tmp_path, monkeypatch):
+    surrogate = "\ud800"
+    error = OperationError(
+        "plugin_error",
+        f"Public café {surrogate}",
+        plugin=f"echo-{surrogate}",
+        domain_code=f"remote-{surrogate}",
+        details={"summary": f"Details café {surrogate}"},
+        transient="no",
+        replay="safe",
+    )
+
+    def fail(*_args):
+        raise error
+
+    monkeypatch.setattr(FakePlugin, "invoke_operation", fail)
+    response = _client(tmp_path).post(
+        "/api/v1/operations/echo:repeat", json={"args": {"text": "hello"}}
+    )
+
+    assert response.status_code == 500
+    assert response.json() == error.to_dict()
+    assert b"\\ud800" in response.content
+    assert b"caf\\u00e9" in response.content
+
+
+@pytest.mark.parametrize("exception_type", [RuntimeError, OSError])
+def test_unexpected_plugin_errors_do_not_escape_to_response_or_logs(
+    tmp_path, monkeypatch, caplog, exception_type
+):
+    exception_secret = "native-operation-secret-7f9a"
+    local_only_sentinel = "native-operation-local-91bd"
+
+    def fail(*_args):
+        private_local = local_only_sentinel
+        raise exception_type(exception_secret)  # source-only-marker-2c4e
+
+    monkeypatch.setattr(FakePlugin, "invoke_operation", fail)
+    caplog.set_level(logging.ERROR, logger="arbiter_server.main")
+
+    response = _client(tmp_path).post(
+        "/api/v1/operations/echo:repeat", json={"args": {"text": "hello"}}
+    )
+
+    assert response.status_code == 500
+    assert response.json() == {
+        "error": {
+            "code": "internal_error",
+            "message": "Internal Arbiter server error.",
+        }
+    }
+    log_text = "\n".join(caplog.messages)
+    assert exception_type.__name__ in log_text
+    assert "fail" in log_text
+    assert exception_secret not in log_text
+    assert local_only_sentinel not in log_text
+    assert "source-only-marker-2c4e" not in log_text
 
 
 def test_native_http_protocol_returns_artifact_metadata_and_streamed_content(

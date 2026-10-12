@@ -10,6 +10,7 @@ from omegaconf import OmegaConf
 from omegaconf.errors import OmegaConfBaseException
 
 from .version import arbiter_server_version, compatibility_line, server_api_version
+from .errors import OperationValidationError
 
 
 RuntimeT = TypeVar("RuntimeT")
@@ -826,13 +827,14 @@ def _validate_dataclass_operation_arguments(
         if _field_is_required(schema_field) and field_name not in arguments
     ]
     if missing:
-        raise ValueError(
-            f"{operation_ref} missing required argument(s): {', '.join(missing)}"
+        raise OperationValidationError(
+            f"{operation_ref} missing required argument(s): {', '.join(missing)}",
+            fields=missing,
         )
 
     unknown = sorted(str(key) for key in arguments if key not in schema_fields)
     if unknown:
-        raise ValueError(
+        raise OperationValidationError(
             f"{operation_ref} received unknown argument(s): {', '.join(unknown)}"
         )
 
@@ -841,7 +843,9 @@ def _validate_dataclass_operation_arguments(
         merged = OmegaConf.merge(OmegaConf.structured(schema_type), argument_values)
         operation_input = OmegaConf.to_object(merged)
     except OmegaConfBaseException as exc:
-        raise ValueError(f"{operation_ref} invalid argument(s): {exc}") from exc
+        raise OperationValidationError(
+            f"{operation_ref} invalid argument(s): {exc}"
+        ) from None
     if not is_dataclass(operation_input):
         raise RuntimeError(f"{operation_ref} input schema did not produce a dataclass")
     return asdict(operation_input)

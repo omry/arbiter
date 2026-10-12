@@ -1,0 +1,1 @@
+Introduce a shared structured operation-error model with plugin-owned generic and domain codes, HTTP mappings, explicit partial outcomes, and separate transience and replay guidance for plugin authors.
