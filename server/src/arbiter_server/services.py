@@ -4,7 +4,7 @@ import logging
 from collections.abc import Callable, ItemsView, KeysView, Mapping, Sequence
 from dataclasses import MISSING, Field, asdict, dataclass, field, fields, is_dataclass
 from types import UnionType
-from typing import Any, Protocol, TypeVar, Union, cast, get_args, get_origin
+from typing import Any, Literal, Protocol, TypeVar, Union, cast, get_args, get_origin
 from typing import get_type_hints
 
 from omegaconf import OmegaConf
@@ -18,6 +18,18 @@ RuntimeT = TypeVar("RuntimeT")
 SERVER_VERSION = arbiter_server_version()
 SERVER_API_VERSION = server_api_version()
 ACCOUNT_TEST_STATUSES = {"ok", "failed", "skipped"}
+
+
+def _require_plain_public_values(value: object) -> None:
+    if OmegaConf.is_config(value) or is_dataclass(value):
+        raise RuntimeError("Public config projections must contain plain values")
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            _require_plain_public_values(key)
+            _require_plain_public_values(item)
+    elif isinstance(value, list | tuple | set):
+        for item in value:
+            _require_plain_public_values(item)
 
 
 class ToolServer(Protocol):
@@ -683,6 +695,23 @@ class OperationCatalog:
             "name": descriptor.name,
             "description": descriptor.description,
         }
+
+    def public_config_projection(
+        self,
+        capability: str,
+        kind: Literal["account", "policy"],
+        config: object,
+    ) -> Mapping[str, object]:
+        """Plugins explicitly choose public fields; absent hooks expose nothing."""
+        self._require_capability(capability)
+        project = getattr(self._plugins[capability], f"public_{kind}_config", None)
+        if not callable(project):
+            return {}
+        projection = project(config)
+        if not isinstance(projection, Mapping) or OmegaConf.is_config(projection):
+            raise RuntimeError("Public config projections must be plain mappings")
+        _require_plain_public_values(projection)
+        return projection
 
     def _account_summaries(self, capability: str) -> Mapping[str, object]:
         runtime = self._context.runtimes.require_object(capability)
