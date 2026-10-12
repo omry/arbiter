@@ -25,6 +25,7 @@ type APIError struct {
 	StatusCode int
 	Code       string
 	Message    string
+	Fields     map[string]any
 }
 
 func (err APIError) Error() string {
@@ -174,21 +175,38 @@ func (c *Client) do(req *http.Request) (map[string]any, error) {
 
 func decodeError(statusCode int, data []byte) error {
 	var payload struct {
-		Error struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
+		Error map[string]any `json:"error"`
 	}
-	if err := json.Unmarshal(data, &payload); err == nil && payload.Error.Message != "" {
-		return APIError{
-			StatusCode: statusCode,
-			Code:       payload.Error.Code,
-			Message:    payload.Error.Message,
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&payload); err == nil {
+		var trailing any
+		if decoder.Decode(&trailing) != io.EOF {
+			return APIError{StatusCode: statusCode, Code: "invalid_response", Message: "Arbiter returned an invalid error response."}
+		}
+		message, hasMessage := payload.Error["message"].(string)
+		code, _ := payload.Error["code"].(string)
+		if hasMessage && code != "" {
+			return APIError{
+				StatusCode: statusCode,
+				Code:       code,
+				Message:    message,
+				Fields:     payload.Error,
+			}
 		}
 	}
-	message := strings.TrimSpace(string(data))
-	if message == "" {
-		message = http.StatusText(statusCode)
+	return APIError{StatusCode: statusCode, Code: "invalid_response", Message: "Arbiter returned an invalid error response."}
+}
+
+// ErrorResponse retains public server error fields with a bounded read. HEAD
+// failures have no body, so retain their status without claiming a domain code.
+func ErrorResponse(resp *http.Response) error {
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024+1))
+	if err != nil || len(data) > 64*1024 {
+		return APIError{StatusCode: resp.StatusCode, Code: "invalid_response", Message: "Arbiter returned an invalid error response."}
 	}
-	return APIError{StatusCode: statusCode, Message: message}
+	if len(data) == 0 {
+		return APIError{StatusCode: resp.StatusCode, Code: "http_error", Message: "Arbiter rejected the artifact request."}
+	}
+	return decodeError(resp.StatusCode, data)
 }
