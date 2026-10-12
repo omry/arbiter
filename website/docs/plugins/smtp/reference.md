@@ -95,8 +95,9 @@ The server enforces:
 - `max_recipients_per_message`
 - per-account per-process message rate limit
 - keyed idempotency replay/conflict handling
-- sent-copy idempotency, so a replay does not resend SMTP and either avoids a
-  second Sent append or retries a previously failed Sent append
+- sent-copy idempotency, so a replay does not resend SMTP while the record is
+  valid, retries definitive failed or skipped copies, and does not repeat an
+  uncertain append
 - no caller override for SMTP host, TLS, credentials, sender identity, or
   `Reply-To`
 
@@ -117,12 +118,17 @@ account only when exactly one folder has `kind: SENT`. If there is no matching
 IMAP account, no Sent folder, or multiple Sent folders, Sent-copy is skipped or
 failed according to `sent_copy.on_failure`.
 
-The operation result reports Sent-copy as `saved`, `skipped`, `failed`, or
-`disabled`. A retry with the same `idempotency_key` and payload does not submit
-the SMTP message again. If the previous SMTP submission succeeded but Sent-copy
-failed or was skipped, the retry can retry only the IMAP Sent-copy step. While
-that retry is possible, the retry record can contain the submitted message
-bytes.
+The operation result reports Sent-copy as `saved`, `skipped`, `failed`,
+`unknown`, or `disabled`. While the original retry record remains valid, a
+retry with the same `idempotency_key` and payload does not submit the SMTP
+message again. If SMTP submission succeeded but Sent-copy definitively failed
+or was skipped, the retry can retry only the IMAP Sent-copy step. While that
+retry is possible, the record can contain the submitted message bytes.
+
+`unknown` means the IMAP append may have succeeded before its outcome was lost.
+Keyed replay preserves this outcome without repeating the append. Inspect the
+destination before attempting recovery; there are no automatic operation
+retries.
 
 ## Config Checks
 

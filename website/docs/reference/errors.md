@@ -40,6 +40,36 @@ Transience does not imply safe replay. `same_idempotency_key` requires the
 same key and payload while the original idempotency record remains valid.
 There are no automatic operation retries.
 
+For example, SMTP submission can succeed before a required IMAP Sent-copy
+fails:
+
+```json
+{
+  "error": {
+    "code": "partial_failure",
+    "plugin": "smtp",
+    "domain_code": "sent_copy_failed",
+    "message": "SMTP submission succeeded but saving the Sent copy failed.",
+    "details": {
+      "steps": {
+        "smtp_submission": "succeeded",
+        "sent_copy": "failed"
+      }
+    },
+    "retry": {"transient": "unknown", "replay": "same_idempotency_key"}
+  }
+}
+```
+
+The existing SMTP `sent_copy.on_failure` policy remains authoritative:
+`warn` returns a successful result containing the Sent-copy outcome; `fail`
+returns an error with explicit completed and failed steps. Without a usable
+idempotency key, resubmitting after confirmed submission is unsafe. An
+upstream timeout during a write can leave the outcome unknown.
+An uncertain Sent-copy append is reported as `unknown`; replaying a cached
+SMTP result does not repeat that append. Inspect the destination before
+attempting recovery, since the copy may already exist.
+
 Plugins raise `arbiter_server.errors.OperationError` with public-safe
 messages and JSON-compatible details. They own the classification and must
 not include credentials, message contents, raw upstream text, or exception

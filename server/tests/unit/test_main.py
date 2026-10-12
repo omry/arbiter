@@ -4609,7 +4609,7 @@ def test_build_app_sent_copy_does_not_infer_folder_from_different_account() -> N
     assert result.sent_copy == {
         "status": "skipped",
         "account": "primary",
-        "reason": "IMAP account has no folder configured with kind=SENT: primary",
+        "reason": "Sent-copy destination could not be resolved.",
         "error_type": "ValueError",
     }
 
