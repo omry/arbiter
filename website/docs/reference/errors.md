@@ -15,7 +15,7 @@ callers should inspect the JSON code for precise handling.
 
 | Code | HTTP status | Meaning |
 | --- | --- | --- |
-| `validation_error` | 400 or 422 | Invalid request syntax or operation arguments. |
+| `validation_error` | 400, 413, or 422 | Invalid request syntax, oversized operation request body, or invalid operation arguments. |
 | `not_found` | 404 | Requested operation or resource does not exist. |
 | `policy_denied` | 403 | Configured policy prohibits the operation. |
 | `rate_limited` | 429 | Arbiter's configured operation rate limit was reached. |
