@@ -32,7 +32,11 @@ func (config ResolvedClientConfig) operationTimeout(operationID string) time.Dur
 func parseTimeout(value, key string) (time.Duration, error) {
 	duration, err := time.ParseDuration(value)
 	if err != nil || duration <= 0 {
-		return 0, fmt.Errorf("%s must be a positive duration with units (for example 30s or 5m)", key)
+		label := "plugin timeout"
+		if key == "arbiter.timeout" || key == "arbiter.connect_timeout" || key == "arbiter.download_idle_timeout" {
+			label = key
+		}
+		return 0, safeClientError(fmt.Sprintf("%s must be a positive duration with units (for example 30s or 5m)", label))
 	}
 	return duration, nil
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -136,19 +137,19 @@ func Main(
 	lookupEnv EnvLookup,
 	homeDir HomeDirFunc,
 ) int {
-	args = normalizeInfoOutputFlags(args)
+	stderr = &errorWriter{Writer: stderr, format: requestedErrorFormat(args)}
 	if len(args) == 0 {
-		printShortUsage(stdout)
+		printShortUsage(stderr)
 		return 2
 	}
 
 	options, remaining, err := parseGlobalOptions(args)
 	if err != nil {
-		fmt.Fprintf(stderr, "Arbiter usage error: %v\n", err)
+		printClientError(stderr, err, "usage")
 		return 2
 	}
 	if len(remaining) == 0 {
-		printShortUsage(stdout)
+		printUsageError(stderr, "expected a command", "arbiter")
 		return 2
 	}
 
@@ -176,8 +177,7 @@ func Main(
 	case "artifact":
 		return runArtifact(remaining[1:], options, stdout, stderr, lookupEnv, homeDir)
 	default:
-		fmt.Fprintf(stderr, "Arbiter usage error: unknown command: %s\n", remaining[0])
-		printShortUsage(stderr)
+		printUsageError(stderr, fmt.Sprintf("unknown command: %s", remaining[0]), "arbiter")
 		return 2
 	}
 }
@@ -190,9 +190,14 @@ func runArtifact(
 	lookupEnv EnvLookup,
 	homeDir HomeDirFunc,
 ) int {
+	var formatErr error
+	args, formatErr = artifactErrorFlags(args)
+	if formatErr != nil {
+		printClientError(stderr, formatErr, "usage")
+		return 2
+	}
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "Arbiter usage error: expected: arbiter artifact {get,save,with-temp,with-stdin} ...")
-		fmt.Fprintln(stderr, "Run 'arbiter artifact --help' for artifact help.")
+		printUsageError(stderr, "expected an artifact command", "arbiter artifact")
 		return 2
 	}
 	switch args[0] {
@@ -206,7 +211,7 @@ func runArtifact(
 		}
 		options, err := parseArtifactGetArgs(args[1:])
 		if err != nil {
-			fmt.Fprintf(stderr, "Arbiter usage error: %v\n", err)
+			printClientError(stderr, err, "usage")
 			return 2
 		}
 		httpClient, err := artifactHTTPClient(
@@ -216,11 +221,11 @@ func runArtifact(
 			options.URL,
 		)
 		if err != nil {
-			fmt.Fprintf(stderr, "Arbiter client config error: %v\n", err)
+			printClientError(stderr, err, "client config")
 			return 1
 		}
 		if err := fetchArtifact(context.Background(), options, httpClient, stdout); err != nil {
-			fmt.Fprintf(stderr, "Arbiter artifact error: %s\n", err)
+			printClientError(stderr, err, "artifact")
 			return 1
 		}
 		return 0
@@ -231,7 +236,7 @@ func runArtifact(
 		}
 		options, err := parseArtifactSaveArgs(args[1:])
 		if err != nil {
-			fmt.Fprintf(stderr, "Arbiter usage error: %v\n", err)
+			printClientError(stderr, err, "usage")
 			return 2
 		}
 		httpClient, err := artifactHTTPClient(
@@ -241,11 +246,11 @@ func runArtifact(
 			options.URL,
 		)
 		if err != nil {
-			fmt.Fprintf(stderr, "Arbiter client config error: %v\n", err)
+			printClientError(stderr, err, "client config")
 			return 1
 		}
 		if err := saveArtifactToFile(context.Background(), options.URL, options.OutputPath, httpClient); err != nil {
-			fmt.Fprintf(stderr, "Arbiter artifact error: %s\n", err)
+			printClientError(stderr, err, "artifact")
 			return 1
 		}
 		return 0
@@ -256,7 +261,7 @@ func runArtifact(
 		}
 		options, err := parseArtifactCommandArgs(args[0], args[1:], true)
 		if err != nil {
-			fmt.Fprintf(stderr, "Arbiter usage error: %v\n", err)
+			printClientError(stderr, err, "usage")
 			return 2
 		}
 		httpClient, err := artifactHTTPClient(
@@ -266,11 +271,11 @@ func runArtifact(
 			options.URL,
 		)
 		if err != nil {
-			fmt.Fprintf(stderr, "Arbiter client config error: %v\n", err)
+			printClientError(stderr, err, "client config")
 			return 1
 		}
 		if err := runArtifactWithTemp(context.Background(), options, httpClient, stdout, stderr); err != nil {
-			fmt.Fprintf(stderr, "Arbiter artifact error: %s\n", err)
+			printClientError(stderr, err, "artifact")
 			return 1
 		}
 		return 0
@@ -281,7 +286,7 @@ func runArtifact(
 		}
 		options, err := parseArtifactCommandArgs(args[0], args[1:], false)
 		if err != nil {
-			fmt.Fprintf(stderr, "Arbiter usage error: %v\n", err)
+			printClientError(stderr, err, "usage")
 			return 2
 		}
 		httpClient, err := artifactHTTPClient(
@@ -291,11 +296,11 @@ func runArtifact(
 			options.URL,
 		)
 		if err != nil {
-			fmt.Fprintf(stderr, "Arbiter client config error: %v\n", err)
+			printClientError(stderr, err, "client config")
 			return 1
 		}
 		if err := runArtifactWithStdin(context.Background(), options, httpClient, stdout, stderr); err != nil {
-			fmt.Fprintf(stderr, "Arbiter artifact error: %s\n", err)
+			printClientError(stderr, err, "artifact")
 			return 1
 		}
 		return 0
@@ -313,6 +318,12 @@ func runBootstrap(
 	lookupEnv EnvLookup,
 	homeDir HomeDirFunc,
 ) int {
+	var err error
+	args, err = stripErrorFormatFlags(args)
+	if err != nil {
+		printClientError(stderr, err, "usage")
+		return 2
+	}
 	if len(args) == 1 && isHelpFlag(args[0]) {
 		printBootstrapHelp(stdout)
 		return 0
@@ -334,18 +345,18 @@ func runBootstrap(
 	}
 	configPath, err := clientConfigPath(options, homeDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "Arbiter client config error: %v\n", err)
+		printClientError(stderr, err, "client config")
 		return 1
 	}
 	if _, err := os.Stat(configPath); err == nil && !force {
-		fmt.Fprintf(stderr, "Arbiter client config error: refusing to overwrite existing file: %s\n", configPath)
+		printClientError(stderr, fmt.Errorf("refusing to overwrite existing configuration"), "client config")
 		return 1
 	} else if err != nil && !os.IsNotExist(err) {
-		fmt.Fprintf(stderr, "Arbiter client config error: %v\n", err)
+		printClientError(stderr, err, "client config")
 		return 1
 	}
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-		fmt.Fprintf(stderr, "Arbiter client config error: %v\n", err)
+		printClientError(stderr, err, "client config")
 		return 1
 	}
 	serverURL := DefaultURL
@@ -356,7 +367,7 @@ func runBootstrap(
 	}
 	settings := defaultResolvedClientConfig()
 	if err := applyTimeoutOverrides(&settings, options.Overrides); err != nil {
-		fmt.Fprintf(stderr, "Arbiter client config error: %v\n", err)
+		printClientError(stderr, err, "client config")
 		return 1
 	}
 	content := fmt.Sprintf("arbiter:\n  url: %q\n", serverURL)
@@ -378,7 +389,7 @@ func runBootstrap(
 		}
 	}
 	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
-		fmt.Fprintf(stderr, "Arbiter client config error: %v\n", err)
+		printClientError(stderr, err, "client config")
 		return 1
 	}
 	fmt.Fprintf(stdout, "wrote %s\n", configPath)
@@ -393,6 +404,12 @@ func runConfig(
 	lookupEnv EnvLookup,
 	homeDir HomeDirFunc,
 ) int {
+	var err error
+	args, err = stripErrorFormatFlags(args)
+	if err != nil {
+		printClientError(stderr, err, "usage")
+		return 2
+	}
 	if len(args) == 0 || (len(args) == 1 && isHelpFlag(args[0])) {
 		printConfigHelp(stdout)
 		return 0
@@ -408,7 +425,7 @@ func runConfig(
 
 	resolved, err := ResolveURL(options.Overrides, lookupEnv, homeDir, options)
 	if err != nil {
-		fmt.Fprintf(stderr, "Arbiter client config error: %v\n", err)
+		printClientError(stderr, err, "client config")
 		return 1
 	}
 	fmt.Fprintf(stdout, "url: %s\nsource: %s\n", resolved.URL, resolved.Source)
@@ -423,17 +440,6 @@ func runInfo(
 	lookupEnv EnvLookup,
 	homeDir HomeDirFunc,
 ) int {
-	yaml := false
-	for len(args) > 0 {
-		switch args[0] {
-		case "--yaml":
-			yaml = true
-		default:
-			goto parsedFlags
-		}
-		args = args[1:]
-	}
-parsedFlags:
 	if len(args) == 0 || (len(args) == 1 && isHelpFlag(args[0])) {
 		printInfoHelp(stdout)
 		return 0
@@ -442,7 +448,12 @@ parsedFlags:
 		printInfoServerHelp(stdout)
 		return 0
 	}
-	if len(args) != 1 || args[0] != "server" {
+	positionals, format, err := parseOutputFormatArgs(args, 1)
+	if err != nil {
+		printUsageError(stderr, err.Error(), "arbiter info")
+		return 2
+	}
+	if len(positionals) != 1 || positionals[0] != "server" {
 		printUsageError(stderr, "expected: arbiter info server", "arbiter info")
 		return 2
 	}
@@ -454,12 +465,12 @@ parsedFlags:
 		homeDir,
 	)
 	if err != nil {
-		fmt.Fprintf(stderr, "Arbiter tool error: %s\n", toolErrorForCLI(err, args, options, lookupEnv, homeDir))
+		printClientError(stderr, err, "tool")
 		return 1
 	}
 	payload = withServerURL(payload, options, lookupEnv, homeDir)
 	printStagedDeploymentWarning(stderr, payload, options, lookupEnv, homeDir)
-	if yaml {
+	if format == outputYAML {
 		printYAML(stdout, payload)
 		return 0
 	}
@@ -494,7 +505,7 @@ func runPlugins(
 	}
 	payload, err := pluginsPayload(positionals, options, lookupEnv, homeDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "Arbiter tool error: %s\n", err)
+		printClientError(stderr, err, "tool")
 		return 1
 	}
 	printStagedDeploymentWarning(stderr, payload, options, lookupEnv, homeDir)
@@ -546,7 +557,7 @@ func runOperation(
 		}
 		payload, err := listOperationPayload(positionals, options, lookupEnv, homeDir)
 		if err != nil {
-			fmt.Fprintf(stderr, "Arbiter tool error: %s\n", err)
+			printClientError(stderr, err, "tool")
 			return 1
 		}
 		renderOperationPayload(stdout, payload, format)
@@ -567,7 +578,7 @@ func runOperation(
 		}
 		payload, err := describeOperationTarget(positionals[0], options, lookupEnv, homeDir)
 		if err != nil {
-			fmt.Fprintf(stderr, "Arbiter tool error: %s\n", err)
+			printClientError(stderr, err, "tool")
 			return 1
 		}
 		renderOperationPayload(stdout, payload, format)
@@ -582,9 +593,9 @@ func runOperation(
 			return 2
 		}
 		operationID := args[1]
-		operationArgs, err := parseArgsFlag(args[2:])
+		operationArgs, format, err := parseOperationRunArgs(args[2:])
 		if err != nil {
-			fmt.Fprintf(stderr, "Arbiter usage error: %v\n", err)
+			printClientError(stderr, err, "usage")
 			return 2
 		}
 		payload, err := callToolPayload(
@@ -595,10 +606,10 @@ func runOperation(
 			homeDir,
 		)
 		if err != nil {
-			fmt.Fprintf(stderr, "Arbiter tool error: %s\n", err)
+			printClientError(stderr, err, "tool")
 			return 1
 		}
-		printJSON(stdout, payload)
+		renderOperationPayload(stdout, payload, format)
 		return 0
 	default:
 		printUsageError(stderr, fmt.Sprintf("unknown op command: %s", args[0]), "arbiter op")
@@ -728,6 +739,9 @@ func clientConfigPath(options globalOptions, homeDir HomeDirFunc) (string, error
 	}
 	if !filepath.IsAbs(configDir) {
 		configDir = filepath.Join(home, configDir)
+	}
+	if info, err := os.Stat(configDir); err == nil && !info.IsDir() {
+		return "", fmt.Errorf("client config directory is not a directory: %s", configDir)
 	}
 	configName := options.ConfigName
 	if configName == "" {
@@ -1096,7 +1110,7 @@ func runArtifactWithTemp(
 	}
 	defer getResp.Body.Close()
 	if getResp.StatusCode < 200 || getResp.StatusCode >= 300 {
-		return fmt.Errorf("artifact fetch failed: HTTP %d", getResp.StatusCode)
+		return arbiterhttp.ErrorResponse(getResp)
 	}
 
 	tempDir, err := os.MkdirTemp("", "arbiter-artifact-*")
@@ -1248,7 +1262,7 @@ func runArtifactWithStdin(
 	}
 	defer getResp.Body.Close()
 	if getResp.StatusCode < 200 || getResp.StatusCode >= 300 {
-		return fmt.Errorf("artifact fetch failed: HTTP %d", getResp.StatusCode)
+		return arbiterhttp.ErrorResponse(getResp)
 	}
 	return runArtifactCommand(
 		ctx,
@@ -1281,15 +1295,32 @@ func runArtifactCommand(
 	cmd.Stderr = childStderr
 
 	commandErr := cmd.Run()
-	writeCapturedStderr(stderr, childStderr)
+	var exitErr *exec.ExitError
+	if errors.As(commandErr, &exitErr) {
+		commandErr = safeClientError(fmt.Sprintf("command failed with exit status %d", exitErr.ExitCode()))
+	}
+	structuredErrors := isStructuredErrorWriter(stderr)
+	if commandErr != nil && structuredErrors {
+		return fmt.Errorf("command failed: %w", commandErr)
+	}
+	if !structuredErrors {
+		writeCapturedStderr(stderr, childStderr)
+	}
 	if childStdout.Exceeded() {
-		return fmt.Errorf("refusing to write child stdout larger than %d bytes", maxStdoutBytes)
+		return safeClientError(fmt.Sprintf("refusing to write child stdout larger than %d bytes", maxStdoutBytes))
 	}
 	stdoutBytes := childStdout.Bytes()
 	if !isTextOutput(stdoutBytes) {
-		return fmt.Errorf("refusing to write non-text child stdout")
+		return safeClientError("refusing to write non-text child stdout")
 	}
-	if len(stdoutBytes) > 0 {
+	if structuredErrors {
+		if len(stdoutBytes) > 0 {
+			if _, err := stdout.Write(stdoutBytes); err != nil {
+				return err
+			}
+		}
+		writeCapturedStderr(stderr, childStderr)
+	} else if len(stdoutBytes) > 0 {
 		if _, err := stdout.Write(stdoutBytes); err != nil {
 			return err
 		}
@@ -1298,6 +1329,11 @@ func runArtifactCommand(
 		return fmt.Errorf("command failed: %w", commandErr)
 	}
 	return nil
+}
+
+func isStructuredErrorWriter(w io.Writer) bool {
+	output, ok := w.(*errorWriter)
+	return ok && output.format != ""
 }
 
 type cappedOutputBuffer struct {
@@ -1386,19 +1422,19 @@ func writeArtifactToStdout(
 	if err != nil {
 		return err
 	}
-	headResp.Body.Close()
+	defer headResp.Body.Close()
 	if headResp.StatusCode < 200 || headResp.StatusCode >= 300 {
-		return fmt.Errorf("artifact metadata request failed: HTTP %d", headResp.StatusCode)
+		return arbiterhttp.ErrorResponse(headResp)
 	}
 	contentType := headResp.Header.Get("Content-Type")
 	if !isTextualArtifactContentType(contentType) {
-		return fmt.Errorf("refusing to write non-text artifact to stdout: %s", contentType)
+		return safeClientError("refusing to write non-text artifact to stdout")
 	}
 	if headResp.ContentLength < 0 {
-		return fmt.Errorf("refusing to write artifact with unknown size to stdout")
+		return safeClientError("refusing to write artifact with unknown size to stdout")
 	}
 	if headResp.ContentLength > maxBytes {
-		return fmt.Errorf("refusing to write %d byte artifact to stdout; limit is %d bytes", headResp.ContentLength, maxBytes)
+		return safeClientError(fmt.Sprintf("refusing to write %d byte artifact to stdout; limit is %d bytes", headResp.ContentLength, maxBytes))
 	}
 
 	getReq, err := http.NewRequestWithContext(ctx, http.MethodGet, artifactURL, nil)
@@ -1411,18 +1447,18 @@ func writeArtifactToStdout(
 	}
 	defer getResp.Body.Close()
 	if getResp.StatusCode < 200 || getResp.StatusCode >= 300 {
-		return fmt.Errorf("artifact fetch failed: HTTP %d", getResp.StatusCode)
+		return arbiterhttp.ErrorResponse(getResp)
 	}
 	getContentType := getResp.Header.Get("Content-Type")
 	if !isTextualArtifactContentType(getContentType) {
-		return fmt.Errorf("refusing to write non-text artifact to stdout: %s", getContentType)
+		return safeClientError("refusing to write non-text artifact to stdout")
 	}
 	data, err := io.ReadAll(io.LimitReader(getResp.Body, maxBytes+1))
 	if err != nil {
 		return err
 	}
 	if int64(len(data)) > maxBytes {
-		return fmt.Errorf("refusing to write artifact larger than %d bytes to stdout", maxBytes)
+		return safeClientError(fmt.Sprintf("refusing to write artifact larger than %d bytes to stdout", maxBytes))
 	}
 	_, err = stdout.Write(data)
 	return err
@@ -1444,7 +1480,7 @@ func saveArtifactToFile(
 	}
 	defer getResp.Body.Close()
 	if getResp.StatusCode < 200 || getResp.StatusCode >= 300 {
-		return fmt.Errorf("artifact fetch failed: HTTP %d", getResp.StatusCode)
+		return arbiterhttp.ErrorResponse(getResp)
 	}
 
 	output, err := os.OpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
@@ -1775,6 +1811,46 @@ func printJSON(w io.Writer, value any) {
 	fmt.Fprintf(w, "%s\n", encoded)
 }
 
+func yamlScalar(value any) any {
+	text, ok := value.(string)
+	if !ok {
+		if value == nil {
+			return "null"
+		}
+		return value
+	}
+	if !isSafeYAMLPlainScalar(text) {
+		return strconv.QuoteToASCII(text)
+	}
+	return text
+}
+
+func isSafeYAMLPlainScalar(text string) bool {
+	if text == "" || strings.TrimSpace(text) != text {
+		return false
+	}
+	lower := strings.ToLower(text)
+	switch lower {
+	case "yes", "no", "y", "n", "on", "off", "true", "false", "null", "~", "<<":
+		return false
+	}
+	for index, character := range text {
+		if index == 0 {
+			if !((character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || character == '_') {
+				return false
+			}
+			continue
+		}
+		if !((character >= 'a' && character <= 'z') ||
+			(character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') ||
+			character == '_' || character == '-' || character == '.' || character == '/' || character == ' ') {
+			return false
+		}
+	}
+	return true
+}
+
 func printYAML(w io.Writer, value any) {
 	writeYAML(w, value, 0)
 }
@@ -1783,6 +1859,14 @@ func writeYAML(w io.Writer, value any, indent int) {
 	prefix := strings.Repeat(" ", indent)
 	switch typed := value.(type) {
 	case map[string]any:
+		if typed == nil {
+			fmt.Fprintf(w, "%snull\n", prefix)
+			return
+		}
+		if len(typed) == 0 {
+			fmt.Fprintf(w, "%s{}\n", prefix)
+			return
+		}
 		keys := make([]string, 0, len(typed))
 		for key := range typed {
 			keys = append(keys, key)
@@ -1791,9 +1875,9 @@ func writeYAML(w io.Writer, value any, indent int) {
 		for _, key := range keys {
 			child := typed[key]
 			if isScalar(child) {
-				fmt.Fprintf(w, "%s%s: %v\n", prefix, key, child)
+				fmt.Fprintf(w, "%s%s: %v\n", prefix, yamlScalar(key), yamlScalar(child))
 			} else {
-				fmt.Fprintf(w, "%s%s:\n", prefix, key)
+				fmt.Fprintf(w, "%s%s:\n", prefix, yamlScalar(key))
 				writeYAML(w, child, indent+2)
 			}
 		}
@@ -1803,15 +1887,23 @@ func writeYAML(w io.Writer, value any, indent int) {
 		if writeReflectedYAML(w, value, indent) {
 			return
 		}
-		fmt.Fprintf(w, "%s%v\n", prefix, typed)
+		fmt.Fprintf(w, "%s%v\n", prefix, yamlScalar(typed))
 	}
 }
 
 func writeYAMLList(w io.Writer, items []any, indent int) {
 	prefix := strings.Repeat(" ", indent)
+	if items == nil {
+		fmt.Fprintf(w, "%snull\n", prefix)
+		return
+	}
+	if len(items) == 0 {
+		fmt.Fprintf(w, "%s[]\n", prefix)
+		return
+	}
 	for _, item := range items {
 		if isScalar(item) {
-			fmt.Fprintf(w, "%s- %v\n", prefix, item)
+			fmt.Fprintf(w, "%s- %v\n", prefix, yamlScalar(item))
 		} else if mapping, ok := yamlStringMap(item); ok {
 			writeYAMLMapListItem(w, mapping, indent)
 		} else {
@@ -1839,9 +1931,9 @@ func writeYAMLMapListItem(w io.Writer, mapping map[string]any, indent int) {
 			keyPrefix = prefix + "- "
 		}
 		if isScalar(child) {
-			fmt.Fprintf(w, "%s%s: %v\n", keyPrefix, key, child)
+			fmt.Fprintf(w, "%s%s: %v\n", keyPrefix, yamlScalar(key), yamlScalar(child))
 		} else {
-			fmt.Fprintf(w, "%s%s:\n", keyPrefix, key)
+			fmt.Fprintf(w, "%s%s:\n", keyPrefix, yamlScalar(key))
 			writeYAML(w, child, indent+4)
 		}
 	}
@@ -1895,41 +1987,11 @@ func yamlStringMap(value any) (map[string]any, bool) {
 
 func isScalar(value any) bool {
 	switch value.(type) {
-	case nil, string, bool, float64, int, int64:
+	case nil, string, bool, float64, int, int64, json.Number:
 		return true
 	default:
 		return false
 	}
-}
-
-func normalizeInfoOutputFlags(args []string) []string {
-	normalized := append([]string(nil), args...)
-	infoIndex := -1
-	for index, arg := range normalized {
-		if arg == "info" {
-			infoIndex = index
-			break
-		}
-	}
-	if infoIndex == -1 {
-		return normalized
-	}
-	var withoutOutputFlags []string
-	var outputFlags []string
-	for index, arg := range normalized {
-		if index > infoIndex && arg == "--yaml" {
-			outputFlags = append(outputFlags, arg)
-			continue
-		}
-		withoutOutputFlags = append(withoutOutputFlags, arg)
-	}
-	if len(outputFlags) == 0 {
-		return normalized
-	}
-	return append(
-		append([]string{}, withoutOutputFlags[:infoIndex+1]...),
-		append(outputFlags, withoutOutputFlags[infoIndex+1:]...)...,
-	)
 }
 
 func readURLFromConfig(path string) (string, bool, error) {
@@ -2001,7 +2063,11 @@ func printShortUsage(w io.Writer) {
 }
 
 func printUsageError(w io.Writer, message string, helpCommand string) {
-	fmt.Fprintf(w, "Arbiter usage error: %s\n", message)
+	if output, ok := w.(*errorWriter); ok && output.format != "" {
+		printClientError(w, fmt.Errorf("%s", message), "usage")
+		return
+	}
+	printClientError(w, fmt.Errorf("%s", message), "usage")
 	if helpCommand != "" {
 		fmt.Fprintf(w, "Run '%s --help' for help.\n", helpCommand)
 	}
@@ -2065,12 +2131,14 @@ func printBootstrapHelp(w io.Writer) {
 }
 
 func printBootstrapClientHelp(w io.Writer) {
-	fmt.Fprintln(w, "usage: arbiter bootstrap client [--force]")
+	fmt.Fprintln(w, "usage: arbiter bootstrap client [--force] [--json|--yaml]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Write the Arbiter client config file.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "options:")
 	fmt.Fprintln(w, "  --force  overwrite an existing client config")
+	fmt.Fprintln(w, "  --json   format errors as structured JSON; success output is unchanged")
+	fmt.Fprintln(w, "  --yaml   format errors as structured YAML; success output is unchanged")
 }
 
 func printConfigHelp(w io.Writer) {
@@ -2083,10 +2151,11 @@ func printConfigHelp(w io.Writer) {
 }
 
 func printConfigURLHelp(w io.Writer) {
-	fmt.Fprintln(w, "usage: arbiter config url")
+	fmt.Fprintln(w, "usage: arbiter config url [--json|--yaml]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Print the URL resolved from overrides, environment, config, or default.")
 	fmt.Fprintln(w, "The source is override, ARBITER_URL, a config file path, or default.")
+	fmt.Fprintln(w, "Use --json or --yaml to format errors; successful output is unchanged.")
 }
 
 func printInfoHelp(w io.Writer) {
@@ -2099,9 +2168,13 @@ func printInfoHelp(w io.Writer) {
 }
 
 func printInfoServerHelp(w io.Writer) {
-	fmt.Fprintln(w, "usage: arbiter info server [--yaml]")
+	fmt.Fprintln(w, "usage: arbiter info server [--json|--yaml]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Show Arbiter server identity, deployment scope, source metadata, and resolved URL.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "options:")
+	fmt.Fprintln(w, "  --json   print structured JSON (default)")
+	fmt.Fprintln(w, "  --yaml   print structured YAML")
 }
 
 func printPluginsHelp(w io.Writer) {
@@ -2158,17 +2231,19 @@ func printOperationDescHelp(w io.Writer, commandName string) {
 }
 
 func printOperationRunHelp(w io.Writer) {
-	fmt.Fprintln(w, "usage: arbiter op run <operation-id> [--args <json-object>]")
+	fmt.Fprintln(w, "usage: arbiter op run <operation-id> [--args <json-object>] [--json|--yaml]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Run one Arbiter operation.")
 	fmt.Fprintln(w, "Discover plugins with 'arbiter op list', then operation ids with 'arbiter op list <plugin>'.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "options:")
 	fmt.Fprintln(w, "  --args JSON  operation arguments as a JSON object")
+	fmt.Fprintln(w, "  --json       print structured JSON (default)")
+	fmt.Fprintln(w, "  --yaml       print structured YAML")
 }
 
 func printArtifactHelp(w io.Writer) {
-	fmt.Fprintln(w, "usage: arbiter artifact {get,save,with-temp,with-stdin} ...")
+	fmt.Fprintln(w, "usage: arbiter artifact {get,save,with-temp,with-stdin} ... [--json|--yaml]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Explicitly access Arbiter artifacts.")
 	fmt.Fprintln(w)
@@ -2182,44 +2257,50 @@ func printArtifactHelp(w io.Writer) {
 	fmt.Fprintln(w, "  get --stdout is text-only and size-bounded.")
 	fmt.Fprintln(w, "  save is only for when the user explicitly asks to save a file.")
 	fmt.Fprintln(w, "  with-temp and with-stdin never write raw artifact bytes to stdout.")
+	fmt.Fprintln(w, "  --json and --yaml format errors only; successful bytes and child output are unchanged.")
 }
 
 func printArtifactGetHelp(w io.Writer) {
-	fmt.Fprintln(w, "usage: arbiter artifact get <url> --stdout [--max-bytes N]")
+	fmt.Fprintln(w, "usage: arbiter artifact get <url> --stdout [--max-bytes N] [--json|--yaml]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Fetch one small textual artifact URL to stdout.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "options:")
 	fmt.Fprintln(w, "  --stdout       write a small textual artifact to stdout")
 	fmt.Fprintln(w, "  --max-bytes N  maximum bytes to write with --stdout")
+	fmt.Fprintln(w, "  --json         format errors as structured JSON")
+	fmt.Fprintln(w, "  --yaml         format errors as structured YAML")
 }
 
 func printArtifactSaveHelp(w io.Writer) {
-	fmt.Fprintln(w, "usage: arbiter artifact save <url> <path>")
+	fmt.Fprintln(w, "usage: arbiter artifact save <url> <path> [--json|--yaml]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Save one artifact URL to a local file.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Use only when the user explicitly requests saving the artifact to a file.")
 	fmt.Fprintln(w, "This command never writes artifact bytes to stdout.")
 	fmt.Fprintln(w, "The output path must not already exist.")
+	fmt.Fprintln(w, "Use --json or --yaml to format errors; successful output is unchanged.")
 }
 
 func printArtifactWithTempHelp(w io.Writer) {
-	fmt.Fprintln(w, "usage: arbiter artifact with-temp <url> [--max-child-stdout-bytes N] -- <argv...>")
+	fmt.Fprintln(w, "usage: arbiter artifact with-temp <url> [--max-child-stdout-bytes N] [--json|--yaml] -- <argv...>")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Run a command with the artifact downloaded to a private temporary file.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Use {} in argv where the temporary path should be substituted.")
 	fmt.Fprintln(w, "The command is executed directly, without a shell.")
 	fmt.Fprintln(w, "Only bounded textual child stdout is written back.")
+	fmt.Fprintln(w, "Use --json or --yaml to format errors; successful bytes and child output are unchanged.")
 }
 
 func printArtifactWithStdinHelp(w io.Writer, commandName string) {
-	fmt.Fprintf(w, "usage: arbiter artifact %s <url> [--max-child-stdout-bytes N] -- <argv...>\n", commandName)
+	fmt.Fprintf(w, "usage: arbiter artifact %s <url> [--max-child-stdout-bytes N] [--json|--yaml] -- <argv...>\n", commandName)
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Run a command with the artifact bytes streamed to child stdin.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "The command is executed directly, without a shell.")
 	fmt.Fprintln(w, "Raw artifact bytes are never written to stdout by Arbiter.")
 	fmt.Fprintln(w, "Only bounded textual child stdout is written back.")
+	fmt.Fprintln(w, "Use --json or --yaml to format errors; successful bytes and child output are unchanged.")
 }
