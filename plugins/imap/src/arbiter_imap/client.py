@@ -11,9 +11,21 @@ import re
 import ssl
 from typing import Any, cast
 
-from .config import IMAPConfig, IMAPSystemFlag, MailTlsMode
+from .config import (
+    IMAPConfig,
+    IMAPSystemFlag,
+    MailTlsMode,
+    resolve_system_flag,
+    validate_user_flag_name,
+)
 from .errors import IMAPAuthenticationError, imap_operation_error
-from arbiter_server.errors import OperationError, Replay, Transient
+from .wire import quote_imap_string, validate_imap_string
+from arbiter_server.errors import (
+    OperationError,
+    PluginValidationError,
+    Replay,
+    Transient,
+)
 
 
 @dataclass(frozen=True)
@@ -77,6 +89,8 @@ class IMAPClient:
         self._config = config
 
     def test_connection(self, *, folders: Sequence[str]) -> None:
+        for folder in folders:
+            validate_imap_string(folder, argument="folder")
         with self._session() as server:
             status, data = server.noop()
             self._expect_ok(status, data, "NOOP")
@@ -94,6 +108,7 @@ class IMAPClient:
         )
 
     def list_messages(self, *, folder: str, limit: int) -> list[FetchedIMAPMessage]:
+        validate_imap_string(folder, argument="folder")
         with self._session() as server:
             self._select_folder(server, folder, readonly=True)
             uids = self._search_uids(server, "ALL")
@@ -101,6 +116,8 @@ class IMAPClient:
             return [self._fetch_message(server, uid) for uid in selected_uids]
 
     def get_message(self, *, folder: str, uid: str) -> FetchedIMAPMessage:
+        validate_imap_string(folder, argument="folder")
+        self._validate_uid(uid)
         with self._session() as server:
             self._select_folder(server, folder, readonly=True)
             return self._fetch_message(server, uid)
@@ -112,6 +129,8 @@ class IMAPClient:
         uid: str,
         attachment_id: str,
     ) -> IMAPAttachmentContent:
+        validate_imap_string(folder, argument="folder")
+        self._validate_uid(uid)
         with self._session() as server:
             self._select_folder(server, folder, readonly=True)
             message_bytes = self._fetch_message_bytes(server, uid)
@@ -124,22 +143,27 @@ class IMAPClient:
     def search_messages(
         self, *, folder: str, query: str, limit: int
     ) -> list[FetchedIMAPMessage]:
+        validate_imap_string(folder, argument="folder")
+        quoted_query = self._quote_search_text(query)
         with self._session() as server:
             self._select_folder(server, folder, readonly=True)
-            uids = self._search_uids(server, "TEXT", self._quote_search_text(query))
+            uids = self._search_uids(server, "TEXT", quoted_query)
             selected_uids = list(reversed(uids))[:limit]
             return [self._fetch_message(server, uid) for uid in selected_uids]
 
     def move_message(
         self, *, source_folder: str, uid: str, destination_folder: str
     ) -> None:
+        validate_imap_string(source_folder, argument="folder")
+        quoted_destination = self._quote_mailbox(destination_folder)
+        self._validate_uid(uid)
         with self._session() as server:
             self._select_folder(server, source_folder, readonly=False)
             try:
                 status, data = server.uid(
                     "MOVE",
                     uid,
-                    self._quote_mailbox(destination_folder),
+                    quoted_destination,
                 )
             except imaplib.IMAP4.error as exc:
                 # imaplib raises for tagged BAD replies instead of returning them.
@@ -156,6 +180,8 @@ class IMAPClient:
             self._expect_ok(status, data, "move message")
 
     def mark_message_read(self, *, folder: str, uid: str, read: bool) -> None:
+        validate_imap_string(folder, argument="folder")
+        self._validate_uid(uid)
         with self._session() as server:
             self._select_folder(server, folder, readonly=False)
             operation = "+FLAGS.SILENT" if read else "-FLAGS.SILENT"
@@ -168,6 +194,8 @@ class IMAPClient:
             self._expect_ok(status, data, "mark message read")
 
     def get_message_flags(self, *, folder: str, uid: str) -> list[str]:
+        validate_imap_string(folder, argument="folder")
+        self._validate_uid(uid)
         with self._session() as server:
             self._select_folder(server, folder, readonly=True)
             return self._fetch_flags(server, uid)
@@ -180,6 +208,10 @@ class IMAPClient:
         add_flags: Sequence[str],
         remove_flags: Sequence[str],
     ) -> None:
+        validate_imap_string(folder, argument="folder")
+        self._validate_uid(uid)
+        formatted_add = self._format_flag_list(add_flags)
+        formatted_remove = self._format_flag_list(remove_flags)
         with self._session() as server:
             self._select_folder(server, folder, readonly=False)
             if add_flags:
@@ -187,7 +219,7 @@ class IMAPClient:
                     "STORE",
                     uid,
                     "+FLAGS.SILENT",
-                    self._format_flag_list(add_flags),
+                    formatted_add,
                 )
                 self._expect_ok(status, data, "add message flags")
             if remove_flags:
@@ -196,7 +228,7 @@ class IMAPClient:
                         "STORE",
                         uid,
                         "-FLAGS.SILENT",
-                        self._format_flag_list(remove_flags),
+                        formatted_remove,
                     )
                     self._expect_ok(status, data, "remove message flags")
                 except (OperationError, imaplib.IMAP4.error, OSError):
@@ -217,6 +249,8 @@ class IMAPClient:
                     ) from None
 
     def delete_message(self, *, folder: str, uid: str) -> None:
+        validate_imap_string(folder, argument="folder")
+        self._validate_uid(uid)
         with self._session() as server:
             self._select_folder(server, folder, readonly=False)
             self._mark_deleted(server, uid)
@@ -241,6 +275,8 @@ class IMAPClient:
         message_bytes: bytes,
         flags: Sequence[str] = (IMAPSystemFlag.SEEN.value,),
     ) -> None:
+        quoted_folder = self._quote_mailbox(folder)
+        formatted_flags = self._format_flag_list(flags)
         try:
             session = self._session()
         except OperationError:
@@ -249,7 +285,6 @@ class IMAPClient:
             # No APPEND command was attempted while establishing the session.
             raise imap_operation_error(exc, replay="safe") from None
         with session as server:
-            quoted_folder = self._quote_mailbox(folder)
             try:
                 # This client uses stdlib's ASCII command mode. Validate the
                 # mailbox before APPEND can transmit its command or literal.
@@ -259,7 +294,7 @@ class IMAPClient:
             date_time: Any = None
             status, data = server.append(
                 quoted_folder,
-                f"({' '.join(flags)})",
+                formatted_flags,
                 date_time,
                 message_bytes,
             )
@@ -376,6 +411,7 @@ class IMAPClient:
         server: imaplib.IMAP4 | imaplib.IMAP4_SSL,
         uid: str,
     ) -> list[str]:
+        self._validate_uid(uid)
         status, data = server.uid("FETCH", uid, "(FLAGS)")
         self._expect_ok(status, data, "fetch message flags")
         flags: list[str] = []
@@ -397,6 +433,7 @@ class IMAPClient:
         server: imaplib.IMAP4 | imaplib.IMAP4_SSL,
         uid: str,
     ) -> bytes:
+        self._validate_uid(uid)
         status, data = server.uid("FETCH", uid, "(RFC822)")
         self._expect_ok(status, data, "fetch message body")
         for item in data:
@@ -496,7 +533,19 @@ class IMAPClient:
         return str(item)
 
     def _format_flag_list(self, flags: Sequence[str]) -> str:
+        for flag in flags:
+            if resolve_system_flag(flag) is None:
+                try:
+                    validate_user_flag_name(flag)
+                except ValueError:
+                    raise PluginValidationError(
+                        "imap", "IMAP flag must be a system flag or a valid user atom"
+                    ) from None
         return "(" + " ".join(flags) + ")"
+
+    def _validate_uid(self, uid: str) -> None:
+        if not uid.isascii() or not uid.isdigit():
+            raise PluginValidationError("imap", "IMAP message_id must be an IMAP UID")
 
     def _parse_list_folder_name(self, item: object) -> str | None:
         if item is None:
@@ -544,10 +593,10 @@ class IMAPClient:
         return None
 
     def _quote_search_text(self, query: str) -> str:
-        return '"' + query.replace("\\", "\\\\").replace('"', '\\"') + '"'
+        return quote_imap_string(query, argument="query")
 
     def _quote_mailbox(self, folder: str) -> str:
-        return '"' + folder.replace("\\", "\\\\").replace('"', '\\"') + '"'
+        return quote_imap_string(folder, argument="folder")
 
     def _addresses(self, message: EmailMessage, header_name: str) -> list[str]:
         values = message.get_all(header_name, [])
