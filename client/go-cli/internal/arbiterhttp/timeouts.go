@@ -66,6 +66,8 @@ func (err timeoutError) Error() string {
 	return fmt.Sprintf("Arbiter %s timeout after %s", err.phase, err.limit)
 }
 
+func (err timeoutError) PublicMessage() string { return err.Error() }
+
 func (err timeoutError) Timeout() bool   { return true }
 func (err timeoutError) Temporary() bool { return true }
 func (err timeoutError) Unwrap() error   { return context.DeadlineExceeded }

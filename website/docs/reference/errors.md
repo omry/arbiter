@@ -70,6 +70,25 @@ An uncertain Sent-copy append is reported as `unknown`; replaying a cached
 SMTP result does not repeat that append. Inspect the destination before
 attempting recovery, since the copy may already exist.
 
+## CLI and diagnostics
+
+CLI exit statuses are 0 for success, 1 for operation or transport failure,
+and 2 for CLI usage errors. Explicit `--json` or `--yaml` selects structured
+errors on stderr; stdout is reserved for successful results. Server error
+fields are preserved, including plugin codes, details, and retry guidance.
+Local transport and usage failures use the same envelope without claiming
+to know a plugin operation's outcome.
+For artifact commands, these flags select errors only; successful artifact
+bytes and child-command output keep their existing form. Flags after `--`
+belong to the child. Artifact commands reject a conflicting `--json` and
+`--yaml` pair before configuration resolution, network access, file creation,
+or child execution; repeating the same format flag follows the existing
+format parser rule.
+
+The `config url` and `bootstrap client` commands accept `--json` or `--yaml`
+after their subcommand to format errors on stderr. Their successful plain-text
+output and bootstrap config writes are unchanged.
+
 Plugins raise `arbiter_server.errors.OperationError` with public-safe
 messages and JSON-compatible details. They own the classification and must
 not include credentials, message contents, raw upstream text, or exception
