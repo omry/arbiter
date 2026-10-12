@@ -12,6 +12,8 @@ from arbiter_server.decisions import (
     DenyDecision,
 )
 
+from arbiter_server.errors import PluginPolicyError, PluginValidationError
+
 from .config import (
     IMAPConfig,
     IMAPFlagMode,
@@ -555,7 +557,9 @@ class _IMAPRuntimePolicyMixin:
         require_message: bool = True,
     ) -> _PreparedAppend:
         if require_message and message_bytes is None and not message:
-            raise ValueError(f"{tool_name} requires a non-empty message")
+            raise PluginValidationError(
+                "imap", f"{tool_name} requires a non-empty message"
+            )
         imap_config, folder_resolution = self._resolve_context(
             tool_name, account, folder
         )
@@ -598,7 +602,9 @@ class _IMAPRuntimePolicyMixin:
         normalized_add = self._normalize_flags(add_flags)
         normalized_remove = self._normalize_flags(remove_flags)
         if not normalized_add and not normalized_remove:
-            raise ValueError("update_message_flags requires add_flags or remove_flags")
+            raise PluginValidationError(
+                "imap", "update_message_flags requires add_flags or remove_flags"
+            )
         return normalized_add, normalized_remove
 
     def _require_accessible(
@@ -608,8 +614,10 @@ class _IMAPRuntimePolicyMixin:
         folder: IMAPFolderResolution,
     ) -> None:
         if not folder.access.allowed:
-            raise ValueError(
-                f"{tool_name} folder is not accessible for account: {account}"
+            raise PluginPolicyError(
+                "imap",
+                f"{tool_name} folder is not accessible for account: {account}",
+                domain_code="folder_access_denied",
             )
 
     def _require_operation(
@@ -623,7 +631,11 @@ class _IMAPRuntimePolicyMixin:
     ) -> None:
         if decision is IMAPOperationDecision.deny:
             label = operation_label or tool_name
-            raise ValueError(f"{label} is not allowed for account: {account}")
+            raise PluginPolicyError(
+                "imap",
+                f"{label} is not allowed for account: {account}",
+                domain_code="operation_denied",
+            )
 
     def _visible_flags(
         self,

@@ -12,6 +12,8 @@ import ssl
 from typing import Any, cast
 
 from .config import IMAPConfig, IMAPSystemFlag, MailTlsMode
+from .errors import IMAPAuthenticationError
+from arbiter_server.errors import OperationError, Replay, Transient
 
 
 @dataclass(frozen=True)
@@ -47,8 +49,27 @@ class FetchedIMAPMessage:
     attachments: list[IMAPAttachment] = field(default_factory=list)
 
 
-class IMAPOperationError(RuntimeError):
-    pass
+class IMAPOperationError(OperationError, RuntimeError):
+    def __init__(
+        self,
+        diagnostic: str,
+        *,
+        code: str = "upstream_protocol_error",
+        domain_code: str = "invalid_response",
+        details: dict[str, object] | None = None,
+        transient: Transient = "unknown",
+        replay: Replay = "unknown",
+    ) -> None:
+        super().__init__(
+            code,
+            "IMAP operation failed.",
+            plugin="imap",
+            domain_code=domain_code,
+            details=details,
+            transient=transient,
+            replay=replay,
+        )
+        self.args = (diagnostic,)
 
 
 class IMAPClient:
@@ -120,12 +141,19 @@ class IMAPClient:
                     uid,
                     self._quote_mailbox(destination_folder),
                 )
-                if self._move_status_supports_fallback(status, data):
-                    self._copy_then_delete(server, uid, destination_folder)
-                    return
-                self._expect_ok(status, data, "move message")
-            except imaplib.IMAP4.error:
+            except imaplib.IMAP4.error as exc:
+                # imaplib raises for tagged BAD replies instead of returning them.
+                # A transport abort still leaves the write outcome uncertain.
+                diagnostic = str(exc)
+                if isinstance(exc, imaplib.IMAP4.abort) or not diagnostic.startswith(
+                    "UID command error: BAD "
+                ):
+                    raise
+                status, data = "BAD", [diagnostic]
+            if self._move_status_supports_fallback(status, data):
                 self._copy_then_delete(server, uid, destination_folder)
+                return
+            self._expect_ok(status, data, "move message")
 
     def mark_message_read(self, *, folder: str, uid: str, read: bool) -> None:
         with self._session() as server:
@@ -163,19 +191,48 @@ class IMAPClient:
                 )
                 self._expect_ok(status, data, "add message flags")
             if remove_flags:
-                status, data = server.uid(
-                    "STORE",
-                    uid,
-                    "-FLAGS.SILENT",
-                    self._format_flag_list(remove_flags),
-                )
-                self._expect_ok(status, data, "remove message flags")
+                try:
+                    status, data = server.uid(
+                        "STORE",
+                        uid,
+                        "-FLAGS.SILENT",
+                        self._format_flag_list(remove_flags),
+                    )
+                    self._expect_ok(status, data, "remove message flags")
+                except (OperationError, imaplib.IMAP4.error, OSError):
+                    if not add_flags:
+                        raise
+                    raise OperationError(
+                        "partial_failure",
+                        "IMAP added flags but could not complete flag removal.",
+                        plugin="imap",
+                        domain_code="flag_update_incomplete",
+                        details={
+                            "steps": {
+                                "add_flags": "succeeded",
+                                "remove_flags": "unknown",
+                            }
+                        },
+                        replay="unknown",
+                    ) from None
 
     def delete_message(self, *, folder: str, uid: str) -> None:
         with self._session() as server:
             self._select_folder(server, folder, readonly=False)
             self._mark_deleted(server, uid)
-            self._expunge_uid(server, uid, "expunge deleted message")
+            try:
+                self._expunge_uid(server, uid, "expunge deleted message")
+            except (OperationError, imaplib.IMAP4.error, OSError):
+                raise OperationError(
+                    "partial_failure",
+                    "IMAP marked the message deleted but could not confirm expunge.",
+                    plugin="imap",
+                    domain_code="delete_cleanup_failed",
+                    details={
+                        "steps": {"mark_deleted": "succeeded", "expunge": "unknown"}
+                    },
+                    replay="unknown",
+                ) from None
 
     def append_message(
         self,
@@ -217,7 +274,20 @@ class IMAPClient:
                 imap_client.starttls(ssl_context=ssl_context)
 
         if self._config.username:
-            imap_client.login(self._config.username, self._config.password)
+            try:
+                imap_client.login(self._config.username, self._config.password)
+            except imaplib.IMAP4.abort:
+                try:
+                    imap_client.shutdown()
+                except Exception:
+                    pass
+                raise
+            except imaplib.IMAP4.error:
+                try:
+                    imap_client.shutdown()
+                except Exception:
+                    pass
+                raise IMAPAuthenticationError("IMAP authentication failed") from None
 
         return imap_client
 
@@ -332,8 +402,25 @@ class IMAPClient:
     ) -> None:
         status, data = server.uid("COPY", uid, self._quote_mailbox(destination_folder))
         self._expect_ok(status, data, "copy message")
-        self._mark_deleted(server, uid)
-        self._expunge_uid(server, uid, "expunge moved message")
+        steps: dict[str, object] = {
+            "copy": "succeeded",
+            "mark_deleted": "unknown",
+            "expunge": "not_attempted",
+        }
+        try:
+            self._mark_deleted(server, uid)
+            steps["mark_deleted"] = "succeeded"
+            steps["expunge"] = "unknown"
+            self._expunge_uid(server, uid, "expunge moved message")
+        except (OperationError, imaplib.IMAP4.error, OSError):
+            raise OperationError(
+                "partial_failure",
+                "IMAP copied the message but could not complete the move.",
+                plugin="imap",
+                domain_code="move_cleanup_failed",
+                details={"steps": steps},
+                replay="unsafe",
+            ) from None
 
     def _mark_deleted(
         self,
@@ -360,7 +447,22 @@ class IMAPClient:
     def _expect_ok(self, status: str, data: list[Any], action: str) -> None:
         if status.upper() != "OK":
             raise IMAPOperationError(
-                f"IMAP failed to {action}: {status} {self._format_response_data(data)}"
+                f"IMAP failed to {action}: {status} {self._format_response_data(data)}",
+                code=(
+                    "upstream_rejected"
+                    if status.upper() in {"NO", "BAD"}
+                    else "upstream_protocol_error"
+                ),
+                domain_code=(
+                    "command_rejected"
+                    if status.upper() in {"NO", "BAD"}
+                    else "invalid_response"
+                ),
+                details=(
+                    {"imap_status": status.upper()}
+                    if status.upper() in {"NO", "BAD"}
+                    else None
+                ),
             )
 
     def _format_response_data(self, data: list[Any]) -> str:
@@ -504,7 +606,13 @@ class IMAPClient:
                 attachment=attachment,
                 content=content,
             )
-        raise IMAPOperationError(f"attachment not found: {attachment_id}")
+        raise IMAPOperationError(
+            f"attachment not found: {attachment_id}",
+            code="not_found",
+            domain_code="attachment_not_found",
+            transient="no",
+            replay="safe",
+        )
 
     def _attachment_metadata(
         self,
@@ -575,3 +683,6 @@ class IMAPSession:
             self._server.logout()
         except OSError:
             return
+        except Exception:
+            if exc is None:
+                raise
