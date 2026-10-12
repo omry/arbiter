@@ -1,0 +1,1 @@
+Classify IMAP authentication, transport, command, validation, and policy failures with shared Arbiter codes and plugin-domain codes. Distinguish read replay safety from unknown write outcomes and report partial move cleanup failures explicitly.

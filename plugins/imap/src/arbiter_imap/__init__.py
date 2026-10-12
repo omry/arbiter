@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+import imaplib
 from typing import Callable, Protocol, cast
 
 from hydra.core.config_store import ConfigStore
 
 from arbiter_server.artifacts import PluginArtifactStore
+from arbiter_server.decisions import DecisionResult
 from arbiter_server.services import (
     CapabilityDescriptor,
     ConfigCheckError,
@@ -15,6 +17,11 @@ from arbiter_server.services import (
     OperationDescriptor,
     ServicePluginContext,
     ServiceRuntimeContext,
+)
+from arbiter_server.errors import (
+    OperationError,
+    PluginPolicyError,
+    PluginValidationError,
 )
 from arbiter_server.version import distribution_version
 
@@ -38,18 +45,31 @@ from .policy import (
     folder_metadata_matches,
     validate_imap_policy,
 )
+from .errors import imap_operation_error
+
 from .runtime_policy import (
     _IMAPRuntimePolicyMixin,
     _PreparedAppend,
     permanent_delete_fallback_warning,
 )
 
-from .client import FetchedIMAPMessage, IMAPAttachmentContent
+from .client import FetchedIMAPMessage, IMAPAttachmentContent, IMAPOperationError
 from .operations import IMAP_OPERATION_DESCRIPTORS
 
 SERVER_API_VERSION = "0.9"
 IMAP_DRAFT_SYSTEM_FLAGS = (IMAPSystemFlag.DRAFT, IMAPSystemFlag.SEEN)
 IMAP_DRAFT_FLAGS = (IMAPSystemFlag.DRAFT.name, IMAPSystemFlag.SEEN.name)
+_IMAP_READ_OPERATIONS = frozenset(
+    {
+        "list_folders",
+        "list_messages",
+        "get_message",
+        "get_attachment",
+        "search_messages",
+        "search_folders",
+        "get_message_flags",
+    }
+)
 
 
 class IMAPClientProtocol(Protocol):
@@ -113,9 +133,11 @@ IMAPClientFactory = Callable[[IMAPConfig], IMAPClientProtocol]
 
 
 def _format_exception_message(exc: BaseException) -> str:
-    if len(exc.args) == 1 and isinstance(exc.args[0], bytes):
-        return exc.args[0].decode("utf-8", errors="replace")
-    return str(exc)
+    if isinstance(exc, OperationError):
+        return exc.message
+    if isinstance(exc, (imaplib.IMAP4.error, imaplib.IMAP4.abort, OSError)):
+        return imap_operation_error(exc, replay="unknown").message
+    return "IMAP account check failed."
 
 
 def _imap_live_auth_error(imap_config: IMAPConfig) -> str | None:
@@ -231,7 +253,9 @@ def _operation_arguments(
     try:
         argument_specs = IMAP_OPERATION_ARGUMENTS[operation]
     except KeyError as exc:
-        raise ValueError(f"unknown IMAP operation: {operation}") from exc
+        raise PluginValidationError(
+            "imap", f"unknown IMAP operation: {operation}"
+        ) from exc
     runtime_arguments: dict[str, object] = {}
     for spec in argument_specs:
         argument_name, default = spec if isinstance(spec, tuple) else (spec, None)
@@ -473,9 +497,10 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
             folder_resolution.policy.read,
         )
         if self._artifact_store is None:
-            raise ValueError(
+            raise PluginValidationError(
+                "imap",
                 "get_attachment requires server artifact storage; "
-                "HTTP artifact delivery is unavailable"
+                "HTTP artifact delivery is unavailable",
             )
 
         uid = self._normalize_message_uid(message_id)
@@ -486,17 +511,27 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
             attachment_id=normalized_attachment_id,
         )
         attachment = attachment_content.attachment
-        artifact = self._artifact_store.create(
-            content=attachment_content.content,
-            filename=attachment.filename,
-            content_type=attachment.content_type,
-            source={
-                "account": account,
-                "folder": folder_resolution.name,
-                "message_id": uid,
-                "attachment_id": attachment.id,
-            },
-        )
+        try:
+            artifact = self._artifact_store.create(
+                content=attachment_content.content,
+                filename=attachment.filename,
+                content_type=attachment.content_type,
+                source={
+                    "account": account,
+                    "folder": folder_resolution.name,
+                    "message_id": uid,
+                    "attachment_id": attachment.id,
+                },
+            )
+        except OSError:
+            raise OperationError(
+                "plugin_error",
+                "IMAP artifact storage failed.",
+                plugin="imap",
+                domain_code="artifact_storage_failed",
+                transient="unknown",
+                replay="safe",
+            ) from None
         return {
             "account": account,
             "folder": folder_resolution.name,
@@ -562,7 +597,9 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
 
         normalized_query = query.strip()
         if not normalized_query:
-            raise ValueError("search_messages requires a non-empty query")
+            raise PluginValidationError(
+                "imap", "search_messages requires a non-empty query"
+            )
 
         normalized_limit = self._normalize_limit(limit)
         messages = self._make_client(imap_config).search_messages(
@@ -594,7 +631,9 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
         resolver = self._resolver(imap_config)
         normalized_query = query.strip()
         if not normalized_query:
-            raise ValueError("search_folders requires a non-empty query")
+            raise PluginValidationError(
+                "imap", "search_folders requires a non-empty query"
+            )
         normalized_root = self._normalize_folder_root(root)
         normalized_limit = self._normalize_folder_limit(limit)
         query_text = normalized_query.casefold()
@@ -617,6 +656,14 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
             "folders": folder_items.items,
         }
 
+    def _require_decision(self, decision: DecisionResult) -> None:
+        if not decision.allowed:
+            raise PluginPolicyError(
+                "imap",
+                decision.why_not or "Operation is not allowed",
+                domain_code=decision.failed_gate or "operation_denied",
+            )
+
     def move_message(
         self,
         account: str,
@@ -630,7 +677,7 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
             destination_folder=destination_folder,
             folder=folder,
         )
-        prepared.decision.require_allowed()
+        self._require_decision(prepared.decision)
         self._make_client(prepared.imap_config).move_message(
             source_folder=prepared.source.name,
             uid=prepared.uid,
@@ -657,7 +704,7 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
             folder=folder,
             read=read,
         )
-        prepared.decision.require_allowed()
+        self._require_decision(prepared.decision)
         self._make_client(prepared.imap_config).mark_message_read(
             folder=prepared.folder.name,
             uid=prepared.uid,
@@ -716,7 +763,7 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
             add_flags=add_flags,
             remove_flags=remove_flags,
         )
-        prepared.decision.require_allowed()
+        self._require_decision(prepared.decision)
         self._make_client(prepared.imap_config).update_message_flags(
             folder=prepared.folder.name,
             uid=prepared.uid,
@@ -808,7 +855,7 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
             folder=folder,
             permanent=permanent,
         )
-        prepared.decision.require_allowed()
+        self._require_decision(prepared.decision)
         permanent_delete = prepared.permanent
         if permanent_delete:
             self._make_client(prepared.imap_config).delete_message(
@@ -855,7 +902,7 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
             flags=(IMAPSystemFlag.SEEN.name,),
             tool_name="append_sent_message",
         )
-        prepared.decision.require_allowed()
+        self._require_decision(prepared.decision)
         self._make_client(prepared.imap_config).append_message(
             folder=prepared.folder.name,
             message_bytes=cast(bytes, prepared.message_bytes),
@@ -877,7 +924,7 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
             flags=flags,
             tool_name="append_message",
         )
-        prepared.decision.require_allowed()
+        self._require_decision(prepared.decision)
         self._make_client(prepared.imap_config).append_message(
             folder=prepared.folder.name,
             message_bytes=cast(bytes, prepared.message_bytes),
@@ -902,7 +949,7 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
             message=message,
             folder=folder,
         )
-        prepared.decision.require_allowed()
+        self._require_decision(prepared.decision)
         self._make_client(prepared.imap_config).append_message(
             folder=prepared.folder.name,
             message_bytes=cast(bytes, prepared.message_bytes),
@@ -972,17 +1019,18 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
     def _resolve_account_config(self, tool_name: str, account_name: str) -> IMAPConfig:
         imap_config = self._accounts.get(account_name)
         if imap_config is None:
-            raise ValueError(
-                f"{tool_name} requires an IMAP-enabled account: {account_name}"
+            raise PluginValidationError(
+                "imap", f"{tool_name} requires an IMAP-enabled account: {account_name}"
             )
         return imap_config
 
     def _validate_policy_references(self) -> None:
         for account_name, imap_config in sorted(self._accounts.items()):
             if imap_config.policy not in self._policies:
-                raise ValueError(
+                raise PluginValidationError(
+                    "imap",
                     "IMAP account references an unknown policy: "
-                    f"{account_name} -> {imap_config.policy}"
+                    f"{account_name} -> {imap_config.policy}",
                 )
             self._resolver(imap_config)
 
@@ -995,8 +1043,9 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
     ) -> IMAPFolderResolution:
         folder_name = folder.strip() if folder else imap_config.default_folder
         if not folder_name:
-            raise ValueError(
-                f"{tool_name} requires folder when the account has no default_folder"
+            raise PluginValidationError(
+                "imap",
+                f"{tool_name} requires folder when the account has no default_folder",
             )
         return self._resolve_named_folder(
             tool_name, account_name, imap_config, folder_name
@@ -1011,7 +1060,9 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
     ) -> IMAPFolderResolution:
         folder_name = folder.strip()
         if not folder_name:
-            raise ValueError(f"{tool_name} requires a non-empty folder")
+            raise PluginValidationError(
+                "imap", f"{tool_name} requires a non-empty folder"
+            )
         return self._resolver(imap_config).resolve_folder(folder_name)
 
     def _resolve_draft_folder(
@@ -1034,9 +1085,10 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
             if folder_config.kind == IMAPFolderKind.DRAFTS
         ]
         if not draft_folder_names:
-            raise ValueError(
+            raise PluginValidationError(
+                "imap",
                 f"{tool_name} requires folder or a configured DRAFTS folder "
-                f"for account: {account_name}"
+                f"for account: {account_name}",
             )
         draft_folder_name = sorted(
             draft_folder_names,
@@ -1052,8 +1104,9 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
     def _resolver(self, imap_config: IMAPConfig) -> IMAPPolicyResolver:
         imap_policy = self._policies.get(imap_config.policy)
         if imap_policy is None:
-            raise ValueError(
-                f"IMAP account references an unknown policy: {imap_config.policy}"
+            raise PluginValidationError(
+                "imap",
+                f"IMAP account references an unknown policy: {imap_config.policy}",
             )
         return IMAPPolicyResolver(
             folder_metadata=imap_config.folders,
@@ -1076,14 +1129,17 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
         test_folders: set[str] = set()
         if imap_config.default_folder:
             if imap_config.default_folder not in folder_set:
-                raise ValueError(
-                    "default_folder does not exist for IMAP account: " f"{account_name}"
+                raise PluginValidationError(
+                    "imap",
+                    "default_folder does not exist for IMAP account: "
+                    f"{account_name}",
                 )
             default_resolution = resolver.resolve_folder(imap_config.default_folder)
             if not default_resolution.access.allowed:
-                raise ValueError(
+                raise PluginValidationError(
+                    "imap",
                     "default_folder is not accessible for IMAP account: "
-                    f"{account_name}"
+                    f"{account_name}",
                 )
             test_folders.add(imap_config.default_folder)
 
@@ -1186,16 +1242,18 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
 
     def _normalize_limit(self, limit: int) -> int:
         if limit < 1:
-            raise ValueError("IMAP message limit must be at least 1")
+            raise PluginValidationError("imap", "IMAP message limit must be at least 1")
         if limit > 100:
-            raise ValueError("IMAP message limit must be at most 100")
+            raise PluginValidationError(
+                "imap", "IMAP message limit must be at most 100"
+            )
         return limit
 
     def _normalize_folder_limit(self, limit: int) -> int:
         if limit < 1:
-            raise ValueError("IMAP folder limit must be at least 1")
+            raise PluginValidationError("imap", "IMAP folder limit must be at least 1")
         if limit > 100:
-            raise ValueError("IMAP folder limit must be at most 100")
+            raise PluginValidationError("imap", "IMAP folder limit must be at most 100")
         return limit
 
     def _normalize_folder_root(self, root: str | None) -> str | None:
@@ -1279,15 +1337,15 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
     def _normalize_message_uid(self, message_id: str) -> str:
         uid = message_id.strip()
         if not uid:
-            raise ValueError("IMAP message_id must be non-empty")
+            raise PluginValidationError("imap", "IMAP message_id must be non-empty")
         if not uid.isdigit():
-            raise ValueError("IMAP message_id must be an IMAP UID")
+            raise PluginValidationError("imap", "IMAP message_id must be an IMAP UID")
         return uid
 
     def _normalize_attachment_id(self, attachment_id: str) -> str:
         normalized = attachment_id.strip()
         if not normalized:
-            raise ValueError("IMAP attachment_id must be non-empty")
+            raise PluginValidationError("imap", "IMAP attachment_id must be non-empty")
         return normalized
 
     def _normalize_flags(self, flags: Sequence[str]) -> tuple[str, ...]:
@@ -1295,10 +1353,13 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
         for flag in flags:
             stripped = flag.strip()
             if not stripped:
-                raise ValueError("IMAP flag names must be non-empty")
+                raise PluginValidationError("imap", "IMAP flag names must be non-empty")
             normalized_flag = normalize_imap_flag_name(stripped)
             if resolve_system_flag(normalized_flag) is None:
-                validate_user_flag_name(normalized_flag)
+                try:
+                    validate_user_flag_name(normalized_flag)
+                except ValueError as exc:
+                    raise PluginValidationError("imap", str(exc)) from None
             normalized.append(normalized_flag)
         return tuple(dict.fromkeys(normalized))
 
@@ -1394,7 +1455,9 @@ folders:
 
 def _imap_policy_bootstrap_template(*, name: str, variant: str = "default-open") -> str:
     if variant not in {"default-open", "default-closed"}:
-        raise ValueError(f"unknown IMAP policy bootstrap variant: {variant}")
+        raise PluginValidationError(
+            "imap", f"unknown IMAP policy bootstrap variant: {variant}"
+        )
     access_rule = (
         '    - allow_glob: "*"' if variant == "default-open" else '    - deny_glob: "*"'
     )
@@ -1716,7 +1779,25 @@ class IMAPServicePlugin:
         runtime = context.runtimes.require(self.name, IMAPRuntime)
         runtime_arguments = _operation_arguments(operation, arguments)
         runtime_method = getattr(runtime, operation)
-        return runtime_method(**runtime_arguments)
+        try:
+            return runtime_method(**runtime_arguments)
+        except IMAPOperationError as exc:
+            if operation in _IMAP_READ_OPERATIONS:
+                raise OperationError(
+                    exc.code,
+                    exc.message,
+                    plugin=exc.plugin,
+                    domain_code=exc.domain_code,
+                    details=exc.details,
+                    transient="no" if exc.code == "not_found" else exc.transient,
+                    replay="safe",
+                ) from None
+            raise
+        except OperationError:
+            raise
+        except (imaplib.IMAP4.error, OSError) as exc:
+            replay = "safe" if operation in _IMAP_READ_OPERATIONS else "unknown"
+            raise imap_operation_error(exc, replay=replay) from None
 
     def check_operation(
         self,

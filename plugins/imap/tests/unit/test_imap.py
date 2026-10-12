@@ -3,7 +3,8 @@ from __future__ import annotations
 import ssl
 import imaplib
 from collections.abc import Mapping, Sequence
-from typing import Any, cast
+from pathlib import Path
+from typing import Any, NoReturn, cast
 
 import pytest
 
@@ -16,6 +17,7 @@ from arbiter_imap import (
 )
 from arbiter_imap.client import (
     FetchedIMAPMessage,
+    IMAPAttachment,
     IMAPAttachmentContent,
     IMAPClient,
     IMAPOperationError,
@@ -1102,7 +1104,7 @@ def test_runtime_skips_folder_probe_when_no_folders_are_configured() -> None:
     }
 
 
-def test_runtime_decodes_byte_authentication_failures() -> None:
+def test_runtime_sanitizes_byte_authentication_failures() -> None:
     class FailingIMAPClient:
         def test_connection(self, *, folders: Sequence[str]) -> None:
             raise AssertionError("test_connection should not be called")
@@ -1179,14 +1181,38 @@ def test_runtime_decodes_byte_authentication_failures() -> None:
 
     result = cast(Mapping[str, object], runtime.test_accounts()["primary"])
 
-    assert result["message"] == "[AUTHENTICATIONFAILED] Authentication failed."
+    assert result["message"] == "IMAP rejected the operation."
+
+
+def test_runtime_sanitizes_classified_upstream_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_list_folders(_client: IMAPClient) -> list[str]:
+        raise IMAPOperationError("server replied password=secret")
+
+    monkeypatch.setattr(IMAPClient, "list_folders", fail_list_folders)
+    runtime = IMAPRuntime(
+        accounts={"primary": IMAPConfig(policy="bot")},
+        policies={"bot": _allow_all_policy()},
+        imap_client_factory=lambda config: IMAPClient(config),
+    )
+
+    result = cast(Mapping[str, object], runtime.test_accounts()["primary"])
+
+    assert result == {
+        "status": "failed",
+        "stage": "connect_auth_noop_examine",
+        "error_type": "IMAPOperationError",
+        "message": "IMAP operation failed.",
+    }
+    assert "password=secret" not in str(result)
 
 
 def test_move_falls_back_to_copy_delete_and_uid_expunge(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake_server = FakeIMAPServer()
-    fake_server.raise_on_move = True
+    fake_server.move_response = ("NO", [b"MOVE unsupported"])
 
     def fake_imap4_ssl(
         host: str,
@@ -1244,6 +1270,139 @@ def test_move_falls_back_when_server_returns_unsupported_status(
         ("STORE", ("42", "+FLAGS.SILENT", r"(\Deleted)")),
         ("EXPUNGE", ("42",)),
     ]
+
+
+def test_move_fallback_does_not_retry_copy_after_copy_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RetryServer(FakeIMAPServer):
+        def __init__(self) -> None:
+            super().__init__()
+            self.copy_calls = 0
+
+        def uid(self, command: str, *args: object) -> tuple[str, list[Any]]:
+            if command == "COPY":
+                self.copy_calls += 1
+                if self.copy_calls == 1:
+                    raise imaplib.IMAP4.error("COPY failed password=secret")
+            return super().uid(command, *args)
+
+    fake_server = RetryServer()
+    fake_server.move_response = ("NO", [b"MOVE unsupported"])
+
+    def fake_imap4_ssl(
+        host: str,
+        port: int,
+        *,
+        ssl_context: ssl.SSLContext,
+        timeout: float,
+    ) -> RetryServer:
+        return fake_server
+
+    monkeypatch.setattr("arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+
+    with pytest.raises(imaplib.IMAP4.error, match="COPY failed"):
+        IMAPClient(IMAPConfig()).move_message(
+            source_folder="INBOX",
+            uid="42",
+            destination_folder="Archive",
+        )
+
+    assert fake_server.copy_calls == 1
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        imaplib.IMAP4.error("MOVE unavailable"),
+        imaplib.IMAP4.abort("UID command error: BAD [b'MOVE unsupported']"),
+        TimeoutError("MOVE outcome unknown"),
+    ],
+)
+def test_move_uncertain_failure_does_not_fall_back(
+    monkeypatch: pytest.MonkeyPatch, failure: Exception
+) -> None:
+    class UncertainServer(FakeIMAPServer):
+        def uid(self, command: str, *args: object) -> tuple[str, list[Any]]:
+            if command == "MOVE":
+                self.uid_calls.append((command, args))
+                raise failure
+            return super().uid(command, *args)
+
+    fake_server = UncertainServer()
+
+    def fake_imap4_ssl(
+        host: str,
+        port: int,
+        *,
+        ssl_context: ssl.SSLContext,
+        timeout: float,
+    ) -> UncertainServer:
+        return fake_server
+
+    monkeypatch.setattr("arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+
+    with pytest.raises(type(failure)) as caught:
+        IMAPClient(IMAPConfig()).move_message(
+            source_folder="INBOX", uid="42", destination_folder="Archive"
+        )
+
+    assert caught.value is failure
+    assert [command for command, _args in fake_server.uid_calls] == ["MOVE"]
+
+
+def test_move_partial_failure_survives_logout_abort(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arbiter_server.errors import OperationError
+
+    class MaskServer(FakeIMAPServer):
+        def uid(self, command: str, *args: object) -> tuple[str, list[Any]]:
+            if command == "STORE":
+                return "NO", [b"destination mailbox does not exist password=secret"]
+            return super().uid(command, *args)
+
+        def logout(self) -> tuple[str, list[bytes]]:
+            raise imaplib.IMAP4.abort("logout failed password=secret")
+
+    fake_server = MaskServer()
+    fake_server.move_response = ("NO", [b"MOVE unsupported"])
+
+    def fake_imap4_ssl(
+        host: str,
+        port: int,
+        *,
+        ssl_context: ssl.SSLContext,
+        timeout: float,
+    ) -> MaskServer:
+        return fake_server
+
+    monkeypatch.setattr("arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+
+    with pytest.raises(OperationError) as caught:
+        IMAPClient(IMAPConfig()).move_message(
+            source_folder="INBOX",
+            uid="42",
+            destination_folder="Archive",
+        )
+
+    assert caught.value.to_dict() == {
+        "error": {
+            "code": "partial_failure",
+            "message": "IMAP copied the message but could not complete the move.",
+            "plugin": "imap",
+            "domain_code": "move_cleanup_failed",
+            "details": {
+                "steps": {
+                    "copy": "succeeded",
+                    "mark_deleted": "unknown",
+                    "expunge": "not_attempted",
+                }
+            },
+            "retry": {"transient": "unknown", "replay": "unsafe"},
+        }
+    }
+    assert "password=secret" not in str(caught.value.to_dict())
 
 
 def test_move_non_fallback_status_raises_without_copying(
@@ -1356,3 +1515,352 @@ def test_fetch_without_rfc822_data_raises(monkeypatch: pytest.MonkeyPatch) -> No
 
     with pytest.raises(IMAPOperationError, match="did not return RFC822"):
         client.list_messages(folder="INBOX", limit=1)
+
+
+@pytest.mark.parametrize(
+    "operation,replay", [("list_folders", "safe"), ("delete_message", "unknown")]
+)
+def test_imap_plugin_classifies_timeout_with_operation_replay(
+    monkeypatch, operation, replay
+):
+    from arbiter_server.errors import OperationError
+    from arbiter_server.services import RuntimeRegistry, ServicePluginContext
+
+    runtime = IMAPRuntime(
+        accounts={"primary": IMAPConfig()}, policies={"bot": _allow_all_policy()}
+    )
+
+    def fail(*_args, **_kwargs):
+        raise TimeoutError("password=secret")
+
+    monkeypatch.setattr(runtime, operation, fail)
+    args = {"account": "primary"}
+    if operation == "delete_message":
+        args["message_id"] = "42"
+    with pytest.raises(OperationError) as caught:
+        IMAPServicePlugin().invoke_operation(
+            operation,
+            args,
+            ServicePluginContext(runtimes=RuntimeRegistry({"imap": runtime})),
+        )
+    assert caught.value.code == "upstream_timeout"
+    assert caught.value.domain_code == "timeout"
+    assert caught.value.replay == replay
+    assert "secret" not in str(caught.value.to_dict())
+
+
+def test_imap_plugin_classifies_client_protocol_read_failure_as_replay_safe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arbiter_server.errors import OperationError
+    from arbiter_server.services import RuntimeRegistry, ServicePluginContext
+
+    class SearchRejectedServer(FakeIMAPServer):
+        def uid(self, command: str, *args: object) -> tuple[str, list[Any]]:
+            if command == "SEARCH":
+                return "NO", [b"search rejected password=secret"]
+            return super().uid(command, *args)
+
+    fake_server = SearchRejectedServer()
+
+    def fake_imap4_ssl(
+        host: str,
+        port: int,
+        *,
+        ssl_context: ssl.SSLContext,
+        timeout: float,
+    ) -> SearchRejectedServer:
+        return fake_server
+
+    monkeypatch.setattr("arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+    runtime = IMAPRuntime(
+        accounts={"primary": IMAPConfig()},
+        policies={"bot": _allow_all_policy()},
+        imap_client_factory=lambda config: IMAPClient(config),
+    )
+
+    with pytest.raises(OperationError) as caught:
+        IMAPServicePlugin().invoke_operation(
+            "search_messages",
+            {
+                "account": "primary",
+                "folder": "INBOX",
+                "query": "invoice",
+            },
+            ServicePluginContext(runtimes=RuntimeRegistry({"imap": runtime})),
+        )
+
+    assert caught.value.to_dict() == {
+        "error": {
+            "code": "upstream_rejected",
+            "message": "IMAP operation failed.",
+            "plugin": "imap",
+            "domain_code": "command_rejected",
+            "details": {"imap_status": "NO"},
+            "retry": {"transient": "unknown", "replay": "safe"},
+        }
+    }
+    assert "secret" not in str(caught.value.to_dict())
+
+
+def test_imap_plugin_preserves_client_protocol_write_failure_as_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arbiter_server.errors import OperationError
+    from arbiter_server.services import RuntimeRegistry, ServicePluginContext
+
+    class MoveRejectedServer(FakeIMAPServer):
+        def uid(self, command: str, *args: object) -> tuple[str, list[Any]]:
+            if command == "MOVE":
+                return "NO", [b"destination mailbox does not exist password=secret"]
+            return super().uid(command, *args)
+
+    fake_server = MoveRejectedServer()
+
+    def fake_imap4_ssl(
+        host: str,
+        port: int,
+        *,
+        ssl_context: ssl.SSLContext,
+        timeout: float,
+    ) -> MoveRejectedServer:
+        return fake_server
+
+    monkeypatch.setattr("arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+    policy = _allow_all_policy()
+    policy.operation_defaults.move = True
+    runtime = IMAPRuntime(
+        accounts={"primary": IMAPConfig()},
+        policies={"bot": policy},
+        imap_client_factory=lambda config: IMAPClient(config),
+    )
+
+    with pytest.raises(OperationError) as caught:
+        IMAPServicePlugin().invoke_operation(
+            "move_message",
+            {
+                "account": "primary",
+                "folder": "INBOX",
+                "message_id": "42",
+                "destination_folder": "Archive",
+            },
+            ServicePluginContext(runtimes=RuntimeRegistry({"imap": runtime})),
+        )
+
+    assert caught.value.to_dict() == {
+        "error": {
+            "code": "upstream_rejected",
+            "message": "IMAP operation failed.",
+            "plugin": "imap",
+            "domain_code": "command_rejected",
+            "details": {"imap_status": "NO"},
+            "retry": {"transient": "unknown", "replay": "unknown"},
+        }
+    }
+    assert "secret" not in str(caught.value.to_dict())
+
+
+def test_imap_plugin_classifies_client_attachment_not_found_as_non_transient(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arbiter_server.artifacts import ArtifactStore
+    from arbiter_server.errors import OperationError
+    from arbiter_server.services import RuntimeRegistry, ServicePluginContext
+
+    fake_server = FakeIMAPServer()
+
+    def fake_imap4_ssl(
+        host: str,
+        port: int,
+        *,
+        ssl_context: ssl.SSLContext,
+        timeout: float,
+    ) -> FakeIMAPServer:
+        return fake_server
+
+    monkeypatch.setattr("arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+    runtime = IMAPRuntime(
+        accounts={"primary": IMAPConfig()},
+        policies={"bot": _allow_all_policy()},
+        imap_client_factory=lambda config: IMAPClient(config),
+        artifact_store=ArtifactStore(
+            root=tmp_path / "artifacts", base_url="http://localhost"
+        ).for_plugin("imap"),
+    )
+
+    with pytest.raises(OperationError) as caught:
+        IMAPServicePlugin().invoke_operation(
+            "get_attachment",
+            {
+                "account": "primary",
+                "folder": "INBOX",
+                "message_id": "42",
+                "attachment_id": "part-999-secret",
+            },
+            ServicePluginContext(runtimes=RuntimeRegistry({"imap": runtime})),
+        )
+
+    assert caught.value.to_dict() == {
+        "error": {
+            "code": "not_found",
+            "message": "IMAP operation failed.",
+            "plugin": "imap",
+            "domain_code": "attachment_not_found",
+            "retry": {"transient": "no", "replay": "safe"},
+        }
+    }
+    assert "part-999-secret" not in str(caught.value.to_dict())
+
+
+def test_imap_plugin_classifies_attachment_storage_failure_as_plugin_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arbiter_server.artifacts import ArtifactStore
+    from arbiter_server.errors import OperationError
+    from arbiter_server.services import RuntimeRegistry, ServicePluginContext
+
+    attachment = IMAPAttachment(
+        id="part-2",
+        filename="contract.pdf",
+        content_type="application/pdf",
+        size=3,
+        disposition="attachment",
+        content_id=None,
+        inline=False,
+    )
+    fetch_calls: list[dict[str, str]] = []
+
+    def fetch_attachment(
+        _client: IMAPClient,
+        *,
+        folder: str,
+        uid: str,
+        attachment_id: str,
+    ) -> IMAPAttachmentContent:
+        fetch_calls.append(
+            {
+                "folder": folder,
+                "uid": uid,
+                "attachment_id": attachment_id,
+            }
+        )
+        return IMAPAttachmentContent(attachment=attachment, content=b"PDF")
+
+    def fail_create(
+        _store: ArtifactStore,
+        *,
+        plugin: str,
+        content: bytes,
+        filename: str | None,
+        content_type: str,
+        source: dict[str, object],
+    ) -> NoReturn:
+        raise OSError("disk full at /srv/arbiter/private-attachment-root")
+
+    monkeypatch.setattr(IMAPClient, "get_attachment", fetch_attachment)
+    monkeypatch.setattr(ArtifactStore, "create", fail_create)
+    runtime = IMAPRuntime(
+        accounts={"primary": IMAPConfig()},
+        policies={"bot": _allow_all_policy()},
+        imap_client_factory=lambda config: IMAPClient(config),
+        artifact_store=ArtifactStore(
+            root=tmp_path / "artifacts", base_url="http://localhost"
+        ).for_plugin("imap"),
+    )
+
+    with pytest.raises(OperationError) as caught:
+        IMAPServicePlugin().invoke_operation(
+            "get_attachment",
+            {
+                "account": "primary",
+                "folder": "INBOX",
+                "message_id": "42",
+                "attachment_id": "part-2",
+            },
+            ServicePluginContext(runtimes=RuntimeRegistry({"imap": runtime})),
+        )
+
+    assert fetch_calls == [{"folder": "INBOX", "uid": "42", "attachment_id": "part-2"}]
+    assert caught.value.to_dict() == {
+        "error": {
+            "code": "plugin_error",
+            "message": "IMAP artifact storage failed.",
+            "plugin": "imap",
+            "domain_code": "artifact_storage_failed",
+            "retry": {"transient": "unknown", "replay": "safe"},
+        }
+    }
+    assert "private-attachment-root" not in str(caught.value.to_dict())
+
+
+def test_imap_login_failure_has_explicit_classification(monkeypatch):
+    from arbiter_imap.errors import IMAPAuthenticationError
+
+    class Server:
+        error = imaplib.IMAP4.error
+        abort = imaplib.IMAP4.abort
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def login(self, *_args):
+            raise self.error("password=secret")
+
+    monkeypatch.setattr(imaplib, "IMAP4", Server)
+    with pytest.raises(IMAPAuthenticationError) as caught:
+        IMAPClient(
+            IMAPConfig(tls=MailTlsMode.none, username="user", password="secret")
+        )._connect()
+    assert "secret" not in str(caught.value)
+
+
+def test_imap_login_abort_remains_transport_failure_and_closes(monkeypatch):
+    from arbiter_imap.errors import imap_operation_error
+
+    original = imaplib.IMAP4
+    closed = []
+
+    class Server:
+        error, abort = original.error, original.abort
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def login(self, *_args):
+            raise self.abort("password=secret")
+
+        def shutdown(self):
+            closed.append(True)
+
+    monkeypatch.setattr(imaplib, "IMAP4", Server)
+    with pytest.raises(original.abort) as caught:
+        IMAPClient(
+            IMAPConfig(tls=MailTlsMode.none, username="user", password="secret")
+        )._connect()
+    error = imap_operation_error(caught.value, replay="unknown")
+    assert error.code == "upstream_unavailable"
+    assert "secret" not in str(error.to_dict())
+    assert closed == [True]
+
+
+def test_move_copy_success_is_reported_when_cleanup_fails():
+    from arbiter_server.errors import OperationError
+
+    class Server:
+        def uid(self, command, *_args):
+            return ("OK", []) if command == "COPY" else ("NO", [b"password=secret"])
+
+    client = IMAPClient(IMAPConfig(tls=MailTlsMode.none))
+    with pytest.raises(OperationError) as caught:
+        client._copy_then_delete(cast(Any, Server()), "42", "Archive")
+    assert caught.value.code == "partial_failure"
+    assert caught.value.domain_code == "move_cleanup_failed"
+    assert caught.value.details["steps"] == {
+        "copy": "succeeded",
+        "mark_deleted": "unknown",
+        "expunge": "not_attempted",
+    }
+    assert caught.value.replay == "unsafe"
+    assert "secret" not in str(caught.value.to_dict())
