@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, ItemsView, KeysView, Mapping, Sequence
 from dataclasses import MISSING, Field, asdict, dataclass, field, fields, is_dataclass
 from types import UnionType
@@ -10,7 +11,7 @@ from omegaconf import OmegaConf
 from omegaconf.errors import OmegaConfBaseException
 
 from .version import arbiter_server_version, compatibility_line, server_api_version
-from .errors import OperationValidationError
+from .errors import OperationError, OperationValidationError, log_unexpected
 
 
 RuntimeT = TypeVar("RuntimeT")
@@ -413,11 +414,19 @@ class OperationCatalog:
             descriptor.input_schema,
             dict(arguments or {}),
         )
-        return self._plugins[capability].invoke_operation(
-            operation,
-            operation_arguments,
-            self._context,
-        )
+        try:
+            return self._plugins[capability].invoke_operation(
+                operation, operation_arguments, self._context
+            )
+        except OperationError:
+            raise
+        except Exception as exc:
+            log_unexpected(logging.getLogger(__name__), exc)
+            raise OperationError(
+                "internal_error",
+                "Internal Arbiter server error.",
+                plugin=capability,
+            ) from None
 
     def check_operation(
         self,
