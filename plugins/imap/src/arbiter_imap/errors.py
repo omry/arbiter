@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import imaplib
+import logging
 import ssl
 
-from arbiter_server.errors import OperationError, Replay
+from arbiter_server.errors import OperationError, Replay, log_unexpected
 
 
 class IMAPAuthenticationError(imaplib.IMAP4.error):
@@ -13,6 +14,22 @@ class IMAPAuthenticationError(imaplib.IMAP4.error):
 
 
 def imap_operation_error(exc: Exception, *, replay: Replay) -> OperationError:
+    if isinstance(exc, UnicodeError):
+        return OperationError(
+            "plugin_error",
+            "IMAP operation could not be encoded.",
+            plugin="imap",
+            domain_code="protocol_failed",
+            replay=replay,
+        )
+    if isinstance(exc, ValueError):
+        return OperationError(
+            "plugin_error",
+            "IMAP connection configuration is invalid.",
+            plugin="imap",
+            domain_code="configuration_failed",
+            replay=replay,
+        )
     if isinstance(exc, IMAPAuthenticationError):
         return OperationError(
             "upstream_auth_failed",
@@ -46,6 +63,14 @@ def imap_operation_error(exc: Exception, *, replay: Replay) -> OperationError:
             plugin="imap",
             domain_code="connection_failed",
             transient="yes",
+            replay=replay,
+        )
+    if not isinstance(exc, imaplib.IMAP4.error):
+        log_unexpected(logging.getLogger(__name__), exc)
+        return OperationError(
+            "internal_error",
+            "Internal Arbiter server error.",
+            plugin="imap",
             replay=replay,
         )
     return OperationError(

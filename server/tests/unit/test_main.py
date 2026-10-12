@@ -4609,7 +4609,7 @@ def test_build_app_sent_copy_does_not_infer_folder_from_different_account() -> N
     assert result.sent_copy == {
         "status": "skipped",
         "account": "primary",
-        "reason": "IMAP account has no folder configured with kind=SENT: primary",
+        "reason": "Sent-copy destination could not be resolved.",
         "error_type": "ValueError",
     }
 
@@ -4650,3 +4650,201 @@ def test_run_server_preserves_hydra_logging_for_http_transport(
 def test_run_server_rejects_non_https_transport() -> None:
     with pytest.raises(ValueError, match="unsupported Arbiter HTTPS transport"):
         _run_server(cast(Any, SimpleNamespace()), cast(Any, "websocket"))
+
+
+@pytest.mark.parametrize("failure_mode", ["warn", "fail"])
+@pytest.mark.parametrize(
+    "failure_kind",
+    [
+        "auth",
+        "connect",
+        "timeout",
+        "tls",
+        "username-encoding",
+        "password-encoding",
+        "folder-encoding",
+        "timeout-zero",
+        "timeout-negative",
+        "prepare-unexpected",
+        "append-timeout",
+    ],
+)
+def test_sent_copy_pre_append_failure_allows_copy_only_retry(
+    tmp_path, monkeypatch, failure_mode, failure_kind
+) -> None:
+    from arbiter_imap.errors import IMAPAuthenticationError
+    from arbiter_imap.client import IMAPClient
+    import ssl
+    import imaplib
+    from arbiter_smtp import SMTPSentCopyError
+    from arbiter_smtp.config import SMTPSentCopyFailureMode
+
+    smtp_sends: list[dict[str, object]] = []
+    imap_appends: list[dict[str, object]] = []
+    cfg = _app_config_with_smtp_imap()
+    cfg.arbiter.storage.plugin_data_dir = str(tmp_path)
+    cast(
+        SMTPServicePolicyConfig, cfg.arbiter.policy["smtp"]["bot"]
+    ).sent_copy.on_failure = SMTPSentCopyFailureMode(failure_mode)
+    authentication_fixed = False
+    original_connect = IMAPClient._connect
+    if failure_kind in {"timeout-zero", "timeout-negative"}:
+        cast(IMAPConfig, cfg.arbiter.account["imap"]["primary"]).timeout_seconds = (
+            0 if failure_kind == "timeout-zero" else -1
+        )
+    sent_folder = "Sént" if failure_kind == "folder-encoding" else "Sent"
+    cast(IMAPConfig, cfg.arbiter.account["imap"]["primary"]).folders[sent_folder] = (
+        IMAPFolderConfig(description="Sent mail", kind=IMAPFolderKind.SENT)
+    )
+    cast(IMAPAccessPolicyConfig, cfg.arbiter.policy["imap"]["bot"]).folders[
+        sent_folder
+    ] = IMAPFolderOperationPolicyConfig(
+        folder_append=IMAPOperationDecision.allow,
+        system_flags=IMAPSystemFlagsPolicyConfig(SEEN=IMAPFlagMode.read_write),
+    )
+
+    class FakeSMTPClient:
+        def send(
+            self,
+            message_bytes: bytes,
+            sender: str,
+            recipients: list[str],
+        ) -> None:
+            smtp_sends.append(
+                {
+                    "message_bytes": message_bytes,
+                    "sender": sender,
+                    "recipients": recipients,
+                }
+            )
+
+        def test_connection(self) -> None:
+            return None
+
+    class FakeIMAPServer:
+        def append(self, folder, flags, date_time, message_bytes):
+            if failure_kind == "folder-encoding" and not authentication_fixed:
+                server = imaplib.IMAP4.__new__(imaplib.IMAP4)
+                for name, value in {
+                    "state": "AUTH",
+                    "_encoding": "ascii",
+                    "tagpre": b"A",
+                    "tagnum": 0,
+                    "tagged_commands": {},
+                    "untagged_responses": {},
+                    "utf8_enabled": False,
+                }.items():
+                    setattr(server, name, value)
+                server.append(folder, flags, date_time, message_bytes)
+            imap_appends.append({"folder": folder, "message_bytes": message_bytes})
+            if failure_kind == "append-timeout":
+                raise TimeoutError("private-password")
+            return "OK", [b"APPEND completed"]
+
+        def logout(self):
+            return "BYE", [b"bye"]
+
+    failures = {
+        "auth": IMAPAuthenticationError("private-password"),
+        "connect": ConnectionRefusedError("private-password"),
+        "timeout": TimeoutError("private-password"),
+        "tls": ssl.SSLError("private-password"),
+        "prepare-unexpected": RuntimeError("private-password"),
+    }
+
+    def connect(_client):
+        if not authentication_fixed and failure_kind in {
+            "timeout-zero",
+            "timeout-negative",
+        }:
+            return original_connect(_client)
+        if not authentication_fixed and failure_kind in {
+            "username-encoding",
+            "password-encoding",
+        }:
+            # Run stdlib LOGIN encoding; failure occurs before any socket write.
+            server = imaplib.IMAP4.__new__(imaplib.IMAP4)
+            for name, value in {
+                "state": "NONAUTH",
+                "_encoding": "ascii",
+                "tagpre": b"A",
+                "tagnum": 0,
+                "tagged_commands": {},
+                "untagged_responses": {},
+            }.items():
+                setattr(server, name, value)
+            username = "private-ñ" if failure_kind == "username-encoding" else "user"
+            password = (
+                "private-ñ" if failure_kind == "password-encoding" else "password"
+            )
+            server.login(username, password)
+        if not authentication_fixed and failure_kind not in {
+            "append-timeout",
+            "folder-encoding",
+        }:
+            raise failures[failure_kind]
+        return FakeIMAPServer()
+
+    monkeypatch.setattr(IMAPClient, "_connect", connect)
+
+    app = build_app(
+        cfg,
+        service_plugins=_test_service_plugins(),
+        runtime_dependencies={
+            "smtp_client_factory": lambda config: FakeSMTPClient(),
+            "imap_client_factory": IMAPClient,
+        },
+    )
+
+    runtime = app.runtime_registry.require("smtp", SMTPRuntime)
+
+    def send():
+        return runtime.send_email(
+            account="primary",
+            to=["to@example.com"],
+            subject="Hello",
+            text_body="Plain body",
+            idempotency_key="sent-auth",
+        )
+
+    if failure_mode == "fail":
+        with pytest.raises(SMTPSentCopyError) as caught:
+            send()
+        result = caught.value.result
+        assert caught.value.replay == (
+            "unknown" if failure_kind == "append-timeout" else "same_idempotency_key"
+        )
+        assert "private-password" not in str(caught.value.to_dict())
+    else:
+        result = send()
+    assert result.sent_copy is not None
+    if failure_kind == "append-timeout":
+        assert result.sent_copy["status"] == "unknown"
+        if failure_mode == "fail":
+            with pytest.raises(SMTPSentCopyError) as retry:
+                send()
+            assert retry.value.replay == "unknown"
+        else:
+            replayed = send()
+            assert replayed.sent_copy is not None
+            assert replayed.sent_copy["status"] == "unknown"
+        assert len(smtp_sends) == 1
+        assert len(imap_appends) == 1
+        return
+    assert result.sent_copy["status"] == "failed"
+    assert "private-password" not in str(result.sent_copy)
+    assert len(smtp_sends) == 1
+    assert imap_appends == []
+    authentication_fixed = True
+    if failure_kind == "folder-encoding":
+        imap_config = cast(IMAPConfig, cfg.arbiter.account["imap"]["primary"])
+        imap_config.folders["Sent"] = imap_config.folders.pop(sent_folder)
+        imap_policy = cast(IMAPAccessPolicyConfig, cfg.arbiter.policy["imap"]["bot"])
+        imap_policy.folders["Sent"] = imap_policy.folders.pop(sent_folder)
+    replayed = send()
+    assert replayed.sent_copy is not None
+    assert replayed.sent_copy["status"] == "saved"
+    assert replayed.idempotency_replayed is True
+    assert len(smtp_sends) == 1
+    assert len(imap_appends) == 1
+    assert imap_appends[0]["message_bytes"] == smtp_sends[0]["message_bytes"]

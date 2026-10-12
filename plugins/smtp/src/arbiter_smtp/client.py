@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from contextlib import suppress
 import smtplib
 import ssl
 
+from arbiter_server.errors import OperationError
+
 from .config import MailTlsMode, SMTPConfig
+from .errors import SMTPPreSubmissionError
 
 
 class SMTPSubmissionClient:
@@ -16,11 +20,51 @@ class SMTPSubmissionClient:
             self._expect_ok(server.noop(), "NOOP")
 
     def send(self, message_bytes: bytes, sender: str, recipients: list[str]) -> None:
-        with self._connect() as server:
-            self._prepare_session(server)
-            refused_recipients = server.sendmail(sender, recipients, message_bytes)
+        try:
+            server = self._connect()
+        except Exception as exc:
+            if isinstance(
+                exc,
+                (
+                    OperationError,
+                    smtplib.SMTPResponseException,
+                    smtplib.SMTPNotSupportedError,
+                ),
+            ):
+                raise
+            raise SMTPPreSubmissionError(exc) from exc
+        try:
+            try:
+                self._prepare_session(server)
+            except Exception as exc:
+                if isinstance(
+                    exc,
+                    (
+                        OperationError,
+                        smtplib.SMTPResponseException,
+                        smtplib.SMTPNotSupportedError,
+                    ),
+                ):
+                    raise
+                raise SMTPPreSubmissionError(exc) from exc
+            try:
+                refused_recipients = server.sendmail(sender, recipients, message_bytes)
+            except smtplib.SMTPRecipientsRefused as exc:
+                # stdlib aborts RCPT processing immediately on 421, before
+                # DATA. Its dictionary can omit accepted/unprocessed RCPTs.
+                if any(reply[0] == 421 for reply in exc.recipients.values()):
+                    raise SMTPPreSubmissionError(exc) from exc
+                raise
             if refused_recipients:
                 raise smtplib.SMTPRecipientsRefused(refused_recipients)
+        finally:
+            # DATA acceptance (or the primary rejection) determines delivery.
+            # QUIT cleanup must not replace that outcome. SMTPException is an
+            # OSError, so this also covers protocol errors while disconnecting.
+            with suppress(OSError):
+                server.quit()
+            with suppress(OSError):
+                server.close()
 
     def _connect(self) -> smtplib.SMTP | smtplib.SMTP_SSL:
         ssl_context = self._build_ssl_context()
