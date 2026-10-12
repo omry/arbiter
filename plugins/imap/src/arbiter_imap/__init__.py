@@ -46,6 +46,7 @@ from .policy import (
     validate_imap_policy,
 )
 from .errors import imap_operation_error
+from .wire import validate_imap_string
 
 from .runtime_policy import (
     _IMAPRuntimePolicyMixin,
@@ -595,6 +596,7 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
             folder_resolution.policy.search,
         )
 
+        validate_imap_string(query, argument="query")
         normalized_query = query.strip()
         if not normalized_query:
             raise PluginValidationError(
@@ -1041,6 +1043,8 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
         imap_config: IMAPConfig,
         folder: str | None,
     ) -> IMAPFolderResolution:
+        if folder is not None:
+            validate_imap_string(folder, argument="folder")
         folder_name = folder.strip() if folder else imap_config.default_folder
         if not folder_name:
             raise PluginValidationError(
@@ -1058,6 +1062,7 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
         imap_config: IMAPConfig,
         folder: str,
     ) -> IMAPFolderResolution:
+        validate_imap_string(folder, argument="folder")
         folder_name = folder.strip()
         if not folder_name:
             raise PluginValidationError(
@@ -1335,10 +1340,11 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
         return any(query in value.casefold() for value in searchable)
 
     def _normalize_message_uid(self, message_id: str) -> str:
+        validate_imap_string(message_id, argument="message_id")
         uid = message_id.strip()
         if not uid:
             raise PluginValidationError("imap", "IMAP message_id must be non-empty")
-        if not uid.isdigit():
+        if not uid.isascii() or not uid.isdigit():
             raise PluginValidationError("imap", "IMAP message_id must be an IMAP UID")
         return uid
 
@@ -1351,6 +1357,7 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
     def _normalize_flags(self, flags: Sequence[str]) -> tuple[str, ...]:
         normalized: list[str] = []
         for flag in flags:
+            validate_imap_string(flag, argument="flag")
             stripped = flag.strip()
             if not stripped:
                 raise PluginValidationError("imap", "IMAP flag names must be non-empty")

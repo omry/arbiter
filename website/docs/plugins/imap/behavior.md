@@ -7,6 +7,19 @@ The caller selects a configured account, folder, and message id; Arbiter
 supplies the connection settings, credentials, folder metadata, and access
 decisions from deployment config.
 
+## Command Input Validation
+
+Message search text and folder names must not contain ASCII control characters,
+including carriage returns, line feeds, NUL, tabs, or DEL. Arbiter rejects
+these values before opening an IMAP session, rather than removing the controls
+or sending them upstream. Quotes and backslashes are escaped within one IMAP
+argument. Message ids must contain ASCII digits, and flag names must be known
+system flags or valid user flag atoms.
+
+Invalid command arguments return `validation_error` with the IMAP domain code
+`invalid_arguments`. Message bodies retain their newlines and are sent as
+IMAP literals when appending messages or saving drafts.
+
 ## Folder Metadata
 
 Account folder entries are overlays on top of folders that already exist on the
