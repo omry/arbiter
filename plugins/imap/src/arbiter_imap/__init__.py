@@ -45,7 +45,7 @@ from .policy import (
     folder_metadata_matches,
     validate_imap_policy,
 )
-from .errors import imap_operation_error
+from .errors import IMAPAuthenticationError, imap_operation_error
 
 from .runtime_policy import (
     _IMAPRuntimePolicyMixin,
@@ -903,11 +903,14 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
             tool_name="append_sent_message",
         )
         self._require_decision(prepared.decision)
-        self._make_client(prepared.imap_config).append_message(
-            folder=prepared.folder.name,
-            message_bytes=cast(bytes, prepared.message_bytes),
-            flags=prepared.flags,
-        )
+        try:
+            self._make_client(prepared.imap_config).append_message(
+                folder=prepared.folder.name,
+                message_bytes=cast(bytes, prepared.message_bytes),
+                flags=prepared.flags,
+            )
+        except IMAPAuthenticationError as exc:
+            raise imap_operation_error(exc, replay="safe") from None
 
     def append_message(
         self,

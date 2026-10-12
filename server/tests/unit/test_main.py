@@ -4609,7 +4609,7 @@ def test_build_app_sent_copy_does_not_infer_folder_from_different_account() -> N
     assert result.sent_copy == {
         "status": "skipped",
         "account": "primary",
-        "reason": "IMAP account has no folder configured with kind=SENT: primary",
+        "reason": "Sent-copy destination could not be resolved.",
         "error_type": "ValueError",
     }
 
@@ -4650,3 +4650,108 @@ def test_run_server_preserves_hydra_logging_for_http_transport(
 def test_run_server_rejects_non_https_transport() -> None:
     with pytest.raises(ValueError, match="unsupported Arbiter HTTPS transport"):
         _run_server(cast(Any, SimpleNamespace()), cast(Any, "websocket"))
+
+
+@pytest.mark.parametrize("failure_mode", ["warn", "fail"])
+def test_sent_copy_authentication_failure_allows_copy_only_retry(
+    tmp_path, failure_mode
+) -> None:
+    from arbiter_imap.errors import IMAPAuthenticationError
+    from arbiter_smtp import SMTPSentCopyError
+    from arbiter_smtp.config import SMTPSentCopyFailureMode
+
+    smtp_sends: list[dict[str, object]] = []
+    imap_appends: list[dict[str, object]] = []
+    cfg = _app_config_with_smtp_imap()
+    cfg.arbiter.storage.plugin_data_dir = str(tmp_path)
+    cast(
+        SMTPServicePolicyConfig, cfg.arbiter.policy["smtp"]["bot"]
+    ).sent_copy.on_failure = SMTPSentCopyFailureMode(failure_mode)
+    authentication_fixed = False
+    cast(IMAPConfig, cfg.arbiter.account["imap"]["primary"]).folders["Sent"] = (
+        IMAPFolderConfig(description="Sent mail", kind=IMAPFolderKind.SENT)
+    )
+    cast(IMAPAccessPolicyConfig, cfg.arbiter.policy["imap"]["bot"]).folders["Sent"] = (
+        IMAPFolderOperationPolicyConfig(
+            folder_append=IMAPOperationDecision.allow,
+            system_flags=IMAPSystemFlagsPolicyConfig(SEEN=IMAPFlagMode.read_write),
+        )
+    )
+
+    class FakeSMTPClient:
+        def send(
+            self,
+            message_bytes: bytes,
+            sender: str,
+            recipients: list[str],
+        ) -> None:
+            smtp_sends.append(
+                {
+                    "message_bytes": message_bytes,
+                    "sender": sender,
+                    "recipients": recipients,
+                }
+            )
+
+        def test_connection(self) -> None:
+            return None
+
+    class FakeIMAPClient:
+        def append_message(
+            self,
+            *,
+            folder: str,
+            message_bytes: bytes,
+            flags: Sequence[str] = (r"\Seen",),
+        ) -> None:
+            if not authentication_fixed:
+                raise IMAPAuthenticationError("private-password")
+            imap_appends.append(
+                {
+                    "folder": folder,
+                    "message_bytes": message_bytes,
+                    "flags": tuple(flags),
+                }
+            )
+
+    app = build_app(
+        cfg,
+        service_plugins=_test_service_plugins(),
+        runtime_dependencies={
+            "smtp_client_factory": lambda config: FakeSMTPClient(),
+            "imap_client_factory": lambda config: FakeIMAPClient(),
+        },
+    )
+
+    runtime = app.runtime_registry.require("smtp", SMTPRuntime)
+
+    def send():
+        return runtime.send_email(
+            account="primary",
+            to=["to@example.com"],
+            subject="Hello",
+            text_body="Plain body",
+            idempotency_key="sent-auth",
+        )
+
+    if failure_mode == "fail":
+        with pytest.raises(SMTPSentCopyError) as caught:
+            send()
+        result = caught.value.result
+        assert caught.value.replay == "same_idempotency_key"
+        assert "private-password" not in str(caught.value.to_dict())
+    else:
+        result = send()
+    assert result.sent_copy is not None
+    assert result.sent_copy["status"] == "failed"
+    assert "private-password" not in str(result.sent_copy)
+    assert len(smtp_sends) == 1
+    assert imap_appends == []
+    authentication_fixed = True
+    replayed = send()
+    assert replayed.sent_copy is not None
+    assert replayed.sent_copy["status"] == "saved"
+    assert replayed.idempotency_replayed is True
+    assert len(smtp_sends) == 1
+    assert len(imap_appends) == 1
+    assert imap_appends[0]["message_bytes"] == smtp_sends[0]["message_bytes"]

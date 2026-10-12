@@ -10,6 +10,7 @@ import hashlib
 import json
 import secrets
 import smtplib
+import sqlite3
 from time import monotonic
 from typing import Callable, Protocol, cast
 
@@ -24,6 +25,11 @@ from arbiter_server.services import (
     ServiceRuntimeContext,
 )
 from arbiter_server.storage import PluginStorage
+from arbiter_server.errors import (
+    OperationError,
+    PluginPolicyError,
+    PluginValidationError,
+)
 from arbiter_server.version import distribution_version
 
 from .config import (
@@ -32,6 +38,7 @@ from .config import (
     register_configs as register_smtp_configs,
 )
 from .idempotency import SMTPIdempotencyResult, SMTPIdempotencyStore
+from .errors import SMTPPreSubmissionError, smtp_operation_error
 from .runtime_policy import _SMTPRuntimePolicyMixin
 
 SERVER_API_VERSION = "0.9"
@@ -52,10 +59,42 @@ class SentCopyDestination:
     folder: str
 
 
-class SMTPSentCopyError(RuntimeError):
-    def __init__(self, message: str, *, result: SendEmailResult) -> None:
-        super().__init__(message)
+class SMTPSentCopyError(OperationError, RuntimeError):
+    def __init__(
+        self, message: str, *, result: SendEmailResult, idempotency_ready: bool = False
+    ) -> None:
+        uncertain = (result.sent_copy or {}).get("status") == "unknown"
+        super().__init__(
+            "partial_failure",
+            "SMTP submission succeeded but saving the Sent copy failed.",
+            plugin="smtp",
+            domain_code="sent_copy_failed",
+            details={
+                "steps": {
+                    "smtp_submission": "succeeded",
+                    "sent_copy": "unknown" if uncertain else "failed",
+                }
+            },
+            replay=(
+                "unknown"
+                if uncertain and idempotency_ready
+                else "same_idempotency_key" if idempotency_ready else "unsafe"
+            ),
+        )
+        self.args = (message,)
         self.result = result
+
+
+class SMTPSentCopyPreflightError(OperationError, RuntimeError):
+    def __init__(self, diagnostic: str) -> None:
+        super().__init__(
+            "plugin_error",
+            "Required Sent-copy destination is unavailable.",
+            plugin="smtp",
+            domain_code="sent_copy_preflight_failed",
+            replay="safe",
+        )
+        self.args = (diagnostic,)
 
 
 class SMTPClientProtocol(Protocol):
@@ -105,28 +144,12 @@ SEND_EMAIL_DESCRIPTION = (
 )
 
 
-def _smtp_response_text(response: object) -> str:
-    if isinstance(response, bytes):
-        return response.decode("utf-8", errors="replace")
-    return str(response)
-
-
 def _format_smtp_exception(exc: Exception) -> str:
-    if isinstance(exc, smtplib.SMTPAuthenticationError):
-        return (
-            f"SMTP authentication failed ({exc.smtp_code}): "
-            f"{_smtp_response_text(exc.smtp_error)}"
-        )
-    if isinstance(exc, smtplib.SMTPResponseException):
-        return f"SMTP error {exc.smtp_code}: {_smtp_response_text(exc.smtp_error)}"
-    if isinstance(exc, smtplib.SMTPServerDisconnected):
-        detail = str(exc)
-        return (
-            "SMTP server disconnected"
-            if not detail
-            else f"SMTP server disconnected: {detail}"
-        )
-    return str(exc)
+    if isinstance(exc, OperationError):
+        return exc.message
+    if isinstance(exc, (smtplib.SMTPException, OSError)):
+        return smtp_operation_error(exc, recipient_count=0).message
+    return "SMTP account check failed."
 
 
 def _smtp_live_auth_error(smtp_config: SMTPConfig) -> str | None:
@@ -299,11 +322,11 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
         recipients_bcc = self._normalize_recipients("bcc", bcc or [])
 
         if not text_body and not html_body:
-            raise ValueError("send_email requires text_body or html_body")
+            raise PluginValidationError(
+                "smtp", "send_email requires text_body or html_body"
+            )
 
-        normalized_subject = subject.strip()
-        if not normalized_subject:
-            raise ValueError("send_email requires a non-empty subject")
+        normalized_subject = self._normalize_subject(subject)
 
         sender = formataddr((smtp_config.from_name, smtp_config.from_email))
         message = EmailMessage()
@@ -346,13 +369,32 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
                 account=account,
                 idempotency_key=normalized_idempotency_key,
             )
-            replayed_result = self._reserve_or_replay_idempotency(
-                smtp_policy,
-                account=account,
-                smtp_config=smtp_config,
-                cache_key=cache_key,
-                payload_hash=payload_hash,
-            )
+            try:
+                replayed_result = self._reserve_or_replay_idempotency(
+                    smtp_policy,
+                    account=account,
+                    smtp_config=smtp_config,
+                    cache_key=cache_key,
+                    payload_hash=payload_hash,
+                )
+            except (OSError, sqlite3.Error):
+                # Prior submission state may be inaccessible; do not claim
+                # that replay is safe or misclassify local storage as SMTP.
+                raise OperationError(
+                    "plugin_error",
+                    "SMTP retry state is unavailable.",
+                    plugin="smtp",
+                    domain_code="idempotency_storage_failed",
+                ) from None
+            except ValueError as exc:
+                if isinstance(exc, OperationError):
+                    raise
+                raise OperationError(
+                    "plugin_error",
+                    "SMTP retry state is unavailable.",
+                    plugin="smtp",
+                    domain_code="idempotency_storage_failed",
+                ) from None
             if replayed_result is not None:
                 return replayed_result
 
@@ -372,7 +414,7 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
                 result=sent_copy_result,
             ).evaluate()
             if not sent_copy_decision.allowed:
-                raise RuntimeError(
+                raise SMTPSentCopyPreflightError(
                     sent_copy_decision.why_not
                     or "send_email sent-copy preflight failed"
                 )
@@ -388,7 +430,15 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
                 exc,
                 envelope_recipients=envelope_recipients,
             ):
-                self._idempotency_store(smtp_policy).delete(cache_key)
+                try:
+                    self._idempotency_store(smtp_policy).delete(cache_key)
+                except (OSError, sqlite3.Error):
+                    raise OperationError(
+                        "plugin_error",
+                        "SMTP retry state is unavailable.",
+                        plugin="smtp",
+                        domain_code="idempotency_storage_failed",
+                    ) from None
             raise
 
         if sent_copy_result is None and sent_copy_destination is not None:
@@ -410,21 +460,22 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
             sent_copy=sent_copy_result,
         )
         if cache_key is not None and payload_hash is not None:
-            self._idempotency_store(smtp_policy).store_success(
-                cache_key,
+            self._store_submitted_result(
+                smtp_policy,
+                cache_key=cache_key,
                 payload_hash=payload_hash,
                 result=SMTPIdempotencyResult(
                     message_id=result.message_id,
                     recipient_count=result.recipient_count,
                     sent_copy=result.sent_copy,
                     sent_copy_message_bytes=self._sent_copy_retry_message_bytes(
-                        sent_copy_result,
-                        message_bytes,
+                        sent_copy_result, message_bytes
                     ),
                 ),
-                expire_seconds=self._idempotency_expire_seconds(smtp_policy),
             )
-        self._raise_if_submitted_sent_copy_required(result, smtp_policy)
+        self._raise_if_submitted_sent_copy_required(
+            result, smtp_policy, idempotency_ready=cache_key is not None
+        )
         return result
 
     def check_operation(
@@ -454,10 +505,10 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
             text_body = cast(str | None, arguments.get("text_body"))
             html_body = cast(str | None, arguments.get("html_body"))
             if not text_body and not html_body:
-                raise ValueError("send_email requires text_body or html_body")
-            normalized_subject = cast(str, arguments.get("subject")).strip()
-            if not normalized_subject:
-                raise ValueError("send_email requires a non-empty subject")
+                raise PluginValidationError(
+                    "smtp", "send_email requires text_body or html_body"
+                )
+            self._normalize_subject(cast(str, arguments.get("subject")))
 
             recipients = recipients_to + recipients_cc + recipients_bcc
             send_decision = self._send_policy_decision(
@@ -484,7 +535,11 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
             return {
                 "operation": operation_id,
                 "allowed": False,
-                "why_not": str(exc),
+                "why_not": (
+                    exc.message
+                    if isinstance(exc, OperationError)
+                    else "SMTP operation check failed."
+                ),
             }
 
     def _resolve_context(
@@ -493,14 +548,15 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
     ) -> tuple[SMTPConfig, SMTPServicePolicyConfig]:
         smtp_config = self._accounts.get(account_name)
         if smtp_config is None:
-            raise ValueError(
-                f"send_email requires an SMTP-enabled account: {account_name}"
+            raise PluginValidationError(
+                "smtp", f"send_email requires an SMTP-enabled account: {account_name}"
             )
 
         smtp_policy = self._policies.get(smtp_config.policy)
         if smtp_policy is None:
-            raise ValueError(
-                f"send_email account references an unknown SMTP policy: {account_name}"
+            raise PluginValidationError(
+                "smtp",
+                f"send_email account references an unknown SMTP policy: {account_name}",
             )
 
         return smtp_config, smtp_policy
@@ -532,7 +588,7 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
             return self._sent_copy_outcome(
                 "skipped",
                 account=account,
-                reason=str(exc),
+                reason="Sent-copy destination could not be checked.",
                 error_type=type(exc).__name__,
             )
 
@@ -573,7 +629,7 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
             result = self._sent_copy_outcome(
                 "skipped",
                 account=account,
-                reason=str(exc),
+                reason="Sent-copy destination could not be resolved.",
                 error_type=type(exc).__name__,
             )
             if enforce_required:
@@ -603,10 +659,21 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
             )
         except Exception as exc:
             return self._sent_copy_outcome(
-                "failed",
+                (
+                    "failed"
+                    if isinstance(exc, OperationError)
+                    and exc.code
+                    in {
+                        "upstream_rejected",
+                        "upstream_auth_failed",
+                        "validation_error",
+                        "policy_denied",
+                    }
+                    else "unknown"
+                ),
                 account=destination.account,
                 folder=destination.folder,
-                reason=str(exc),
+                reason="Sent-copy operation failed.",
                 error_type=type(exc).__name__,
             )
         return self._sent_copy_outcome(
@@ -622,14 +689,18 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
     ) -> None:
         if smtp_policy.sent_copy.on_failure.value != "fail":
             return
-        raise RuntimeError(f"send_email sent-copy preflight failed: {result['reason']}")
+        raise SMTPSentCopyPreflightError(
+            f"send_email sent-copy preflight failed: {result['reason']}"
+        )
 
     def _normalize_sent_copy_folder(self, folder: str | None) -> str | None:
         if folder is None:
             return None
         normalized = folder.strip()
         if not normalized:
-            raise ValueError("SMTP sent_copy.folder must be non-empty when configured")
+            raise PluginValidationError(
+                "smtp", "SMTP sent_copy.folder must be non-empty when configured"
+            )
         return normalized
 
     def _sent_copy_outcome(
@@ -706,13 +777,14 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
             sent_copy=sent_copy_result,
             idempotency_replayed=True,
         )
-        self._raise_if_submitted_sent_copy_required(replayed_result, smtp_policy)
         return replayed_result
 
     def _raise_if_submitted_sent_copy_required(
         self,
         result: SendEmailResult,
         smtp_policy: SMTPServicePolicyConfig,
+        *,
+        idempotency_ready: bool = False,
     ) -> None:
         if smtp_policy.sent_copy.on_failure.value != "fail":
             return
@@ -725,28 +797,43 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
             "send_email submitted the SMTP message but failed to save "
             f"a sent copy{suffix}",
             result=result,
+            idempotency_ready=idempotency_ready,
         )
 
     def _validate_config(self) -> None:
         for account_name, smtp_config in sorted(self._accounts.items()):
             if smtp_config.policy not in self._policies:
-                raise ValueError(
+                raise PluginValidationError(
+                    "smtp",
                     "SMTP account references an unknown policy: "
-                    f"{account_name} -> {smtp_config.policy}"
+                    f"{account_name} -> {smtp_config.policy}",
                 )
             if (
                 smtp_config.sent_copy.folder is not None
                 and not smtp_config.sent_copy.folder.strip()
             ):
-                raise ValueError(
-                    f"SMTP sent_copy.folder must be non-empty: {account_name}"
+                raise PluginValidationError(
+                    "smtp", f"SMTP sent_copy.folder must be non-empty: {account_name}"
                 )
         for policy_name, smtp_policy in sorted(self._policies.items()):
             if smtp_policy.idempotency.expiration_days <= 0:
-                raise ValueError(
+                raise PluginValidationError(
+                    "smtp",
                     "SMTP idempotency expiration_days must be positive: "
-                    f"{policy_name}"
+                    f"{policy_name}",
                 )
+
+    def _normalize_subject(self, subject: str) -> str:
+        normalized = subject.strip()
+        if not normalized:
+            raise PluginValidationError(
+                "smtp", "send_email requires a non-empty subject"
+            )
+        if "\r" in normalized or "\n" in normalized:
+            raise PluginValidationError(
+                "smtp", "send_email subject must be a single line"
+            )
+        return normalized
 
     def _normalize_recipients(
         self,
@@ -757,11 +844,15 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
             recipient.strip() for recipient in recipients if recipient.strip()
         ]
         if field_name == "to" and not normalized:
-            raise ValueError("send_email requires at least one recipient in to")
+            raise PluginValidationError(
+                "smtp", "send_email requires at least one recipient in to"
+            )
 
         for recipient in normalized:
-            if "@" not in recipient:
-                raise ValueError(f"send_email received an invalid {field_name} address")
+            if "@" not in recipient or "\r" in recipient or "\n" in recipient:
+                raise PluginValidationError(
+                    "smtp", f"send_email received an invalid {field_name} address"
+                )
 
         return normalized
 
@@ -781,20 +872,31 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
         smtp_policy: SMTPServicePolicyConfig,
         recipients: list[str],
     ) -> None:
-        self._send_policy_decision(
+        decision = self._send_policy_decision(
             account_name=account_name,
             smtp_policy=smtp_policy,
             recipients=recipients,
-        ).evaluate().require_allowed()
+        ).evaluate()
+        if not decision.allowed:
+            raise PluginPolicyError(
+                "smtp",
+                decision.why_not or "Operation is not allowed",
+                domain_code=decision.failed_gate or "recipient_denied",
+            )
 
     def _consume_rate_limit(
         self,
         account_name: str,
         smtp_policy: SMTPServicePolicyConfig,
     ) -> None:
-        self._rate_limit_decision(
-            account_name, smtp_policy
-        ).evaluate().require_allowed()
+        decision = self._rate_limit_decision(account_name, smtp_policy).evaluate()
+        if not decision.allowed:
+            raise PluginPolicyError(
+                "smtp",
+                decision.why_not or "Rate limit reached",
+                domain_code="max_messages_per_minute",
+                code="rate_limited",
+            )
         max_messages = smtp_policy.limits.max_messages_per_minute
         if max_messages is None:
             return
@@ -808,8 +910,11 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
             if timestamp > window_start
         ]
         if len(active_attempts) >= max_messages:
-            raise ValueError(
-                f"send_email exceeds max_messages_per_minute for account: {account_name}"
+            raise PluginPolicyError(
+                "smtp",
+                f"send_email exceeds max_messages_per_minute for account: {account_name}",
+                domain_code="max_messages_per_minute",
+                code="rate_limited",
             )
 
         active_attempts.append(now)
@@ -843,7 +948,9 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
             return None
         normalized = idempotency_key.strip()
         if not normalized:
-            raise ValueError("send_email idempotency_key must be non-empty")
+            raise PluginValidationError(
+                "smtp", "send_email idempotency_key must be non-empty"
+            )
         return normalized
 
     def _idempotency_payload_hash(
@@ -908,13 +1015,23 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
                 return None
             record = store.get(cache_key)
         if record is None:
-            raise ValueError("send_email idempotency cache reservation failed")
+            raise PluginValidationError(
+                "smtp", "send_email idempotency cache reservation failed"
+            )
         if record.payload_hash != payload_hash:
-            raise ValueError(
-                "send_email idempotency_key was reused with a different payload"
+            raise PluginValidationError(
+                "smtp",
+                "send_email idempotency_key was reused with a different payload",
+                code="conflict",
+                domain_code="idempotency_payload_conflict",
             )
         if record.result is None:
-            raise ValueError("send_email idempotency_key is already in progress")
+            raise PluginValidationError(
+                "smtp",
+                "send_email idempotency_key is already in progress",
+                code="conflict",
+                domain_code="idempotency_in_progress",
+            )
         if self._sent_copy_needs_idempotent_retry(record.result):
             replayed_result = self._retry_sent_copy_from_idempotency(
                 account=account,
@@ -922,8 +1039,9 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
                 smtp_policy=smtp_policy,
                 result=record.result,
             )
-            store.store_success(
-                cache_key,
+            self._store_submitted_result(
+                smtp_policy,
+                cache_key=cache_key,
                 payload_hash=payload_hash,
                 result=SMTPIdempotencyResult(
                     message_id=replayed_result.message_id,
@@ -934,16 +1052,55 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
                         record.result.sent_copy_message_bytes or b"",
                     ),
                 ),
-                expire_seconds=expire_seconds,
+            )
+            self._raise_if_submitted_sent_copy_required(
+                replayed_result, smtp_policy, idempotency_ready=True
             )
             return replayed_result
-        return SendEmailResult(
+        replayed_result = SendEmailResult(
             tool="send_email",
             message_id=record.result.message_id,
             recipient_count=record.result.recipient_count,
             sent_copy=record.result.sent_copy,
             idempotency_replayed=True,
         )
+        self._raise_if_submitted_sent_copy_required(
+            replayed_result, smtp_policy, idempotency_ready=True
+        )
+        return replayed_result
+
+    def _store_submitted_result(
+        self,
+        smtp_policy: SMTPServicePolicyConfig,
+        *,
+        cache_key: str,
+        payload_hash: str,
+        result: SMTPIdempotencyResult,
+    ) -> None:
+        try:
+            self._idempotency_store(smtp_policy).store_success(
+                cache_key,
+                payload_hash=payload_hash,
+                result=result,
+                expire_seconds=self._idempotency_expire_seconds(smtp_policy),
+            )
+        except Exception:
+            sent_copy_status = (result.sent_copy or {}).get("status")
+            steps = {"smtp_submission": "succeeded", "idempotency_record": "failed"}
+            if sent_copy_status in {"saved", "failed", "unknown"}:
+                steps["sent_copy"] = (
+                    "succeeded"
+                    if sent_copy_status == "saved"
+                    else str(sent_copy_status)
+                )
+            raise OperationError(
+                "partial_failure",
+                "SMTP submission succeeded but recording retry state failed.",
+                plugin="smtp",
+                domain_code="idempotency_record_failed",
+                details={"steps": steps},
+                replay="unsafe",
+            ) from None
 
     def _idempotency_store(
         self,
@@ -970,10 +1127,14 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
                 expire_seconds=60,
             )
             if not added:
-                raise ValueError("SMTP idempotency cache readiness key collided")
+                raise PluginValidationError(
+                    "smtp", "SMTP idempotency cache readiness key collided"
+                )
             record = store.get(key)
             if record is None or record.payload_hash != payload_hash:
-                raise ValueError("SMTP idempotency cache readiness read failed")
+                raise PluginValidationError(
+                    "smtp", "SMTP idempotency cache readiness read failed"
+                )
         finally:
             store.delete(key)
 
@@ -1002,7 +1163,9 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
 
     def _idempotency_cache_dir(self, smtp_policy: SMTPServicePolicyConfig) -> str:
         if self._plugin_storage is None:
-            raise ValueError("SMTP idempotency storage requires plugin storage")
+            raise PluginValidationError(
+                "smtp", "SMTP idempotency storage requires plugin storage"
+            )
         return str(self._plugin_storage.path("idempotency"))
 
     def _idempotency_expire_seconds(
@@ -1021,13 +1184,28 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
             refused_recipients = {
                 recipient.strip().lower() for recipient in exc.recipients
             }
-            attempted_recipients = {
+            attempted_list = [
                 recipient.strip().lower() for recipient in envelope_recipients
-            }
-            return attempted_recipients <= refused_recipients
-        if isinstance(exc, smtplib.SMTPServerDisconnected):
-            return False
-        return True
+            ]
+            attempted_recipients = set(attempted_list)
+            return (
+                len(attempted_list) == len(attempted_recipients)
+                and attempted_recipients <= refused_recipients
+            )
+        # Only definitive pre-acceptance rejections release the reservation.
+        # SMTPException subclasses OSError; a broad transport check first would
+        # incorrectly retain reservations for these known response failures.
+        return isinstance(
+            exc,
+            (
+                PluginValidationError,
+                PluginPolicyError,
+                SMTPSentCopyPreflightError,
+                SMTPPreSubmissionError,
+                smtplib.SMTPResponseException,
+                smtplib.SMTPNotSupportedError,
+            ),
+        )
 
 
 def _smtp_account_bootstrap_template(
@@ -1224,19 +1402,37 @@ class SMTPServicePlugin:
         context: ServicePluginContext,
     ) -> object:
         if operation != "send_email":
-            raise ValueError(f"unknown SMTP operation: {operation}")
+            raise PluginValidationError("smtp", f"unknown SMTP operation: {operation}")
 
         runtime = context.runtimes.require(self.name, SMTPRuntime)
-        result = runtime.send_email(
-            account=cast(str, arguments.get("account")),
-            to=cast(list[str], arguments.get("to")),
-            subject=cast(str, arguments.get("subject")),
-            text_body=cast(str | None, arguments.get("text_body")),
-            html_body=cast(str | None, arguments.get("html_body")),
-            cc=cast(list[str] | None, arguments.get("cc")),
-            bcc=cast(list[str] | None, arguments.get("bcc")),
-            idempotency_key=cast(str | None, arguments.get("idempotency_key")),
-        )
+        try:
+            result = runtime.send_email(
+                account=cast(str, arguments.get("account")),
+                to=cast(list[str], arguments.get("to")),
+                subject=cast(str, arguments.get("subject")),
+                text_body=cast(str | None, arguments.get("text_body")),
+                html_body=cast(str | None, arguments.get("html_body")),
+                cc=cast(list[str] | None, arguments.get("cc")),
+                bcc=cast(list[str] | None, arguments.get("bcc")),
+                idempotency_key=cast(str | None, arguments.get("idempotency_key")),
+            )
+        except (smtplib.SMTPException, OSError) as exc:
+            recipients = (
+                runtime._normalize_recipients(
+                    "to", cast(list[str], arguments.get("to"))
+                )
+                + runtime._normalize_recipients(
+                    "cc", cast(list[str], arguments.get("cc") or [])
+                )
+                + runtime._normalize_recipients(
+                    "bcc", cast(list[str], arguments.get("bcc") or [])
+                )
+            )
+            raise smtp_operation_error(
+                exc,
+                recipient_count=len(recipients),
+                attempted_recipients=recipients,
+            ) from None
         return {
             "ok": True,
             "message_id": result.message_id,
