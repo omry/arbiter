@@ -2120,11 +2120,34 @@ def _native_account_detail_payload(
     }
 
 
-async def _read_operation_arguments(request: object) -> Mapping[str, Any]:
+class _RequestBodyTooLarge(ValueError):
+    pass
+
+
+async def _read_operation_arguments(
+    request: object, *, max_body_bytes: int
+) -> Mapping[str, Any]:
     from json import JSONDecodeError
 
+    http_request = cast(Any, request)
+    content_length = http_request.headers.get("content-length")
+    if content_length is not None:
+        declared = content_length.strip()
+        if not declared.isascii() or not declared.isdecimal():
+            raise ValueError("Content-Length must be a nonnegative integer")
+        # Compare decimal strings without allocating an arbitrarily large int.
+        declared = declared.lstrip("0") or "0"
+        maximum = str(max_body_bytes)
+        if (len(declared), declared) > (len(maximum), maximum):
+            raise _RequestBodyTooLarge
+
+    body = bytearray()
+    async for chunk in http_request.stream():
+        if len(body) + len(chunk) > max_body_bytes:
+            raise _RequestBodyTooLarge
+        body.extend(chunk)
     try:
-        payload = await cast(Any, request).json()
+        payload = json.loads(body)
     except JSONDecodeError as exc:
         raise ValueError("request body must be valid JSON") from exc
     if not isinstance(payload, Mapping):
@@ -2176,6 +2199,7 @@ def _create_native_http_app(
     service_plugins: Sequence[ServicePlugin],
     deployment_scope: DeploymentScope | str,
     artifact_store: ArtifactStore,
+    max_request_body_bytes: int,
 ) -> object:
     from starlette.applications import Starlette
     from starlette.requests import Request
@@ -2295,7 +2319,16 @@ def _create_native_http_app(
     async def invoke_operation(request: Request) -> object:
         operation_id_value = request.path_params["operation_id"]
         try:
-            args = await _read_operation_arguments(request)
+            args = await _read_operation_arguments(
+                request, max_body_bytes=max_request_body_bytes
+            )
+        except _RequestBodyTooLarge:
+            return _native_error_response(
+                status_code=413,
+                code="validation_error",
+                message="Operation request body exceeds the configured size limit.",
+                details={"max_request_body_bytes": max_request_body_bytes},
+            )
         except Exception as exc:
             return _native_exception_response(exc)
         try:
@@ -2432,6 +2465,11 @@ def build_server(
     *,
     prepare_tls: bool = True,
 ) -> NativeHTTPServer:
+    max_request_body_bytes = cfg.arbiter.server.max_request_body_bytes
+    if type(max_request_body_bytes) is not int or max_request_body_bytes < 1:
+        raise ValueError(
+            "arbiter.server.max_request_body_bytes must be a positive integer"
+        )
     available_service_plugins = (
         discover_service_plugins() if service_plugins is None else service_plugins
     )
@@ -2462,6 +2500,7 @@ def build_server(
         service_plugins=active_service_plugins,
         deployment_scope=cfg.arbiter.deployment_scope,
         artifact_store=artifact_store,
+        max_request_body_bytes=max_request_body_bytes,
     )
     ssl_certfile, ssl_keyfile = _server_tls_files(
         cfg,

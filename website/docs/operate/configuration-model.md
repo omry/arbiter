@@ -117,6 +117,28 @@ Hydra also supports config group overrides. Arbiter uses config groups for
 accounts and policies, but normal account activation should go through
 `arbiter-server config activate` so `plugins.yaml` remains consistent.
 
+## Operation Request Size
+
+Operation requests have a default body ceiling of 1 MiB (1,048,576 bytes).
+The ceiling counts the complete encoded JSON body, including argument names
+and inline message content. Configure it in the server deployment:
+
+```yaml
+arbiter:
+  server:
+    max_request_body_bytes: 1048576
+```
+
+The value must be a positive integer; zero does not disable the limit.
+Oversized bodies return HTTP `413` with `validation_error` before JSON parsing
+or plugin execution. Arbiter checks received bytes even when `Content-Length`
+is absent or understates the body size. The response reports the configured
+ceiling in `error.details.max_request_body_bytes`.
+
+Artifact downloads are responses and are not restricted by this request-body
+ceiling. This setting does not bound message fetching, artifact storage, or
+plugin execution resources.
+
 ## Server TLS
 
 Arbiter serves HTTPS by default. The server TLS source is configured under

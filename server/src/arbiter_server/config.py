@@ -58,6 +58,7 @@ class ServerConfig:
     bind: HTTPServerConfig = field(default_factory=_bind_http_server_config)
     public: HTTPServerConfig = field(default_factory=_public_http_server_config)
     tls: ServerTlsConfig = field(default_factory=ServerTlsConfig)
+    max_request_body_bytes: int = 1024 * 1024
 
 
 @dataclass

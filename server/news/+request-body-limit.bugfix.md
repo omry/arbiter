@@ -1,0 +1,4 @@
+Bound operation request bodies before JSON parsing or plugin execution, with a
+configurable 1 MiB default under `arbiter.server.max_request_body_bytes`.
+Oversized bodies receive HTTP 413 even with absent or misleading Content-Length;
+the error reports the configured byte ceiling without including request content.

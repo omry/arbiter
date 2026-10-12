@@ -171,6 +171,9 @@ async def _asgi_request(
     target: str,
     *,
     json_body: object | None = None,
+    body_chunks: Sequence[bytes] | None = None,
+    extra_headers: Sequence[tuple[bytes, bytes]] = (),
+    on_receive: Callable[[], None] | None = None,
 ) -> ASGIResponse:
     parsed = urlparse(target)
     body = b""
@@ -178,15 +181,24 @@ async def _asgi_request(
     if json_body is not None:
         body = json.dumps(json_body).encode("utf-8")
         headers.append((b"content-type", b"application/json"))
+    headers.extend(extra_headers)
+    chunks = list(body_chunks) if body_chunks is not None else [body]
     messages: list[ASGIMessage] = []
-    received = False
+    received = 0
 
     async def receive() -> ASGIMessage:
         nonlocal received
-        if received:
+        if on_receive is not None:
+            on_receive()
+        if received >= len(chunks):
             return {"type": "http.disconnect"}
-        received = True
-        return {"type": "http.request", "body": body, "more_body": False}
+        chunk = chunks[received]
+        received += 1
+        return {
+            "type": "http.request",
+            "body": chunk,
+            "more_body": received < len(chunks),
+        }
 
     async def send(message: ASGIMessage) -> None:
         messages.append(message)
@@ -228,9 +240,15 @@ async def _asgi_request(
 
 
 def _client(
-    tmp_path: Path, *, private_value: object = None, plugin: FakePlugin | None = None
+    tmp_path: Path,
+    *,
+    private_value: object = None,
+    plugin: FakePlugin | None = None,
+    max_request_body_bytes: int | None = None,
 ) -> ASGIClient:
     cfg = AppConfig()
+    if max_request_body_bytes is not None:
+        cfg.arbiter.server.max_request_body_bytes = max_request_body_bytes
     cfg.arbiter.account = {
         "echo": {
             "primary": {
@@ -432,6 +450,144 @@ def test_native_http_protocol_exposes_health_info_and_progressive_discovery(
         "inline_max_bytes": 5120,
         "supports_uploads": False,
     }
+
+
+@pytest.mark.parametrize("declared_length", [None, "0", "1", "1000000"])
+def test_operation_body_limit_rejects_oversize_before_json_parsing_or_plugin(
+    tmp_path, monkeypatch, declared_length
+):
+    calls = []
+
+    class RecordingPlugin(FakePlugin):
+        def invoke_operation(self, operation, arguments, context):
+            calls.append(operation)
+            return super().invoke_operation(operation, arguments, context)
+
+    client = _client(tmp_path, plugin=RecordingPlugin(), max_request_body_bytes=64)
+    parse_calls = []
+    original_loads = json.loads
+
+    def record_loads(*args, **kwargs):
+        parse_calls.append(True)
+        return original_loads(*args, **kwargs)
+
+    monkeypatch.setattr(json, "loads", record_loads)
+    headers = (
+        []
+        if declared_length is None
+        else [(b"content-length", declared_length.encode())]
+    )
+    body = b'{"args":{"text":"' + b"x" * 100 + b'"}}'
+    response = asyncio.run(
+        _asgi_request(
+            client._app,
+            "POST",
+            "/api/v1/operations/echo:repeat",
+            body_chunks=[body[:32], body[32:]],
+            extra_headers=headers,
+        )
+    )
+    assert response.status_code == 413
+    assert calls == []
+    assert parse_calls == []
+    assert response.json() == {
+        "error": {
+            "code": "validation_error",
+            "message": "Operation request body exceeds the configured size limit.",
+            "details": {"max_request_body_bytes": 64},
+        }
+    }
+
+
+@pytest.mark.parametrize("delta,expected_status", [(-1, 413), (0, 200), (1, 200)])
+def test_operation_body_limit_counts_encoded_bytes_and_accepts_boundary(
+    tmp_path, delta, expected_status
+):
+    body = json.dumps({"args": {"text": "caf\u00e9"}}, ensure_ascii=False).encode(
+        "utf-8"
+    )
+    client = _client(tmp_path, max_request_body_bytes=len(body) + delta)
+    response = asyncio.run(
+        _asgi_request(
+            client._app,
+            "POST",
+            "/api/v1/operations/echo:repeat",
+            body_chunks=[body[:10], body[10:]],
+        )
+    )
+    assert response.status_code == expected_status
+    if expected_status == 200:
+        assert response.json()["result"]["text"] == "caf\u00e9"
+
+
+def test_operation_body_limit_does_not_read_past_oversized_chunk(tmp_path):
+    client = _client(tmp_path, max_request_body_bytes=64)
+    reads = []
+    response = asyncio.run(
+        _asgi_request(
+            client._app,
+            "POST",
+            "/api/v1/operations/echo:repeat",
+            body_chunks=[b"x" * 65, b"must not be read"],
+            on_receive=lambda: reads.append(True),
+        )
+    )
+    assert response.status_code == 413
+    assert len(reads) == 1
+
+
+@pytest.mark.parametrize("declared_length", ["65", "9" * 5000])
+def test_operation_body_limit_rejects_oversized_length_without_reading(
+    tmp_path, declared_length
+):
+    client = _client(tmp_path, max_request_body_bytes=64)
+    reads = []
+    response = asyncio.run(
+        _asgi_request(
+            client._app,
+            "POST",
+            "/api/v1/operations/echo:repeat",
+            body_chunks=[b"{}"],
+            extra_headers=[(b"content-length", declared_length.encode())],
+            on_receive=lambda: reads.append(True),
+        )
+    )
+    assert response.status_code == 413
+    assert reads == []
+
+
+@pytest.mark.parametrize("declared_length", ["-1", "abc", "1.5", "\u0661", ""])
+def test_operation_body_limit_rejects_invalid_content_length(tmp_path, declared_length):
+    client = _client(tmp_path, max_request_body_bytes=64)
+    response = asyncio.run(
+        _asgi_request(
+            client._app,
+            "POST",
+            "/api/v1/operations/echo:repeat",
+            body_chunks=[b"{}"],
+            extra_headers=[(b"content-length", declared_length.encode("utf-8"))],
+        )
+    )
+    assert response.status_code == 400
+
+
+def test_operation_body_limit_default_is_one_mib(tmp_path):
+    client = _client(tmp_path)
+    response = client.post(
+        "/api/v1/operations/echo:repeat", json={"args": {"text": "x" * (1024 * 1024)}}
+    )
+    assert response.status_code == 413
+    assert response.json()["error"]["details"]["max_request_body_bytes"] == 1024 * 1024
+
+
+@pytest.mark.parametrize("limit", [0, -1])
+def test_server_rejects_unbounded_request_body_configuration(limit):
+    cfg = AppConfig()
+    cfg.arbiter.server.max_request_body_bytes = limit
+    with pytest.raises(
+        ValueError, match="max_request_body_bytes must be a positive integer"
+    ):
+        build_server(OmegaConf.structured(cfg), service_plugins=[], prepare_tls=False)
 
 
 def test_native_http_protocol_invokes_operations_and_returns_error_envelopes(
