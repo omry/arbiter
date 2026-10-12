@@ -227,7 +227,9 @@ async def _asgi_request(
     )
 
 
-def _client(tmp_path: Path) -> ASGIClient:
+def _client(
+    tmp_path: Path, *, private_value: object = None, plugin: FakePlugin | None = None
+) -> ASGIClient:
     cfg = AppConfig()
     cfg.arbiter.account = {
         "echo": {
@@ -236,6 +238,7 @@ def _client(tmp_path: Path) -> ASGIClient:
                 "description": "Primary echo account.",
                 "guidance": "Use for smoke tests.",
                 "password": "${oc.env:ARB_TEST_PASSWORD_DOES_NOT_EXIST}",
+                "access": private_value,
             }
         }
     }
@@ -247,15 +250,102 @@ def _client(tmp_path: Path) -> ASGIClient:
                     "idempotency": {"cache_dir": "/tmp/arbiter-cache"},
                 },
                 "api_key": "${oc.env:ARB_TEST_POLICY_API_KEY_DOES_NOT_EXIST}",
+                "access": private_value,
             }
         }
     }
     cfg.arbiter.storage.plugin_data_dir = str(tmp_path)
     server = build_server(
         OmegaConf.structured(cfg),
-        service_plugins=[cast(ServicePlugin, FakePlugin())],
+        service_plugins=[cast(ServicePlugin, plugin or FakePlugin())],
     )
     return ASGIClient(cast(ASGIApp, server.app))
+
+
+@pytest.mark.parametrize("container", ["scalar", "mapping", "list"])
+@pytest.mark.parametrize("source", ["literal", "oc.env", "secret_file"])
+def test_discovery_never_serializes_unknown_private_fields(
+    tmp_path, monkeypatch, container, source
+):
+    secret = "dbb-private-credential-value"
+    if source == "oc.env":
+        monkeypatch.setenv("DBB_TEST_ACCESS", secret)
+        value = "${oc.env:DBB_TEST_ACCESS}"
+    elif source == "secret_file":
+        secret_path = tmp_path / "private-value"
+        secret_path.write_text(secret)
+        value = "${secret_file:" + str(secret_path) + "}"
+    else:
+        value = secret
+    private_value = (
+        {"value": value}
+        if container == "mapping"
+        else [value] if container == "list" else value
+    )
+    client = _client(tmp_path, private_value=private_value)
+
+    for path in (
+        "/api/v1/plugins/echo/accounts",
+        "/api/v1/plugins/echo/accounts/primary",
+        "/api/v1/plugins/echo/policies/primary_policy",
+    ):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert secret.encode() not in response.content
+        assert b"access" not in response.content
+        assert b"${" not in response.content
+
+
+def test_discovery_does_not_evaluate_private_resolvers(tmp_path):
+    calls = []
+
+    def resolve() -> str:
+        calls.append(True)
+        return "dbb-private-resolved-value"
+
+    OmegaConf.register_new_resolver("dbb_private", resolve, replace=True)
+    try:
+        client = _client(tmp_path, private_value="${dbb_private:}")
+        assert client.get("/api/v1/plugins/echo/accounts/primary").status_code == 200
+        assert (
+            client.get("/api/v1/plugins/echo/policies/primary_policy").status_code
+            == 200
+        )
+        assert calls == []
+    finally:
+        OmegaConf.clear_resolver("dbb_private")
+
+
+def test_discovery_keeps_only_explicit_plugin_projections(tmp_path, monkeypatch):
+    class PublicPlugin(FakePlugin):
+        def public_account_config(self, config: object) -> Mapping[str, object]:
+            return {"purpose": "smoke testing"}
+
+        def public_policy_config(self, config: object) -> Mapping[str, object]:
+            return {"repeat": "allow"}
+
+    monkeypatch.setenv("DBB_TEST_ACCESS", "dbb-private-credential-value")
+    client = _client(
+        tmp_path, private_value="${oc.env:DBB_TEST_ACCESS}", plugin=PublicPlugin()
+    )
+    account = client.get("/api/v1/plugins/echo/accounts/primary").json()
+    policy = client.get("/api/v1/plugins/echo/policies/primary_policy").json()
+    assert account["config"] == {"purpose": "smoke testing"}
+    assert account["policy"] == policy
+    assert policy["rules"] == {"repeat": "allow"}
+
+
+def test_discovery_rejects_raw_config_as_a_public_projection(tmp_path):
+    class UnsafePlugin(FakePlugin):
+        def public_account_config(self, config: object) -> object:
+            return config
+
+    response = _client(tmp_path, plugin=UnsafePlugin()).get(
+        "/api/v1/plugins/echo/accounts/primary"
+    )
+    assert response.status_code == 500
+    assert response.json()["error"]["code"] == "internal_error"
+    assert b"ARB_TEST_PASSWORD" not in response.content
 
 
 def test_native_http_protocol_exposes_health_info_and_progressive_discovery(
@@ -306,18 +396,12 @@ def test_native_http_protocol_exposes_health_info_and_progressive_discovery(
     assert account["account"] == "primary"
     assert account["description"] == "Primary echo account."
     assert account["guidance"] == "Use for smoke tests."
-    assert account["config"]["password"] == "<redacted>"
+    assert account["config"] == {}
     assert account["policy"] == {
         "kind": "policy",
         "plugin": "echo",
         "policy": "primary_policy",
-        "rules": {
-            "rules": {
-                "repeat": "allow",
-                "idempotency": {"cache_dir": "<redacted>"},
-            },
-            "api_key": "<redacted>",
-        },
+        "rules": {},
     }
 
     policy = client.get("/api/v1/plugins/echo/policies/primary_policy").json()

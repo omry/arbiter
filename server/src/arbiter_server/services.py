@@ -4,7 +4,7 @@ import logging
 from collections.abc import Callable, ItemsView, KeysView, Mapping, Sequence
 from dataclasses import MISSING, Field, asdict, dataclass, field, fields, is_dataclass
 from types import UnionType
-from typing import Any, Protocol, TypeVar, Union, cast, get_args, get_origin
+from typing import Any, Literal, Protocol, TypeVar, Union, cast, get_args, get_origin
 from typing import get_type_hints
 
 from omegaconf import OmegaConf
@@ -683,6 +683,22 @@ class OperationCatalog:
             "name": descriptor.name,
             "description": descriptor.description,
         }
+
+    def public_config_projection(
+        self,
+        capability: str,
+        kind: Literal["account", "policy"],
+        config: object,
+    ) -> Mapping[str, object]:
+        """Plugins explicitly choose public fields; absent hooks expose nothing."""
+        self._require_capability(capability)
+        project = getattr(self._plugins[capability], f"public_{kind}_config", None)
+        if not callable(project):
+            return {}
+        projection = project(config)
+        if not isinstance(projection, Mapping) or OmegaConf.is_config(projection):
+            raise RuntimeError("Public config projections must be plain mappings")
+        return projection
 
     def _account_summaries(self, capability: str) -> Mapping[str, object]:
         runtime = self._context.runtimes.require_object(capability)
