@@ -430,8 +430,15 @@ def test_imap_client_surfaces_login_failure(
 ) -> None:
     imap_server = imap_server_factory(login_ok=False)
 
-    with pytest.raises(imaplib.IMAP4.error, match="LOGIN failed"):
+    from arbiter_imap.errors import IMAPAuthenticationError, imap_operation_error
+
+    with pytest.raises(
+        IMAPAuthenticationError, match="IMAP authentication failed"
+    ) as caught:
         _client(imap_server).list_messages(folder="INBOX", limit=1)
+    error = imap_operation_error(caught.value, replay="safe")
+    assert error.code == "upstream_auth_failed"
+    assert error.domain_code == "authentication_failed"
 
 
 def test_imap_client_surfaces_folder_selection_failure(
