@@ -13,6 +13,14 @@ class IMAPAuthenticationError(imaplib.IMAP4.error):
 
 
 def imap_operation_error(exc: Exception, *, replay: Replay) -> OperationError:
+    if isinstance(exc, UnicodeError):
+        return OperationError(
+            "plugin_error",
+            "IMAP operation could not be encoded.",
+            plugin="imap",
+            domain_code="protocol_failed",
+            replay=replay,
+        )
     if isinstance(exc, IMAPAuthenticationError):
         return OperationError(
             "upstream_auth_failed",
