@@ -8,6 +8,11 @@ Arbiter server and exposes discovery and operation execution.
 Most users and agents should start with `info server`, then drill into
 `plugins` or `op` as needed.
 
+Explicit `--json` and `--yaml` also select structured errors on stderr.
+Errors preserve the server's generic and plugin-domain codes, partial outcomes,
+and retry guidance. Exit statuses remain 0 (success), 1 (operation or transport
+failure), and 2 (CLI usage error). See the [error contract](errors.md).
+
 Arbiter exposes a hierarchical discovery surface. Start with server
 orientation, then drill into the plugin, account, policy, or operation needed
 for the task:
@@ -117,16 +122,28 @@ automatically retry a timed-out operation.
 Create the client config file.
 
 ```bash
-arbiter bootstrap client [--force] [override...]
+arbiter bootstrap client [--force] [override...] [--json|--yaml]
 ```
 
 - `--force`: overwrite an existing client config.
+- `--json` and `--yaml`: format errors on stderr; successful output is unchanged.
 
 Example:
 
 ```bash
 arbiter bootstrap client arbiter.url=https://127.0.0.1:8075
 ```
+
+## config
+
+Inspect the resolved client configuration.
+
+```bash
+arbiter config url [--json|--yaml]
+```
+
+`--json` and `--yaml` format errors on stderr. Successful output remains the
+same plain `url` and `source` text.
 
 ## Common flow
 
@@ -145,7 +162,7 @@ Show server identity. Bare `arbiter info` prints a short help menu.
 
 ```bash
 arbiter info
-arbiter info server [--yaml]
+arbiter info server [--json|--yaml]
 ```
 
 `info server` prints JSON by default so agents and scripts can consume it
@@ -164,6 +181,8 @@ arbiter info server --yaml
 - `info`: show help for server info commands.
 - `info server`: show the server URL, deployment scope, version, and source
   metadata when available.
+- `--json` and `--yaml`: select the successful response format and format
+  errors on stderr.
 
 ## plugins
 
@@ -190,12 +209,14 @@ Discover and run operations.
 ```bash
 arbiter op list [plugin]
 arbiter op desc <operation-id>
-arbiter op run <operation-id> --args '<json-object>'
+arbiter op run <operation-id> [--args '<json-object>'] [--json|--yaml]
 ```
 
 - `op list`: list operation summaries.
 - `op desc`: show one operation and its input schema.
 - `op run`: run one operation with JSON arguments.
+- `--json` and `--yaml`: select the successful response format and format
+  errors on stderr.
 - `operation` is an alias for `op`.
 
 Example:
@@ -203,3 +224,17 @@ Example:
 ```bash
 arbiter op run smtp:send_email --args '{"account":"bot","to":["ops@example.com"],"subject":"Hello","text_body":"Hi"}'
 ```
+
+## artifact
+
+Read, save, or pass an artifact to a child command explicitly.
+
+```bash
+arbiter artifact get <url> --stdout [--max-bytes N] [--json|--yaml]
+arbiter artifact save <url> <path> [--json|--yaml]
+arbiter artifact with-temp <url> [--max-child-stdout-bytes N] [--json|--yaml] -- <argv...>
+arbiter artifact with-stdin <url> [--max-child-stdout-bytes N] [--json|--yaml] -- <argv...>
+```
+
+`--json` and `--yaml` format artifact errors on stderr. Successful artifact
+bytes and child output remain unchanged.
