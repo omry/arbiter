@@ -238,7 +238,9 @@ Use standard HTTP status codes where possible:
 - `403`: forbidden by authentication, authorization, or policy
 - `404`: unknown plugin, operation, artifact, or route
 - `409`: conflict
-- `413`: payload too large
+- `413`: operation request body exceeds `arbiter.server.max_request_body_bytes`
+  (default 1 MiB). The `validation_error` envelope includes
+  `details.max_request_body_bytes`; rejection occurs before parsing or execution.
 - `415`: unsupported media type
 - `422`: valid request rejected by operation validation or policy
 - `429`: rate limited
