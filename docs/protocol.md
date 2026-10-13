@@ -165,6 +165,7 @@ Example:
   "output_schema": {},
   "artifact_policy": {
     "max_artifact_bytes": 52428800,
+    "max_artifact_storage_bytes": 1073741824,
     "inline_max_bytes": 5120,
     "supports_uploads": true
   }
@@ -173,6 +174,14 @@ Example:
 
 Clients may cache discovery responses. The protocol can later add `ETag` and
 `If-None-Match` support without changing the response shapes.
+
+`max_artifact_storage_bytes` is the server-wide retained artifact file budget
+across all plugins, including payloads and metadata. It defaults to 1 GiB.
+An artifact whose payload plus reserved metadata cannot fit even in an empty
+store returns HTTP `403`, `policy_denied`, and `retry.transient: no`.
+Otherwise, insufficient remaining capacity after expiry cleanup returns HTTP
+`503`, `resource_exhausted`, and `retry.transient: yes`. Replay safety remains `unknown`;
+clients must consider earlier steps of the enclosing operation before retrying.
 
 ## Operation Invocation
 

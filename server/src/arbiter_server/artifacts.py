@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
+import errno
 import hashlib
 import json
 import os
@@ -9,18 +12,22 @@ from pathlib import Path
 import re
 import secrets
 import shutil
+import sys
 import time
 from urllib.parse import quote
 
 from .storage import ensure_private_dir, plugin_data_dir
 from .errors import OperationError
-from .limits import DEFAULT_MAX_ARTIFACT_BYTES
+from .limits import DEFAULT_MAX_ARTIFACT_BYTES, DEFAULT_MAX_ARTIFACT_STORAGE_BYTES
 
 
 DEFAULT_IDLE_TTL_SECONDS = 10 * 60
 DEFAULT_RETENTION_SECONDS = 24 * 60 * 60
 ARTIFACT_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 CONSUMED_MARKER = "consumed"
+# Allocate room for access timestamps and a bounded access counter up front.
+# Reading an artifact then fits within its admitted metadata allocation.
+METADATA_ACCESS_HEADROOM_BYTES = 128
 
 
 class ArtifactError(RuntimeError):
@@ -48,6 +55,19 @@ class ArtifactTooLarge(OperationError):
             transient="no",
             # The store cannot know whether its caller has already performed
             # other operation steps; do not promise safe operation replay.
+            replay="unknown",
+        )
+
+
+class ArtifactStorageExhausted(OperationError):
+    def __init__(self, max_artifact_storage_bytes: int) -> None:
+        super().__init__(
+            "resource_exhausted",
+            "Artifact storage exhausted; try again later.",
+            details={"max_artifact_storage_bytes": max_artifact_storage_bytes},
+            transient="yes",
+            # Artifact creation does not establish the replay safety of earlier
+            # steps in the enclosing plugin operation.
             replay="unknown",
         )
 
@@ -96,6 +116,10 @@ class PluginArtifactStore:
     def max_artifact_bytes(self) -> int:
         return self._store.max_artifact_bytes
 
+    @property
+    def max_artifact_storage_bytes(self) -> int:
+        return self._store.max_artifact_storage_bytes
+
     def create(
         self,
         *,
@@ -122,6 +146,7 @@ class ArtifactStore:
         idle_ttl_seconds: int = DEFAULT_IDLE_TTL_SECONDS,
         retention_seconds: int = DEFAULT_RETENTION_SECONDS,
         max_artifact_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES,
+        max_artifact_storage_bytes: int = DEFAULT_MAX_ARTIFACT_STORAGE_BYTES,
     ) -> None:
         if idle_ttl_seconds < 1:
             raise ValueError("artifact idle_ttl_seconds must be at least 1")
@@ -129,15 +154,27 @@ class ArtifactStore:
             raise ValueError("artifact retention_seconds must be at least 1")
         if type(max_artifact_bytes) is not int or max_artifact_bytes < 1:
             raise ValueError("artifact max_artifact_bytes must be a positive integer")
+        if (
+            type(max_artifact_storage_bytes) is not int
+            or max_artifact_storage_bytes < 1
+        ):
+            raise ValueError(
+                "artifact max_artifact_storage_bytes must be a positive integer"
+            )
         self._root = root
         self._base_url = base_url.rstrip("/")
         self._idle_ttl_seconds = idle_ttl_seconds
         self._retention_seconds = retention_seconds
         self._max_artifact_bytes = max_artifact_bytes
+        self._max_artifact_storage_bytes = max_artifact_storage_bytes
 
     @property
     def max_artifact_bytes(self) -> int:
         return self._max_artifact_bytes
+
+    @property
+    def max_artifact_storage_bytes(self) -> int:
+        return self._max_artifact_storage_bytes
 
     @property
     def idle_ttl_seconds(self) -> int:
@@ -157,16 +194,33 @@ class ArtifactStore:
     ) -> ArtifactDescriptor:
         if len(content) > self._max_artifact_bytes:
             raise ArtifactTooLarge(self._max_artifact_bytes)
-        self.purge_expired()
+        with self._storage_lock():
+            self._purge_expired()
+            retained_bytes = self._storage_bytes()
+            return self._create(
+                plugin=plugin,
+                content=content,
+                filename=filename,
+                content_type=content_type,
+                source=source,
+                retained_bytes=retained_bytes,
+            )
+
+    def _create(
+        self,
+        *,
+        plugin: str,
+        content: bytes,
+        filename: str | None,
+        content_type: str,
+        source: dict[str, object],
+        retained_bytes: int,
+    ) -> ArtifactDescriptor:
         artifact_id = secrets.token_urlsafe(24)
         nonce = secrets.token_urlsafe(32)
         created_at = time.time()
         payload_hash = hashlib.sha256(content).hexdigest()
         artifact_dir = plugin_data_dir(self._root, plugin) / "artifacts" / artifact_id
-        ensure_private_dir(artifact_dir)
-        payload_path = artifact_dir / "payload"
-        metadata_path = artifact_dir / "metadata.json"
-        _write_private_file(payload_path, content)
         metadata = {
             "id": artifact_id,
             "plugin": plugin,
@@ -179,17 +233,26 @@ class ArtifactStore:
             "created_at": created_at,
             "created_at_iso": _iso_timestamp(created_at),
             "last_accessed_at": None,
-            "last_accessed_at_iso": None,
             "access_count": 0,
             "consumed": False,
             "one_time": True,
             "idle_ttl_seconds": self._idle_ttl_seconds,
             "retention_seconds": self._retention_seconds,
         }
-        _write_private_file(
-            metadata_path,
-            json.dumps(metadata, sort_keys=True).encode("utf-8"),
+        metadata_bytes = json.dumps(
+            metadata, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        metadata_bytes += b" " * METADATA_ACCESS_HEADROOM_BYTES
+        self._check_capacity(
+            len(content) + len(metadata_bytes), retained_bytes=retained_bytes
         )
+        ensure_private_dir(artifact_dir)
+        try:
+            _write_private_file(artifact_dir / "payload", content)
+            _write_private_file(artifact_dir / "metadata.json", metadata_bytes)
+        except BaseException:
+            shutil.rmtree(artifact_dir, ignore_errors=True)
+            raise
         encoded_id = quote(artifact_id, safe="")
         encoded_nonce = quote(nonce, safe="")
         return ArtifactDescriptor(
@@ -205,17 +268,23 @@ class ArtifactStore:
         )
 
     def open_once(self, artifact_id: str, nonce: str) -> ArtifactRead:
-        self.purge_expired()
-        artifact_dir, metadata = self._validated_artifact(artifact_id, nonce)
-        self._claim_artifact(artifact_dir, artifact_id)
-        self._record_access(artifact_dir, metadata, consume=True)
-        return _artifact_read(artifact_dir, metadata)
+        with self._storage_lock():
+            self._purge_expired()
+            artifact_dir, metadata = self._validated_artifact(artifact_id, nonce)
+            self._claim_artifact(artifact_dir, artifact_id)
+            try:
+                self._record_access(artifact_dir, metadata, consume=True)
+            except BaseException:
+                (artifact_dir / CONSUMED_MARKER).unlink(missing_ok=True)
+                raise
+            return _artifact_read(artifact_dir, metadata)
 
     def inspect(self, artifact_id: str, nonce: str) -> ArtifactRead:
-        self.purge_expired()
-        artifact_dir, metadata = self._validated_artifact(artifact_id, nonce)
-        self._record_access(artifact_dir, metadata, consume=False)
-        return _artifact_read(artifact_dir, metadata)
+        with self._storage_lock():
+            self._purge_expired()
+            artifact_dir, metadata = self._validated_artifact(artifact_id, nonce)
+            self._record_access(artifact_dir, metadata, consume=False)
+            return _artifact_read(artifact_dir, metadata)
 
     def _validated_artifact(
         self,
@@ -242,8 +311,7 @@ class ArtifactStore:
         marker_path = artifact_dir / CONSUMED_MARKER
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
         try:
-            with os.fdopen(os.open(marker_path, flags, 0o600), "wb") as handle:
-                handle.write(_iso_timestamp(time.time()).encode("utf-8"))
+            os.close(os.open(marker_path, flags, 0o600))
         except FileExistsError as exc:
             raise ArtifactConsumed(f"artifact already consumed: {artifact_id}") from exc
         if os.name != "nt":
@@ -256,35 +324,129 @@ class ArtifactStore:
         *,
         consume: bool,
     ) -> None:
+        # The numeric timestamp is authoritative. Drop the unused derived ISO
+        # copy so legacy metadata can receive access bookkeeping in place.
+        metadata.pop("last_accessed_at_iso", None)
         accessed_at = time.time()
         metadata["last_accessed_at"] = accessed_at
-        metadata["last_accessed_at_iso"] = _iso_timestamp(accessed_at)
-        metadata["access_count"] = _int_or_default(metadata.get("access_count"), 0) + 1
+        metadata["access_count"] = min(
+            _int_or_default(metadata.get("access_count"), 0) + 1, 2**63 - 1
+        )
         if consume:
             metadata["consumed"] = True
             metadata["nonce_sha256"] = None
-        _write_private_file(
-            artifact_dir / "metadata.json",
-            json.dumps(metadata, sort_keys=True).encode("utf-8"),
+        metadata_path = artifact_dir / "metadata.json"
+        allocated_bytes = metadata_path.stat().st_size
+        encoded = json.dumps(metadata, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
         )
+        if len(encoded) > allocated_bytes:
+            # Older artifacts may not have allocated access headroom. Keep
+            # admission accounting for every metadata replacement.
+            self._check_capacity(len(encoded) - allocated_bytes)
+        encoded = encoded.ljust(allocated_bytes, b" ")
+        temporary_path = artifact_dir / ".metadata.tmp"
+        try:
+            _write_private_file(temporary_path, encoded)
+            temporary_path.replace(metadata_path)
+        finally:
+            temporary_path.unlink(missing_ok=True)
 
     def purge_expired(self) -> int:
+        with self._storage_lock():
+            return self._purge_expired()
+
+    def _purge_expired(self) -> int:
         if not self._root.exists():
             return 0
+        self._remove_stale_metadata_temporary_files()
         now = time.time()
         removed = 0
-        for metadata_path in self._root.glob("*/artifacts/*/metadata.json"):
-            artifact_dir = metadata_path.parent
+        for artifact_dir in self._root.glob("*/artifacts/*"):
+            if not artifact_dir.is_dir():
+                continue
+            metadata_path = artifact_dir / "metadata.json"
             try:
                 metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 shutil.rmtree(artifact_dir, ignore_errors=True)
                 removed += 1
                 continue
-            if self._is_expired(metadata, now):
+            if not isinstance(metadata, dict) or self._is_expired(metadata, now):
                 shutil.rmtree(artifact_dir, ignore_errors=True)
                 removed += 1
         return removed
+
+    def _remove_stale_metadata_temporary_files(self) -> None:
+        for artifact_dir in self._root.glob("*/artifacts/*"):
+            if not artifact_dir.is_dir():
+                continue
+            (artifact_dir / ".metadata.tmp").unlink(missing_ok=True)
+
+    def _storage_bytes(self) -> int:
+        return sum(
+            path.stat().st_size
+            for artifact_dir in self._root.glob("*/artifacts/*")
+            for path in artifact_dir.rglob("*")
+            if path.is_file()
+        )
+
+    def _check_capacity(
+        self, incoming_bytes: int, *, retained_bytes: int | None = None
+    ) -> None:
+        if incoming_bytes > self._max_artifact_storage_bytes:
+            raise OperationError(
+                "policy_denied",
+                "Artifact exceeds the configured storage limit.",
+                details={
+                    "max_artifact_storage_bytes": self._max_artifact_storage_bytes
+                },
+                transient="no",
+                replay="unknown",
+            )
+        if retained_bytes is None:
+            retained_bytes = self._storage_bytes()
+        if retained_bytes + incoming_bytes > self._max_artifact_storage_bytes:
+            raise ArtifactStorageExhausted(self._max_artifact_storage_bytes)
+
+    @contextmanager
+    def _storage_lock(self) -> Iterator[None]:
+        # A persistent lock file coordinates all store instances and processes
+        # using this root. Never unlink it: that would permit two lock owners.
+        ensure_private_dir(self._root)
+        flags = os.O_RDWR | os.O_CREAT
+        with os.fdopen(
+            os.open(self._root / ".artifact-storage.lock", flags, 0o600), "r+b"
+        ) as handle:
+            if sys.platform == "win32":
+                import msvcrt
+
+                # Windows permits locking a byte beyond EOF, so even a newly
+                # created empty lock file needs no racy initialization write.
+                handle.seek(0)
+                while True:
+                    try:
+                        msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+                        break
+                    except OSError as exc:
+                        # The CRT gives up after ten attempts. Keep waiting on
+                        # contention, matching POSIX flock, but propagate faults.
+                        if exc.errno not in (errno.EACCES, errno.EDEADLK):
+                            raise
+                        time.sleep(0.1)
+                try:
+                    yield
+                finally:
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
     def _artifact_dir(self, artifact_id: str) -> Path:
         if ARTIFACT_ID_PATTERN.fullmatch(artifact_id) is None:
