@@ -13,6 +13,7 @@ from omegaconf import II, OmegaConf
 
 from .services import SERVICE_PLUGIN_ENTRY_POINT_GROUP, ServicePluginFactory
 from .services import validate_service_plugin_compatibility
+from .limits import CoreLimitsConfig
 
 
 LOGGER = logging.getLogger(__name__)
@@ -96,6 +97,7 @@ class ArbiterConfig:
     deployment_scope: DeploymentScope = DeploymentScope.unknown
     discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
+    limits: CoreLimitsConfig = field(default_factory=CoreLimitsConfig)
     account: dict[str, Any] = field(default_factory=dict)
     policy: dict[str, Any] = field(default_factory=dict)
     etc: dict[str, Any] = field(default_factory=dict)
