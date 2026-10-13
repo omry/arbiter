@@ -164,6 +164,7 @@ Example:
   "input_schema": {},
   "output_schema": {},
   "artifact_policy": {
+    "max_artifact_bytes": 52428800,
     "inline_max_bytes": 5120,
     "supports_uploads": true
   }

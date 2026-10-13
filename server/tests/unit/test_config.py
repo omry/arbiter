@@ -104,6 +104,7 @@ def test_compose_config_returns_hydra_config() -> None:
     assert cfg.arbiter.server.name == "arbiter"
     assert cfg.arbiter.server.transport == "https"
     assert cfg.arbiter.limits.max_request_body_bytes == 1024 * 1024
+    assert cfg.arbiter.limits.max_artifact_bytes == 50 * 1024 * 1024
     assert cfg.arbiter.server.bind.scheme == "https"
     assert cfg.arbiter.server.bind.host == "127.0.0.1"
     assert cfg.arbiter.server.bind.port == 8075
@@ -134,6 +135,7 @@ def test_compose_config_applies_overrides() -> None:
             "+arbiter/policy/imap@arbiter.policy.imap.bot=schema",
             "arbiter.server.transport=https",
             "arbiter.limits.max_request_body_bytes=4096",
+            "arbiter.limits.max_artifact_bytes=10000000",
             "arbiter.server.bind.port=9000",
             "arbiter.server.tls.source=CERT_FILES",
             "arbiter.server.tls.cert_file=/tls/cert.pem",
@@ -156,6 +158,7 @@ def test_compose_config_applies_overrides() -> None:
     assert cfg.arbiter.server.transport == "https"
     assert cfg.arbiter.server.bind.port == 9000
     assert cfg.arbiter.limits.max_request_body_bytes == 4096
+    assert cfg.arbiter.limits.max_artifact_bytes == 10000000
     assert cfg.arbiter.server.tls.source == ServerTlsSource.CERT_FILES
     assert cfg.arbiter.server.tls.cert_file == "/tls/cert.pem"
     assert cfg.arbiter.server.tls.key_file == "/tls/key.pem"
