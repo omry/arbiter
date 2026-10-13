@@ -14,6 +14,7 @@ ERROR_STATUS = {
     "not_found": 404,
     "policy_denied": 403,
     "rate_limited": 429,
+    "resource_exhausted": 503,
     "conflict": 409,
     "upstream_auth_failed": 500,
     "upstream_timeout": 504,
