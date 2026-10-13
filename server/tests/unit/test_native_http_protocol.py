@@ -164,6 +164,11 @@ class ASGIClient:
             )
         )
 
+    def head(self, target: str) -> ASGIResponse:
+        return asyncio.run(
+            asyncio.wait_for(_asgi_request(self._app, "HEAD", target), timeout=3)
+        )
+
 
 async def _asgi_request(
     app: ASGIApp,
@@ -246,12 +251,15 @@ def _client(
     plugin: FakePlugin | None = None,
     max_request_body_bytes: int | None = None,
     max_artifact_bytes: int | None = None,
+    max_artifact_storage_bytes: int | None = None,
 ) -> ASGIClient:
     cfg = AppConfig()
     if max_request_body_bytes is not None:
         cfg.arbiter.limits.max_request_body_bytes = max_request_body_bytes
     if max_artifact_bytes is not None:
         cfg.arbiter.limits.max_artifact_bytes = max_artifact_bytes
+    if max_artifact_storage_bytes is not None:
+        cfg.arbiter.limits.max_artifact_storage_bytes = max_artifact_storage_bytes
     cfg.arbiter.account = {
         "echo": {
             "primary": {
@@ -516,6 +524,7 @@ def test_native_http_protocol_exposes_health_info_and_progressive_discovery(
     assert details["artifact_policy"] == {
         "inline_max_bytes": 5120,
         "max_artifact_bytes": 50 * 1024 * 1024,
+        "max_artifact_storage_bytes": 1024 * 1024 * 1024,
         "supports_uploads": False,
     }
 
@@ -897,6 +906,63 @@ def test_request_body_limit_does_not_limit_artifact_download_bytes(tmp_path):
     assert client.get(content_url).content == b"x" * 1024
 
 
+@pytest.mark.parametrize("content", ["x" * 2048, "x"])
+def test_artifact_that_exceeds_empty_store_capacity_is_nontransient(tmp_path, content):
+    client = _client(tmp_path, max_artifact_storage_bytes=256)
+    response = client.post(
+        "/api/v1/operations/echo:make_artifact", json={"args": {"content": content}}
+    )
+    assert response.status_code == 403
+    assert response.json() == {
+        "error": {
+            "code": "policy_denied",
+            "message": "Artifact exceeds the configured storage limit.",
+            "details": {"max_artifact_storage_bytes": 256},
+            "retry": {"transient": "no", "replay": "unknown"},
+        }
+    }
+    assert list(tmp_path.glob("*/artifacts/*")) == []
+
+
+def test_total_artifact_quota_is_published_and_returns_retryable_error(tmp_path):
+    cap = 13000
+    client = _client(tmp_path, max_artifact_storage_bytes=cap)
+    details = client.get("/api/v1/operations/echo:make_artifact").json()
+    assert details["artifact_policy"]["max_artifact_storage_bytes"] == cap
+    first = client.post(
+        "/api/v1/operations/echo:make_artifact",
+        json={"args": {"content": "x" * 10000}},
+    )
+    assert first.status_code == 200
+    second = client.post(
+        "/api/v1/operations/echo:make_artifact",
+        json={"args": {"content": "y" * 10000}},
+    )
+    assert second.status_code == 503
+    assert second.json() == {
+        "error": {
+            "code": "resource_exhausted",
+            "message": "Artifact storage exhausted; try again later.",
+            "details": {"max_artifact_storage_bytes": cap},
+            "retry": {"transient": "yes", "replay": "unknown"},
+        }
+    }
+    # Rejection does not consume or damage the previously stored artifact.
+    content_url = first.json()["artifacts"][0]["content_url"]
+    assert client.get(content_url).content == b"x" * 10000
+    assert len(list(tmp_path.glob("*/artifacts/*/payload"))) == 1
+
+
+@pytest.mark.parametrize("limit", [0, -1])
+def test_server_rejects_unbounded_total_artifact_quota(limit):
+    cfg = AppConfig()
+    cfg.arbiter.limits.max_artifact_storage_bytes = limit
+    with pytest.raises(
+        ValueError, match="max_artifact_storage_bytes must be a positive integer"
+    ):
+        build_server(OmegaConf.structured(cfg), service_plugins=[], prepare_tls=False)
+
+
 @pytest.mark.parametrize("limit", [0, -1])
 def test_server_rejects_unbounded_artifact_configuration(limit):
     cfg = AppConfig()
@@ -948,6 +1014,59 @@ def test_native_http_protocol_returns_artifact_metadata_and_streamed_content(
     assert content.status_code == 200
     assert content.content == b"hello artifact"
     assert content.headers["x-arbiter-artifact-sha256"] == metadata_payload["sha256"]
+
+
+@pytest.mark.parametrize("cap_delta", [0, -1], ids=["exact-cap", "below-usage"])
+def test_native_http_protocol_keeps_legacy_artifact_access_at_lowered_quota(
+    tmp_path, cap_delta
+) -> None:
+    client = _client(tmp_path)
+    operation = client.post(
+        "/api/v1/operations/echo:make_artifact",
+        json={"args": {"content": "legacy artifact"}},
+    ).json()
+    artifact_url = operation["result"]["artifact"]["url"]
+    parsed = urlparse(artifact_url)
+    metadata_path = next(tmp_path.glob("*/artifacts/*/metadata.json"))
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["last_accessed_at"] = None
+    metadata["last_accessed_at_iso"] = None
+    metadata["access_count"] = 0
+    metadata_path.write_text(json.dumps(metadata, sort_keys=True), encoding="utf-8")
+    retained_before = sum(
+        path.stat().st_size for path in tmp_path.glob("*/artifacts/*/*")
+    )
+    cap = retained_before + cap_delta
+    capped = _client(tmp_path, max_artifact_storage_bytes=cap)
+    metadata_payload: dict[str, Any] | None = None
+
+    for _ in range(3):
+        metadata_response = capped.get(f"{parsed.path}?{parsed.query}")
+        assert metadata_response.status_code == 200
+        metadata_payload = metadata_response.json()
+        head = capped.head(f"{parsed.path}?{parsed.query}")
+        assert head.status_code == 200
+        retained_after_access = sum(
+            path.stat().st_size for path in tmp_path.glob("*/artifacts/*/*")
+        )
+        assert retained_after_access <= retained_before
+
+    assert metadata_payload is not None
+    rejected = capped.post(
+        "/api/v1/operations/echo:make_artifact",
+        json={"args": {"content": "new artifact"}},
+    )
+    # The cap is below a new artifact's reserved metadata allocation.
+    assert rejected.status_code == 403
+    assert rejected.json()["error"]["code"] == "policy_denied"
+    assert rejected.json()["error"]["retry"]["transient"] == "no"
+
+    content = capped.get(metadata_payload["content_url"])
+    assert content.status_code == 200
+    assert content.content == b"legacy artifact"
+    consumed = capped.get(metadata_payload["content_url"])
+    assert consumed.status_code == 410
+    assert consumed.json()["error"]["code"] == "artifact_consumed"
 
 
 def test_native_http_protocol_escapes_artifact_content_disposition_filename(

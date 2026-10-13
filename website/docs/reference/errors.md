@@ -19,6 +19,7 @@ callers should inspect the JSON code for precise handling.
 | `not_found` | 404 | Requested operation or resource does not exist. |
 | `policy_denied` | 403 | Configured policy or a core artifact size limit prohibits the operation. |
 | `rate_limited` | 429 | Arbiter's configured operation rate limit was reached. |
+| `resource_exhausted` | 503 | Server artifact storage has insufficient remaining capacity; retry later when replay is safe. An artifact too large for an empty store is instead `policy_denied` with `transient: no`. |
 | `conflict` | 409 | Request conflicts with current state, including an idempotency reservation. |
 | `upstream_auth_failed` | 500 | Configured service credentials were rejected; this is not caller authentication to Arbiter. |
 | `upstream_timeout` | 504 | A required upstream service did not respond in time. |
