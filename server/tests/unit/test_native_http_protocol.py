@@ -245,10 +245,13 @@ def _client(
     private_value: object = None,
     plugin: FakePlugin | None = None,
     max_request_body_bytes: int | None = None,
+    max_artifact_bytes: int | None = None,
 ) -> ASGIClient:
     cfg = AppConfig()
     if max_request_body_bytes is not None:
         cfg.arbiter.limits.max_request_body_bytes = max_request_body_bytes
+    if max_artifact_bytes is not None:
+        cfg.arbiter.limits.max_artifact_bytes = max_artifact_bytes
     cfg.arbiter.account = {
         "echo": {
             "primary": {
@@ -512,6 +515,7 @@ def test_native_http_protocol_exposes_health_info_and_progressive_discovery(
     assert details["input_schema"]["required"] == ["text"]
     assert details["artifact_policy"] == {
         "inline_max_bytes": 5120,
+        "max_artifact_bytes": 50 * 1024 * 1024,
         "supports_uploads": False,
     }
 
@@ -830,6 +834,77 @@ def test_unexpected_plugin_errors_do_not_escape_to_response_or_logs(
     assert exception_secret not in log_text
     assert local_only_sentinel not in log_text
     assert "source-only-marker-2c4e" not in log_text
+
+
+@pytest.mark.parametrize(
+    "limit,content,status",
+    [
+        (3, "abcd", 403),
+        (4, "abcd", 200),
+        (3, "\u00e9\u00e9", 403),
+        (4, "\u00e9\u00e9", 200),
+    ],
+)
+def test_core_artifact_limit_is_enforced_and_published(
+    tmp_path, limit, content, status
+):
+    client = _client(tmp_path, max_artifact_bytes=limit)
+    details = client.get("/api/v1/operations/echo:make_artifact").json()
+    assert details["artifact_policy"]["max_artifact_bytes"] == limit
+    response = client.post(
+        "/api/v1/operations/echo:make_artifact", json={"args": {"content": content}}
+    )
+    assert response.status_code == status
+    if status == 403:
+        assert response.json() == {
+            "error": {
+                "code": "policy_denied",
+                "message": "Artifact exceeds the configured size limit.",
+                "details": {"max_artifact_bytes": limit},
+                "retry": {"transient": "no", "replay": "unknown"},
+            }
+        }
+        assert list(tmp_path.glob("*/artifacts/*/payload")) == []
+    else:
+        artifact = response.json()["artifacts"][0]
+        assert client.get(artifact["content_url"]).content == content.encode("utf-8")
+
+
+def test_request_body_limit_does_not_limit_artifact_download_bytes(tmp_path):
+    class ProducingPlugin(FakePlugin):
+        def invoke_operation(self, operation, arguments, context):
+            runtime = context.runtimes.require("echo", FakeRuntime)
+            assert runtime.artifact_store is not None
+            artifact = runtime.artifact_store.create(
+                content=b"x" * 1024,
+                filename="result.txt",
+                content_type="text/plain",
+                source={},
+            )
+            return {"artifact": artifact.to_dict()}
+
+    client = _client(
+        tmp_path,
+        plugin=ProducingPlugin(),
+        max_request_body_bytes=64,
+        max_artifact_bytes=1024,
+    )
+    response = client.post(
+        "/api/v1/operations/echo:make_artifact", json={"args": {"content": "seed"}}
+    )
+    assert response.status_code == 200
+    content_url = response.json()["artifacts"][0]["content_url"]
+    assert client.get(content_url).content == b"x" * 1024
+
+
+@pytest.mark.parametrize("limit", [0, -1])
+def test_server_rejects_unbounded_artifact_configuration(limit):
+    cfg = AppConfig()
+    cfg.arbiter.limits.max_artifact_bytes = limit
+    with pytest.raises(
+        ValueError, match="max_artifact_bytes must be a positive integer"
+    ):
+        build_server(OmegaConf.structured(cfg), service_plugins=[], prepare_tls=False)
 
 
 def test_native_http_protocol_returns_artifact_metadata_and_streamed_content(
