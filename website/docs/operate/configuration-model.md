@@ -132,6 +132,7 @@ arbiter:
   limits:
     max_request_body_bytes: 1048576
     max_artifact_bytes: 52428800
+    max_artifact_storage_bytes: 1073741824
 ```
 
 The value must be a positive integer; zero does not disable the limit.
@@ -151,9 +152,27 @@ writing files, with HTTP `403`, `policy_denied`, and
 in full; the limit does not truncate them. Operation discovery publishes the
 configured ceiling in `artifact_policy.max_artifact_bytes`.
 
-This core limit bounds individual artifact writes. Total artifact storage,
-mail fetching and decoding, and plugin execution need separate limits in their
-own domains. Plugin-specific limits do not change core limits. These controls
+`max_artifact_storage_bytes` caps total retained artifact file bytes across all
+plugins at 1 GiB (1,073,741,824 bytes) by default. It must be a positive integer.
+It includes payloads, metadata, and metadata space allocated for later access
+updates. Expired artifacts and incomplete creations are reclaimed before new
+artifacts are admitted. A creation that cannot fit returns HTTP `503`,
+`resource_exhausted`, the message "Artifact storage exhausted; try again later.",
+and `retry.transient: yes`. Retry only when replaying the enclosing operation
+is safe; the storage error reports `retry.replay: unknown`. It also reports the
+configured cap in `error.details.max_artifact_storage_bytes`, and operation
+discovery publishes `artifact_policy.max_artifact_storage_bytes`.
+
+Admission and writes are coordinated across store instances and processes
+sharing the same local storage root. Existing files count after restart; lowering
+the cap does not evict unexpired artifacts. New creation stays blocked until
+enough capacity is reclaimed. Cleanup is opportunistic on artifact operations.
+
+This is a retained-file byte budget, not a reservation of free disk space.
+Temporary metadata replacement, filesystem allocation and directory overhead,
+artifact counts, other plugin state, mail fetching and decoding, and plugin
+execution need separate bounds in their own domains. Plugin-specific limits
+do not change core limits. These controls
 apply to trusted plugins using Arbiter's storage API; they do not isolate
 same-process plugin code from the filesystem.
 
