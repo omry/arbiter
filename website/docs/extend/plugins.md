@@ -153,6 +153,17 @@ def bootstrap_config(self, *, kind: str, name: str) -> object | None:
     return None
 ```
 
+A plugin may also define an `activation_guidance` string describing its
+bootstrap defaults and what an operator should review. Explicit account
+activation loads only its target plugins and prints this guidance as a warning
+on stderr, including when the account is already active. This is setup
+guidance, not a resolved-policy audit; activation does not resolve credentials
+to render it. Omit the attribute when no guidance is needed.
+Unavailable plugins or metadata errors produce a manual-policy-review warning
+after the selection is recorded. Advisory guidance failures do not block
+activation or suppress guidance for other targets; runtime compatibility checks
+still apply when checking configuration or starting the server.
+
 ## 3. Build The Runtime
 
 The runtime is the service implementation. It receives the already-composed

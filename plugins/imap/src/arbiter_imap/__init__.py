@@ -1484,6 +1484,8 @@ defaults:
   - _self_
 
 # Explicit folder access baseline. This {access_description}.
+# With default-open, agents can read/search every current and future folder.
+# Narrow folder_access rules or choose --variant default-closed for opt-in access.
 folder_access:
   rules:
 {access_rule}
@@ -1522,6 +1524,11 @@ class IMAPServicePlugin:
     name = "imap"
     version = distribution_version("arbiter-imap", package_file=__file__)
     server_api_version = SERVER_API_VERSION
+    activation_guidance = (
+        "The generated default-open policy lets agents read/search every current "
+        "and future folder. Review the selected policy; narrow folder_access "
+        "rules or bootstrap --policy with --variant default-closed for opt-in access."
+    )
 
     def register_configs(self, config_store: ConfigStore) -> None:
         register_imap_configs(config_store)
