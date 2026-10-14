@@ -12,6 +12,14 @@ Bootstrap an account and starter policy:
 arbiter-server bootstrap --plugin smtp --account bot
 ```
 
+The generated policy permits sending to **any recipient**. You can try the
+account before choosing recipient restrictions, then narrow
+`recipient_policy.allowed_recipients` or `allowed_domain_patterns`. Empty
+allowlists leave destinations unrestricted; send-rate and recipient-count
+limits do not restrict destinations. A prompt-injected caller can send mail
+wherever the configured policy permits. Activation warns about this bootstrap
+default; it does not audit the selected policy or require confirmation.
+
 The account file contains deployment-owned connection settings and credentials:
 
 ```yaml title="arbiter/account/smtp/bot.yaml"

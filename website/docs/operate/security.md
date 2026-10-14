@@ -3,7 +3,10 @@ title: Security Model
 ---
 
 Arbiter's current trust model assumes the caller is trusted once connected to
-the server. Caller authentication is not part of the first server contract yet.
+the server. Caller authentication is absent. Supported prerelease use is limited
+to trusted local clients; remote, hosted, or shared access is unsupported until
+authentication exists. HTTPS protects the connection but does not identify or
+authorize its caller.
 
 ## Current boundary
 
@@ -72,6 +75,30 @@ injection can turn that capability into a policy bypass.
 Binding to `127.0.0.1` protects against network access from other hosts, but
 any local process that can reach the Arbiter server can use whatever the
 configured policy allows.
+
+Startup warns about this unauthenticated boundary, and adds a warning when the
+bind host is not a literal loopback IP address. Hostnames also receive that
+warning because the server does not assume their resolution is local. These
+warnings do not refuse startup or change policy.
+
+Docker's internal `0.0.0.0` bind is separate from the host published address.
+Publish the port on host `127.0.0.1`, not `0.0.0.0`; an advertised loopback URL
+does not prove the port is private. Check Compose port mappings and any reverse
+proxy or forwarding configuration. A container can still be reachable by peers
+on its Docker network, so those peers must also be trusted.
+
+The default Go client skips server certificate verification for loopback HTTPS
+when no CA file is configured. This does not protect against a local process
+impersonating a stopped or restarting Arbiter server. Trust only local clients
+and the local host. Server identity, caller authentication, and bidirectional
+trust enrollment remain separate unfinished work; no enrollment protocol has
+been selected.
+
+Generated IMAP policies default to broad folder read/search access, including
+future folders; SMTP policies default to unrestricted recipients. Activation
+warnings explain these defaults. Review and narrow the selected policies to
+match the account's purpose. These retained defaults are an accepted prerelease
+risk, not an isolation boundary against prompt injection.
 
 For production, run Arbiter as a separate least-privileged user. Harden
 filesystem permissions so agents and other untrusted users cannot modify config,

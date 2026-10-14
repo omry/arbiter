@@ -3709,6 +3709,65 @@ def test_cli_config_activate_account_accepts_comma_separated_plugins(
     assert capsys.readouterr().out == f"updated {config_dir / 'plugins.yaml'}\n"
 
 
+@pytest.mark.parametrize("plugin", ["imap", "smtp"])
+def test_activation_warns_about_bootstrap_authority_without_resolving_credentials(
+    plugin: str,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_dir = tmp_path / "conf"
+    monkeypatch.delenv(f"{plugin.upper()}_BOT_ACCOUNT_PASSWORD", raising=False)
+    assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
+    assert (
+        main(
+            [
+                "--config-dir",
+                str(config_dir),
+                "bootstrap",
+                "--plugin",
+                plugin,
+                "--account",
+                "bot",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    requested_plugins: list[list[str]] = []
+
+    def target_plugins(*, names: Sequence[str]) -> list[ServicePlugin]:
+        requested_plugins.append(list(names))
+        return [p for p in _test_service_plugins() if p.name in names]
+
+    monkeypatch.setattr("arbiter_server.main.discover_service_plugins", target_plugins)
+    args = [
+        "--config-dir",
+        str(config_dir),
+        "config",
+        "activate",
+        "--plugin",
+        plugin,
+        "--account",
+        "bot",
+    ]
+    for _ in range(2):
+        assert main(args) == 0
+        output = capsys.readouterr()
+        assert f"WARNING: {plugin}/bot:" in output.err
+        assert "Review the selected" in output.err
+        if plugin == "imap":
+            assert "every current and future folder" in output.err
+            assert "default-closed" in output.err
+            assert "any recipient" not in output.err
+        else:
+            assert "sending to any recipient" in output.err
+            assert "rate limits do not restrict destinations" in output.err
+            assert "future folder" not in output.err
+        assert "PASSWORD" not in output.err
+    assert requested_plugins == [[plugin], [plugin]]
+
+
 def test_cli_config_activate_accepts_plugin_and_account_options(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -4410,6 +4469,40 @@ def test_log_startup_summary_uses_public_base_url(
     message = caplog.messages[0]
     assert "bind=0.0.0.0:8075" in message
     assert "url=https://arbiter.example.test" in message
+
+
+@pytest.mark.parametrize(
+    ("host", "network_warning"),
+    [
+        ("127.0.0.1", False),
+        ("127.0.0.2", False),
+        ("::1", False),
+        ("0.0.0.0", True),
+        ("::", True),
+        ("192.0.2.1", True),
+        ("localhost", True),
+    ],
+)
+def test_startup_warns_about_unauthenticated_and_non_loopback_access(
+    host: str,
+    network_warning: bool,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    cfg = _app_config_with_smtp()
+    cfg.arbiter.server.bind.host = host
+    # A public URL is an advertisement, not proof of the actual listening or
+    # Docker host-publishing boundary.
+    cfg.arbiter.server.public.base_url = "https://127.0.0.1:8075"
+    caplog.set_level(logging.WARNING, logger="arbiter_server.main")
+    log_startup_summary(cfg)
+    assert any("Caller authentication is absent" in m for m in caplog.messages)
+    assert (
+        any("not a literal loopback address" in m for m in caplog.messages)
+        == network_warning
+    )
+    if network_warning:
+        assert any("host published address" in m for m in caplog.messages)
+        assert any("publish only to 127.0.0.1" in m for m in caplog.messages)
 
 
 def test_server_urls_default_to_loopback_base_url() -> None:
