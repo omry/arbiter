@@ -1246,6 +1246,23 @@ def log_startup_summary(cfg: HydraConfig) -> None:
         _csv_or_none(active_services),
         _service_accounts_summary(cfg),
     )
+    LOGGER.warning(
+        "Caller authentication is absent: every reachable client can use all "
+        "configured accounts and permitted operations. Use only trusted local clients."
+    )
+    host = str(cfg.arbiter.server.bind.host)
+    try:
+        local_bind = ip_address(host).is_loopback
+    except ValueError:
+        local_bind = False
+    if not local_bind:
+        LOGGER.warning(
+            "Arbiter bind address %s is not a literal loopback address. "
+            "Remote/shared access is unsupported until authentication exists. "
+            "For Docker, check the host published address: an internal wildcard "
+            "bind does not establish host exposure; publish only to 127.0.0.1.",
+            host,
+        )
 
 
 def _installed_plugin_summary(
@@ -3786,6 +3803,12 @@ def _run_config_activate_account(
     if plugins_config is None:
         return 1
     plugins_config_file, lines = plugins_config
+    # Explicit activation may load its targets. The guidance describes bootstrap
+    # defaults, without resolving credentials or claiming to audit the policy.
+    activation_guidance = {
+        plugin.name: getattr(plugin, "activation_guidance", None)
+        for plugin in discover_service_plugins(names=plugins)
+    }
     try:
         changed = False
         for plugin, policy_config_name in selections:
@@ -3816,6 +3839,10 @@ def _run_config_activate_account(
     else:
         accounts = ", ".join(f"{plugin}/{name}" for plugin in plugins)
         print(f"accounts already active: {accounts}")
+    for plugin in plugins:
+        guidance = activation_guidance.get(plugin)
+        if guidance:
+            print(f"WARNING: {plugin}/{name}: {guidance}", file=sys.stderr)
     return 0
 
 

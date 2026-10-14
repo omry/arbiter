@@ -1312,6 +1312,8 @@ idempotency:
   expiration_days: 7
 
 # Empty lists do not restrict recipients. Add entries to enforce allow/block rules.
+# The generated default permits sending to any recipient. Narrow these rules
+# after initial setup to restrict recipients or domains.
 recipient_policy:
   allowed_recipients: []
   blocked_recipients: []
@@ -1363,6 +1365,11 @@ class SMTPServicePlugin:
     name = "smtp"
     version = distribution_version("arbiter-smtp", package_file=__file__)
     server_api_version = SERVER_API_VERSION
+    activation_guidance = (
+        "The generated default policy permits sending to any recipient. "
+        "Review the selected recipient_policy and restrict recipients or domains "
+        "after initial setup; rate limits do not restrict destinations."
+    )
 
     def register_configs(self, config_store: ConfigStore) -> None:
         register_smtp_configs(config_store)
