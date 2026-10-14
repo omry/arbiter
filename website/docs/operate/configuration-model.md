@@ -134,6 +134,7 @@ arbiter:
     max_artifact_bytes: 52428800
     max_artifact_storage_bytes: 1073741824
     max_artifact_count: 2000
+    max_blocking_workers: 8
 ```
 
 The value must be a positive integer; zero does not disable the limit.
@@ -144,6 +145,23 @@ ceiling in `error.details.max_request_body_bytes`.
 
 Artifact downloads are responses and are not restricted by this request-body
 ceiling.
+
+`max_blocking_workers` bounds concurrent blocking operation execution across all
+plugins in one native server. It defaults to eight and must be a positive
+integer. Plugin invocation, artifact materialization and operation-response
+encoding run off the HTTP event loop, keeping health and discovery responsive.
+When capacity is full, Arbiter returns HTTP `503` with `resource_exhausted`,
+`transient: yes` and `replay: safe` before invoking the operation; retry later.
+Excess operations are not placed in an unbounded waiting queue.
+
+Cancelling or disconnecting an HTTP request does not stop an already-running
+plugin operation or undo its effects. Its capacity stays occupied until the
+underlying work finishes. Use an operation's retry guidance and idempotency
+support before retrying a request whose outcome is unknown.
+Server shutdown stops admission and cancels work that has not started. Running
+operations can continue while the process is alive; Arbiter's daemon workers do
+not prevent process exit. Exiting may interrupt an unfinished operation, so its
+external outcome can remain unknown.
 
 `max_artifact_bytes` limits creation of each stored artifact to 50 MiB
 (52,428,800 bytes) by default, regardless of which plugin produces it. It must

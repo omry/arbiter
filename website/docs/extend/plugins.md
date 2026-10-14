@@ -251,6 +251,12 @@ def invoke_operation(
 Return small structured results with the information the caller needs. Keep
 service clients, connection pools, and temporary state inside the runtime.
 
+Native HTTP invocation runs synchronous operations in a bounded worker pool.
+Several calls can use the same plugin and runtime concurrently. Protect shared
+mutable state and atomic policy admission, and use service clients that support
+concurrent calls or create a client per operation. Request cancellation does not
+interrupt an operation that is already running.
+
 ## 6. Add Operator Feedback
 
 Config checks help operators catch mistakes before they start using the

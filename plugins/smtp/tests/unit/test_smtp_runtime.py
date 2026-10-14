@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import smtplib
 import sqlite3
+import threading
 
 from diskcache import Timeout as DiskCacheTimeout
 
@@ -169,6 +171,207 @@ def _runtime(
         plugin_storage=PluginStorage(plugin_name="smtp", root=cache_dir),
         sent_message_appender=sent_message_appender,
     )
+
+
+def test_concurrent_sends_cannot_both_consume_the_last_rate_slot(tmp_path):
+    writes = threading.Barrier(2)
+
+    class ScheduledAttempts(dict[str, list[float]]):
+        def __setitem__(self, key: str, value: list[float]) -> None:
+            # Force a context switch between admission and publication. Without
+            # a lock both senders compute an empty window and enter this barrier.
+            try:
+                writes.wait(timeout=0.5)
+            except threading.BrokenBarrierError:
+                pass
+            super().__setitem__(key, value)
+
+    factory = RecordingSMTPClientFactory()
+    runtime = _runtime(
+        cache_dir=tmp_path,
+        factory=factory,
+        policy=SMTPServicePolicyConfig(
+            limits=SMTPLimitsConfig(max_messages_per_minute=1)
+        ),
+    )
+    runtime._attempt_timestamps = ScheduledAttempts()
+    start = threading.Barrier(2)
+
+    def send():
+        start.wait(timeout=2)
+        try:
+            runtime.send_email(
+                account="primary",
+                to=["recipient@example.com"],
+                subject="Concurrent send",
+                text_body="Test body",
+            )
+            return "sent"
+        except OperationError as exc:
+            return exc.code
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        futures = [workers.submit(send) for _ in range(2)]
+        results = sorted(future.result(timeout=3) for future in futures)
+
+    assert results == ["rate_limited", "sent"]
+    assert len(factory.clients) == 1
+
+
+def test_concurrent_runtime_calls_initialize_one_idempotency_store(tmp_path):
+    construction = threading.Barrier(2)
+    created: list[SMTPIdempotencyStore] = []
+
+    def factory(cache_dir: str) -> SMTPIdempotencyStore:
+        store = SMTPIdempotencyStore(cache_dir)
+        created.append(store)
+        try:
+            construction.wait(timeout=0.5)
+        except threading.BrokenBarrierError:
+            pass
+        return store
+
+    policy = SMTPServicePolicyConfig()
+    runtime = SMTPRuntime(
+        accounts={"primary": SMTPConfig(policy="bot")},
+        policies={"bot": policy},
+        smtp_client_factory=RecordingSMTPClientFactory(),
+        idempotency_store_factory=factory,
+        plugin_storage=PluginStorage(plugin_name="smtp", root=tmp_path),
+    )
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        futures = [workers.submit(runtime._idempotency_store, policy) for _ in range(2)]
+        stores = [future.result(timeout=3) for future in futures]
+
+    assert stores[0] is stores[1]
+    assert len(created) == 1
+
+
+def test_concurrent_same_key_replays_save_one_previously_failed_sent_copy(tmp_path):
+    policy = SMTPServicePolicyConfig(
+        sent_copy=SMTPSentCopyPolicyConfig(on_failure=SMTPSentCopyFailureMode.fail)
+    )
+
+    def send(runtime: SMTPRuntime):
+        return runtime.send_email(
+            account="primary",
+            to=["to@example.com"],
+            subject="Hello",
+            text_body="Body",
+            idempotency_key="same",
+        )
+
+    first = _runtime(
+        cache_dir=tmp_path,
+        policy=policy,
+        sent_message_appender=RecordingSentMessageAppender(
+            append_error=OperationError(
+                "upstream_rejected",
+                "APPEND rejected",
+                plugin="imap",
+                domain_code="command_rejected",
+            )
+        ),
+    )
+    with pytest.raises(SMTPSentCopyError):
+        send(first)
+
+    append_barrier = threading.Barrier(2)
+
+    class ScheduledAppender(RecordingSentMessageAppender):
+        def append_sent_message(self, **kwargs):
+            try:
+                append_barrier.wait(timeout=0.5)
+            except threading.BrokenBarrierError:
+                pass
+            super().append_sent_message(**kwargs)
+
+    appender = ScheduledAppender()
+    factory = RecordingSMTPClientFactory()
+    runtime = _runtime(
+        cache_dir=tmp_path,
+        policy=policy,
+        factory=factory,
+        sent_message_appender=appender,
+    )
+    start = threading.Barrier(2)
+
+    def retry():
+        start.wait(timeout=2)
+        return send(runtime)
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        futures = [workers.submit(retry) for _ in range(2)]
+        results = [future.result(timeout=3) for future in futures]
+
+    assert len(appender.appended) == 1
+    assert factory.clients == []
+    assert all(result.idempotency_replayed for result in results)
+    for result in results:
+        assert result.sent_copy is not None
+        assert result.sent_copy["status"] == "saved"
+    assert runtime._idempotency_key_locks == {}
+
+
+def test_slow_sent_copy_recovery_does_not_block_a_different_key(tmp_path):
+    policy = SMTPServicePolicyConfig(
+        sent_copy=SMTPSentCopyPolicyConfig(on_failure=SMTPSentCopyFailureMode.fail)
+    )
+
+    def send(runtime: SMTPRuntime, key: str):
+        return runtime.send_email(
+            account="primary",
+            to=["to@example.com"],
+            subject="Hello",
+            text_body="Body",
+            idempotency_key=key,
+        )
+
+    first = _runtime(
+        cache_dir=tmp_path,
+        policy=policy,
+        sent_message_appender=RecordingSentMessageAppender(
+            append_error=OperationError(
+                "upstream_rejected",
+                "APPEND rejected",
+                plugin="imap",
+                domain_code="command_rejected",
+            )
+        ),
+    )
+    with pytest.raises(SMTPSentCopyError):
+        send(first, "retry")
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    class BlockingFirstAppender(RecordingSentMessageAppender):
+        def append_sent_message(self, **kwargs):
+            if not entered.is_set():
+                entered.set()
+                assert release.wait(timeout=5)
+            super().append_sent_message(**kwargs)
+
+    factory = RecordingSMTPClientFactory()
+    runtime = _runtime(
+        cache_dir=tmp_path,
+        policy=policy,
+        factory=factory,
+        sent_message_appender=BlockingFirstAppender(),
+    )
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        retry = workers.submit(send, runtime, "retry")
+        try:
+            assert entered.wait(timeout=2)
+            unrelated = workers.submit(send, runtime, "unrelated")
+            result = unrelated.result(timeout=2)
+            assert not result.idempotency_replayed
+            assert not release.is_set()
+        finally:
+            release.set()
+            assert retry.result(timeout=3).idempotency_replayed
+    assert len(factory.clients) == 1
+    assert runtime._idempotency_key_locks == {}
 
 
 def test_send_email_discovery_schema_describes_idempotency_key_for_agents() -> None:

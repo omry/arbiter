@@ -23,6 +23,7 @@ from collections.abc import (
     Sequence,
 )
 from dataclasses import asdict, dataclass, is_dataclass
+from contextlib import asynccontextmanager
 from ipaddress import ip_address
 from pathlib import Path, PurePath
 from tempfile import mkstemp
@@ -42,6 +43,7 @@ from .artifacts import (
     ArtifactStore,
 )
 from .cli_errors import print_cli_error
+from .blocking import BlockingOperationPool, validate_worker_limit
 from .config import (
     AppConfig,
     DeploymentScope,
@@ -2210,11 +2212,21 @@ def _create_native_http_app(
     deployment_scope: DeploymentScope | str,
     artifact_store: ArtifactStore,
     max_request_body_bytes: int,
+    max_blocking_workers: int,
 ) -> object:
     from starlette.applications import Starlette
     from starlette.requests import Request
     from starlette.responses import Response, StreamingResponse
     from starlette.routing import Route
+
+    operation_pool = BlockingOperationPool(max_blocking_workers)
+
+    @asynccontextmanager
+    async def lifespan(_app: object) -> AsyncGenerator[None, None]:
+        try:
+            yield
+        finally:
+            operation_pool.close()
 
     async def health(_request: Request) -> object:
         return _native_response({"status": "ok"})
@@ -2348,10 +2360,19 @@ def _create_native_http_app(
         except Exception as exc:
             return _native_exception_response(exc)
         try:
-            result = catalog.invoke_operation(operation_id_value, args)
-            return _native_response(
-                _operation_response_payload(result, artifact_store=artifact_store)
-            )
+
+            def invoke_and_prepare_response() -> object:
+                try:
+                    result = catalog.invoke_operation(operation_id_value, args)
+                    return _native_response(
+                        _operation_response_payload(
+                            result, artifact_store=artifact_store
+                        )
+                    )
+                except Exception as exc:
+                    return _native_exception_response(exc, validation_status_code=422)
+
+            return await operation_pool.run(invoke_and_prepare_response)
         except Exception as exc:
             return _native_exception_response(exc, validation_status_code=422)
 
@@ -2422,6 +2443,7 @@ def _create_native_http_app(
             return _native_exception_response(exc)
 
     return Starlette(
+        lifespan=lifespan,
         routes=[
             Route(HEALTH_ROUTE, health, methods=["GET"]),
             Route(f"{API_ROUTE_PREFIX}/info", info, methods=["GET"]),
@@ -2471,7 +2493,7 @@ def _create_native_http_app(
                 artifact_content,
                 methods=["GET", "HEAD"],
             ),
-        ]
+        ],
     )
 
 
@@ -2486,6 +2508,8 @@ def build_server(
         raise ValueError(
             "arbiter.limits.max_request_body_bytes must be a positive integer"
         )
+    max_blocking_workers = cfg.arbiter.limits.max_blocking_workers
+    validate_worker_limit(max_blocking_workers)
     available_service_plugins = (
         discover_service_plugins() if service_plugins is None else service_plugins
     )
@@ -2520,6 +2544,7 @@ def build_server(
         deployment_scope=cfg.arbiter.deployment_scope,
         artifact_store=artifact_store,
         max_request_body_bytes=max_request_body_bytes,
+        max_blocking_workers=max_blocking_workers,
     )
     ssl_certfile, ssl_keyfile = _server_tls_files(
         cfg,
