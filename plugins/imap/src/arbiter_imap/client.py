@@ -17,9 +17,16 @@ from .config import (
     MailTlsMode,
     resolve_system_flag,
     validate_user_flag_name,
+    validate_imap_limits,
 )
 from .errors import IMAPAuthenticationError, imap_operation_error
 from .wire import quote_imap_string, validate_imap_string
+from .transport import (
+    BoundedIMAP4,
+    BoundedIMAP4SSL,
+    check_message_size,
+    message_literal_guard,
+)
 from arbiter_server.errors import (
     OperationError,
     PluginValidationError,
@@ -86,6 +93,7 @@ class IMAPOperationError(OperationError, RuntimeError):
 
 class IMAPClient:
     def __init__(self, config: IMAPConfig) -> None:
+        validate_imap_limits(config.limits)
         self._config = config
 
     def test_connection(self, *, folders: Sequence[str]) -> None:
@@ -307,17 +315,19 @@ class IMAPClient:
         ssl_context = self._build_ssl_context()
         imap_client: imaplib.IMAP4 | imaplib.IMAP4_SSL
         if self._config.tls == MailTlsMode.implicit:
-            imap_client = imaplib.IMAP4_SSL(
+            imap_client = BoundedIMAP4SSL(
                 self._config.host,
                 self._config.port,
                 ssl_context=ssl_context,
                 timeout=self._config.timeout_seconds,
+                max_literal_bytes=self._config.limits.max_message_bytes,
             )
         else:
-            imap_client = imaplib.IMAP4(
+            imap_client = BoundedIMAP4(
                 self._config.host,
                 self._config.port,
                 timeout=self._config.timeout_seconds,
+                max_literal_bytes=self._config.limits.max_message_bytes,
             )
             if self._config.tls == MailTlsMode.starttls:
                 imap_client.starttls(ssl_context=ssl_context)
@@ -428,20 +438,96 @@ class IMAPClient:
             )
         return flags
 
+    def _fetch_numeric_attributes(self, raw: bytes, name: bytes) -> list[int]:
+        # Only outer FETCH attributes are numbers: flag atoms and strings can
+        # contain the same words. Protocol attribute names are case-insensitive.
+        tokens = re.findall(rb'"(?:[^"\\]|\\.)*"|[()]|[^ ()]+', raw)
+        depth = 0
+        values: list[int] = []
+        for index, token in enumerate(tokens):
+            if token == b"(":
+                depth += 1
+            elif token == b")":
+                depth -= 1
+            elif depth == 1 and token.upper() == name:
+                if index + 1 == len(tokens) or not tokens[index + 1].isdigit():
+                    raise IMAPOperationError(
+                        "IMAP returned an invalid numeric FETCH attribute"
+                    )
+                try:
+                    values.append(int(tokens[index + 1]))
+                except ValueError:
+                    raise IMAPOperationError(
+                        "IMAP returned an invalid numeric FETCH attribute"
+                    ) from None
+        return values
+
     def _fetch_message_bytes(
         self,
         server: imaplib.IMAP4 | imaplib.IMAP4_SSL,
         uid: str,
     ) -> bytes:
         self._validate_uid(uid)
-        status, data = server.uid("FETCH", uid, "(RFC822)")
-        self._expect_ok(status, data, "fetch message body")
+        wanted_uid = uid.lstrip("0") or "0"
+        maximum = self._config.limits.max_message_bytes
+        status, data = server.uid("FETCH", uid, "(RFC822.SIZE)")
+        self._expect_ok(status, data, "fetch message size")
+        sizes = []
         for item in data:
+            raw = self._raw_fetch_item(item)
+            if raw is None:
+                continue
+            # Ignore unsolicited size responses for another UID.
+            if [
+                str(value) for value in self._fetch_numeric_attributes(raw, b"UID")
+            ] != [wanted_uid]:
+                continue
+            sizes.extend(self._fetch_numeric_attributes(raw, b"RFC822.SIZE"))
+        if len(sizes) != 1:
+            raise IMAPOperationError(
+                f"IMAP fetch for UID {uid} did not return one valid RFC822.SIZE"
+            )
+        # Size metadata may be an estimate, including an overestimate. The
+        # literal guard enforces the cap before allocation of the actual body.
+        # PEEK leaves flags unchanged; a bounded request also limits a message
+        # that grows between the size check and content retrieval.
+        with message_literal_guard(server):
+            try:
+                status, data = server.uid(
+                    "FETCH", uid, f"(BODY.PEEK[]<0.{maximum + 1}>)"
+                )
+            except OperationError as exc:
+                if exc.plugin == "imap" and exc.domain_code == "message_too_large":
+                    # This read-only PEEK cannot mutate the mailbox. A transport
+                    # guard outside this read does not know the enclosing outcome.
+                    exc.replay = "safe"
+                raise
+        self._expect_ok(status, data, "fetch message body")
+        for index, item in enumerate(data):
             if (
                 isinstance(item, tuple)
                 and len(item) >= 2
                 and isinstance(item[1], bytes)
             ):
+                raw = self._raw_fetch_item(item)
+                if raw is None:
+                    continue
+                # imaplib splits literal data from trailing FETCH attributes.
+                # UID may precede or follow BODY; never borrow it from the
+                # next response, and never search the actual email content.
+                for trailing in data[index + 1 :]:
+                    trailer = self._raw_fetch_item(trailing)
+                    if trailer is None or re.match(rb"^[0-9]+ \(", trailer):
+                        break
+                    raw += b" " + trailer
+                    if trailer.rstrip().endswith(b")"):
+                        break
+                if [
+                    str(value) for value in self._fetch_numeric_attributes(raw, b"UID")
+                ] != [wanted_uid]:
+                    continue
+                # RFC822.SIZE may be an estimate; enforce the returned octets.
+                check_message_size(len(item[1]), maximum)
                 return item[1]
         raise IMAPOperationError(f"IMAP fetch for UID {uid} did not return RFC822 data")
 

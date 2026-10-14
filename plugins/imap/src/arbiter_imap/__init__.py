@@ -37,6 +37,7 @@ from .config import (
     register_configs as register_imap_configs,
     resolve_system_flag,
     validate_user_flag_name,
+    validate_imap_limits,
 )
 from .policy import (
     IMAPFolderResolution,
@@ -288,6 +289,8 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
         )
         self._imap_client_factory = imap_client_factory
         self._artifact_store = artifact_store
+        for account in self._accounts.values():
+            validate_imap_limits(account.limits)
         self._validate_policy_references()
 
     def account_summaries(self) -> dict[str, object]:
@@ -1595,6 +1598,11 @@ class IMAPServicePlugin:
         if errors:
             raise ConfigCheckError(errors)
         for account_name, imap_config in sorted(imap_accounts.items()):
+            try:
+                validate_imap_limits(imap_config.limits)
+            except ValueError as exc:
+                errors.append(ConfigCheckIssue(message=str(exc), account=account_name))
+                continue
             imap_policy = imap_policies.get(imap_config.policy)
             if imap_policy is None:
                 continue
