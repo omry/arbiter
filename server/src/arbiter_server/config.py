@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from enum import Enum
 from importlib.metadata import entry_points
@@ -203,8 +204,12 @@ def _register_server_configs(config_store: ConfigStore) -> None:
     )
 
 
-def _register_service_plugin_configs(config_store: ConfigStore) -> None:
+def _register_service_plugin_configs(
+    config_store: ConfigStore, names: Collection[str]
+) -> None:
     for entry_point in entry_points().select(group=SERVICE_PLUGIN_ENTRY_POINT_GROUP):
+        if entry_point.name not in names:
+            continue
         try:
             plugin_factory = cast(ServicePluginFactory, entry_point.load())
         except ModuleNotFoundError as exc:
@@ -217,15 +222,33 @@ def _register_service_plugin_configs(config_store: ConfigStore) -> None:
             continue
         service_plugin = plugin_factory()
         validate_service_plugin_compatibility(service_plugin)
+        if service_plugin.name != entry_point.name:
+            raise RuntimeError(
+                f"service plugin entry point {entry_point.name} returned "
+                f"plugin {service_plugin.name}"
+            )
         service_plugin.register_configs(config_store)
 
 
-def register_configs() -> None:
+def _register_service_plugin_namespaces(config_store: ConfigStore) -> None:
+    # Hydra classifies group overrides before loading their selected config.
+    # Advertise empty group directories from metadata so a cold deletion is a
+    # group deletion. ConfigStore has no public empty-group registration API;
+    # these are the same directory dictionaries created by store(group=...).
+    # No schema/config nodes or plugin code are loaded here.
+    for point in entry_points().select(group=SERVICE_PLUGIN_ENTRY_POINT_GROUP):
+        for domain in ("account", "policy"):
+            directory = config_store.repo
+            for component in ("arbiter", domain, point.name):
+                directory = directory.setdefault(component, {})
+
+
+def register_configs(service_names: Collection[str] = ()) -> None:
     global _CONFIG_REGISTERED
     _register_resolvers()
-    if _CONFIG_REGISTERED:
-        return
     config_store = ConfigStore.instance()
-    _register_server_configs(config_store)
-    _register_service_plugin_configs(config_store)
-    _CONFIG_REGISTERED = True
+    if not _CONFIG_REGISTERED:
+        _register_server_configs(config_store)
+        _CONFIG_REGISTERED = True
+    _register_service_plugin_namespaces(config_store)
+    _register_service_plugin_configs(config_store, service_names)

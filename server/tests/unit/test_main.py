@@ -326,6 +326,7 @@ def test_discover_service_plugins_loads_entry_point_factories(
     class FakeEntryPoint:
         def __init__(self, plugin: FakePlugin) -> None:
             self._plugin = plugin
+            self.name = plugin.name
 
         def load(self) -> Callable[[], FakePlugin]:
             return lambda: self._plugin
@@ -1193,7 +1194,10 @@ def test_cli_lists_plugins(
 ) -> None:
     monkeypatch.setattr(
         "arbiter_server.main.discover_service_plugins",
-        lambda: _test_service_plugins(),
+        lambda **_kwargs: _test_service_plugins(),
+    )
+    monkeypatch.setattr(
+        "arbiter_server.main.installed_service_names", lambda: ["imap", "smtp"]
     )
 
     assert main(["--config-dir", "/tmp", "plugins", "list"]) == 0
@@ -2152,7 +2156,10 @@ def test_cli_lists_plugins_as_json(
 ) -> None:
     monkeypatch.setattr(
         "arbiter_server.main.discover_service_plugins",
-        lambda: _test_service_plugins(),
+        lambda **_kwargs: _test_service_plugins(),
+    )
+    monkeypatch.setattr(
+        "arbiter_server.main.installed_service_names", lambda: ["imap", "smtp"]
     )
     monkeypatch.setattr(
         "arbiter_server.main.source_info",
@@ -2173,7 +2180,10 @@ def test_cli_version_prints_server_and_plugin_versions(
 ) -> None:
     monkeypatch.setattr(
         "arbiter_server.main.discover_service_plugins",
-        lambda: _test_service_plugins(),
+        lambda **_kwargs: _test_service_plugins(),
+    )
+    monkeypatch.setattr(
+        "arbiter_server.main.installed_service_names", lambda: ["imap", "smtp"]
     )
     monkeypatch.setattr(
         "arbiter_server.main.source_info",
@@ -2240,7 +2250,10 @@ def test_cli_version_can_print_json(
 ) -> None:
     monkeypatch.setattr(
         "arbiter_server.main.discover_service_plugins",
-        lambda: _test_service_plugins(),
+        lambda **_kwargs: _test_service_plugins(),
+    )
+    monkeypatch.setattr(
+        "arbiter_server.main.installed_service_names", lambda: ["imap", "smtp"]
     )
     monkeypatch.setattr(
         "arbiter_server.main.source_info",
@@ -2905,7 +2918,10 @@ def test_cli_bootstrap_server_writes_main_config(
 
     monkeypatch.setattr(
         "arbiter_server.main.discover_service_plugins",
-        lambda: _test_service_plugins(),
+        lambda **_kwargs: _test_service_plugins(),
+    )
+    monkeypatch.setattr(
+        "arbiter_server.main.installed_service_names", lambda: ["imap", "smtp"]
     )
     env_file = tmp_path / ".arbiter.env"
     env_file.write_text("", encoding="utf-8")
@@ -3738,7 +3754,10 @@ def test_cli_config_activate_lists_installed_plugin_status(
     monkeypatch.setenv("REPLOY_APP_COMMAND_PREFIX", "./arbiter")
     monkeypatch.setattr(
         "arbiter_server.main.discover_service_plugins",
-        lambda: _test_service_plugins(),
+        lambda **_kwargs: _test_service_plugins(),
+    )
+    monkeypatch.setattr(
+        "arbiter_server.main.installed_service_names", lambda: ["imap", "smtp"]
     )
     assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
     assert (
@@ -3811,7 +3830,10 @@ def test_cli_config_activate_lists_empty_account_status_consistently(
     monkeypatch.setenv("REPLOY_APP_COMMAND_PREFIX", "./arbiter")
     monkeypatch.setattr(
         "arbiter_server.main.discover_service_plugins",
-        lambda: _test_service_plugins(),
+        lambda **_kwargs: _test_service_plugins(),
+    )
+    monkeypatch.setattr(
+        "arbiter_server.main.installed_service_names", lambda: ["imap", "smtp"]
     )
     assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
     capsys.readouterr()
@@ -3839,7 +3861,10 @@ def test_cli_config_activate_status_colors_plugin_icons(
     monkeypatch.setenv("ARBITER_COLOR", "always")
     monkeypatch.setattr(
         "arbiter_server.main.discover_service_plugins",
-        lambda: _test_service_plugins(),
+        lambda **_kwargs: _test_service_plugins(),
+    )
+    monkeypatch.setattr(
+        "arbiter_server.main.installed_service_names", lambda: ["imap", "smtp"]
     )
     assert main(["--config-dir", str(config_dir), "bootstrap", "--server"]) == 0
     assert (
