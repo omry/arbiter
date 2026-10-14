@@ -44,9 +44,11 @@ reading, moving, flagging, or deleting a message.
 
 Each IMAP account has an operator-owned `limits.max_message_bytes`, defaulting
 to 50 MiB (52,428,800 bytes). It limits the entire raw email, including encoded
-attachments, before full-content retrieval and MIME parsing. The client checks
-`RFC822.SIZE`, requests content with bounded `BODY.PEEK`, and rejects oversized
-response literals before reading them. Reading does not mark the message seen.
+attachments, before full-content retrieval and MIME parsing. The client validates
+`RFC822.SIZE` metadata, requests content with bounded `BODY.PEEK`, and enforces
+the cap on actual response bytes, rejecting oversized literals before reading
+them. Server size estimates do not reject an otherwise valid message. Reading
+does not mark the message seen.
 
 An oversized message returns HTTP `403`, generic `policy_denied`, and IMAP
 domain code `message_too_large`, with the configured maximum in error details.
@@ -54,8 +56,26 @@ Retry guidance is `transient: no` and `replay: safe`; increasing the limit is an
 operator decision. Rejection does not change the mailbox. This IMAP limit is
 independent of core artifact limits, which apply when storing an attachment.
 
-List and search currently retrieve full messages and therefore also enforce
-this cap. Metadata-only listing and bounded previews are a separate change.
+`imap:list_messages` and `imap:search_messages` fetch message headers, flags, and
+MIME structure without fetching full bodies or attachment content. Messages
+larger than `max_message_bytes` remain visible in these results. Snippets use a
+bounded `BODY.PEEK` of a text part, preferring plain text and falling back to HTML.
+`limits.max_preview_bytes` defaults to 16 KiB (16,384 bytes) and bounds the total
+transfer-encoded text fetched per message, including any HTML fallback.
+Attachments and text nested inside attachment containers are excluded. A
+preview may end mid-character or mid-transfer-encoding sequence; it is a snippet,
+not complete message content. Attachment-only messages have no snippet.
+
+Metadata response framing and literals use a separate internal 50 MiB safety
+budget. This budget is independent of `max_message_bytes` and is not a
+configuration field. If an upstream response exceeds it, the operation returns
+an upstream protocol error while the connection is closed before another
+command is sent.
+
+List/search results include an `attachments` inventory from MIME metadata. Its
+`size` is the server-reported **transfer-encoded** part size; obtaining the exact
+decoded size requires explicit full-content retrieval. Part ids can be passed
+to `imap:get_attachment` with the same folder and message id.
 
 `imap:get_message` returns the message body plus an `attachments` inventory.
 Each attachment entry includes a MIME-part id, filename, content type, decoded
