@@ -144,6 +144,41 @@ artifact. Maintainers do not need to prepare `dist-publish/` locally before
 dispatching the workflow. Local `--prepare-output-dir` is only useful for a
 local publish rehearsal or for inspecting the exact staged artifact set.
 
+### Release toolchain updates
+
+External GitHub Actions are pinned to full commit SHAs with version comments.
+Dependabot groups monthly action updates, following Hydra's update pattern.
+Review the upstream changes before accepting a new pin.
+
+Release preparation and publishing install `.github/requirements-release.txt`
+with `--require-hashes --only-binary=:all:`. This lock includes transitive
+Python tooling dependencies and all distribution build backends. Release
+builds pass `--no-isolation`, so Python build isolation cannot download a
+different backend. Missing locked backends fail the build. The lock supports
+the release validation matrix's Python 3.10 and newer interpreters; distribution
+building uses Python 3.13.
+
+For a local build rehearsal, use a fresh Python 3.13 virtual environment:
+
+```bash
+python3.13 -m venv /tmp/arbiter-release
+/tmp/arbiter-release/bin/python -m pip install --require-hashes --only-binary=:all: -r .github/requirements-release.txt
+/tmp/arbiter-release/bin/python tools/build_release_dists --no-isolation --packages server,imap,smtp,meta:all,client,skill
+```
+
+Update `.github/requirements-release.in` and regenerate the lock with uv 0.13.1
+in a separate tooling environment:
+
+```bash
+uv pip compile --universal --python-version 3.10 --generate-hashes --no-emit-index-url --upgrade --output-file .github/requirements-release.txt .github/requirements-release.in
+```
+
+Review version and hash changes in a PR, install the lock in a clean environment,
+and build the selected distributions before publishing. This locks release
+tooling; application dependency ranges and nox's test-environment dependencies
+remain separate. The default local build command still uses build isolation
+unless `--no-isolation` is requested.
+
 ## Initial PyPI bootstrap
 
 GitHub publishing uses the shared `pypi` environment. PyPI must have a matching
