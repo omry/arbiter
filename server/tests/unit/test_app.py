@@ -1029,6 +1029,17 @@ def test_list_messages_uses_account_policy_and_folder_config() -> None:
             "flags": ["SEEN", "DELETED", "bot.followed_up"],
             "rfc822_message_id": "<message-42@example.com>",
             "snippet": "Plain text body",
+            "attachments": [
+                {
+                    "id": "part-2",
+                    "filename": "contract.pdf",
+                    "content_type": "application/pdf",
+                    "size": 1234,
+                    "disposition": "attachment",
+                    "content_id": None,
+                    "inline": False,
+                }
+            ],
         }
     ]
     assert factory.clients[0].list_calls == [{"folder": "INBOX", "limit": 1}]

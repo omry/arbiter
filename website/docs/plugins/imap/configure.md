@@ -36,11 +36,16 @@ Set the maximum whole-message size in the IMAP account file:
 ```yaml
 limits:
   max_message_bytes: 52428800
+  max_preview_bytes: 16384
 ```
 
-The default is 50 MiB, including encoded attachments. The value must be a
-positive integer; zero does not disable the cap. This is an IMAP-owned limit
-and does not override the core server's artifact size or storage limits.
+The full-message default is 50 MiB, including encoded attachments.
+`max_preview_bytes` defaults to 16 KiB and limits total text fetched per message
+for list/search snippets. It excludes attachment content, which list/search do
+not fetch. Both values must be positive integers; zero does not disable a cap.
+These IMAP-owned limits do not override the core server's artifact size or
+storage limits. Oversized messages remain visible in list/search; their full
+content can be read only within `max_message_bytes`.
 
 ## Folders
 

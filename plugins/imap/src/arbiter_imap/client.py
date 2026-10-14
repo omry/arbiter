@@ -6,8 +6,11 @@ from email import policy
 from email.message import EmailMessage
 from email.parser import BytesParser
 from email.utils import formataddr, getaddresses
+import base64
+import binascii
 import imaplib
 import re
+import quopri
 import ssl
 from typing import Any, cast
 
@@ -20,10 +23,12 @@ from .config import (
     validate_imap_limits,
 )
 from .errors import IMAPAuthenticationError, imap_operation_error
+from .fetch import body_parts, envelope_message, fetch_attributes, text
 from .wire import quote_imap_string, validate_imap_string
 from .transport import (
     BoundedIMAP4,
     BoundedIMAP4SSL,
+    metadata_literal_guard,
     check_message_size,
     message_literal_guard,
 )
@@ -121,7 +126,7 @@ class IMAPClient:
             self._select_folder(server, folder, readonly=True)
             uids = self._search_uids(server, "ALL")
             selected_uids = list(reversed(uids))[:limit]
-            return [self._fetch_message(server, uid) for uid in selected_uids]
+            return [self._fetch_summary(server, uid) for uid in selected_uids]
 
     def get_message(self, *, folder: str, uid: str) -> FetchedIMAPMessage:
         validate_imap_string(folder, argument="folder")
@@ -157,7 +162,7 @@ class IMAPClient:
             self._select_folder(server, folder, readonly=True)
             uids = self._search_uids(server, "TEXT", quoted_query)
             selected_uids = list(reversed(uids))[:limit]
-            return [self._fetch_message(server, uid) for uid in selected_uids]
+            return [self._fetch_summary(server, uid) for uid in selected_uids]
 
     def move_message(
         self, *, source_folder: str, uid: str, destination_folder: str
@@ -389,6 +394,120 @@ class IMAPClient:
         if isinstance(raw_uids, str):
             return raw_uids.split()
         return []
+
+    def _fetch_summary(
+        self,
+        server: imaplib.IMAP4 | imaplib.IMAP4_SSL,
+        uid: str,
+    ) -> FetchedIMAPMessage:
+        self._validate_uid(uid)
+        with metadata_literal_guard(server):
+            status, data = server.uid("FETCH", uid, "(ENVELOPE FLAGS BODYSTRUCTURE)")
+        self._expect_ok(status, data, "fetch message metadata")
+        try:
+            attributes = fetch_attributes(
+                data, uid, required_attribute=b"BODYSTRUCTURE"
+            )
+            message = envelope_message(attributes.get(b"ENVELOPE"))
+            parts = list(body_parts(attributes.get(b"BODYSTRUCTURE")))
+            flags = attributes.get(b"FLAGS")
+            if not isinstance(flags, list):
+                raise ValueError("Missing message flags")
+            decoded_flags = [text(flag) for flag in flags]
+        except (ValueError, TypeError, OverflowError) as exc:
+            raise IMAPOperationError("Invalid IMAP message metadata") from exc
+        attachments = []
+        for index, part in enumerate(parts, start=1):
+            headers = part.headers
+            disposition = headers.get_content_disposition()
+            if (
+                disposition in {"attachment", "inline"}
+                or headers.get_filename() is not None
+                or headers.get("Content-ID") is not None
+            ):
+                attachments.append(
+                    IMAPAttachment(
+                        id=f"part-{index}",
+                        filename=headers.get_filename(),
+                        content_type=headers.get_content_type(),
+                        size=part.encoded_size,
+                        disposition=disposition,
+                        content_id=headers.get("Content-ID"),
+                        inline=disposition == "inline",
+                    )
+                )
+        # Prefer the first plain-text body, then HTML only if that yields no
+        # snippet. Neither attachment leaves nor their nested bodies qualify.
+        candidates = []
+        for content_type in ("text/plain", "text/html"):
+            candidate = next(
+                (
+                    part
+                    for part in parts
+                    if not part.within_attachment
+                    and part.headers.get_content_type() == content_type
+                ),
+                None,
+            )
+            if candidate is not None:
+                candidates.append(candidate)
+        remaining = self._config.limits.max_preview_bytes
+        snippet = ""
+        for part in candidates:
+            if not remaining:
+                break
+            with message_literal_guard(server, remaining):
+                try:
+                    status, data = server.uid(
+                        "FETCH", uid, f"(BODY.PEEK[{part.section}]<0.{remaining}>)"
+                    )
+                except OperationError as exc:
+                    if exc.plugin == "imap" and exc.domain_code == "message_too_large":
+                        raise IMAPOperationError(
+                            "IMAP preview exceeded the requested byte budget"
+                        ) from None
+                    raise
+            self._expect_ok(status, data, "fetch message preview")
+            try:
+                body_attribute = f"BODY[{part.section}]<0>".encode()
+                attributes = fetch_attributes(
+                    data, uid, required_attribute=body_attribute
+                )
+                content = attributes.get(body_attribute)
+                if not isinstance(content, bytes) or len(content) > remaining:
+                    raise ValueError("Invalid bounded preview")
+                remaining -= len(content)
+                if part.encoding.upper() == "BASE64":
+                    # A bounded prefix may end inside a transfer-encoding
+                    # quantum. Decode complete groups; do not fetch the tail.
+                    encoded = b"".join(content.split())
+                    content = base64.b64decode(encoded[: len(encoded) // 4 * 4])
+                elif part.encoding.upper() == "QUOTED-PRINTABLE":
+                    content = quopri.decodestring(content)
+                charset = part.headers.get_content_charset() or "utf-8"
+                try:
+                    preview = content.decode(charset, errors="replace")
+                except LookupError:
+                    preview = content.decode("utf-8", errors="replace")
+                snippet = self._snippet_from_body(preview)
+            except (ValueError, binascii.Error) as exc:
+                raise IMAPOperationError("Invalid IMAP preview response") from exc
+            if snippet:
+                break
+        return FetchedIMAPMessage(
+            uid=uid,
+            subject=message.get("Subject", ""),
+            from_addr=self._first_address(message, "From"),
+            to=self._addresses(message, "To"),
+            cc=self._addresses(message, "Cc"),
+            date=message.get("Date", ""),
+            flags=decoded_flags,
+            rfc822_message_id=message.get("Message-ID"),
+            text_body=None,
+            html_body=None,
+            snippet=snippet,
+            attachments=attachments,
+        )
 
     def _fetch_message(
         self,

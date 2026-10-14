@@ -55,11 +55,14 @@ class IMAPFolderConfig:
 @dataclass
 class IMAPLimitsConfig:
     max_message_bytes: int = 50 * 1024 * 1024
+    max_preview_bytes: int = 16 * 1024
 
 
 def validate_imap_limits(limits: IMAPLimitsConfig) -> None:
-    if type(limits.max_message_bytes) is not int or limits.max_message_bytes < 1:
-        raise ValueError("IMAP limits.max_message_bytes must be a positive integer")
+    for name in ("max_message_bytes", "max_preview_bytes"):
+        value = getattr(limits, name)
+        if type(value) is not int or value < 1:
+            raise ValueError(f"IMAP limits.{name} must be a positive integer")
 
 
 @dataclass
