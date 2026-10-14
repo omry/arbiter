@@ -107,6 +107,7 @@ def test_compose_config_returns_hydra_config() -> None:
     assert cfg.arbiter.limits.max_artifact_bytes == 50 * 1024 * 1024
     assert cfg.arbiter.limits.max_artifact_storage_bytes == 1024 * 1024 * 1024
     assert cfg.arbiter.limits.max_artifact_count == 2000
+    assert cfg.arbiter.limits.max_blocking_workers == 8
     assert cfg.arbiter.server.bind.scheme == "https"
     assert cfg.arbiter.server.bind.host == "127.0.0.1"
     assert cfg.arbiter.server.bind.port == 8075
@@ -140,6 +141,7 @@ def test_compose_config_applies_overrides() -> None:
             "arbiter.limits.max_artifact_bytes=10000000",
             "arbiter.limits.max_artifact_storage_bytes=100000000",
             "arbiter.limits.max_artifact_count=3000",
+            "arbiter.limits.max_blocking_workers=4",
             "arbiter.server.bind.port=9000",
             "arbiter.server.tls.source=CERT_FILES",
             "arbiter.server.tls.cert_file=/tls/cert.pem",
@@ -165,6 +167,7 @@ def test_compose_config_applies_overrides() -> None:
     assert cfg.arbiter.limits.max_artifact_bytes == 10000000
     assert cfg.arbiter.limits.max_artifact_storage_bytes == 100000000
     assert cfg.arbiter.limits.max_artifact_count == 3000
+    assert cfg.arbiter.limits.max_blocking_workers == 4
     assert cfg.arbiter.server.tls.source == ServerTlsSource.CERT_FILES
     assert cfg.arbiter.server.tls.cert_file == "/tls/cert.pem"
     assert cfg.arbiter.server.tls.key_file == "/tls/key.pem"
