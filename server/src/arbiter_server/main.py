@@ -1846,6 +1846,7 @@ def _operation_details_payload(
     *,
     max_artifact_bytes: int,
     max_artifact_storage_bytes: int,
+    max_artifact_count: int,
 ) -> object:
     details = catalog.describe_operation(operation_ref)
     plugin = details.get("capability", "")
@@ -1862,6 +1863,7 @@ def _operation_details_payload(
             "inline_max_bytes": INLINE_ARTIFACT_MAX_BYTES,
             "max_artifact_bytes": max_artifact_bytes,
             "max_artifact_storage_bytes": max_artifact_storage_bytes,
+            "max_artifact_count": max_artifact_count,
             "supports_uploads": False,
         },
     }
@@ -2324,6 +2326,7 @@ def _create_native_http_app(
                     request.path_params["operation_id"],
                     max_artifact_bytes=artifact_store.max_artifact_bytes,
                     max_artifact_storage_bytes=artifact_store.max_artifact_storage_bytes,
+                    max_artifact_count=artifact_store.max_artifact_count,
                 )
             )
         except Exception as exc:
@@ -2496,6 +2499,7 @@ def build_server(
         base_url=_artifact_base_url(cfg),
         max_artifact_bytes=cfg.arbiter.limits.max_artifact_bytes,
         max_artifact_storage_bytes=cfg.arbiter.limits.max_artifact_storage_bytes,
+        max_artifact_count=cfg.arbiter.limits.max_artifact_count,
     )
     runtime_dependencies["artifact_store"] = artifact_store
     app = build_app(

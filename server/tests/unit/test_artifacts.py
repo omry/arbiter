@@ -62,6 +62,141 @@ def _create_for_quota(store, *, plugin="imap", content=b"x" * 10000, source=None
     )
 
 
+def test_default_count_limit_rejects_more_than_2000_retained_artifacts(tmp_path):
+    store = ArtifactStore(root=tmp_path, base_url="https://localhost/artifacts")
+    seed = _create_for_quota(store, content=b"")
+    seed_dir = tmp_path / "imap" / "artifacts" / seed.id
+    metadata = json.loads((seed_dir / "metadata.json").read_text())
+    for index in range(1999):
+        artifact_id = f"retained-{index}"
+        artifact_dir = seed_dir.parent / artifact_id
+        artifact_dir.mkdir()
+        (artifact_dir / "payload").write_bytes(b"")
+        (artifact_dir / "metadata.json").write_text(
+            json.dumps({**metadata, "id": artifact_id})
+        )
+    with pytest.raises(OperationError) as caught:
+        _create_for_quota(store, plugin="smtp", content=b"")
+    assert caught.value.code == "resource_exhausted"
+    assert caught.value.details["max_artifact_count"] == 2000
+    assert not list(tmp_path.glob("smtp/artifacts/*"))
+
+
+def test_count_limit_is_shared_and_retains_consumed_artifacts_after_restart(tmp_path):
+    store = ArtifactStore(
+        root=tmp_path, base_url="https://localhost/artifacts", max_artifact_count=2
+    )
+    first = _create_for_quota(store, content=b"first")
+    second = _create_for_quota(store, plugin="smtp", content=b"second")
+    nonce = parse_qs(urlparse(first.url).query)["nonce"][0]
+    # Payload, metadata, and a consumption marker still occupy just one slot.
+    assert store.open_once(first.id, nonce).path.read_bytes() == b"first"
+    restarted = ArtifactStore(
+        root=tmp_path, base_url="https://localhost/artifacts", max_artifact_count=2
+    )
+    assert restarted.for_plugin("smtp").max_artifact_count == 2
+    with pytest.raises(OperationError) as caught:
+        _create_for_quota(restarted)
+    assert caught.value.code == "resource_exhausted"
+    assert caught.value.transient == "yes"
+    assert caught.value.replay == "unknown"
+    assert caught.value.details["max_artifact_count"] == 2
+    second_nonce = parse_qs(urlparse(second.url).query)["nonce"][0]
+    assert restarted.inspect(second.id, second_nonce).size == len(b"second")
+    assert restarted.open_once(second.id, second_nonce).path.read_bytes() == b"second"
+
+
+def test_lower_count_limit_preserves_existing_artifacts(tmp_path):
+    store = ArtifactStore(root=tmp_path, base_url="https://localhost/artifacts")
+    artifacts = [_create_for_quota(store, content=b"kept") for _ in range(2)]
+    lowered = ArtifactStore(
+        root=tmp_path, base_url="https://localhost/artifacts", max_artifact_count=1
+    )
+    with pytest.raises(OperationError):
+        _create_for_quota(lowered)
+    for descriptor in artifacts:
+        nonce = parse_qs(urlparse(descriptor.url).query)["nonce"][0]
+        assert lowered.open_once(descriptor.id, nonce).path.read_bytes() == b"kept"
+
+
+def test_expiry_reclaims_count_slots_before_admission(tmp_path, monkeypatch):
+    clock = [1700000000.0]
+    monkeypatch.setattr("arbiter_server.artifacts.time.time", lambda: clock[0])
+    store = ArtifactStore(
+        root=tmp_path, base_url="https://localhost/artifacts", max_artifact_count=1
+    )
+    expired = _create_for_quota(store)
+    clock[0] += store.idle_ttl_seconds + 1
+    replacement = _create_for_quota(store, plugin="smtp")
+    assert not (tmp_path / "imap" / "artifacts" / expired.id).exists()
+    assert (tmp_path / "smtp" / "artifacts" / replacement.id).exists()
+
+
+def test_failed_creation_does_not_reserve_a_count_slot(tmp_path, monkeypatch):
+    import arbiter_server.artifacts as artifacts
+
+    store = ArtifactStore(
+        root=tmp_path, base_url="https://localhost/artifacts", max_artifact_count=1
+    )
+    original_write = artifacts._write_private_file
+
+    def fail_metadata(path, content):
+        if path.name == "metadata.json":
+            raise OSError("simulated metadata write failure")
+        original_write(path, content)
+
+    monkeypatch.setattr(artifacts, "_write_private_file", fail_metadata)
+    with pytest.raises(OSError, match="simulated metadata write failure"):
+        _create_for_quota(store)
+    monkeypatch.setattr(artifacts, "_write_private_file", original_write)
+    descriptor = _create_for_quota(store)
+    assert (tmp_path / "imap" / "artifacts" / descriptor.id / "payload").exists()
+
+
+def test_concurrent_store_instances_cannot_overcommit_count(tmp_path, monkeypatch):
+    import arbiter_server.artifacts as artifacts
+
+    barrier = threading.Barrier(2)
+    original_write = artifacts._write_private_file
+
+    def slow_write(path, content):
+        time.sleep(0.05)
+        original_write(path, content)
+
+    monkeypatch.setattr(artifacts, "_write_private_file", slow_write)
+
+    def create(_index):
+        store = ArtifactStore(
+            root=tmp_path,
+            base_url="https://localhost/artifacts",
+            max_artifact_count=1,
+        )
+        barrier.wait(timeout=5)
+        try:
+            _create_for_quota(store)
+        except OperationError as exc:
+            assert exc.code == "resource_exhausted"
+            return "full"
+        return "created"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(create, range(2)))
+    assert sorted(results) == ["created", "full"]
+    assert len(list(tmp_path.glob("*/artifacts/*/metadata.json"))) == 1
+
+
+@pytest.mark.parametrize("limit", [0, -1, True, None])
+def test_count_limit_must_be_a_positive_integer(tmp_path, limit):
+    with pytest.raises(
+        ValueError, match="max_artifact_count must be a positive integer"
+    ):
+        ArtifactStore(
+            root=tmp_path,
+            base_url="https://localhost/artifacts",
+            max_artifact_count=limit,
+        )
+
+
 def _retained_bytes(root):
     return sum(path.stat().st_size for path in root.glob("*/artifacts/*/*"))
 
@@ -410,14 +545,17 @@ def test_concurrent_store_instances_cannot_overcommit(
     assert _retained_bytes(root) <= cap
 
 
-def test_separate_processes_cannot_overcommit(tmp_path):
+@pytest.mark.parametrize("quota", ["bytes", "count"])
+def test_separate_processes_cannot_overcommit(tmp_path, quota):
     script = """
 import sys
 from pathlib import Path
 from arbiter_server.artifacts import ArtifactStore
 from arbiter_server.errors import OperationError
+limits = ({'max_artifact_storage_bytes': 13000} if sys.argv[2] == 'bytes'
+          else {'max_artifact_count': 1})
 store = ArtifactStore(root=Path(sys.argv[1]), base_url='https://localhost/artifacts',
-                      max_artifact_storage_bytes=13000)
+                      **limits)
 print('ready', flush=True)
 sys.stdin.readline()
 try:
@@ -431,7 +569,7 @@ else:
 """
     processes = [
         subprocess.Popen(
-            [sys.executable, "-c", script, str(tmp_path)],
+            [sys.executable, "-c", script, str(tmp_path), quota],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -454,6 +592,7 @@ else:
             results.append(stdout.strip())
         assert sorted(results) == ["created", "full"]
         assert _retained_bytes(tmp_path) <= 13000
+        assert len(list(tmp_path.glob("*/artifacts/*/metadata.json"))) == 1
     finally:
         for process in processes:
             if process.poll() is None:
