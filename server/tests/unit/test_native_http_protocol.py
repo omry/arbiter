@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 import json
 import logging
+import threading
 import pytest
 from pathlib import Path
 from typing import Any, cast
@@ -170,6 +171,48 @@ class ASGIClient:
         )
 
 
+def test_blocking_plugin_keeps_health_responsive_on_the_same_event_loop(tmp_path):
+    entered = threading.Event()
+    release = threading.Event()
+
+    class BlockingPlugin(FakePlugin):
+        def invoke_operation(self, operation, arguments, context):
+            entered.set()
+            assert release.wait(timeout=5)
+            return super().invoke_operation(operation, arguments, context)
+
+    client = _client(tmp_path, plugin=BlockingPlugin())
+
+    async def exercise():
+        operation = asyncio.create_task(
+            _asgi_request(
+                client._app,
+                "POST",
+                "/api/v1/operations/echo:repeat",
+                json_body={"args": {"text": "held"}},
+            )
+        )
+        try:
+            assert await asyncio.to_thread(entered.wait, 2)
+            response = await _asgi_request(client._app, "GET", "/_health_")
+            assert response.status_code == 200
+            assert not release.is_set(), "health waited for the blocking operation"
+        finally:
+            release.set()
+            assert (await operation).status_code == 200
+
+    # A separate thread releases the old synchronous implementation even when
+    # it blocks the event loop, so the regression fails instead of hanging.
+    watchdog = threading.Timer(3, release.set)
+    watchdog.start()
+    try:
+        asyncio.run(exercise())
+    finally:
+        release.set()
+        watchdog.cancel()
+        watchdog.join()
+
+
 async def _asgi_request(
     app: ASGIApp,
     method: str,
@@ -253,6 +296,7 @@ def _client(
     max_artifact_bytes: int | None = None,
     max_artifact_storage_bytes: int | None = None,
     max_artifact_count: int | None = None,
+    max_blocking_workers: int | None = None,
 ) -> ASGIClient:
     cfg = AppConfig()
     if max_request_body_bytes is not None:
@@ -263,6 +307,8 @@ def _client(
         cfg.arbiter.limits.max_artifact_storage_bytes = max_artifact_storage_bytes
     if max_artifact_count is not None:
         cfg.arbiter.limits.max_artifact_count = max_artifact_count
+    if max_blocking_workers is not None:
+        cfg.arbiter.limits.max_blocking_workers = max_blocking_workers
     cfg.arbiter.account = {
         "echo": {
             "primary": {
@@ -292,6 +338,211 @@ def _client(
         service_plugins=[cast(ServicePlugin, plugin or FakePlugin())],
     )
     return ASGIClient(cast(ASGIApp, server.app))
+
+
+def test_default_worker_capacity_rejects_ninth_operation_without_invoking_it(tmp_path):
+    release = threading.Event()
+    all_entered = threading.Event()
+    count_lock = threading.Lock()
+    entered = 0
+
+    class BlockingPlugin(FakePlugin):
+        def invoke_operation(self, operation, arguments, context):
+            nonlocal entered
+            with count_lock:
+                entered += 1
+                if entered == 8:
+                    all_entered.set()
+            assert release.wait(timeout=5)
+            return super().invoke_operation(operation, arguments, context)
+
+    client = _client(tmp_path, plugin=BlockingPlugin())
+
+    async def exercise():
+        operations = [
+            asyncio.create_task(
+                _asgi_request(
+                    client._app,
+                    "POST",
+                    "/api/v1/operations/echo:repeat",
+                    json_body={"args": {"text": "held"}},
+                )
+            )
+            for _ in range(8)
+        ]
+        try:
+            assert await asyncio.to_thread(all_entered.wait, 2)
+            busy = await _asgi_request(
+                client._app,
+                "POST",
+                "/api/v1/operations/echo:make_artifact",
+                json_body={"args": {"content": "must not execute"}},
+            )
+            assert busy.status_code == 503
+            assert busy.json()["error"] == {
+                "code": "resource_exhausted",
+                "message": "Server operation capacity is full; try again later.",
+                "details": {"max_blocking_workers": 8},
+                "retry": {"transient": "yes", "replay": "safe"},
+            }
+            assert entered == 8
+            assert (
+                await _asgi_request(client._app, "GET", "/_health_")
+            ).status_code == 200
+        finally:
+            release.set()
+            assert all(
+                response.status_code == 200
+                for response in await asyncio.gather(*operations)
+            )
+
+    asyncio.run(asyncio.wait_for(exercise(), timeout=6))
+
+
+def test_cancelled_request_keeps_capacity_until_its_underlying_work_finishes(tmp_path):
+    entered = threading.Event()
+    release = threading.Event()
+    calls = 0
+
+    class BlockingPlugin(FakePlugin):
+        def invoke_operation(self, operation, arguments, context):
+            nonlocal calls
+            calls += 1
+            if arguments["text"] == "held":
+                entered.set()
+                assert release.wait(timeout=5)
+            return super().invoke_operation(operation, arguments, context)
+
+    client = _client(tmp_path, plugin=BlockingPlugin(), max_blocking_workers=1)
+
+    async def exercise():
+        operation = asyncio.create_task(
+            _asgi_request(
+                client._app,
+                "POST",
+                "/api/v1/operations/echo:repeat",
+                json_body={"args": {"text": "held"}},
+            )
+        )
+        try:
+            assert await asyncio.to_thread(entered.wait, 2)
+            operation.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await operation
+            busy = await _asgi_request(
+                client._app,
+                "POST",
+                "/api/v1/operations/echo:repeat",
+                json_body={"args": {"text": "next"}},
+            )
+            assert busy.status_code == 503
+            assert busy.json()["error"]["details"]["max_blocking_workers"] == 1
+            assert calls == 1
+        finally:
+            release.set()
+            if not operation.done():
+                await operation
+
+        async def retry_until_available():
+            while True:
+                response = await _asgi_request(
+                    client._app,
+                    "POST",
+                    "/api/v1/operations/echo:repeat",
+                    json_body={"args": {"text": "next"}},
+                )
+                if response.status_code != 503:
+                    return response
+                await asyncio.sleep(0)
+
+        response = await asyncio.wait_for(retry_until_available(), timeout=2)
+        assert response.status_code == 200
+        assert calls == 2
+
+    asyncio.run(asyncio.wait_for(exercise(), timeout=6))
+
+
+def test_worker_failure_releases_capacity_and_preserves_the_error_envelope(tmp_path):
+    calls = 0
+
+    class FailOncePlugin(FakePlugin):
+        def invoke_operation(self, operation, arguments, context):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise OperationError(
+                    "upstream_unavailable",
+                    "Upstream temporarily unavailable.",
+                    plugin="echo",
+                    domain_code="temporary_failure",
+                    transient="yes",
+                    replay="safe",
+                )
+            return super().invoke_operation(operation, arguments, context)
+
+    client = _client(tmp_path, plugin=FailOncePlugin(), max_blocking_workers=1)
+    failed = client.post(
+        "/api/v1/operations/echo:repeat", json={"args": {"text": "first"}}
+    )
+    assert failed.status_code == 503
+    assert failed.json()["error"]["domain_code"] == "temporary_failure"
+    assert failed.json()["error"]["retry"] == {"transient": "yes", "replay": "safe"}
+    passed = client.post(
+        "/api/v1/operations/echo:repeat", json={"args": {"text": "next"}}
+    )
+    assert passed.status_code == 200
+    assert calls == 2
+
+
+def test_server_shutdown_does_not_block_the_loop_on_running_worker(tmp_path):
+    entered = threading.Event()
+    release = threading.Event()
+
+    class BlockingPlugin(FakePlugin):
+        def invoke_operation(self, operation, arguments, context):
+            entered.set()
+            assert release.wait(timeout=5)
+            return super().invoke_operation(operation, arguments, context)
+
+    client = _client(tmp_path, plugin=BlockingPlugin())
+
+    async def exercise():
+        operation = None
+        try:
+            async with cast(Any, client._app).router.lifespan_context(client._app):
+                operation = asyncio.create_task(
+                    _asgi_request(
+                        client._app,
+                        "POST",
+                        "/api/v1/operations/echo:repeat",
+                        json_body={"args": {"text": "held"}},
+                    )
+                )
+                assert await asyncio.to_thread(entered.wait, 2)
+            assert not release.is_set(), "shutdown blocked on the worker"
+        finally:
+            release.set()
+            if operation is not None:
+                assert (await operation).status_code == 200
+
+    watchdog = threading.Timer(3, release.set)
+    watchdog.start()
+    try:
+        asyncio.run(exercise())
+    finally:
+        release.set()
+        watchdog.cancel()
+        watchdog.join()
+
+
+@pytest.mark.parametrize("maximum", [0, -1, True, None, "8", 1.5])
+def test_invalid_worker_capacity_is_rejected_before_runtime_creation(maximum):
+    cfg = AppConfig()
+    cast(Any, cfg.arbiter.limits).max_blocking_workers = maximum
+    with pytest.raises(
+        ValueError, match="max_blocking_workers must be a positive integer"
+    ):
+        build_server(cfg, service_plugins=[], prepare_tls=False)
 
 
 @pytest.mark.parametrize("container", ["scalar", "mapping", "list"])
