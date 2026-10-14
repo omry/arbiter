@@ -61,10 +61,20 @@ The entry point target must return a plugin object that implements
 static type checkers a clear contract. Arbiter still validates the object
 structurally at runtime; it does not require inheritance.
 
-Arbiter loads every installed entry point in the `arbiter.services` group. The
-entry-point key is a packaging label; Arbiter uses the plugin object's `name`
-as the capability id. If two installed plugins expose the same capability name,
-server startup fails with a duplicate capability error.
+Arbiter reads raw configuration and activation choices before composing the
+full Hydra configuration. It imports only the plugins needed by selected
+accounts, policies, schemas, or explicit bootstrap commands. The entry-point
+key must match the plugin object's `name` and its configuration group name;
+this lets Arbiter select the plugin without executing its code first.
+Runtime construction loads only services with configured accounts. Installing
+a plugin alone does not activate it. Commands that explicitly inspect all
+plugins, such as `plugins list --json` and `version`, may import all of them.
+Listing installed plugin names or activation status uses metadata without
+importing them.
+
+Activated or explicitly loaded plugins are fully trusted Python code in the
+server process. They can access process credentials and other plugins' data;
+plugin storage directories provide organization, not security isolation.
 
 Plugins use compatibility-line versions. A plugin for Arbiter server `0.9.x`
 should use a package version on the `0.9` line, such as `0.9.0` or `0.9.1`,

@@ -56,7 +56,8 @@ from .config import (
 )
 from .file_protection import ensure_runtime_config_permissions
 from .errors import ERROR_STATUS, OperationError, log_unexpected
-from .plugins import discover_service_plugins
+from .plugins import discover_service_plugins, installed_service_names
+from .plugin_selection import selected_service_names
 from .services import (
     SERVER_API_VERSION,
     SERVER_VERSION,
@@ -805,7 +806,9 @@ def build_app(
     runtime_dependencies: dict[str, object] | None = None,
 ) -> ArbiterApp:
     available_plugins = (
-        discover_service_plugins() if service_plugins is None else service_plugins
+        discover_service_plugins(names=configured_service_names(cfg.arbiter.account))
+        if service_plugins is None
+        else service_plugins
     )
     active_service_plugins = _configured_service_plugins(cfg, available_plugins)
     shared_runtime_dependencies = runtime_dependencies or {}
@@ -1248,7 +1251,11 @@ def log_startup_summary(cfg: HydraConfig) -> None:
 def _installed_plugin_summary(
     service_plugins: Sequence[ServicePlugin] | None = None,
 ) -> str:
-    names = service_plugin_names(service_plugins)
+    names = (
+        installed_service_names()
+        if service_plugins is None
+        else service_plugin_names(service_plugins)
+    )
     return ", ".join(names) if names else "none"
 
 
@@ -1504,7 +1511,11 @@ def config_check_components(
     try:
         ensure_runnable_config(cfg, service_plugins=service_plugins)
         available_service_plugins = (
-            discover_service_plugins() if service_plugins is None else service_plugins
+            discover_service_plugins(
+                names=configured_service_names(cfg.arbiter.account)
+            )
+            if service_plugins is None
+            else service_plugins
         )
         active_service_plugins = _configured_service_plugins(
             cfg,
@@ -1648,9 +1659,10 @@ def config_check_report(
 def service_plugin_names(
     service_plugins: Sequence[ServicePlugin] | None = None,
 ) -> list[str]:
-    plugins = discover_service_plugins() if service_plugins is None else service_plugins
-    validate_service_plugins(plugins)
-    return sorted(service_plugin.name for service_plugin in plugins)
+    if service_plugins is None:
+        return installed_service_names()
+    validate_service_plugins(service_plugins)
+    return sorted(service_plugin.name for service_plugin in service_plugins)
 
 
 def service_plugin_infos(
@@ -2511,7 +2523,9 @@ def build_server(
     max_blocking_workers = cfg.arbiter.limits.max_blocking_workers
     validate_worker_limit(max_blocking_workers)
     available_service_plugins = (
-        discover_service_plugins() if service_plugins is None else service_plugins
+        discover_service_plugins(names=configured_service_names(cfg.arbiter.account))
+        if service_plugins is None
+        else service_plugins
     )
     active_service_plugins = _configured_service_plugins(
         cfg,
@@ -2771,6 +2785,9 @@ def compose_config(
         config_dir=str(config_dir_path),
         job_name="arbiter-server",
     ):
+        selected_service_names(
+            config_name=config_name, overrides=_strip_arg_separator(overrides)
+        )
         return compose(
             config_name=config_name,
             overrides=list(_strip_arg_separator(overrides)),
@@ -2887,6 +2904,9 @@ def _compose_config_for_env_command(
         config_dir=str(config_dir_path),
         job_name="arbiter-server-env",
     ):
+        selected_service_names(
+            config_name=config_name, overrides=_strip_arg_separator(overrides)
+        )
         cfg = compose(
             config_name=config_name,
             overrides=list(_strip_arg_separator(overrides)),
@@ -3368,7 +3388,7 @@ def _load_plugin_example_yaml(
     *,
     variant: str | None = None,
 ) -> str | None:
-    plugins = _service_plugin_map(discover_service_plugins())
+    plugins = _service_plugin_map(discover_service_plugins(names=[plugin]))
     service_plugin = plugins.get(plugin)
     if service_plugin is None:
         print_cli_error(f"service plugin is not installed: {plugin}", area="bootstrap")
@@ -3407,7 +3427,7 @@ def _run_plugin_bootstrap_list_variants(
     plugin: str,
     kind: BootstrapObjectKind,
 ) -> int:
-    plugins = _service_plugin_map(discover_service_plugins())
+    plugins = _service_plugin_map(discover_service_plugins(names=[plugin]))
     service_plugin = plugins.get(plugin)
     if service_plugin is None:
         print_cli_error(f"service plugin is not installed: {plugin}", area="bootstrap")
