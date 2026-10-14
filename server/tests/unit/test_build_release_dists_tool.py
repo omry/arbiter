@@ -245,6 +245,61 @@ def test_parse_package_keys_deduplicates_while_preserving_order() -> None:
     ]
 
 
+def test_locked_build_uses_preinstalled_backends_for_every_distribution(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    tool = _load_tool()
+    (tmp_path / "server").mkdir()
+    (tmp_path / "server" / "pyproject.toml").write_text(
+        '[project]\nname = "arbiter-server"\nversion = "1.2.3"\n',
+        encoding="utf-8",
+    )
+    for name in ("imap", "smtp"):
+        package = tmp_path / "plugins" / name
+        package.mkdir(parents=True)
+        (package / "pyproject.toml").write_text(
+            f'[project]\nname = "arbiter-{name}"\nversion = "1.2.3"\n',
+            encoding="utf-8",
+        )
+    calls: list[list[str]] = []
+
+    def fake_run(
+        command: list[str],
+        *,
+        verbose: bool,
+        env: dict[str, str] | None = None,
+    ) -> None:
+        calls.append(command)
+
+    monkeypatch.setattr(tool, "_run", fake_run)
+    assert (
+        tool.main(
+            [
+                "--root",
+                str(tmp_path),
+                "--outdir",
+                str(tmp_path / "dist"),
+                "--packages",
+                "server,imap,smtp,meta:all,client,skill",
+                "--no-isolation",
+            ]
+        )
+        == 0
+    )
+    builds = [call for call in calls if call[:3] == [sys.executable, "-m", "build"]]
+    assert len(builds) == 11  # four Python packages, six clients, one skill
+    assert all("--no-isolation" in call for call in builds)
+    assert {Path(call[-1]).name for call in builds} == {
+        "server",
+        "imap",
+        "smtp",
+        "arbiter-suite",
+        "client",
+        "skill",
+    }
+
+
 def test_main_returns_nonzero_when_build_fails(
     tmp_path: Path,
     monkeypatch: Any,

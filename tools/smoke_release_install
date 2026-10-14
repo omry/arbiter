@@ -71,8 +71,6 @@ def _install_publish_specs(
     specs: tuple[PublishSpec, ...],
     no_index: bool,
 ) -> None:
-    if not no_index:
-        _run([str(python), "-m", "pip", "install", "--upgrade", "pip"])
     pip_install = [
         str(python),
         "-m",
