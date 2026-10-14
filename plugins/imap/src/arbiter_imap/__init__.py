@@ -1398,18 +1398,18 @@ class IMAPRuntime(_IMAPRuntimePolicyMixin):
         if include_body:
             message_dict["text_body"] = message.text_body
             message_dict["html_body"] = message.html_body
-            message_dict["attachments"] = [
-                {
-                    "id": attachment.id,
-                    "filename": attachment.filename,
-                    "content_type": attachment.content_type,
-                    "size": attachment.size,
-                    "disposition": attachment.disposition,
-                    "content_id": attachment.content_id,
-                    "inline": attachment.inline,
-                }
-                for attachment in message.attachments
-            ]
+        message_dict["attachments"] = [
+            {
+                "id": attachment.id,
+                "filename": attachment.filename,
+                "content_type": attachment.content_type,
+                "size": attachment.size,
+                "disposition": attachment.disposition,
+                "content_id": attachment.content_id,
+                "inline": attachment.inline,
+            }
+            for attachment in message.attachments
+        ]
         return message_dict
 
 

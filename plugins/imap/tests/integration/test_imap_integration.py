@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from email.message import EmailMessage
+from email.message import EmailMessage, MIMEPart
+from email import policy
+from email.parser import BytesParser
+from email.utils import getaddresses
 import imaplib
+import re
 import socket
 import threading
 
@@ -41,6 +45,90 @@ def _multipart_message_bytes(uid: str) -> bytes:
         filename="ignored.bin",
     )
     return message.as_bytes()
+
+
+def _imap_value(value: object) -> bytes:
+    if value is None:
+        return b"NIL"
+    if isinstance(value, list):
+        return b"(" + b" ".join(_imap_value(item) for item in value) + b")"
+    if isinstance(value, int):
+        return str(value).encode()
+    raw = str(value).encode()
+    if b"\r" in raw or b"\n" in raw:
+        return b"{" + str(len(raw)).encode() + b"}\r\n" + raw
+    return b'"' + raw.replace(b"\\", b"\\\\").replace(b'"', b'\\"') + b'"'
+
+
+def _envelope(message: MIMEPart) -> list[object]:
+    def addresses(name: str) -> list[object] | None:
+        values = []
+        for personal, address in getaddresses(message.get_all(name, [])):
+            mailbox, _, host = address.partition("@")
+            values.append([personal or None, None, mailbox, host])
+        return values or None
+
+    return [
+        message.get("Date"),
+        message.get("Subject"),
+        addresses("From"),
+        None,
+        None,
+        addresses("To"),
+        addresses("Cc"),
+        None,
+        None,
+        message.get("Message-ID"),
+    ]
+
+
+def _body_structure(message: MIMEPart) -> list[object]:
+    def params(header: str) -> list[object] | None:
+        values = []
+        for name, value in message.get_params(header=header, failobj=[])[1:]:
+            values.extend([name.upper(), value])
+        return values or None
+
+    disposition = message.get_content_disposition()
+    dsp = [disposition.upper(), params("Content-Disposition")] if disposition else None
+    if message.is_multipart() and message.get_content_maintype() != "message":
+        return [
+            *[_body_structure(part) for part in message.iter_parts()],
+            message.get_content_subtype().upper(),
+            params("Content-Type"),
+            dsp,
+        ]
+    payload = message.get_payload()
+    encoded = payload.encode() if isinstance(payload, str) else message.as_bytes()
+    result: list[object] = [
+        message.get_content_maintype().upper(),
+        message.get_content_subtype().upper(),
+        params("Content-Type"),
+        message.get("Content-ID"),
+        None,
+        message.get("Content-Transfer-Encoding", "7BIT"),
+        len(encoded),
+    ]
+    if message.get_content_maintype() == "text":
+        result.append(encoded.count(b"\n"))
+    elif message.get_content_type() == "message/rfc822":
+        assert isinstance(payload, list)
+        nested = payload[0]
+        assert isinstance(nested, MIMEPart)
+        result.extend(
+            [_envelope(nested), _body_structure(nested), encoded.count(b"\n")]
+        )
+    result.extend([None, dsp])
+    return result
+
+
+def _section_part(message: MIMEPart, section: str) -> MIMEPart:
+    for index in section.split("."):
+        if message.is_multipart():
+            message = list(message.iter_parts())[int(index) - 1]
+        else:
+            assert index == "1"
+    return message
 
 
 @dataclass(frozen=True)
@@ -201,6 +289,29 @@ class _LocalIMAPServerRunner:
                     f"{tag} OK FETCH completed\r\n"
                 ).encode()
             body = self.messages.get(uid, _message_bytes(uid))
+            if fetch_items == "(ENVELOPE FLAGS BODYSTRUCTURE)":
+                message = BytesParser(policy=policy.default).parsebytes(body)
+                return (
+                    f"* {uid} FETCH (UID {uid} FLAGS (\\Seen bot.followed_up) ENVELOPE ".encode()
+                    + _imap_value(_envelope(message))
+                    + b" BODYSTRUCTURE "
+                    + _imap_value(_body_structure(message))
+                    + f")\r\n{tag} OK FETCH completed\r\n".encode()
+                )
+            preview = re.fullmatch(
+                r"\(BODY\.PEEK\[([0-9.]+)\]<0\.([0-9]+)>\)", fetch_items
+            )
+            if preview:
+                message = BytesParser(policy=policy.default).parsebytes(body)
+                part = _section_part(message, preview[1])
+                payload = part.get_payload()
+                assert isinstance(payload, str)
+                content = payload.encode()[: int(preview[2])]
+                return (
+                    f"* {uid} FETCH (UID {uid} BODY[{preview[1]}]<0> {{{len(content)}}}\r\n".encode()
+                    + content
+                    + f")\r\n{tag} OK FETCH completed\r\n".encode()
+                )
             if fetch_items == "(RFC822.SIZE)":
                 return f"* {uid} FETCH (UID {uid} RFC822.SIZE {len(body)})\r\n{tag} OK FETCH completed\r\n".encode()
             return (
@@ -386,6 +497,157 @@ def test_imap_reads_messages_with_estimated_sizes(
     assert not any(" STORE " in command for command in server.commands)
 
 
+@pytest.mark.parametrize("operation", ["list_messages", "search_messages"])
+def test_imap_summary_wire_fetches_skip_attachments_and_keep_large_mail_visible(
+    imap_server_factory, operation
+) -> None:
+    content = _multipart_message_bytes("42")
+    server = imap_server_factory(messages={"42": content}, search_uids=("42",))
+    config = IMAPConfig(
+        host=server.host,
+        port=server.port,
+        tls=MailTlsMode.none,
+        username="user",
+        password="secret",
+    )
+    config.limits.max_message_bytes = 16
+    config.limits.max_preview_bytes = 12
+    client = IMAPClient(config)
+    arguments = {"folder": "INBOX", "limit": 1}
+    if operation == "search_messages":
+        arguments["query"] = "multipart"
+    messages = getattr(client, operation)(**arguments)
+    assert messages[0].subject == "Multipart update 42"
+    assert messages[0].snippet == "Plain multip"
+    assert messages[0].text_body is None and messages[0].html_body is None
+    attachment = messages[0].attachments[0]
+    assert attachment.id == "part-3" and attachment.filename == "ignored.bin"
+    assert any(
+        command.endswith("UID FETCH 42 (BODY.PEEK[1.1]<0.12>)")
+        for command in server.commands
+    )
+    assert not any(
+        "BODY.PEEK[]" in command or "BODY.PEEK[2]" in command or " STORE " in command
+        for command in server.commands
+    )
+    # The metadata id continues to identify the same explicit retrieval.
+    config.limits.max_message_bytes = len(content)
+    assert (
+        IMAPClient(config)
+        .get_attachment(folder="INBOX", uid="42", attachment_id=attachment.id)
+        .content
+        == b"ignored attachment"
+    )
+
+
+@pytest.mark.parametrize("operation", ["list_messages", "search_messages"])
+@pytest.mark.parametrize("multipart", [False, True])
+def test_imap_normal_inline_body_keeps_a_bounded_snippet_on_wire(
+    imap_server_factory, operation, multipart
+) -> None:
+    message = EmailMessage()
+    message["Subject"] = "Inline body"
+    message.set_content("Ordinary inline text body")
+    if multipart:
+        message.add_alternative("<p>Ordinary inline HTML body</p>", subtype="html")
+    message["Content-Disposition"] = "inline"
+    server = imap_server_factory(
+        messages={"42": message.as_bytes()}, search_uids=("42",)
+    )
+    config = IMAPConfig(
+        host=server.host,
+        port=server.port,
+        tls=MailTlsMode.none,
+        username="user",
+        password="secret",
+    )
+    config.limits.max_preview_bytes = 8
+    arguments = {"folder": "INBOX", "limit": 1}
+    if operation == "search_messages":
+        arguments["query"] = "inline"
+
+    result = getattr(IMAPClient(config), operation)(**arguments)
+
+    assert result[0].snippet == "Ordinary"
+    assert any(
+        command.endswith("UID FETCH 42 (BODY.PEEK[1]<0.8>)")
+        for command in server.commands
+    )
+    assert not any("BODY.PEEK[]" in command for command in server.commands)
+
+
+def test_imap_preview_literal_larger_than_budget_is_rejected_before_read(
+    imap_server_factory, monkeypatch
+) -> None:
+    server = imap_server_factory(search_uids=("42",))
+    runner = server.stop
+    original = runner._uid_response
+
+    def response(tag, rest):
+        if "BODY.PEEK[1]" in rest:
+            # No payload is sent. The operation must close immediately rather
+            # than waiting for bytes or accepting the dishonest literal size.
+            return b"* 42 FETCH (UID 42 BODY[1]<0> {999999999}\r\n"
+        return original(tag, rest)
+
+    monkeypatch.setattr(runner, "_uid_response", response)
+    config = IMAPConfig(
+        host=server.host,
+        port=server.port,
+        tls=MailTlsMode.none,
+        username="user",
+        password="secret",
+    )
+    config.limits.max_preview_bytes = 8
+    with pytest.raises(IMAPOperationError) as caught:
+        IMAPClient(config).list_messages(folder="INBOX", limit=1)
+    assert caught.value.code == "upstream_protocol_error"
+    assert not any(" STORE " in command for command in server.commands)
+
+
+def test_imap_metadata_literal_and_uid_after_it_are_supported_on_wire(
+    imap_server_factory, monkeypatch
+) -> None:
+    server = imap_server_factory(search_uids=("42",))
+    runner = server.stop
+    original = runner._uid_response
+
+    def response(tag, rest):
+        result = original(tag, rest)
+        if "ENVELOPE" in rest:
+            subject = b"Status update 42"
+            result = result.replace(b'"Status update 42"', b"{16}\r\n" + subject)
+            result = result.replace(b"(UID 42 FLAGS", b"(FLAGS").replace(
+                b")\r\n" + tag.encode(), b" UID 42)\r\n" + tag.encode()
+            )
+        return result
+
+    monkeypatch.setattr(runner, "_uid_response", response)
+    message = _client(server, max_message_bytes=8).list_messages(
+        folder="INBOX", limit=1
+    )[0]
+    assert message.uid == "42" and message.subject == "Status update 42"
+    assert message.snippet == "Plain text body for 42"
+
+
+def test_imap_unsolicited_same_uid_flags_do_not_replace_requested_data(
+    imap_server_factory, monkeypatch
+) -> None:
+    server = imap_server_factory(search_uids=("42",))
+    runner = server.stop
+    original = runner._uid_response
+
+    def response(tag, rest):
+        result = original(tag, rest)
+        if rest.startswith("FETCH"):
+            result = b"* 42 FETCH (UID 42 FLAGS (\\Seen))\r\n" + result
+        return result
+
+    monkeypatch.setattr(runner, "_uid_response", response)
+    result = _client(server).list_messages(folder="INBOX", limit=1)
+    assert result[0].snippet == "Plain text body for 42"
+
+
 @pytest.mark.parametrize("operation", ["get_message", "get_attachment"])
 def test_imap_reads_a_body_with_uid_after_the_literal(
     imap_server_factory: Callable[..., LocalIMAPServer], monkeypatch, operation
@@ -467,7 +729,7 @@ def test_imap_client_reads_and_searches_against_local_server(
     assert messages[0].to == ["Bot <bot@example.com>"]
     assert messages[0].cc == ["Watcher <watcher@example.com>"]
     assert messages[0].flags == ["\\Seen", "bot.followed_up"]
-    assert messages[0].text_body == "Plain text body for 42\n"
+    assert messages[0].text_body is None
     assert messages[0].snippet == "Plain text body for 42"
     assert [message.uid for message in search_results] == ["42"]
     assert message.rfc822_message_id == "<message-42@example.com>"
