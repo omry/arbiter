@@ -32,9 +32,7 @@ class SizeAwareServer:
         return "BYE", [b"done"]
 
 
-@pytest.mark.parametrize(
-    "operation", ["get_message", "get_attachment", "list_messages", "search_messages"]
-)
+@pytest.mark.parametrize("operation", ["get_message", "get_attachment"])
 def test_default_message_limit_rejects_before_mime_parsing(monkeypatch, operation):
     oversized = b"x" * (50 * 1024 * 1024 + 1)
     server = SizeAwareServer(len(oversized), oversized)
@@ -245,11 +243,12 @@ def test_message_size_estimate_can_differ_from_returned_octets(
 
 
 @pytest.mark.parametrize("maximum", [0, -1, True, None])
-def test_invalid_limits_fail_before_client_or_runtime_connects(maximum):
+@pytest.mark.parametrize("field", ["max_message_bytes", "max_preview_bytes"])
+def test_invalid_limits_fail_before_client_or_runtime_connects(maximum, field):
     from arbiter_imap import IMAPRuntime, IMAPServicePlugin
 
     config = IMAPConfig()
-    config.limits.max_message_bytes = maximum
+    setattr(config.limits, field, maximum)
 
     with pytest.raises(ValueError, match="positive integer"):
         IMAPClient(config)

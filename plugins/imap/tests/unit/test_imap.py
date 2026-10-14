@@ -405,6 +405,16 @@ class FakeIMAPServer:
             return self.move_response
         if command == "SEARCH":
             return "OK", [b"40 41 42"]
+        if command == "FETCH" and args[1] == "(ENVELOPE FLAGS BODYSTRUCTURE)":
+            return "OK", [
+                f'42 (UID {args[0]} ENVELOPE ("Tue, 03 Mar 2026 12:00:00 +0000" "Status update" (("Sender" NIL "sender" "example.com")) NIL NIL (("Bot" NIL "bot" "example.com")) (("Watcher" NIL "watcher" "example.com")) NIL NIL "<message-42@example.com>") FLAGS (\\Seen bot.followed_up) BODYSTRUCTURE ("TEXT" "PLAIN" ("CHARSET" "utf-8") NIL NIL "7BIT" 17 1))'.encode()
+            ]
+        if command == "FETCH" and str(args[1]).startswith("(BODY.PEEK[1]"):
+            body = b"Plain text body\r\n"
+            return "OK", [
+                (f"42 (UID {args[0]} BODY[1]<0> {{{len(body)}}}".encode(), body),
+                b")",
+            ]
         if command == "FETCH" and args[1] == "(FLAGS)":
             return "OK", [b"42 (UID 42 FLAGS (\\Seen bot.followed_up))"]
         if command == "FETCH" and args[1] == "(RFC822.SIZE)":
@@ -476,7 +486,7 @@ def test_list_messages_uses_ssl_login_and_parses_recent_messages(
     assert messages[0].to == ["Bot <bot@example.com>"]
     assert messages[0].cc == ["Watcher <watcher@example.com>"]
     assert messages[0].flags == ["\\Seen", "bot.followed_up"]
-    assert messages[0].text_body == "Plain text body\r\n"
+    assert messages[0].text_body is None
     assert messages[0].html_body is None
     assert messages[0].snippet == "Plain text body"
     assert fake_server.logged_out is True
@@ -1539,7 +1549,7 @@ def test_fetch_without_rfc822_data_raises(monkeypatch: pytest.MonkeyPatch) -> No
     client = IMAPClient(IMAPConfig())
 
     with pytest.raises(IMAPOperationError, match="did not return RFC822"):
-        client.list_messages(folder="INBOX", limit=1)
+        client.get_message(folder="INBOX", uid="42")
 
 
 @pytest.mark.parametrize(
