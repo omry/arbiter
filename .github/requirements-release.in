@@ -1,0 +1,12 @@
+# Release preparation, distribution building, and installer smoke tooling.
+# Keep every backend here: release builds use --no-isolation.
+pip
+build>=1.2,<2
+packaging
+towncrier>=24.8,<25
+nox[pbs]>=2024.10,<2026
+agent-skill-installer>=0.3.0,<0.4.0
+setuptools>=68
+wheel
+hatchling>=1.24,<2
+editables>=0.5,<1

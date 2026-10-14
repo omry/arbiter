@@ -27,6 +27,39 @@ def _load_tool() -> ModuleType:
     return module
 
 
+@pytest.mark.parametrize("no_index", [False, True])
+def test_smoke_install_does_not_fetch_an_unlocked_pip_upgrade(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    no_index: bool,
+) -> None:
+    tool = _load_tool()
+    calls: list[list[str]] = []
+
+    def fake_run(command: list[str]) -> None:
+        calls.append(command)
+
+    monkeypatch.setattr(tool, "_run", fake_run)
+    tool._install_publish_specs(
+        python=tmp_path / "python",
+        dist_dir=tmp_path / "dist",
+        specs=(tool.PublishSpec("arbiter-server", "1.2.3"),),
+        no_index=no_index,
+    )
+    assert calls == [
+        [
+            str(tmp_path / "python"),
+            "-m",
+            "pip",
+            "install",
+            "--find-links",
+            str(tmp_path / "dist"),
+            *(["--no-index"] if no_index else []),
+            "arbiter-server==1.2.3",
+        ]
+    ]
+
+
 def test_parse_publish_specs_requires_exact_specs() -> None:
     tool = _load_tool()
 
