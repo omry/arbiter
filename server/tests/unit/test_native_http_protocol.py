@@ -252,6 +252,7 @@ def _client(
     max_request_body_bytes: int | None = None,
     max_artifact_bytes: int | None = None,
     max_artifact_storage_bytes: int | None = None,
+    max_artifact_count: int | None = None,
 ) -> ASGIClient:
     cfg = AppConfig()
     if max_request_body_bytes is not None:
@@ -260,6 +261,8 @@ def _client(
         cfg.arbiter.limits.max_artifact_bytes = max_artifact_bytes
     if max_artifact_storage_bytes is not None:
         cfg.arbiter.limits.max_artifact_storage_bytes = max_artifact_storage_bytes
+    if max_artifact_count is not None:
+        cfg.arbiter.limits.max_artifact_count = max_artifact_count
     cfg.arbiter.account = {
         "echo": {
             "primary": {
@@ -525,6 +528,7 @@ def test_native_http_protocol_exposes_health_info_and_progressive_discovery(
         "inline_max_bytes": 5120,
         "max_artifact_bytes": 50 * 1024 * 1024,
         "max_artifact_storage_bytes": 1024 * 1024 * 1024,
+        "max_artifact_count": 2000,
         "supports_uploads": False,
     }
 
@@ -922,6 +926,45 @@ def test_artifact_that_exceeds_empty_store_capacity_is_nontransient(tmp_path, co
         }
     }
     assert list(tmp_path.glob("*/artifacts/*")) == []
+
+
+def test_artifact_count_is_published_and_full_store_remains_downloadable(tmp_path):
+    client = _client(tmp_path, max_artifact_count=1)
+    details = client.get("/api/v1/operations/echo:make_artifact").json()
+    assert details["artifact_policy"]["max_artifact_count"] == 1
+    first = client.post(
+        "/api/v1/operations/echo:make_artifact", json={"args": {"content": "first"}}
+    )
+    assert first.status_code == 200
+    content_url = first.json()["artifacts"][0]["content_url"]
+    assert client.get(content_url).content == b"first"
+    # Downloading consumes the token, but retained files still occupy a slot.
+    second = client.post(
+        "/api/v1/operations/echo:make_artifact", json={"args": {"content": "second"}}
+    )
+    assert second.status_code == 503
+    assert second.json() == {
+        "error": {
+            "code": "resource_exhausted",
+            "message": "Artifact storage exhausted; try again later.",
+            "details": {
+                "max_artifact_storage_bytes": 1024 * 1024 * 1024,
+                "max_artifact_count": 1,
+            },
+            "retry": {"transient": "yes", "replay": "unknown"},
+        }
+    }
+    assert len(list(tmp_path.glob("*/artifacts/*/metadata.json"))) == 1
+
+
+@pytest.mark.parametrize("limit", [0, -1])
+def test_server_rejects_unbounded_artifact_count(limit):
+    cfg = AppConfig()
+    cfg.arbiter.limits.max_artifact_count = limit
+    with pytest.raises(
+        ValueError, match="max_artifact_count must be a positive integer"
+    ):
+        build_server(OmegaConf.structured(cfg), service_plugins=[], prepare_tls=False)
 
 
 def test_total_artifact_quota_is_published_and_returns_retryable_error(tmp_path):

@@ -133,6 +133,7 @@ arbiter:
     max_request_body_bytes: 1048576
     max_artifact_bytes: 52428800
     max_artifact_storage_bytes: 1073741824
+    max_artifact_count: 2000
 ```
 
 The value must be a positive integer; zero does not disable the limit.
@@ -171,9 +172,22 @@ sharing the same local storage root. Existing files count after restart; lowerin
 the cap does not evict unexpired artifacts. New creation stays blocked until
 enough capacity is reclaimed. Cleanup is opportunistic on artifact operations.
 
+`max_artifact_count` caps retained artifacts across all plugins at 2,000 by
+default. It must be a positive integer. An artifact's payload, metadata, and
+consumption marker together count as one artifact. Downloads consume access
+tokens but do not release count capacity; cleanup must remove the retained
+artifact first. Expired and incomplete artifacts are reclaimed before admission.
+The count is restored from storage after restart, and lowering the limit does
+not evict existing artifacts or prevent their downloads.
+
+Creation must fit both the count and byte budgets. A full count budget returns
+the same HTTP `503`, `resource_exhausted`, and retry guidance as exhausted byte
+capacity, with `error.details.max_artifact_count` alongside the storage byte cap.
+Operation discovery publishes `artifact_policy.max_artifact_count`.
+
 This is a retained-file byte budget, not a reservation of free disk space.
 Temporary metadata replacement, filesystem allocation and directory overhead,
-artifact counts, other plugin state, mail fetching and decoding, and plugin
+other plugin state, mail fetching and decoding, and plugin
 execution need separate bounds in their own domains. Plugin-specific limits
 do not change core limits. These controls
 apply to trusted plugins using Arbiter's storage API; they do not isolate

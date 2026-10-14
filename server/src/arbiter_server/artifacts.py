@@ -18,7 +18,11 @@ from urllib.parse import quote
 
 from .storage import ensure_private_dir, plugin_data_dir
 from .errors import OperationError
-from .limits import DEFAULT_MAX_ARTIFACT_BYTES, DEFAULT_MAX_ARTIFACT_STORAGE_BYTES
+from .limits import (
+    DEFAULT_MAX_ARTIFACT_BYTES,
+    DEFAULT_MAX_ARTIFACT_COUNT,
+    DEFAULT_MAX_ARTIFACT_STORAGE_BYTES,
+)
 
 
 DEFAULT_IDLE_TTL_SECONDS = 10 * 60
@@ -60,11 +64,16 @@ class ArtifactTooLarge(OperationError):
 
 
 class ArtifactStorageExhausted(OperationError):
-    def __init__(self, max_artifact_storage_bytes: int) -> None:
+    def __init__(
+        self, max_artifact_storage_bytes: int, *, max_artifact_count: int | None = None
+    ) -> None:
+        details = {"max_artifact_storage_bytes": max_artifact_storage_bytes}
+        if max_artifact_count is not None:
+            details["max_artifact_count"] = max_artifact_count
         super().__init__(
             "resource_exhausted",
             "Artifact storage exhausted; try again later.",
-            details={"max_artifact_storage_bytes": max_artifact_storage_bytes},
+            details=details,
             transient="yes",
             # Artifact creation does not establish the replay safety of earlier
             # steps in the enclosing plugin operation.
@@ -120,6 +129,10 @@ class PluginArtifactStore:
     def max_artifact_storage_bytes(self) -> int:
         return self._store.max_artifact_storage_bytes
 
+    @property
+    def max_artifact_count(self) -> int:
+        return self._store.max_artifact_count
+
     def create(
         self,
         *,
@@ -147,6 +160,7 @@ class ArtifactStore:
         retention_seconds: int = DEFAULT_RETENTION_SECONDS,
         max_artifact_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES,
         max_artifact_storage_bytes: int = DEFAULT_MAX_ARTIFACT_STORAGE_BYTES,
+        max_artifact_count: int = DEFAULT_MAX_ARTIFACT_COUNT,
     ) -> None:
         if idle_ttl_seconds < 1:
             raise ValueError("artifact idle_ttl_seconds must be at least 1")
@@ -161,12 +175,15 @@ class ArtifactStore:
             raise ValueError(
                 "artifact max_artifact_storage_bytes must be a positive integer"
             )
+        if type(max_artifact_count) is not int or max_artifact_count < 1:
+            raise ValueError("artifact max_artifact_count must be a positive integer")
         self._root = root
         self._base_url = base_url.rstrip("/")
         self._idle_ttl_seconds = idle_ttl_seconds
         self._retention_seconds = retention_seconds
         self._max_artifact_bytes = max_artifact_bytes
         self._max_artifact_storage_bytes = max_artifact_storage_bytes
+        self._max_artifact_count = max_artifact_count
 
     @property
     def max_artifact_bytes(self) -> int:
@@ -175,6 +192,10 @@ class ArtifactStore:
     @property
     def max_artifact_storage_bytes(self) -> int:
         return self._max_artifact_storage_bytes
+
+    @property
+    def max_artifact_count(self) -> int:
+        return self._max_artifact_count
 
     @property
     def idle_ttl_seconds(self) -> int:
@@ -246,6 +267,13 @@ class ArtifactStore:
         self._check_capacity(
             len(content) + len(metadata_bytes), retained_bytes=retained_bytes
         )
+        # Creation holds the root lock and has purged expired/incomplete entries.
+        # Each retained artifact occupies one slot even after it is consumed.
+        if self._artifact_count() >= self._max_artifact_count:
+            raise ArtifactStorageExhausted(
+                self._max_artifact_storage_bytes,
+                max_artifact_count=self._max_artifact_count,
+            )
         ensure_private_dir(artifact_dir)
         try:
             _write_private_file(artifact_dir / "payload", content)
@@ -389,6 +417,13 @@ class ArtifactStore:
             for artifact_dir in self._root.glob("*/artifacts/*")
             for path in artifact_dir.rglob("*")
             if path.is_file()
+        )
+
+    def _artifact_count(self) -> int:
+        return sum(
+            1
+            for artifact_dir in self._root.glob("*/artifacts/*")
+            if artifact_dir.is_dir()
         )
 
     def _check_capacity(
