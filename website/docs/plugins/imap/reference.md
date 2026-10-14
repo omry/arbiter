@@ -34,6 +34,11 @@ class IMAPFolderConfig:
 
 
 @dataclass
+class IMAPLimitsConfig:
+    max_message_bytes: int = 50 * 1024 * 1024
+
+
+@dataclass
 class IMAPConfig(Policy):
     policy: str = "bot"
     description: str = ""
@@ -45,6 +50,7 @@ class IMAPConfig(Policy):
     tls: MailTlsMode = MailTlsMode.implicit
     verify_peer: bool = True
     timeout_seconds: float = 30.0
+    limits: IMAPLimitsConfig = field(default_factory=IMAPLimitsConfig)
     default_folder: str | None = None
     folders: dict[str, IMAPFolderConfig] = field(default_factory=dict)
 ```
