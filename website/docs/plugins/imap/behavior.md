@@ -42,6 +42,21 @@ reading, moving, flagging, or deleting a message.
 
 ## Attachments
 
+Each IMAP account has an operator-owned `limits.max_message_bytes`, defaulting
+to 50 MiB (52,428,800 bytes). It limits the entire raw email, including encoded
+attachments, before full-content retrieval and MIME parsing. The client checks
+`RFC822.SIZE`, requests content with bounded `BODY.PEEK`, and rejects oversized
+response literals before reading them. Reading does not mark the message seen.
+
+An oversized message returns HTTP `403`, generic `policy_denied`, and IMAP
+domain code `message_too_large`, with the configured maximum in error details.
+Retry guidance is `transient: no` and `replay: safe`; increasing the limit is an
+operator decision. Rejection does not change the mailbox. This IMAP limit is
+independent of core artifact limits, which apply when storing an attachment.
+
+List and search currently retrieve full messages and therefore also enforce
+this cap. Metadata-only listing and bounded previews are a separate change.
+
 `imap:get_message` returns the message body plus an `attachments` inventory.
 Each attachment entry includes a MIME-part id, filename, content type, decoded
 size, disposition, content id, and whether it is inline. Attachment bodies are
