@@ -61,6 +61,7 @@ class _LocalIMAPServerRunner:
         login_ok: bool = True,
         search_ok: bool = True,
         support_move: bool = True,
+        non_message_literal: bool = False,
         selectable_mailboxes: set[str] | None = None,
         search_uids: tuple[str, ...] = ("40", "41", "42"),
         messages: dict[str, bytes] | None = None,
@@ -72,6 +73,7 @@ class _LocalIMAPServerRunner:
         self.login_ok = login_ok
         self.search_ok = search_ok
         self.support_move = support_move
+        self.non_message_literal = non_message_literal
         self.selectable_mailboxes = selectable_mailboxes or {"INBOX", "Archive"}
         self.search_uids = search_uids
         self.messages = messages or {}
@@ -154,6 +156,16 @@ class _LocalIMAPServerRunner:
                 + f"{tag} OK CAPABILITY completed\r\n".encode()
             )
         if command == "NOOP":
+            if self.non_message_literal:
+                literal = b"ordinary IMAP response"
+                return (
+                    b"* OK {"
+                    + str(len(literal)).encode()
+                    + b"}\r\n"
+                    + literal
+                    + b"\r\n"
+                    + f"{tag} OK NOOP completed\r\n".encode()
+                )
             return f"{tag} OK NOOP completed\r\n".encode()
         if command in {"EXAMINE", "SELECT"}:
             mailbox = self._mailbox_name(rest)
@@ -189,8 +201,10 @@ class _LocalIMAPServerRunner:
                     f"{tag} OK FETCH completed\r\n"
                 ).encode()
             body = self.messages.get(uid, _message_bytes(uid))
+            if fetch_items == "(RFC822.SIZE)":
+                return f"* {uid} FETCH (UID {uid} RFC822.SIZE {len(body)})\r\n{tag} OK FETCH completed\r\n".encode()
             return (
-                f"* {uid} FETCH (UID {uid} RFC822 {{{len(body)}}}\r\n".encode()
+                f"* {uid} FETCH (UID {uid} BODY[]<0> {{{len(body)}}}\r\n".encode()
                 + body
                 + b")\r\n"
                 + f"{tag} OK FETCH completed\r\n".encode()
@@ -229,6 +243,7 @@ def imap_server_factory(
         login_ok: bool = True,
         search_ok: bool = True,
         support_move: bool = True,
+        non_message_literal: bool = False,
         selectable_mailboxes: set[str] | None = None,
         search_uids: tuple[str, ...] = ("40", "41", "42"),
         messages: dict[str, bytes] | None = None,
@@ -238,6 +253,7 @@ def imap_server_factory(
             login_ok=login_ok,
             search_ok=search_ok,
             support_move=support_move,
+            non_message_literal=non_message_literal,
             selectable_mailboxes=selectable_mailboxes,
             search_uids=search_uids,
             messages=messages,
@@ -259,15 +275,180 @@ def imap_server(
     return imap_server_factory()
 
 
-def _client(server: LocalIMAPServer) -> IMAPClient:
-    return IMAPClient(
-        IMAPConfig(
-            host=server.host,
-            port=server.port,
-            username="user@example.com",
-            password="secret",
-            tls=MailTlsMode.none,
+def _client(
+    server: LocalIMAPServer, *, max_message_bytes: int | None = None
+) -> IMAPClient:
+    config = IMAPConfig(
+        host=server.host,
+        port=server.port,
+        username="user@example.com",
+        password="secret",
+        tls=MailTlsMode.none,
+    )
+    if max_message_bytes is not None:
+        config.limits.max_message_bytes = max_message_bytes
+    return IMAPClient(config)
+
+
+def test_imap_does_not_limit_non_message_literals(
+    imap_server_factory: Callable[..., LocalIMAPServer],
+) -> None:
+    server = imap_server_factory(non_message_literal=True)
+
+    _client(server, max_message_bytes=8).test_connection(folders=[])
+
+    assert any(command.endswith("NOOP") for command in server.commands)
+
+
+@pytest.mark.parametrize("operation", ["get_message", "get_attachment"])
+def test_imap_rejects_an_oversized_literal_when_server_lies_about_size(
+    imap_server: LocalIMAPServer, monkeypatch, operation
+) -> None:
+    from arbiter_server.errors import OperationError
+
+    runner = imap_server.stop
+    assert isinstance(runner, _LocalIMAPServerRunner)
+    original = runner._uid_response
+
+    def response(tag, rest):
+        if rest == "FETCH 42 (RFC822.SIZE)":
+            return f"* 42 FETCH (UID 42 RFC822.SIZE 8)\r\n{tag} OK FETCH completed\r\n".encode()
+        return original(tag, rest)
+
+    monkeypatch.setattr(runner, "_uid_response", response)
+    monkeypatch.setattr(
+        "arbiter_imap.client.BytesParser",
+        lambda **kwargs: pytest.fail(
+            "oversized content must not reach the MIME parser"
+        ),
+    )
+    config = IMAPConfig(
+        host=imap_server.host,
+        port=imap_server.port,
+        tls=MailTlsMode.none,
+        username="user@example.com",
+        password="secret",
+    )
+    config.limits.max_message_bytes = 8
+    client = IMAPClient(config)
+    arguments: dict[str, object] = {"folder": "INBOX", "uid": "42"}
+    if operation == "get_attachment":
+        arguments["attachment_id"] = "part-1"
+
+    with pytest.raises(OperationError) as caught:
+        getattr(client, operation)(**arguments)
+
+    assert caught.value.domain_code == "message_too_large"
+    assert any(
+        command.endswith("UID FETCH 42 (BODY.PEEK[]<0.9>)")
+        for command in imap_server.commands
+    )
+    assert not any(
+        " STORE " in command or " APPEND " in command
+        for command in imap_server.commands
+    )
+
+
+@pytest.mark.parametrize("operation", ["get_message", "get_attachment"])
+@pytest.mark.parametrize("estimate_delta", [-1, 1])
+def test_imap_reads_messages_with_estimated_sizes(
+    imap_server_factory: Callable[..., LocalIMAPServer],
+    monkeypatch,
+    operation,
+    estimate_delta,
+) -> None:
+    content = _multipart_message_bytes("42")
+    server = imap_server_factory(messages={"42": content})
+    runner = server.stop
+    assert isinstance(runner, _LocalIMAPServerRunner)
+    original = runner._uid_response
+
+    def response(tag, rest):
+        if rest == "FETCH 42 (RFC822.SIZE)":
+            size = len(content) + estimate_delta
+            return f"* 42 FETCH (UID 42 RFC822.SIZE {size})\r\n{tag} OK FETCH completed\r\n".encode()
+        return original(tag, rest)
+
+    monkeypatch.setattr(runner, "_uid_response", response)
+    client = _client(server, max_message_bytes=len(content))
+    if operation == "get_message":
+        assert (
+            client.get_message(folder="INBOX", uid="42").subject
+            == "Multipart update 42"
         )
+    else:
+        assert (
+            client.get_attachment(
+                folder="INBOX", uid="42", attachment_id="part-3"
+            ).content
+            == b"ignored attachment"
+        )
+    assert not any(" STORE " in command for command in server.commands)
+
+
+@pytest.mark.parametrize("operation", ["get_message", "get_attachment"])
+def test_imap_reads_a_body_with_uid_after_the_literal(
+    imap_server_factory: Callable[..., LocalIMAPServer], monkeypatch, operation
+) -> None:
+    server = imap_server_factory(messages={"42": _multipart_message_bytes("42")})
+    runner = server.stop
+    assert isinstance(runner, _LocalIMAPServerRunner)
+    original = runner._uid_response
+
+    def response(tag, rest):
+        result = original(tag, rest)
+        if rest.startswith("FETCH 42 (BODY.PEEK"):
+            result = result.replace(b"(UID 42 BODY[]", b"(BODY[]", 1)
+            result = result.replace(
+                b")\r\n" + tag.encode() + b" OK FETCH",
+                b" UID 42)\r\n" + tag.encode() + b" OK FETCH",
+                1,
+            )
+        return result
+
+    monkeypatch.setattr(runner, "_uid_response", response)
+    client = _client(server)
+    if operation == "get_message":
+        assert (
+            client.get_message(folder="INBOX", uid="42").subject
+            == "Multipart update 42"
+        )
+    else:
+        assert (
+            client.get_attachment(
+                folder="INBOX", uid="42", attachment_id="part-3"
+            ).content
+            == b"ignored attachment"
+        )
+
+
+@pytest.mark.parametrize("variant", ["case", "nested-flags"])
+def test_imap_accepts_numeric_fetch_attributes_on_real_wire(
+    imap_server: LocalIMAPServer, monkeypatch, variant
+) -> None:
+    runner = imap_server.stop
+    assert isinstance(runner, _LocalIMAPServerRunner)
+    original = runner._uid_response
+
+    def response(tag, rest):
+        result = original(tag, rest)
+        if rest.startswith("FETCH 42") and "(FLAGS)" not in rest:
+            header, separator, remaining = result.partition(b"\r\n")
+            if variant == "case":
+                header = header.replace(b"UID ", b"uId ").replace(
+                    b"RFC822.SIZE", b"rfc822.size"
+                )
+            else:
+                header = header.replace(
+                    b"(UID 42", b"(FLAGS (UID 42 RFC822.SIZE 9) UID 42", 1
+                )
+            return header + separator + remaining
+        return result
+
+    monkeypatch.setattr(runner, "_uid_response", response)
+    assert (
+        _client(imap_server).get_message(folder="INBOX", uid="42").subject
+        == "Status update 42"
     )
 
 
@@ -299,7 +480,8 @@ def test_imap_client_reads_and_searches_against_local_server(
         for command in imap_server.commands
     )
     assert any(
-        command.endswith("UID FETCH 42 (RFC822)") for command in imap_server.commands
+        command.endswith("UID FETCH 42 (BODY.PEEK[]<0.52428801>)")
+        for command in imap_server.commands
     )
 
 

@@ -29,6 +29,19 @@ Generated config uses environment variables for deployment-specific connection
 details. It is still your config: edit the YAML directly when a fixed value is
 clearer for your deployment.
 
+## Message size limit
+
+Set the maximum whole-message size in the IMAP account file:
+
+```yaml
+limits:
+  max_message_bytes: 52428800
+```
+
+The default is 50 MiB, including encoded attachments. The value must be a
+positive integer; zero does not disable the cap. This is an IMAP-owned limit
+and does not override the core server's artifact size or storage limits.
+
 ## Folders
 
 Folder entries are metadata overlays. They describe known folders and patterns;

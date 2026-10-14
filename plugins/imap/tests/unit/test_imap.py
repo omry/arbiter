@@ -407,8 +407,17 @@ class FakeIMAPServer:
             return "OK", [b"40 41 42"]
         if command == "FETCH" and args[1] == "(FLAGS)":
             return "OK", [b"42 (UID 42 FLAGS (\\Seen bot.followed_up))"]
-        if command == "FETCH" and args[1] == "(RFC822)":
-            return "OK", [(b"42 (RFC822 {123}", MESSAGE_BYTES)]
+        if command == "FETCH" and args[1] == "(RFC822.SIZE)":
+            return "OK", [
+                f"42 (UID {args[0]} RFC822.SIZE {len(MESSAGE_BYTES)})".encode()
+            ]
+        if command == "FETCH" and str(args[1]).startswith("(BODY.PEEK[]<0."):
+            return "OK", [
+                (
+                    f"42 (UID {args[0]} BODY[]<0> {{{len(MESSAGE_BYTES)}}}".encode(),
+                    MESSAGE_BYTES,
+                )
+            ]
         return "OK", [b"ok"]
 
     def starttls(self, *, ssl_context: ssl.SSLContext) -> None:
@@ -437,6 +446,7 @@ def test_list_messages_uses_ssl_login_and_parses_recent_messages(
         *,
         ssl_context: ssl.SSLContext,
         timeout: float,
+        max_literal_bytes: int,
     ) -> FakeIMAPServer:
         assert host == "imap.example.com"
         assert port == 993
@@ -444,7 +454,7 @@ def test_list_messages_uses_ssl_login_and_parses_recent_messages(
         assert ssl_context.check_hostname is False
         return fake_server
 
-    monkeypatch.setattr("arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+    monkeypatch.setattr("arbiter_imap.client.BoundedIMAP4SSL", fake_imap4_ssl)
 
     client = IMAPClient(
         IMAPConfig(
@@ -475,13 +485,15 @@ def test_list_messages_uses_ssl_login_and_parses_recent_messages(
 def test_starttls_uses_configured_context(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_server = FakeIMAPServer()
 
-    def fake_imap4(host: str, port: int, *, timeout: float) -> FakeIMAPServer:
+    def fake_imap4(
+        host: str, port: int, *, timeout: float, max_literal_bytes: int
+    ) -> FakeIMAPServer:
         assert host == "imap.example.com"
         assert port == 143
         assert timeout == 30.0
         return fake_server
 
-    monkeypatch.setattr("arbiter_imap.client.imaplib.IMAP4", fake_imap4)
+    monkeypatch.setattr("arbiter_imap.client.BoundedIMAP4", fake_imap4)
 
     client = IMAPClient(
         IMAPConfig(
@@ -510,10 +522,11 @@ def test_connection_probe_uses_noop_and_readonly_folder_select(
         *,
         ssl_context: ssl.SSLContext,
         timeout: float,
+        max_literal_bytes: int,
     ) -> FakeIMAPServer:
         return fake_server
 
-    monkeypatch.setattr("arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+    monkeypatch.setattr("arbiter_imap.client.BoundedIMAP4SSL", fake_imap4_ssl)
 
     client = IMAPClient(IMAPConfig(username="user", password="secret"))
 
@@ -539,10 +552,11 @@ def test_connection_probe_quotes_mailbox_names_with_spaces(
         *,
         ssl_context: ssl.SSLContext,
         timeout: float,
+        max_literal_bytes: int,
     ) -> FakeIMAPServer:
         return fake_server
 
-    monkeypatch.setattr("arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+    monkeypatch.setattr("arbiter_imap.client.BoundedIMAP4SSL", fake_imap4_ssl)
 
     client = IMAPClient(IMAPConfig(username="user", password="secret"))
 
@@ -1220,10 +1234,11 @@ def test_move_falls_back_to_copy_delete_and_uid_expunge(
         *,
         ssl_context: ssl.SSLContext,
         timeout: float,
+        max_literal_bytes: int,
     ) -> FakeIMAPServer:
         return fake_server
 
-    monkeypatch.setattr("arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+    monkeypatch.setattr("arbiter_imap.client.BoundedIMAP4SSL", fake_imap4_ssl)
 
     client = IMAPClient(IMAPConfig())
 
@@ -1251,10 +1266,11 @@ def test_move_falls_back_when_server_returns_unsupported_status(
         *,
         ssl_context: ssl.SSLContext,
         timeout: float,
+        max_literal_bytes: int,
     ) -> FakeIMAPServer:
         return fake_server
 
-    monkeypatch.setattr("arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+    monkeypatch.setattr("arbiter_imap.client.BoundedIMAP4SSL", fake_imap4_ssl)
 
     client = IMAPClient(IMAPConfig())
 
@@ -1296,10 +1312,11 @@ def test_move_fallback_does_not_retry_copy_after_copy_error(
         *,
         ssl_context: ssl.SSLContext,
         timeout: float,
+        max_literal_bytes: int,
     ) -> RetryServer:
         return fake_server
 
-    monkeypatch.setattr("arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+    monkeypatch.setattr("arbiter_imap.client.BoundedIMAP4SSL", fake_imap4_ssl)
 
     with pytest.raises(imaplib.IMAP4.error, match="COPY failed"):
         IMAPClient(IMAPConfig()).move_message(
@@ -1337,10 +1354,11 @@ def test_move_uncertain_failure_does_not_fall_back(
         *,
         ssl_context: ssl.SSLContext,
         timeout: float,
+        max_literal_bytes: int,
     ) -> UncertainServer:
         return fake_server
 
-    monkeypatch.setattr("arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+    monkeypatch.setattr("arbiter_imap.client.BoundedIMAP4SSL", fake_imap4_ssl)
 
     with pytest.raises(type(failure)) as caught:
         IMAPClient(IMAPConfig()).move_message(
@@ -1374,10 +1392,11 @@ def test_move_partial_failure_survives_logout_abort(
         *,
         ssl_context: ssl.SSLContext,
         timeout: float,
+        max_literal_bytes: int,
     ) -> MaskServer:
         return fake_server
 
-    monkeypatch.setattr("arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+    monkeypatch.setattr("arbiter_imap.client.BoundedIMAP4SSL", fake_imap4_ssl)
 
     with pytest.raises(OperationError) as caught:
         IMAPClient(IMAPConfig()).move_message(
@@ -1417,10 +1436,11 @@ def test_move_non_fallback_status_raises_without_copying(
         *,
         ssl_context: ssl.SSLContext,
         timeout: float,
+        max_literal_bytes: int,
     ) -> FakeIMAPServer:
         return fake_server
 
-    monkeypatch.setattr("arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+    monkeypatch.setattr("arbiter_imap.client.BoundedIMAP4SSL", fake_imap4_ssl)
 
     client = IMAPClient(IMAPConfig())
 
@@ -1449,10 +1469,11 @@ def test_move_bad_status_without_unsupported_marker_raises_without_copying(
         *,
         ssl_context: ssl.SSLContext,
         timeout: float,
+        max_literal_bytes: int,
     ) -> FakeIMAPServer:
         return fake_server
 
-    monkeypatch.setattr("arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+    monkeypatch.setattr("arbiter_imap.client.BoundedIMAP4SSL", fake_imap4_ssl)
 
     client = IMAPClient(IMAPConfig())
 
@@ -1475,10 +1496,11 @@ def test_delete_message_uses_uid_expunge(monkeypatch: pytest.MonkeyPatch) -> Non
         *,
         ssl_context: ssl.SSLContext,
         timeout: float,
+        max_literal_bytes: int,
     ) -> FakeIMAPServer:
         return fake_server
 
-    monkeypatch.setattr("arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+    monkeypatch.setattr("arbiter_imap.client.BoundedIMAP4SSL", fake_imap4_ssl)
 
     client = IMAPClient(IMAPConfig())
 
@@ -1496,6 +1518,8 @@ def test_fetch_without_rfc822_data_raises(monkeypatch: pytest.MonkeyPatch) -> No
             return "OK", [b"42"]
         if command == "FETCH" and args[1] == "(FLAGS)":
             return "OK", [b"42 (UID 42 FLAGS ())"]
+        if command == "FETCH" and args[1] == "(RFC822.SIZE)":
+            return "OK", [f"42 (UID 42 RFC822.SIZE {len(MESSAGE_BYTES)})".encode()]
         return "OK", [b"missing body"]
 
     fake_server.uid = fake_uid  # type: ignore[method-assign]
@@ -1506,10 +1530,11 @@ def test_fetch_without_rfc822_data_raises(monkeypatch: pytest.MonkeyPatch) -> No
         *,
         ssl_context: ssl.SSLContext,
         timeout: float,
+        max_literal_bytes: int,
     ) -> FakeIMAPServer:
         return fake_server
 
-    monkeypatch.setattr("arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+    monkeypatch.setattr("arbiter_imap.client.BoundedIMAP4SSL", fake_imap4_ssl)
 
     client = IMAPClient(IMAPConfig())
 
@@ -1569,10 +1594,11 @@ def test_imap_plugin_classifies_client_protocol_read_failure_as_replay_safe(
         *,
         ssl_context: ssl.SSLContext,
         timeout: float,
+        max_literal_bytes: int,
     ) -> SearchRejectedServer:
         return fake_server
 
-    monkeypatch.setattr("arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+    monkeypatch.setattr("arbiter_imap.client.BoundedIMAP4SSL", fake_imap4_ssl)
     runtime = IMAPRuntime(
         accounts={"primary": IMAPConfig()},
         policies={"bot": _allow_all_policy()},
@@ -1623,10 +1649,11 @@ def test_imap_plugin_preserves_client_protocol_write_failure_as_unknown(
         *,
         ssl_context: ssl.SSLContext,
         timeout: float,
+        max_literal_bytes: int,
     ) -> MoveRejectedServer:
         return fake_server
 
-    monkeypatch.setattr("arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+    monkeypatch.setattr("arbiter_imap.client.BoundedIMAP4SSL", fake_imap4_ssl)
     policy = _allow_all_policy()
     policy.operation_defaults.move = True
     runtime = IMAPRuntime(
@@ -1676,10 +1703,11 @@ def test_imap_plugin_classifies_client_attachment_not_found_as_non_transient(
         *,
         ssl_context: ssl.SSLContext,
         timeout: float,
+        max_literal_bytes: int,
     ) -> FakeIMAPServer:
         return fake_server
 
-    monkeypatch.setattr("arbiter_imap.client.imaplib.IMAP4_SSL", fake_imap4_ssl)
+    monkeypatch.setattr("arbiter_imap.client.BoundedIMAP4SSL", fake_imap4_ssl)
     runtime = IMAPRuntime(
         accounts={"primary": IMAPConfig()},
         policies={"bot": _allow_all_policy()},
@@ -1808,7 +1836,7 @@ def test_imap_login_failure_has_explicit_classification(monkeypatch):
         def login(self, *_args):
             raise self.error("password=secret")
 
-    monkeypatch.setattr(imaplib, "IMAP4", Server)
+    monkeypatch.setattr("arbiter_imap.client.BoundedIMAP4", Server)
     with pytest.raises(IMAPAuthenticationError) as caught:
         IMAPClient(
             IMAPConfig(tls=MailTlsMode.none, username="user", password="secret")
@@ -1834,7 +1862,7 @@ def test_imap_login_abort_remains_transport_failure_and_closes(monkeypatch):
         def shutdown(self):
             closed.append(True)
 
-    monkeypatch.setattr(imaplib, "IMAP4", Server)
+    monkeypatch.setattr("arbiter_imap.client.BoundedIMAP4", Server)
     with pytest.raises(original.abort) as caught:
         IMAPClient(
             IMAPConfig(tls=MailTlsMode.none, username="user", password="secret")
