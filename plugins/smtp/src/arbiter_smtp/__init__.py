@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from _thread import LockType
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from email import policy as email_policy
@@ -11,6 +13,7 @@ import json
 import secrets
 import smtplib
 import sqlite3
+import threading
 from time import monotonic
 from typing import Callable, Protocol, cast
 
@@ -231,6 +234,8 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
         self._sent_message_appender = sent_message_appender
         self._idempotency_stores: dict[str, SMTPIdempotencyStore] = {}
         self._attempt_timestamps: dict[str, list[float]] = {}
+        self._state_lock = threading.RLock()
+        self._idempotency_key_locks: dict[tuple[str, str], tuple[LockType, int]] = {}
         self._validate_config()
 
     def configure_sent_message_appender(
@@ -898,36 +903,37 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
         account_name: str,
         smtp_policy: SMTPServicePolicyConfig,
     ) -> None:
-        decision = self._rate_limit_decision(account_name, smtp_policy).evaluate()
-        if not decision.allowed:
-            raise PluginPolicyError(
-                "smtp",
-                decision.why_not or "Rate limit reached",
-                domain_code="max_messages_per_minute",
-                code="rate_limited",
-            )
-        max_messages = smtp_policy.limits.max_messages_per_minute
-        if max_messages is None:
-            return
+        with self._state_lock:
+            decision = self._rate_limit_decision(account_name, smtp_policy).evaluate()
+            if not decision.allowed:
+                raise PluginPolicyError(
+                    "smtp",
+                    decision.why_not or "Rate limit reached",
+                    domain_code="max_messages_per_minute",
+                    code="rate_limited",
+                )
+            max_messages = smtp_policy.limits.max_messages_per_minute
+            if max_messages is None:
+                return
 
-        now = self._policy_now()
-        window_start = now - 60.0
-        attempt_timestamps = self._rate_limit_attempt_timestamps()
-        active_attempts = [
-            timestamp
-            for timestamp in attempt_timestamps.get(account_name, [])
-            if timestamp > window_start
-        ]
-        if len(active_attempts) >= max_messages:
-            raise PluginPolicyError(
-                "smtp",
-                f"send_email exceeds max_messages_per_minute for account: {account_name}",
-                domain_code="max_messages_per_minute",
-                code="rate_limited",
-            )
+            now = self._policy_now()
+            window_start = now - 60.0
+            attempt_timestamps = self._rate_limit_attempt_timestamps()
+            active_attempts = [
+                timestamp
+                for timestamp in attempt_timestamps.get(account_name, [])
+                if timestamp > window_start
+            ]
+            if len(active_attempts) >= max_messages:
+                raise PluginPolicyError(
+                    "smtp",
+                    f"send_email exceeds max_messages_per_minute for account: {account_name}",
+                    domain_code="max_messages_per_minute",
+                    code="rate_limited",
+                )
 
-        active_attempts.append(now)
-        attempt_timestamps[account_name] = active_attempts
+            active_attempts.append(now)
+            attempt_timestamps[account_name] = active_attempts
 
     def _recipient_matches_list(
         self,
@@ -996,6 +1002,23 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
     def _idempotency_cache_key(self, *, account: str, idempotency_key: str) -> str:
         return f"smtp:{account}:{idempotency_key}"
 
+    @contextmanager
+    def _idempotency_lock(self, cache_dir: str, cache_key: str) -> Iterator[None]:
+        key = (cache_dir, cache_key)
+        with self._state_lock:
+            lock, users = self._idempotency_key_locks.get(key, (threading.Lock(), 0))
+            self._idempotency_key_locks[key] = (lock, users + 1)
+        try:
+            with lock:
+                yield
+        finally:
+            with self._state_lock:
+                _, users = self._idempotency_key_locks[key]
+                if users == 1:
+                    del self._idempotency_key_locks[key]
+                else:
+                    self._idempotency_key_locks[key] = (lock, users - 1)
+
     def _reserve_or_replay_idempotency(
         self,
         smtp_policy: SMTPServicePolicyConfig,
@@ -1005,78 +1028,84 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
         cache_key: str,
         payload_hash: str,
     ) -> SendEmailResult | None:
-        store = self._idempotency_store(smtp_policy)
-        expire_seconds = self._idempotency_expire_seconds(smtp_policy)
-        if store.add_pending(
-            cache_key,
-            payload_hash=payload_hash,
-            expire_seconds=expire_seconds,
+        # Serialize completed-record recovery as well as reservation so
+        # concurrent same-key retries cannot both append a failed sent copy.
+        # A slow IMAP retry must not hold the runtime-wide admission lock.
+        with self._idempotency_lock(
+            self._idempotency_cache_dir(smtp_policy), cache_key
         ):
-            return None
-
-        record = store.get(cache_key)
-        if record is None:
+            store = self._idempotency_store(smtp_policy)
+            expire_seconds = self._idempotency_expire_seconds(smtp_policy)
             if store.add_pending(
                 cache_key,
                 payload_hash=payload_hash,
                 expire_seconds=expire_seconds,
             ):
                 return None
+
             record = store.get(cache_key)
-        if record is None:
-            raise PluginValidationError(
-                "smtp", "send_email idempotency cache reservation failed"
-            )
-        if record.payload_hash != payload_hash:
-            raise PluginValidationError(
-                "smtp",
-                "send_email idempotency_key was reused with a different payload",
-                code="conflict",
-                domain_code="idempotency_payload_conflict",
-            )
-        if record.result is None:
-            raise PluginValidationError(
-                "smtp",
-                "send_email idempotency_key is already in progress",
-                code="conflict",
-                domain_code="idempotency_in_progress",
-            )
-        if self._sent_copy_needs_idempotent_retry(record.result):
-            replayed_result = self._retry_sent_copy_from_idempotency(
-                account=account,
-                smtp_config=smtp_config,
-                smtp_policy=smtp_policy,
-                result=record.result,
-            )
-            self._store_submitted_result(
-                smtp_policy,
-                cache_key=cache_key,
-                payload_hash=payload_hash,
-                result=SMTPIdempotencyResult(
-                    message_id=replayed_result.message_id,
-                    recipient_count=replayed_result.recipient_count,
-                    sent_copy=replayed_result.sent_copy,
-                    sent_copy_message_bytes=self._sent_copy_retry_message_bytes(
-                        replayed_result.sent_copy or {},
-                        record.result.sent_copy_message_bytes or b"",
+            if record is None:
+                if store.add_pending(
+                    cache_key,
+                    payload_hash=payload_hash,
+                    expire_seconds=expire_seconds,
+                ):
+                    return None
+                record = store.get(cache_key)
+            if record is None:
+                raise PluginValidationError(
+                    "smtp", "send_email idempotency cache reservation failed"
+                )
+            if record.payload_hash != payload_hash:
+                raise PluginValidationError(
+                    "smtp",
+                    "send_email idempotency_key was reused with a different payload",
+                    code="conflict",
+                    domain_code="idempotency_payload_conflict",
+                )
+            if record.result is None:
+                raise PluginValidationError(
+                    "smtp",
+                    "send_email idempotency_key is already in progress",
+                    code="conflict",
+                    domain_code="idempotency_in_progress",
+                )
+            if self._sent_copy_needs_idempotent_retry(record.result):
+                replayed_result = self._retry_sent_copy_from_idempotency(
+                    account=account,
+                    smtp_config=smtp_config,
+                    smtp_policy=smtp_policy,
+                    result=record.result,
+                )
+                self._store_submitted_result(
+                    smtp_policy,
+                    cache_key=cache_key,
+                    payload_hash=payload_hash,
+                    result=SMTPIdempotencyResult(
+                        message_id=replayed_result.message_id,
+                        recipient_count=replayed_result.recipient_count,
+                        sent_copy=replayed_result.sent_copy,
+                        sent_copy_message_bytes=self._sent_copy_retry_message_bytes(
+                            replayed_result.sent_copy or {},
+                            record.result.sent_copy_message_bytes or b"",
+                        ),
                     ),
-                ),
+                )
+                self._raise_if_submitted_sent_copy_required(
+                    replayed_result, smtp_policy, idempotency_ready=True
+                )
+                return replayed_result
+            replayed_result = SendEmailResult(
+                tool="send_email",
+                message_id=record.result.message_id,
+                recipient_count=record.result.recipient_count,
+                sent_copy=record.result.sent_copy,
+                idempotency_replayed=True,
             )
             self._raise_if_submitted_sent_copy_required(
                 replayed_result, smtp_policy, idempotency_ready=True
             )
             return replayed_result
-        replayed_result = SendEmailResult(
-            tool="send_email",
-            message_id=record.result.message_id,
-            recipient_count=record.result.recipient_count,
-            sent_copy=record.result.sent_copy,
-            idempotency_replayed=True,
-        )
-        self._raise_if_submitted_sent_copy_required(
-            replayed_result, smtp_policy, idempotency_ready=True
-        )
-        return replayed_result
 
     def _store_submitted_result(
         self,
@@ -1116,11 +1145,12 @@ class SMTPRuntime(_SMTPRuntimePolicyMixin):
         smtp_policy: SMTPServicePolicyConfig,
     ) -> SMTPIdempotencyStore:
         cache_dir = self._idempotency_cache_dir(smtp_policy)
-        store = self._idempotency_stores.get(cache_dir)
-        if store is None:
-            store = self._idempotency_store_factory(cache_dir)
-            self._idempotency_stores[cache_dir] = store
-        return store
+        with self._state_lock:
+            store = self._idempotency_stores.get(cache_dir)
+            if store is None:
+                store = self._idempotency_store_factory(cache_dir)
+                self._idempotency_stores[cache_dir] = store
+            return store
 
     def _test_idempotency_storage(
         self,
