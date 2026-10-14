@@ -6,6 +6,13 @@ Prepare and test the deployment directory as an unprivileged operator. This
 phase writes files, config, and env locally; it can start the staged container
 for smoke testing, but it does not install anything under `/opt`.
 
+Keep the host published address at `127.0.0.1`. The server binds to all
+interfaces inside the container and warns about that bind; this is separate
+from host port publishing. Check the generated Compose port mapping and trust
+all peers that can reach the container network. Changing the public URL does
+not restrict network access. Caller authentication is absent, so remote/shared
+deployments are unsupported. See the [security model](../security).
+
 ## Install Reploy
 
 Reploy is the deployment tool used by this flow. It creates the staging

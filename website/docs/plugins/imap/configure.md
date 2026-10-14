@@ -12,6 +12,23 @@ Bootstrap an account and starter policy:
 arbiter-server bootstrap --plugin imap --account bot
 ```
 
+The generated `default-open` policy lets agents read and search **every current
+and future folder**. This is convenient for initial use, but a prompt-injected
+caller can read any mail that policy permits. Activation prints a warning about
+this bootstrap default; it does not audit your selected policy or ask for a
+confirmation. Narrow `folder_access.rules` after trying the account.
+
+For explicit opt-in folder access, generate a separate default-closed policy:
+
+```bash
+arbiter-server bootstrap --plugin imap --policy restricted --variant default-closed
+```
+
+Set the account's `policy: restricted`, then add allow rules to that policy for
+the folders agents should see. Folder metadata in the account file alone does
+not narrow access. Both variants retain the same operation defaults; folder
+access and permission to perform an operation are separate decisions.
+
 The account file contains deployment-owned connection settings and credentials:
 
 ```yaml title="arbiter/account/imap/bot.yaml"
