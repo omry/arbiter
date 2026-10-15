@@ -146,13 +146,17 @@ ceiling in `error.details.max_request_body_bytes`.
 Artifact downloads are responses and are not restricted by this request-body
 ceiling.
 
-`max_blocking_workers` bounds synchronous operations and artifact I/O in one
+`max_blocking_workers` bounds admitted operation requests and artifact I/O in one
 native server, shared across plugins. It defaults to eight and must be a positive
-integer. Plugin invocation, artifact materialization and operation-response
-encoding run off the HTTP event loop, keeping health and discovery responsive.
+integer. An operation reserves capacity before reading its first body byte and
+keeps it through JSON parsing, plugin invocation, artifact materialization and
+operation-response encoding. Parsing and synchronous work run off the HTTP event
+loop, keeping health and discovery responsive.
 When capacity is full, Arbiter returns HTTP `503` with `resource_exhausted`,
-`transient: yes` and `replay: safe`; retry later. Excess work is not placed in an
-unbounded waiting queue.
+`transient: yes` and `replay: safe` before reading the operation body or doing
+artifact storage work; retry later. Excess requests are not placed in an
+unbounded waiting queue. The per-request body ceiling still applies to every
+admitted operation, even for chunked or understated-length bodies.
 
 Artifact metadata and HEAD storage work use the same pool. A content GET holds
 one slot through lookup, its one-time claim, file reads, network backpressure,
@@ -164,7 +168,7 @@ Cancelling or disconnecting an HTTP request does not stop an already-running
 plugin operation or undo its effects. Its capacity stays occupied until the
 underlying work finishes. Use an operation's retry guidance and idempotency
 support before retrying a request whose outcome is unknown.
-Streaming disconnects stop pending transport waits.
+Body-reader cancellation and streaming disconnects stop pending transport waits.
 A blocking file read/lock wait still owns its slot until it finishes and any
 open file is closed. Disconnecting after a content GET claims an artifact does
 not restore its one-time capability.
