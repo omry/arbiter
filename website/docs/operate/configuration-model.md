@@ -146,22 +146,37 @@ ceiling in `error.details.max_request_body_bytes`.
 Artifact downloads are responses and are not restricted by this request-body
 ceiling.
 
-`max_blocking_workers` bounds concurrent blocking operation execution across all
-plugins in one native server. It defaults to eight and must be a positive
+`max_blocking_workers` bounds synchronous operations and artifact I/O in one
+native server, shared across plugins. It defaults to eight and must be a positive
 integer. Plugin invocation, artifact materialization and operation-response
 encoding run off the HTTP event loop, keeping health and discovery responsive.
 When capacity is full, Arbiter returns HTTP `503` with `resource_exhausted`,
-`transient: yes` and `replay: safe` before invoking the operation; retry later.
-Excess operations are not placed in an unbounded waiting queue.
+`transient: yes` and `replay: safe`; retry later. Excess work is not placed in an
+unbounded waiting queue.
+
+Artifact metadata and HEAD storage work use the same pool. A content GET holds
+one slot through lookup, its one-time claim, file reads, network backpressure,
+and file closure. Slow downloads therefore share capacity with operations.
+Chunks are read off the event loop, one at a time, without buffering the whole
+artifact. HEAD and metadata inspection do not consume the artifact.
 
 Cancelling or disconnecting an HTTP request does not stop an already-running
 plugin operation or undo its effects. Its capacity stays occupied until the
 underlying work finishes. Use an operation's retry guidance and idempotency
 support before retrying a request whose outcome is unknown.
+Streaming disconnects stop pending transport waits.
+A blocking file read/lock wait still owns its slot until it finishes and any
+open file is closed. Disconnecting after a content GET claims an artifact does
+not restore its one-time capability.
 Server shutdown stops admission and cancels work that has not started. Running
 operations can continue while the process is alive; Arbiter's daemon workers do
 not prevent process exit. Exiting may interrupt an unfinished operation, so its
 external outcome can remain unknown.
+
+This is application admission, not a global connection or process-memory cap.
+Idle connections, keepalive and transport buffers require separate deployment
+limits. The standard launcher does not impose a new global connection ceiling;
+such a ceiling would also affect health and discovery traffic.
 
 `max_artifact_bytes` limits creation of each stored artifact to 50 MiB
 (52,428,800 bytes) by default, regardless of which plugin produces it. It must

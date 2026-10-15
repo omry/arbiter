@@ -17,6 +17,7 @@ import time
 from collections.abc import (
     AsyncGenerator,
     Callable,
+    Generator,
     Iterable,
     Iterator,
     Mapping,
@@ -44,6 +45,7 @@ from .artifacts import (
 )
 from .cli_errors import print_cli_error
 from .blocking import BlockingOperationPool, validate_worker_limit
+from .http_work import BlockingStreamingResponse, HTTPWork
 from .config import (
     AppConfig,
     DeploymentScope,
@@ -2249,17 +2251,18 @@ def _create_native_http_app(
 ) -> object:
     from starlette.applications import Starlette
     from starlette.requests import Request
-    from starlette.responses import Response, StreamingResponse
+    from starlette.responses import Response
     from starlette.routing import Route
 
     operation_pool = BlockingOperationPool(max_blocking_workers)
+    http_work = HTTPWork(operation_pool)
 
     @asynccontextmanager
     async def lifespan(_app: object) -> AsyncGenerator[None, None]:
         try:
             yield
         finally:
-            operation_pool.close()
+            http_work.close()
 
     async def health(_request: Request) -> object:
         return _native_response({"status": "ok"})
@@ -2419,14 +2422,18 @@ def _create_native_http_app(
                 message="Artifact was not found.",
             )
         try:
-            artifact = artifact_store.inspect(artifact_id, nonce)
-            return _native_response(
-                _native_artifact_metadata(
-                    artifact_id=artifact_id,
-                    artifact=artifact,
-                    nonce=nonce,
+
+            def inspect_metadata() -> object:
+                artifact = artifact_store.inspect(artifact_id, nonce)
+                return _native_response(
+                    _native_artifact_metadata(
+                        artifact_id=artifact_id,
+                        artifact=artifact,
+                        nonce=nonce,
+                    )
                 )
-            )
+
+            return await operation_pool.run(inspect_metadata)
         except Exception as exc:
             return _native_exception_response(exc)
 
@@ -2439,32 +2446,14 @@ def _create_native_http_app(
                 code="artifact_not_found",
                 message="Artifact was not found.",
             )
-        try:
-            if request.method == "HEAD":
-                artifact = artifact_store.inspect(artifact_id, nonce)
-                response = Response(status_code=200, media_type=artifact.content_type)
-                response.headers["Content-Length"] = str(artifact.size)
-                response.headers["Cache-Control"] = "no-store"
-                response.headers["X-Content-Type-Options"] = "nosniff"
-                response.headers["Digest"] = f"sha-256={artifact.sha256}"
-                response.headers["X-Arbiter-Artifact-SHA256"] = artifact.sha256
-                return response
-            artifact = artifact_store.open_once(artifact_id, nonce)
 
-            async def content_chunks() -> AsyncGenerator[bytes, None]:
-                with artifact.path.open("rb") as handle:
-                    while chunk := handle.read(64 * 1024):
-                        yield chunk
-
-            response = StreamingResponse(
-                content_chunks(),
-                media_type=artifact.content_type,
-            )
-            if artifact.filename is not None:
+        def content_response(artifact: Any, *, attachment: bool) -> Response:
+            response = Response(status_code=200, media_type=artifact.content_type)
+            if attachment and artifact.filename is not None:
                 response.headers["Content-Disposition"] = (
                     _attachment_content_disposition(artifact.filename)
                 )
-            else:
+            elif attachment:
                 response.headers["Content-Disposition"] = "attachment"
             response.headers["Content-Length"] = str(artifact.size)
             response.headers["Cache-Control"] = "no-store"
@@ -2472,6 +2461,29 @@ def _create_native_http_app(
             response.headers["Digest"] = f"sha-256={artifact.sha256}"
             response.headers["X-Arbiter-Artifact-SHA256"] = artifact.sha256
             return response
+
+        def prepare_content() -> tuple[Response, Generator[bytes, None, None]]:
+            artifact = artifact_store.open_once(artifact_id, nonce)
+
+            def content_chunks() -> Generator[bytes, None, None]:
+                with artifact.path.open("rb") as handle:
+                    while chunk := handle.read(64 * 1024):
+                        yield chunk
+
+            return content_response(artifact, attachment=True), content_chunks()
+
+        try:
+            if request.method == "HEAD":
+                return await operation_pool.run(
+                    lambda: content_response(
+                        artifact_store.inspect(artifact_id, nonce), attachment=False
+                    )
+                )
+            return BlockingStreamingResponse(
+                http_work,
+                prepare_content,
+                lambda exc: cast(Response, _native_exception_response(exc)),
+            )
         except Exception as exc:
             return _native_exception_response(exc)
 

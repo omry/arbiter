@@ -222,6 +222,8 @@ async def _asgi_request(
     body_chunks: Sequence[bytes] | None = None,
     extra_headers: Sequence[tuple[bytes, bytes]] = (),
     on_receive: Callable[[], None] | None = None,
+    on_send: Callable[[ASGIMessage], Awaitable[None]] | None = None,
+    disconnect: asyncio.Event | None = None,
 ) -> ASGIResponse:
     parsed = urlparse(target)
     body = b""
@@ -233,12 +235,14 @@ async def _asgi_request(
     chunks = list(body_chunks) if body_chunks is not None else [body]
     messages: list[ASGIMessage] = []
     received = 0
+    response_finished = asyncio.Event()
 
     async def receive() -> ASGIMessage:
         nonlocal received
         if on_receive is not None:
             on_receive()
         if received >= len(chunks):
+            await (disconnect or response_finished).wait()
             return {"type": "http.disconnect"}
         chunk = chunks[received]
         received += 1
@@ -249,7 +253,11 @@ async def _asgi_request(
         }
 
     async def send(message: ASGIMessage) -> None:
+        if on_send is not None:
+            await on_send(message)
         messages.append(message)
+        if message["type"] == "http.response.body" and not message.get("more_body"):
+            response_finished.set()
 
     await app(
         {
