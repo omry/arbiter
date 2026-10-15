@@ -32,7 +32,7 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from hydra import compose, initialize_config_dir
 from hydra.errors import CompactHydraException
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, ListConfig, OmegaConf
 from omegaconf.errors import InterpolationResolutionError
 
 from .app import ArbiterApp
@@ -49,7 +49,10 @@ from .config import (
     DeploymentScope,
     ServerTlsSource,
     StorageConfig,
+    config_for_display,
     configured_service_names,
+    display_config_select,
+    display_config_yaml,
     register_configs,
     service_accounts_for,
     service_policies_for,
@@ -3181,22 +3184,28 @@ def _run_config_show(
             config_name=config_name,
             overrides=overrides,
         )
-        output: object = cfg
-        if package is not None:
-            missing = object()
-            output = OmegaConf.select(cast(Any, cfg), package, default=missing)
-            if output is missing:
-                raise ValueError(f"config package not found: {package}")
-        if value:
-            if package is None:
-                raise ValueError("config show --value requires --package")
-            if OmegaConf.is_config(output):
-                raise ValueError("config show --value requires a scalar package")
-            print(output)
-        elif OmegaConf.is_config(output):
-            print(OmegaConf.to_yaml(output, resolve=resolve), end="")
-        else:
-            print(output)
+        with config_for_display(cfg) as display:
+            output: object = display
+            if package is not None:
+                missing = object()
+                output = display_config_select(display, package, missing)
+                if output is missing:
+                    raise ValueError(f"config package not found: {package}")
+            if value:
+                if package is None:
+                    raise ValueError("config show --value requires --package")
+                if OmegaConf.is_config(output):
+                    raise ValueError("config show --value requires a scalar package")
+                print(output)
+            elif OmegaConf.is_config(output):
+                print(
+                    display_config_yaml(
+                        cast(DictConfig | ListConfig, output), resolve=resolve
+                    ),
+                    end="",
+                )
+            else:
+                print(output)
     except (CompactHydraException, ValueError) as exc:
         print_cli_error(str(exc), area="config")
         return 1
