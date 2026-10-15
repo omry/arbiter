@@ -53,6 +53,25 @@ workspace files, shell startup files, local credential stores, unrestricted API
 tokens, or helper tools. If an agent can use the protected service directly,
 Arbiter is no longer the enforcement point.
 
+## Artifact URLs and logs
+
+Artifact URLs contain a bearer nonce in their query string. Anyone who obtains
+an unconsumed URL can retrieve that artifact. Metadata and HEAD requests do not
+consume the nonce, so a URL copied into logs can remain usable.
+
+The standard Arbiter server launcher removes the entire query string from
+artifact access-log records before handlers or formatters receive them. This
+covers metadata, content, HEAD, and failed requests, while retaining the method,
+path and status. Requests still carry their nonce for authentication, and
+one-time download behavior is unchanged.
+
+Configure equivalent query redaction before emission in reverse proxies,
+external ASGI hosts, tracing and other request logging. Arbiter cannot sanitize
+records already written by another process. For example, an Nginx access format
+can log `$request_method $uri $server_protocol` and `$status`; `$request` and
+`$request_uri` include the query string. Check error/debug logging too, and do
+not copy complete artifact URLs into diagnostics or shared logs.
+
 ## Bypass paths
 
 Arbiter is not a general sandbox. It gates service access only when the

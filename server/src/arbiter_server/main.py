@@ -28,7 +28,7 @@ from ipaddress import ip_address
 from pathlib import Path, PurePath
 from tempfile import mkstemp
 from typing import Any, Literal, cast
-from urllib.parse import parse_qs, quote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from hydra import compose, initialize_config_dir
 from hydra.errors import CompactHydraException
@@ -97,6 +97,7 @@ CONFIG_FILE_MODE = 0o640
 ENV_FILE_MODE = 0o600
 API_ROUTE_PREFIX = "/api/v1"
 ARTIFACT_ROUTE_PREFIX = f"{API_ROUTE_PREFIX}/artifacts"
+_ARTIFACT_ACCESS_PATH = re.compile(re.escape(ARTIFACT_ROUTE_PREFIX) + r"(?:/|$)")
 HEALTH_ROUTE = "/_health_"
 INLINE_ARTIFACT_MAX_BYTES = 5 * 1024
 BUILD_TIME_ENV_VAR = "ARBITER_BUILD_TIME"
@@ -2591,11 +2592,28 @@ def build_server(
     )
 
 
+class _ArtifactAccessLogFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Uvicorn supplies client, method, target, HTTP version and status.
+        # Sanitize the record before any handler or formatter can emit it;
+        # the request scope retains its query for artifact authentication.
+        args = record.args
+        if isinstance(args, tuple) and len(args) == 5 and isinstance(args[2], str):
+            path, separator, _query = args[2].partition("?")
+            # Routers decode percent escapes, while access logs may use raw_path.
+            if separator and _ARTIFACT_ACCESS_PATH.search(unquote(path)):
+                record.args = (*args[:2], path, *args[3:])
+        return True
+
+
 def _run_server(server: NativeHTTPServer, transport: TransportMode) -> None:
     if transport != "https":
         raise ValueError(f"unsupported Arbiter HTTPS transport: {transport}")
     import uvicorn
 
+    access_logger = logging.getLogger("uvicorn.access")
+    if not any(isinstance(f, _ArtifactAccessLogFilter) for f in access_logger.filters):
+        access_logger.addFilter(_ArtifactAccessLogFilter())
     uvicorn.run(
         cast(Any, server.app),
         host=server.host,
