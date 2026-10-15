@@ -224,6 +224,7 @@ async def _asgi_request(
     on_receive: Callable[[], None] | None = None,
     on_send: Callable[[ASGIMessage], Awaitable[None]] | None = None,
     disconnect: asyncio.Event | None = None,
+    before_receive: Callable[[], Awaitable[None]] | None = None,
 ) -> ASGIResponse:
     parsed = urlparse(target)
     body = b""
@@ -239,6 +240,8 @@ async def _asgi_request(
 
     async def receive() -> ASGIMessage:
         nonlocal received
+        if before_receive is not None:
+            await before_receive()
         if on_receive is not None:
             on_receive()
         if received >= len(chunks):
