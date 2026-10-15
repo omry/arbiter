@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from collections.abc import Collection
+from collections.abc import Callable
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from importlib.metadata import entry_points
@@ -9,8 +14,12 @@ import logging
 from pathlib import Path
 from typing import Any, cast
 
+import yaml
 from hydra.core.config_store import ConfigStore
-from omegaconf import II, OmegaConf
+from omegaconf import DictConfig, II, ListConfig, OmegaConf
+from omegaconf.basecontainer import BaseContainer
+from omegaconf.errors import InterpolationResolutionError
+from omegaconf._utils import get_omega_conf_dumper
 
 from .services import SERVICE_PLUGIN_ENTRY_POINT_GROUP, ServicePluginFactory
 from .services import validate_service_plugin_compatibility
@@ -161,6 +170,22 @@ def service_policies_for(
 _CONFIG_SCHEMA_NAMES = ("arbiter_app_config_schema",)
 _CONFIG_REGISTERED = False
 _RESOLVERS_REGISTERED = False
+_DISPLAY_REDACTION = ContextVar("arbiter_config_display_redaction", default=False)
+_DISPLAY_REDACTION_MARKER = "<REDACTED>"
+
+
+class _DisplayInterpolationResolutionError(InterpolationResolutionError):
+    """Marks a resolver result that must redact its enclosing expression."""
+
+
+class _DisplayResolver:
+    def __init__(self, resolver: Callable[..., Any]) -> None:
+        self._resolver = resolver
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        if _DISPLAY_REDACTION.get():
+            raise _DisplayInterpolationResolutionError()
+        return self._resolver(*args, **kwargs)
 
 
 def _read_secret_file(path: str) -> str:
@@ -182,6 +207,103 @@ def _register_resolvers() -> None:
             use_cache=False,
         )
     _RESOLVERS_REGISTERED = True
+
+
+@contextmanager
+def config_for_display(cfg: DictConfig) -> Iterator[DictConfig]:
+    _register_resolvers()
+    # Wrap after composition, including resolvers registered by active plugins.
+    # Keep OmegaConf's callbacks intact for their cache keys/context arguments;
+    # other runtime contexts still delegate to the original implementation.
+    for name in ("oc.env", "secret_file"):
+        resolver = OmegaConf._get_resolver(name)
+        if resolver is not None and not isinstance(resolver, _DisplayResolver):
+            BaseContainer._resolvers[name] = _DisplayResolver(resolver)
+    display = deepcopy(cfg)
+    OmegaConf.clear_cache(display)
+    token = _DISPLAY_REDACTION.set(True)
+    try:
+        yield display
+    finally:
+        _DISPLAY_REDACTION.reset(token)
+
+
+def _display_resolved_container(
+    value: DictConfig | ListConfig,
+    *,
+    resolved_node_cache: dict[int, Any],
+) -> Any:
+    if value._is_none():
+        return None
+
+    def get_node_value(key: Any) -> Any:
+        node: Any = value._get_child(key)
+        assert node is not None
+        node_id = id(node)
+        cached = resolved_node_cache.get(node_id)
+        if cached is not None:
+            node = cached
+        else:
+            node = node._maybe_dereference_node(
+                throw_on_resolution_failure=True,
+                resolved_node_cache=resolved_node_cache,
+            )
+            assert node is not None
+            resolved_node_cache[node_id] = node
+
+        if isinstance(node, (DictConfig, ListConfig)):
+            return _display_resolved_container(
+                node, resolved_node_cache=resolved_node_cache
+            )
+        child = node._value()
+        return f"{child.name}" if isinstance(child, Enum) else child
+
+    if isinstance(value, DictConfig):
+        result: dict[Any, Any] = {}
+        for key in value.keys():
+            output_key = f"{key.name}" if isinstance(key, Enum) else key
+            try:
+                if OmegaConf.is_missing(value, key):
+                    result[output_key] = "???"
+                else:
+                    result[output_key] = get_node_value(key)
+            except _DisplayInterpolationResolutionError:
+                result[output_key] = _DISPLAY_REDACTION_MARKER
+        return result
+
+    result_list: list[Any] = []
+    for index in range(len(value)):
+        try:
+            if OmegaConf.is_missing(value, index):
+                result_list.append("???")
+            else:
+                result_list.append(get_node_value(index))
+        except _DisplayInterpolationResolutionError:
+            result_list.append(_DISPLAY_REDACTION_MARKER)
+    return result_list
+
+
+def display_config_select(cfg: DictConfig, package: str, default: Any) -> Any:
+    try:
+        return OmegaConf.select(cfg, package, default=default)
+    except _DisplayInterpolationResolutionError:
+        return _DISPLAY_REDACTION_MARKER
+
+
+def display_config_yaml(cfg: DictConfig | ListConfig, *, resolve: bool) -> str:
+    if not resolve:
+        return OmegaConf.to_yaml(cfg, resolve=False)
+    content = _display_resolved_container(cfg, resolved_node_cache={})
+    return cast(
+        str,
+        yaml.dump(
+            content,
+            default_flow_style=False,
+            allow_unicode=True,
+            sort_keys=False,
+            Dumper=get_omega_conf_dumper(),
+        ),
+    )
 
 
 def _register_server_configs(config_store: ConfigStore) -> None:

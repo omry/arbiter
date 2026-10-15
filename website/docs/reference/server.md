@@ -51,20 +51,29 @@ arbiter-server config deactivate --plugins <plugin[,plugin...]> --account <name>
 ```
 
 - `config show`: print the composed config.
-- `config show --resolve`: resolve OmegaConf interpolations before printing.
+- `config show --resolve`: resolve OmegaConf interpolations before printing,
+  masking `oc.env` and `secret_file` results as `<REDACTED>`.
 - `config show --package PATH`: print only one config subtree or scalar.
 - `config show --package PATH --value`: print the selected scalar value without
-  YAML formatting.
+  YAML formatting. Resolver masking applies before selection, including without
+  `--resolve`.
 - `config check`: validate config and service runtime construction without
   serving.
 - `config check --live`: also run configured account readiness checks using the
   current credentials.
+
 - `config activate`: add an account to `plugins.yaml`. The account's
   referenced policy is activated as well. Use comma-separated plugin names to
   activate the same account name for several plugins in one command, for
   example `config activate --plugins imap,smtp --account bot`.
 - `config deactivate`: remove an account from `plugins.yaml`.
   The policy is removed only when no other active account still references it.
+
+All environment-derived display values are masked, including hosts and ports;
+runtime commands and `config check` still use their real values. The default
+unresolved YAML display retains interpolation references. Literal secrets
+written directly in YAML can still appear in output, so treat `config show`
+as an operator-only command and do not publish its output without review.
 
 ## bootstrap
 

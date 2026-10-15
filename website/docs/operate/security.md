@@ -72,6 +72,19 @@ can log `$request_method $uri $server_protocol` and `$status`; `$request` and
 `$request_uri` include the query string. Check error/debug logging too, and do
 not copy complete artifact URLs into diagnostics or shared logs.
 
+## Configuration output
+
+`config show --resolve` masks `oc.env` and `secret_file` results as
+`<REDACTED>`. Scalar selections, including `--package PATH --value`, are masked
+before resolution even when `--resolve` is omitted. This applies to all
+environment-derived values, including hosts and ports. Normal runtime commands
+and readiness checks still resolve the actual values.
+
+Without `--resolve`, YAML output retains unresolved interpolation references.
+Secrets written literally in YAML can still be printed: resolver masking is
+not a general secret detector. Keep config output operator-only and review it
+before sharing.
+
 ## Bypass paths
 
 Arbiter is not a general sandbox. It gates service access only when the
