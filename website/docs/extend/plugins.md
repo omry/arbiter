@@ -273,6 +273,9 @@ Return small structured results with the information the caller needs. Keep
 service clients, connection pools, and temporary state inside the runtime.
 
 Native HTTP invocation runs synchronous operations in a bounded worker pool.
+Admission happens before operation-body reads; body parsing and invocation share
+capacity with artifact storage and streaming. Slow clients can occupy this
+capacity, while health and discovery remain outside the pool.
 Several calls can use the same plugin and runtime concurrently. Protect shared
 mutable state and atomic policy admission, and use service clients that support
 concurrent calls or create a client per operation. Request cancellation does not
