@@ -45,7 +45,7 @@ from .artifacts import (
 )
 from .cli_errors import print_cli_error
 from .blocking import BlockingOperationPool, validate_worker_limit
-from .http_work import BlockingStreamingResponse, HTTPWork
+from .http_work import BlockingStreamingResponse, HTTPWork, LoopBridge
 from .config import (
     AppConfig,
     DeploymentScope,
@@ -2171,11 +2171,7 @@ class _RequestBodyTooLarge(ValueError):
     pass
 
 
-async def _read_operation_arguments(
-    request: object, *, max_body_bytes: int
-) -> Mapping[str, Any]:
-    from json import JSONDecodeError
-
+def _check_operation_content_length(request: object, *, max_body_bytes: int) -> None:
     http_request = cast(Any, request)
     content_length = http_request.headers.get("content-length")
     if content_length is not None:
@@ -2188,11 +2184,20 @@ async def _read_operation_arguments(
         if (len(declared), declared) > (len(maximum), maximum):
             raise _RequestBodyTooLarge
 
+
+async def _read_operation_body(request: object, *, max_body_bytes: int) -> bytearray:
+    http_request = cast(Any, request)
     body = bytearray()
     async for chunk in http_request.stream():
         if len(body) + len(chunk) > max_body_bytes:
             raise _RequestBodyTooLarge
         body.extend(chunk)
+    return body
+
+
+def _parse_operation_arguments(body: bytearray) -> Mapping[str, Any]:
+    from json import JSONDecodeError
+
     try:
         payload = json.loads(body)
     except JSONDecodeError as exc:
@@ -2250,7 +2255,7 @@ def _create_native_http_app(
     max_blocking_workers: int,
 ) -> object:
     from starlette.applications import Starlette
-    from starlette.requests import Request
+    from starlette.requests import ClientDisconnect, Request
     from starlette.responses import Response
     from starlette.routing import Route
 
@@ -2383,7 +2388,7 @@ def _create_native_http_app(
     async def invoke_operation(request: Request) -> object:
         operation_id_value = request.path_params["operation_id"]
         try:
-            args = await _read_operation_arguments(
+            _check_operation_content_length(
                 request, max_body_bytes=max_request_body_bytes
             )
         except _RequestBodyTooLarge:
@@ -2395,20 +2400,38 @@ def _create_native_http_app(
             )
         except Exception as exc:
             return _native_exception_response(exc)
+
+        def invoke_and_prepare_response(bridge: LoopBridge) -> object:
+            try:
+                body = bridge.call(
+                    _read_operation_body(request, max_body_bytes=max_request_body_bytes)
+                )
+                args = _parse_operation_arguments(body)
+            except ClientDisconnect:
+                return _native_error_response(
+                    status_code=400,
+                    code="validation_error",
+                    message="Client disconnected before completing the request body.",
+                )
+            except _RequestBodyTooLarge:
+                return _native_error_response(
+                    status_code=413,
+                    code="validation_error",
+                    message="Operation request body exceeds the configured size limit.",
+                    details={"max_request_body_bytes": max_request_body_bytes},
+                )
+            except Exception as exc:
+                return _native_exception_response(exc)
+            try:
+                result = catalog.invoke_operation(operation_id_value, args)
+                return _native_response(
+                    _operation_response_payload(result, artifact_store=artifact_store)
+                )
+            except Exception as exc:
+                return _native_exception_response(exc, validation_status_code=422)
+
         try:
-
-            def invoke_and_prepare_response() -> object:
-                try:
-                    result = catalog.invoke_operation(operation_id_value, args)
-                    return _native_response(
-                        _operation_response_payload(
-                            result, artifact_store=artifact_store
-                        )
-                    )
-                except Exception as exc:
-                    return _native_exception_response(exc, validation_status_code=422)
-
-            return await operation_pool.run(invoke_and_prepare_response)
+            return await http_work.run(invoke_and_prepare_response)
         except Exception as exc:
             return _native_exception_response(exc, validation_status_code=422)
 

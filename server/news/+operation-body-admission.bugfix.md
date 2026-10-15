@@ -1,0 +1,6 @@
+Admit operation requests before reading their bodies, and parse JSON on the
+admitted worker. The existing eight-worker default, request-body ceiling, and
+retryable capacity error remain; cancellation and disconnects recover capacity
+after underlying work and cleanup finish.
+Keep invalid or oversized declared-length rejection ahead of worker admission,
+so overloaded servers still return the existing HTTP 400/413 header errors.
