@@ -326,6 +326,7 @@ class IMAPClient:
                 ssl_context=ssl_context,
                 timeout=self._config.timeout_seconds,
                 max_literal_bytes=self._config.limits.max_message_bytes,
+                max_response_bytes=self._config.limits.upstream_server.max_response_bytes,
             )
         else:
             imap_client = BoundedIMAP4(
@@ -333,6 +334,7 @@ class IMAPClient:
                 self._config.port,
                 timeout=self._config.timeout_seconds,
                 max_literal_bytes=self._config.limits.max_message_bytes,
+                max_response_bytes=self._config.limits.upstream_server.max_response_bytes,
             )
             if self._config.tls == MailTlsMode.starttls:
                 imap_client.starttls(ssl_context=ssl_context)
@@ -622,33 +624,29 @@ class IMAPClient:
                     exc.replay = "safe"
                 raise
         self._expect_ok(status, data, "fetch message body")
-        for index, item in enumerate(data):
-            if (
-                isinstance(item, tuple)
-                and len(item) >= 2
-                and isinstance(item[1], bytes)
-            ):
-                raw = self._raw_fetch_item(item)
-                if raw is None:
-                    continue
-                # imaplib splits literal data from trailing FETCH attributes.
-                # UID may precede or follow BODY; never borrow it from the
-                # next response, and never search the actual email content.
-                for trailing in data[index + 1 :]:
-                    trailer = self._raw_fetch_item(trailing)
-                    if trailer is None or re.match(rb"^[0-9]+ \(", trailer):
-                        break
-                    raw += b" " + trailer
-                    if trailer.rstrip().endswith(b")"):
-                        break
-                if [
-                    str(value) for value in self._fetch_numeric_attributes(raw, b"UID")
-                ] != [wanted_uid]:
-                    continue
-                # RFC822.SIZE may be an estimate; enforce the returned octets.
-                check_message_size(len(item[1]), maximum)
-                return item[1]
-        raise IMAPOperationError(f"IMAP fetch for UID {uid} did not return RFC822 data")
+        try:
+            attributes = fetch_attributes(
+                data, uid, required_attribute=(b"BODY[]", b"BODY[]<0>")
+            )
+            bodies = [
+                attributes[name]
+                for name in (b"BODY[]", b"BODY[]<0>")
+                if name in attributes
+            ]
+            if len(bodies) != 1 or not isinstance(bodies[0], bytes):
+                raise ValueError("Missing or ambiguous full-message body")
+        except (ValueError, TypeError, OverflowError) as exc:
+            try:
+                server.shutdown()
+            except Exception:
+                pass
+            raise IMAPOperationError(
+                f"IMAP fetch for UID {uid} did not return RFC822 data unambiguously"
+            ) from exc
+        # RFC822.SIZE may be an estimate; enforce the returned octets.
+        body = bodies[0]
+        check_message_size(len(body), maximum)
+        return body
 
     def _copy_then_delete(
         self,

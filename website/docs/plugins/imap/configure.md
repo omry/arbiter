@@ -46,7 +46,7 @@ Generated config uses environment variables for deployment-specific connection
 details. It is still your config: edit the YAML directly when a fixed value is
 clearer for your deployment.
 
-## Message size limit
+## Message and upstream-server limits
 
 Set the maximum whole-message size in the IMAP account file:
 
@@ -54,6 +54,8 @@ Set the maximum whole-message size in the IMAP account file:
 limits:
   max_message_bytes: 52428800
   max_preview_bytes: 16384
+  upstream_server:
+    max_response_bytes: 67108864
 ```
 
 The full-message default is 50 MiB, including encoded attachments.
@@ -63,6 +65,21 @@ not fetch. Both values must be positive integers; zero does not disable a cap.
 These IMAP-owned limits do not override the core server's artifact size or
 storage limits. Oversized messages remain visible in list/search; their full
 content can be read only within `max_message_bytes`.
+
+`limits.upstream_server.max_response_bytes` defaults to 64 MiB (67,108,864
+bytes). Arbiter enforces this separate safety cap on each complete IMAP
+command response, including unsolicited replies, literals, and protocol
+framing. Responses still cached by the connection count against the next
+command's available budget. The initial greeting is bounded too. This is an
+operator-owned limit on data accepted from the server, not a server-advertised
+quota. It must be a positive integer.
+
+If the cap is exceeded, Arbiter closes the connection and reports IMAP
+`response_too_large` with generic `upstream_protocol_error`. Raise this limit
+only when the upstream response volume is expected. A larger message limit
+does not automatically raise the upstream-server limit; leave room for framing
+and unsolicited data when configuring both. Metadata also retains its existing
+internal 50 MiB safety budget.
 
 ## Folders
 
