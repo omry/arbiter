@@ -1,5 +1,13 @@
 # Arbiter Info Surface
 
+Status note (2026-10-16): this working design combines implemented discovery
+with proposed diagnostics. Use the [client reference](../website/docs/reference/client.md)
+for current commands and the [security assessment](prerelease-security-assessment.md)
+for the reviewed public-projection boundary. In particular, account discovery
+does not return the raw redacted connection config shown in this older sketch.
+The gaps below have not all been revalidated; `arbiter config url` already
+reports the effective URL and its source.
+
 This document describes the current Arbiter discovery surface and the gaps that
 matter before release. Here, "complete" means convenient for a user or agent to
 understand what this Arbiter server can do without reading deployment config
