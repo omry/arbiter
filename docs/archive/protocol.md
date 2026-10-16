@@ -1,5 +1,10 @@
 # Arbiter Native HTTP Protocol
 
+> Archived design draft. Use the current [client](../../website/docs/reference/client.md),
+> [server](../../website/docs/reference/server.md) and
+> [error](../../website/docs/reference/errors.md) references for implemented behavior.
+> Proposed upload routes below are not an implemented API.
+
 This document sketches the native Arbiter HTTP protocol that replaces the old
 public transport surface.
 

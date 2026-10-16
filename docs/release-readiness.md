@@ -3,6 +3,12 @@
 This checklist is for preparing the initial Arbiter release. It is an
 internal working document, not website documentation.
 
+Status note (2026-10-16): this checklist contains historical release evidence
+and has not had a full readiness refresh. Focused security assessments and
+remediation are now recorded in the [security assessment](prerelease-security-assessment.md);
+the older "security analysis has not been completed" blocker below is historical,
+not the current security-review status. Other gates remain unverified here.
+
 Publishing one or more dev wheels is useful validation, but it does not make the
 release ready. Treat every required gate as evidence-based: if the check did not
 run, it is not done.

@@ -1,0 +1,26 @@
+{
+  "command_results": [
+    {
+      "command": "/tmp/arbiter-resource-hotfix-nox/tests/bin/python temp/dbb-r1-merged-actual/probe.py",
+      "exit_code": 0,
+      "wall_time_seconds": 0.238271956,
+      "stdout": "python=3.13.12 checks=14 elapsed=0.001984s\n",
+      "stderr": ""
+    },
+    {
+      "command": "/tmp/arbiter-resource-hotfix-nox/compat-3-10/bin/python temp/dbb-r1-merged-actual/probe.py",
+      "exit_code": 0,
+      "wall_time_seconds": 0.283676126,
+      "stdout": "python=3.10.20 checks=14 elapsed=0.001251s\n",
+      "stderr": ""
+    },
+    {
+      "command": "/tmp/arbiter-resource-hotfix-nox/compat-3-14/bin/python temp/dbb-r1-merged-actual/probe.py",
+      "exit_code": 0,
+      "wall_time_seconds": 0.282049077,
+      "stdout": "python=3.14.2 checks=14 elapsed=0.001808s\n",
+      "stderr": ""
+    }
+  ],
+  "provenance": "Transcribed verbatim from the three captured exec_command results in this DBB assessment turn; the probe was not rerun to create this record."
+}

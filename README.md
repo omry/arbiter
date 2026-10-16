@@ -96,13 +96,15 @@ native `arbiter` executable directly as a wheel script; it does not contain a
 Python wrapper.
 
 The user-facing documentation lives in [website/docs/](website/docs/). The
-root [docs/](docs/) directory is reserved for internal planning and future
-design notes:
+root [docs/](docs/README.md) directory contains internal planning, security
+assessments, active designs and an archive of superseded drafts:
 
 - [docs/BACKLOG.md](docs/BACKLOG.md)
 - [docs/testing_backlog.md](docs/testing_backlog.md)
 - [docs/release-readiness.md](docs/release-readiness.md)
+- [Security assessment](docs/prerelease-security-assessment.md)
 - [docs/future/](docs/future/)
+- [Historical designs](docs/archive/README.md)
 
 ## Local Native HTTP Run
 
