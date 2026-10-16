@@ -53,9 +53,17 @@ class IMAPFolderConfig:
 
 
 @dataclass
+class IMAPUpstreamServerLimitsConfig:
+    max_response_bytes: int = 64 * 1024 * 1024
+
+
+@dataclass
 class IMAPLimitsConfig:
     max_message_bytes: int = 50 * 1024 * 1024
     max_preview_bytes: int = 16 * 1024
+    upstream_server: IMAPUpstreamServerLimitsConfig = field(
+        default_factory=IMAPUpstreamServerLimitsConfig
+    )
 
 
 def validate_imap_limits(limits: IMAPLimitsConfig) -> None:
@@ -63,6 +71,11 @@ def validate_imap_limits(limits: IMAPLimitsConfig) -> None:
         value = getattr(limits, name)
         if type(value) is not int or value < 1:
             raise ValueError(f"IMAP limits.{name} must be a positive integer")
+    value = limits.upstream_server.max_response_bytes
+    if type(value) is not int or value < 1:
+        raise ValueError(
+            "IMAP limits.upstream_server.max_response_bytes must be a positive integer"
+        )
 
 
 @dataclass

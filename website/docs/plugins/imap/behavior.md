@@ -74,6 +74,28 @@ configuration field. If an upstream response exceeds it, the operation returns
 an upstream protocol error while the connection is closed before another
 command is sent.
 
+All IMAP commands, including startup, authentication, folder selection, SEARCH,
+FLAGS and size queries, also have an operator-owned upstream-server response
+budget. `limits.upstream_server.max_response_bytes` defaults to 64 MiB
+(67,108,864 bytes). It counts complete response framing and literals before
+large payload reads. Unsolicited responses retained by imaplib reduce the
+available budget for subsequent commands; issuing another command cannot
+replenish space occupied by those cached responses. An individual framing
+read may consume one additional byte to detect overflow.
+
+Overflow closes the connection before another command can be sent and returns
+generic `upstream_protocol_error` with IMAP `response_too_large`, configured
+`max_response_bytes` in details, `transient: no`, and `replay: unknown`. A command
+that changes the mailbox may already have taken effect before its response
+exceeds the limit; do not automatically replay it. The message and preview
+limits remain independent: full-message and preview FETCHes share their
+respective literal budget across all literals in that FETCH. Multiple matching
+full-body responses are rejected rather than returning an arbitrary body.
+
+These are transport byte budgets, not process-memory limits or a guarantee of
+containment for hostile IMAP servers. Configured IMAP servers remain trusted;
+sender-controlled email content remains untrusted.
+
 List/search results include an `attachments` inventory from MIME metadata. Its
 `size` is the server-reported **transfer-encoded** part size; obtaining the exact
 decoded size requires explicit full-content retrieval. Part ids can be passed

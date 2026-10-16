@@ -401,7 +401,7 @@ def _client(
     return IMAPClient(config)
 
 
-def test_imap_does_not_limit_non_message_literals(
+def test_imap_non_message_literal_can_exceed_message_limit(
     imap_server_factory: Callable[..., LocalIMAPServer],
 ) -> None:
     server = imap_server_factory(non_message_literal=True)
@@ -409,6 +409,50 @@ def test_imap_does_not_limit_non_message_literals(
     _client(server, max_message_bytes=8).test_connection(folders=[])
 
     assert any(command.endswith("NOOP") for command in server.commands)
+
+
+@pytest.mark.parametrize(
+    "target,operation,arguments",
+    [
+        ("NOOP", "test_connection", {"folders": []}),
+        ("EXAMINE", "test_connection", {"folders": ["INBOX"]}),
+        ("SEARCH", "list_messages", {"folder": "INBOX", "limit": 1}),
+        ("FLAGS", "get_message", {"folder": "INBOX", "uid": "42"}),
+        (
+            "RFC822.SIZE",
+            "get_attachment",
+            {"folder": "INBOX", "uid": "42", "attachment_id": "part-1"},
+        ),
+    ],
+)
+def test_upstream_limit_closes_real_connection_without_logout(
+    imap_server, monkeypatch, target, operation, arguments
+):
+    from arbiter_server.errors import OperationError
+
+    runner = imap_server.stop
+    assert isinstance(runner, _LocalIMAPServerRunner)
+    original = runner._response
+
+    def response(tag, command, rest):
+        if target == command or target in rest:
+            return (
+                b"* 9 FETCH (UID 99 BODY[] {512}\r\n"
+                + b"x" * 512
+                + b")\r\n"
+                + f"{tag} OK done\r\n".encode()
+            )
+        return original(tag, command, rest)
+
+    monkeypatch.setattr(runner, "_response", response)
+    client = _client(imap_server)
+    client._config.limits.upstream_server.max_response_bytes = 320
+    with pytest.raises(OperationError) as caught:
+        getattr(client, operation)(**arguments)
+    assert caught.value.code == "upstream_protocol_error"
+    assert caught.value.domain_code == "response_too_large"
+    assert caught.value.details == {"max_response_bytes": 320}
+    assert not any("LOGOUT" in command for command in imap_server.commands)
 
 
 @pytest.mark.parametrize("operation", ["get_message", "get_attachment"])
