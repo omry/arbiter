@@ -1,5 +1,9 @@
 # Generic Deploy Tool Design Draft
 
+> Archived proposal from before Reploy became an external tool. The repository
+> placement, migration phases and command sketches below are historical.
+> See the current [deployment guide](../../website/docs/operate/deployment/1-docker-prepare.md).
+
 Status: temporary planning draft.
 
 This document captures the initial shape for a generic deployment lifecycle

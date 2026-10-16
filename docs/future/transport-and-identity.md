@@ -2,6 +2,13 @@
 
 ## Status
 
+Status note (2026-10-16): native HTTPS is already implemented. The plain HTTP
+deployment examples below are historical proposals, not supported deployment
+instructions. The unresolved identity and pairing discussion remains future
+design work; this note does not select an authentication mechanism or relax the
+current local-only trust boundary. See the
+[current security model](../../website/docs/operate/security.md).
+
 Future direction. This document records the intended security model direction
 for remote and multi-agent Arbiter deployments. It is not an implementation
 plan for the initial release.

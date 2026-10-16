@@ -2,6 +2,13 @@
 
 ## Status
 
+Status note (2026-10-16): this working record mixes implemented folder-policy
+behavior with proposals. The current schema and behavior are documented in the
+[IMAP reference](../website/docs/plugins/imap/reference.md) and
+[behavior guide](../website/docs/plugins/imap/behavior.md). The proposed client
+`op check` surface below is not currently implemented; retain that unfinished
+work rather than treating this whole design as completed history.
+
 This is the active design for tightening IMAP permissions before the initial
 release. It should be kept as implementation guidance until the behavior is
 stable, then either retained as design history or replaced by operator-facing
