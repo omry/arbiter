@@ -22,7 +22,10 @@ _TOKEN = re.compile(rb'\s+|[()]|"(?:[^"\\]|\\.)*"|[^\s()"]+')
 
 
 def fetch_attributes(
-    data: Sequence[Any], uid: str, *, required_attribute: bytes | None = None
+    data: Sequence[Any],
+    uid: str,
+    *,
+    required_attribute: bytes | tuple[bytes, ...] | None = None,
 ) -> dict[bytes, Value]:
     """Handle imaplib's split literals, including UID after a literal.
 
@@ -30,6 +33,11 @@ def fetch_attributes(
     An iterative stack avoids recursion on untrusted nested metadata.
     """
     root: list[Value] = []
+    wanted = (
+        (required_attribute,)
+        if isinstance(required_attribute, bytes)
+        else required_attribute
+    )
     stack = [root]
     for item in data:
         literal = None
@@ -93,7 +101,7 @@ def fetch_attributes(
             if response_uid.lstrip(b"0") == uid.encode().lstrip(b"0"):
                 # Unsolicited FLAGS updates for the requested UID are separate
                 # responses, not duplicate requested metadata or body data.
-                if required_attribute is None or required_attribute in decoded:
+                if wanted is None or any(name in decoded for name in wanted):
                     matches.append(decoded)
     if len(matches) != 1:
         raise ValueError("FETCH did not return exactly one matching UID")

@@ -26,7 +26,10 @@ class SizeAwareServer:
             return "OK", [b"1 (UID 42 FLAGS ())"]
         if args[1] == "(RFC822.SIZE)":
             return "OK", [f"1 (UID 42 RFC822.SIZE {self.size})".encode()]
-        return "OK", [(b"1 (UID 42 BODY[] {20}", self.content)]
+        return "OK", [
+            (f"1 (UID 42 BODY[] {{{len(self.content)}}}".encode(), self.content),
+            b")",
+        ]
 
     def logout(self):
         return "BYE", [b"done"]
@@ -288,7 +291,9 @@ def test_oversized_literal_closes_before_any_payload_read(monkeypatch, transport
 
 
 @pytest.mark.parametrize("transport_name", ["BoundedIMAP4", "BoundedIMAP4SSL"])
-def test_non_message_literals_are_unbounded_outside_guard(monkeypatch, transport_name):
+def test_non_message_literals_can_exceed_message_limit_within_response_budget(
+    monkeypatch, transport_name
+):
     from arbiter_imap import transport
 
     cls = getattr(transport, transport_name)
@@ -296,7 +301,9 @@ def test_non_message_literals_are_unbounded_outside_guard(monkeypatch, transport
     connection._max_literal_bytes = 10
     connection._message_literal_guard_active = False
     payload = b"x" * 11
-    monkeypatch.setattr("imaplib.IMAP4.read", lambda *_args: payload)
+    import io
+
+    connection._file = io.BytesIO(payload)
 
     assert connection.read(len(payload)) == payload
     assert connection._message_literal_guard_active is False
@@ -333,19 +340,20 @@ def test_configured_limit_reaches_the_real_transport_factory(monkeypatch, tls):
 
     config = IMAPConfig(tls=MailTlsMode(tls))
     config.limits.max_message_bytes = 1234
+    config.limits.upstream_server.max_response_bytes = 5678
     seen = []
     server = SizeAwareServer(10)
     monkeypatch.setattr(server, "starttls", lambda **kwargs: None, raising=False)
 
     def factory(*args, **kwargs):
-        seen.append(kwargs["max_literal_bytes"])
+        seen.append((kwargs["max_literal_bytes"], kwargs["max_response_bytes"]))
         return server
 
     monkeypatch.setattr("arbiter_imap.client.BoundedIMAP4", factory)
     monkeypatch.setattr("arbiter_imap.client.BoundedIMAP4SSL", factory)
 
     assert IMAPClient(config)._connect() is server
-    assert seen == [1234]
+    assert seen == [(1234, 5678)]
 
 
 def test_limit_error_survives_plugin_dispatch(monkeypatch):

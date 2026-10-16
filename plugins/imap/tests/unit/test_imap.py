@@ -426,7 +426,8 @@ class FakeIMAPServer:
                 (
                     f"42 (UID {args[0]} BODY[]<0> {{{len(MESSAGE_BYTES)}}}".encode(),
                     MESSAGE_BYTES,
-                )
+                ),
+                b")",
             ]
         return "OK", [b"ok"]
 
@@ -457,6 +458,7 @@ def test_list_messages_uses_ssl_login_and_parses_recent_messages(
         ssl_context: ssl.SSLContext,
         timeout: float,
         max_literal_bytes: int,
+        max_response_bytes: int,
     ) -> FakeIMAPServer:
         assert host == "imap.example.com"
         assert port == 993
@@ -496,7 +498,12 @@ def test_starttls_uses_configured_context(monkeypatch: pytest.MonkeyPatch) -> No
     fake_server = FakeIMAPServer()
 
     def fake_imap4(
-        host: str, port: int, *, timeout: float, max_literal_bytes: int
+        host: str,
+        port: int,
+        *,
+        timeout: float,
+        max_literal_bytes: int,
+        max_response_bytes: int,
     ) -> FakeIMAPServer:
         assert host == "imap.example.com"
         assert port == 143
@@ -533,6 +540,7 @@ def test_connection_probe_uses_noop_and_readonly_folder_select(
         ssl_context: ssl.SSLContext,
         timeout: float,
         max_literal_bytes: int,
+        max_response_bytes: int,
     ) -> FakeIMAPServer:
         return fake_server
 
@@ -563,6 +571,7 @@ def test_connection_probe_quotes_mailbox_names_with_spaces(
         ssl_context: ssl.SSLContext,
         timeout: float,
         max_literal_bytes: int,
+        max_response_bytes: int,
     ) -> FakeIMAPServer:
         return fake_server
 
@@ -1245,6 +1254,7 @@ def test_move_falls_back_to_copy_delete_and_uid_expunge(
         ssl_context: ssl.SSLContext,
         timeout: float,
         max_literal_bytes: int,
+        max_response_bytes: int,
     ) -> FakeIMAPServer:
         return fake_server
 
@@ -1277,6 +1287,7 @@ def test_move_falls_back_when_server_returns_unsupported_status(
         ssl_context: ssl.SSLContext,
         timeout: float,
         max_literal_bytes: int,
+        max_response_bytes: int,
     ) -> FakeIMAPServer:
         return fake_server
 
@@ -1323,6 +1334,7 @@ def test_move_fallback_does_not_retry_copy_after_copy_error(
         ssl_context: ssl.SSLContext,
         timeout: float,
         max_literal_bytes: int,
+        max_response_bytes: int,
     ) -> RetryServer:
         return fake_server
 
@@ -1365,6 +1377,7 @@ def test_move_uncertain_failure_does_not_fall_back(
         ssl_context: ssl.SSLContext,
         timeout: float,
         max_literal_bytes: int,
+        max_response_bytes: int,
     ) -> UncertainServer:
         return fake_server
 
@@ -1403,6 +1416,7 @@ def test_move_partial_failure_survives_logout_abort(
         ssl_context: ssl.SSLContext,
         timeout: float,
         max_literal_bytes: int,
+        max_response_bytes: int,
     ) -> MaskServer:
         return fake_server
 
@@ -1447,6 +1461,7 @@ def test_move_non_fallback_status_raises_without_copying(
         ssl_context: ssl.SSLContext,
         timeout: float,
         max_literal_bytes: int,
+        max_response_bytes: int,
     ) -> FakeIMAPServer:
         return fake_server
 
@@ -1480,6 +1495,7 @@ def test_move_bad_status_without_unsupported_marker_raises_without_copying(
         ssl_context: ssl.SSLContext,
         timeout: float,
         max_literal_bytes: int,
+        max_response_bytes: int,
     ) -> FakeIMAPServer:
         return fake_server
 
@@ -1507,6 +1523,7 @@ def test_delete_message_uses_uid_expunge(monkeypatch: pytest.MonkeyPatch) -> Non
         ssl_context: ssl.SSLContext,
         timeout: float,
         max_literal_bytes: int,
+        max_response_bytes: int,
     ) -> FakeIMAPServer:
         return fake_server
 
@@ -1541,6 +1558,7 @@ def test_fetch_without_rfc822_data_raises(monkeypatch: pytest.MonkeyPatch) -> No
         ssl_context: ssl.SSLContext,
         timeout: float,
         max_literal_bytes: int,
+        max_response_bytes: int,
     ) -> FakeIMAPServer:
         return fake_server
 
@@ -1605,6 +1623,7 @@ def test_imap_plugin_classifies_client_protocol_read_failure_as_replay_safe(
         ssl_context: ssl.SSLContext,
         timeout: float,
         max_literal_bytes: int,
+        max_response_bytes: int,
     ) -> SearchRejectedServer:
         return fake_server
 
@@ -1660,6 +1679,7 @@ def test_imap_plugin_preserves_client_protocol_write_failure_as_unknown(
         ssl_context: ssl.SSLContext,
         timeout: float,
         max_literal_bytes: int,
+        max_response_bytes: int,
     ) -> MoveRejectedServer:
         return fake_server
 
@@ -1714,6 +1734,7 @@ def test_imap_plugin_classifies_client_attachment_not_found_as_non_transient(
         ssl_context: ssl.SSLContext,
         timeout: float,
         max_literal_bytes: int,
+        max_response_bytes: int,
     ) -> FakeIMAPServer:
         return fake_server
 

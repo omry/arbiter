@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import imaplib
+import io
 import pytest
 
 from arbiter_imap.client import IMAPClient, IMAPOperationError
@@ -302,14 +303,12 @@ def test_preview_guard_closes_before_a_literal_exceeds_the_remaining_budget(
     calls = []
     closed = []
     monkeypatch.setattr(server, "shutdown", lambda: closed.append(True))
-    monkeypatch.setattr(
-        imaplib.IMAP4, "read", lambda self, size: calls.append(size) or b" " * size
-    )
+    server._file = io.BytesIO(b" " * 128)
     with server.message_literal_guard(8):
         assert server.read(3) == b" " * 3
         with pytest.raises(OperationError):
             server.read(6)
-    assert calls == [3] and closed == [True]
+    assert server._file.tell() == 3 and closed == [True]
     assert server._max_literal_bytes == 128
     assert server._literal_bytes_remaining is None
 
@@ -343,7 +342,7 @@ def test_metadata_guard_counts_response_framing_and_literals(monkeypatch, cls):
     closed = []
     monkeypatch.setattr(transport, "METADATA_TRANSPORT_BYTES", 8)
     monkeypatch.setattr(server, "shutdown", lambda: closed.append(True))
-    monkeypatch.setattr(imaplib.IMAP4, "readline", lambda self: b" " * 6)
+    server._file = io.BytesIO(b" " * 6)
     monkeypatch.setattr(imaplib.IMAP4, "read", lambda self, size: b" " * size)
     with metadata_literal_guard(server):
         assert server.readline() == b" " * 6

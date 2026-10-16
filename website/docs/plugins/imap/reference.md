@@ -34,9 +34,17 @@ class IMAPFolderConfig:
 
 
 @dataclass
+class IMAPUpstreamServerLimitsConfig:
+    max_response_bytes: int = 64 * 1024 * 1024
+
+
+@dataclass
 class IMAPLimitsConfig:
     max_message_bytes: int = 50 * 1024 * 1024
     max_preview_bytes: int = 16 * 1024
+    upstream_server: IMAPUpstreamServerLimitsConfig = field(
+        default_factory=IMAPUpstreamServerLimitsConfig
+    )
 
 
 @dataclass
