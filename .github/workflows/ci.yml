@@ -154,6 +154,27 @@ jobs:
           GOCACHE: ${{ runner.temp }}/go-build
         run: nox -s ${{ matrix.nox_session }}
 
+      - name: Set up Go for pairing experiment
+        if: ${{ !cancelled() && matrix.platform_id == 'windows-arm64' }}
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: "1.26.x"
+          cache: false
+
+      - name: Run isolated pairing experiment on Windows ARM64
+        if: ${{ !cancelled() && matrix.platform_id == 'windows-arm64' }}
+        env:
+          GOCACHE: ${{ runner.temp }}/pairing-go-build
+        run: python experiments/pairing-noise/run.py --require-windows-arm64 --output-dir .ci/pairing-noise
+
+      - name: Upload Windows ARM64 pairing evidence
+        if: ${{ always() && matrix.platform_id == 'windows-arm64' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pairing-noise-windows-arm64
+          path: .ci/pairing-noise/
+          if-no-files-found: warn
+
   website:
     name: Website
     runs-on: ubuntu-latest
