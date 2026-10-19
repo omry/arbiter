@@ -1,0 +1,9 @@
+{
+  "directory": "website",
+  "validationScript": "build",
+  "defaults": {
+    "repository": "hydra-ecosystem/github-actions",
+    "path": "defaults/node-maintenance.json",
+    "ref": "main"
+  }
+}
