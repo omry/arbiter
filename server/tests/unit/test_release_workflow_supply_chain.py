@@ -17,9 +17,15 @@ def test_external_workflow_actions_have_immutable_pins_and_version_comments() ->
             reference = line.split("uses:", 1)[1].strip()
             if reference.startswith("./"):
                 continue
-            assert re.fullmatch(
-                r"[\w-]+/[\w./-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+", reference
-            ), (path, line)
+            if "/.github/workflows/" in reference:
+                assert re.fullmatch(
+                    r"[\w-]+/[\w.-]+/\.github/workflows/[\w.-]+\.ya?ml@[0-9a-f]{40}",
+                    reference,
+                ), (path, line)
+            else:
+                assert re.fullmatch(
+                    r"[\w-]+/[\w./-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+", reference
+                ), (path, line)
 
 
 def test_release_jobs_install_hashed_binary_toolchain_and_disable_build_isolation() -> (
