@@ -194,6 +194,8 @@ every state file must be owned by the caller, SYSTEM or Administrators, in
 addition to passing the existing private ACL checks. Use a private path under the
 operator's profile; other unsupported ownership fails closed.
 
-These commands create identity metadata only. They do not issue credentials or
-enable caller authentication. The current trusted-local-client restriction
-above still applies.
+Initialization also creates separate owner-issuer, server-authority and server
+TLS signing credentials in the same private database transaction. Status never
+prints private keys. See [credential profiles](credentials.md) for their purposes,
+validity and verification rules. This does not enable caller authentication;
+the current trusted-local-client restriction above still applies.
