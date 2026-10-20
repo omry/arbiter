@@ -379,6 +379,7 @@ def wire_request(port, method, path):
     "method,content", [("GET", False), ("HEAD", True), ("GET", True)]
 )
 @pytest.mark.parametrize("valid_nonce", [False, True])
+@pytest.mark.usefixtures("private_windows_test_parent")
 def test_real_socket_artifact_contention_does_not_delay_health(
     tmp_path, monkeypatch, method, content, valid_nonce
 ):

@@ -240,14 +240,6 @@ def _locked(root: Path) -> Iterator[None]:
             unlock()
 
 
-def _remove_pending(root: Path) -> None:
-    for name in (_PENDING, _PENDING + "-journal"):
-        path = root / name
-        if path.exists() or path.is_symlink():
-            _check_path(path)
-            path.unlink()
-
-
 def _write_database(path: Path, record: AuthorityRecord) -> None:
     from .credentials import store_setup_credentials
 
@@ -279,7 +271,24 @@ def _write_database(path: Path, record: AuthorityRecord) -> None:
 
 
 def _publish(pending: Path, target: Path) -> None:
-    os.replace(pending, target)
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        win_dll = getattr(ctypes, "WinDLL", None)
+        if win_dll is None:
+            raise OSError("Windows durable publication is unavailable")
+        move = win_dll("kernel32", use_last_error=True).MoveFileExW
+        move.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD]
+        move.restype = wintypes.BOOL
+        # Same-volume moves, including directories; never permit copy-and-delete.
+        # MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH.
+        if not move(str(pending), str(target), 0x1 | 0x8):
+            raise OSError(
+                getattr(ctypes, "get_last_error")(), "MoveFileExW failed", str(target)
+            )
+    else:
+        os.replace(pending, target)
     _flush_parents(target.parent)
 
 
@@ -302,8 +311,9 @@ def initialize_authority(
     """Create one private set of IDs, refusing to replace any existing database."""
     root = _root(state_dir, create=True)
     with _locked(root):
-        target = root / DATABASE
-        if target.exists() or target.is_symlink():
+        from . import generations
+
+        if generations.reconcile(root) is not None:
             raise AuthorityError(
                 "authority database already exists; inspect authority status"
             )
@@ -317,74 +327,87 @@ def initialize_authority(
             path,
             material,
         ):
-            _remove_pending(root)
             record = AuthorityRecord(
                 material.owner_id, str(uuid4()), datetime.now(timezone.utc).isoformat()
             )
-            try:
-                _write_database(root / _PENDING, record)
-                register_and_publish(path, record, material, root / _PENDING)
-                _publish(root / _PENDING, target)
-            finally:
-                # Keep external recovery custody even if database publication fails.
-                _remove_pending(root)
+            with generations.staging(root) as staged:
+                _write_database(staged / _PENDING, record)
+                register_and_publish(path, record, material, staged / _PENDING)
+                _publish(staged / _PENDING, staged / DATABASE)
+                generations.activate(root, staged)
             return record
 
 
 def authority_status(state_dir: Path) -> AuthorityRecord | None:
-    """Inspect committed records without creating or repairing a database."""
-    from .credentials import verify_setup_credentials
-    from .recovery import verify_registration
-
+    """Inspect authority, reconciling publication without repairing database contents."""
     root = _root(state_dir, create=False)
     if not root.exists():
         return None
     with _locked(root):
-        path = root / DATABASE
-        if not path.exists() and not path.is_symlink():
-            return None
-        _check_path(path)
-        try:
-            with closing(
-                sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=0)
-            ) as db:
-                version = db.execute("PRAGMA user_version").fetchone()[0]
-                if version != SCHEMA_VERSION:
-                    raise AuthorityError(
-                        "unsupported authority database schema version"
-                    )
-                rows = db.execute(
-                    "SELECT singleton, owner_id, server_id, created_at FROM authority"
-                ).fetchall()
-                credentials = db.execute(
-                    "SELECT role, certificate_der, private_key_der FROM credentials"
-                ).fetchall()
-                if len(rows) != 1:
-                    raise ValueError("expected one authority record")
-                verify_registration(db, rows[0][1])
+        return _current_record(root)
+
+
+def _current_record(root: Path) -> AuthorityRecord | None:
+    from .generations import reconcile
+
+    path = reconcile(root)
+    return _read_record(path) if path is not None else None
+
+
+@contextmanager
+def running_instance(state_dir: Path) -> Iterator[AuthorityRecord | None]:
+    """Own the same instance lock as stopped-instance setup for the full lifetime."""
+    root = _root(state_dir, create=True)
+    with _locked(root):
+        yield _current_record(root)
+
+
+def _read_record(path: Path) -> AuthorityRecord:
+    from .credentials import verify_setup_credentials
+    from .recovery import verify_registration
+
+    _check_path(path)
+    # Keep database verification separate from instance-lock acquisition so the
+    # owning server can inspect its live state without trying to lock itself.
+    try:
+        with closing(
+            sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=0)
+        ) as db:
+            version = db.execute("PRAGMA user_version").fetchone()[0]
+            if version != SCHEMA_VERSION:
+                raise AuthorityError("unsupported authority database schema version")
+            rows = db.execute(
+                "SELECT singleton, owner_id, server_id, created_at FROM authority"
+            ).fetchall()
+            credentials = db.execute(
+                "SELECT role, certificate_der, private_key_der FROM credentials"
+            ).fetchall()
             if len(rows) != 1:
                 raise ValueError("expected one authority record")
-            singleton, owner, server, created = rows[0]
-            if singleton != 1:
-                raise ValueError("invalid authority singleton")
-            for value in (owner, server):
-                if not isinstance(value, str) or str(UUID(value, version=4)) != value:
-                    raise ValueError("invalid authority ID")
-            if owner == server or not isinstance(created, str):
-                raise ValueError("invalid authority record")
-            when = datetime.fromisoformat(created)
-            if when.tzinfo is None or when.utcoffset() != timezone.utc.utcoffset(None):
-                raise ValueError("invalid creation timestamp")
-            # Offline inspection checks the initial setup at its recorded time.
-            # Network verifiers must use the current time, independently.
-            verify_setup_credentials(credentials, owner, server, when)
-            return AuthorityRecord(owner, server, created)
-        except (sqlite3.Error, ValueError) as exc:
-            if isinstance(exc, AuthorityError):
-                raise
-            raise AuthorityError(
-                "invalid or incomplete authority database; refusing to replace it"
-            ) from exc
+            verify_registration(db, rows[0][1])
+        if len(rows) != 1:
+            raise ValueError("expected one authority record")
+        singleton, owner, server, created = rows[0]
+        if singleton != 1:
+            raise ValueError("invalid authority singleton")
+        for value in (owner, server):
+            if not isinstance(value, str) or str(UUID(value, version=4)) != value:
+                raise ValueError("invalid authority ID")
+        if owner == server or not isinstance(created, str):
+            raise ValueError("invalid authority record")
+        when = datetime.fromisoformat(created)
+        if when.tzinfo is None or when.utcoffset() != timezone.utc.utcoffset(None):
+            raise ValueError("invalid creation timestamp")
+        # Offline inspection checks the initial setup at its recorded time.
+        # Network verifiers must use the current time, independently.
+        verify_setup_credentials(credentials, owner, server, when)
+        return AuthorityRecord(owner, server, created)
+    except (sqlite3.Error, ValueError) as exc:
+        if isinstance(exc, AuthorityError):
+            raise
+        raise AuthorityError(
+            "invalid or incomplete authority database; refusing to replace it"
+        ) from exc
 
 
 def authority_cli(

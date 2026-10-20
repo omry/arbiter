@@ -26,6 +26,7 @@ from arbiter_server.main import (
 
 
 @pytest.mark.parametrize("encoded_route", [False, True])
+@pytest.mark.usefixtures("private_windows_test_parent")
 def test_live_artifact_tokens_are_absent_from_native_access_logs(
     encoded_route: bool,
     tmp_path: Path,
