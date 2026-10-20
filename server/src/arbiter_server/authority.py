@@ -16,7 +16,7 @@ from uuid import UUID, uuid4
 DATABASE = "authority.sqlite3"
 _PENDING = ".authority.pending.sqlite3"
 _LOCK = ".authority.lock"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 # Windows Modules Installer is part of the trusted host OS. This exception is
 # for ancestors only; authority-root and file ACL allowlists remain unchanged.
 _TRUSTED_INSTALLER = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
@@ -246,6 +246,8 @@ def _remove_pending(root: Path) -> None:
 
 
 def _write_database(path: Path, record: AuthorityRecord) -> None:
+    from .credentials import store_setup_credentials
+
     fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
     os.close(fd)
     _check_path(path)
@@ -260,6 +262,12 @@ def _write_database(path: Path, record: AuthorityRecord) -> None:
         db.execute(
             "INSERT INTO authority VALUES (1, ?, ?, ?)",
             (record.owner_id, record.server_id, record.created_at),
+        )
+        store_setup_credentials(
+            db,
+            record.owner_id,
+            record.server_id,
+            datetime.fromisoformat(record.created_at),
         )
         db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         db.commit()
@@ -303,6 +311,8 @@ def initialize_authority(state_dir: Path) -> AuthorityRecord:
 
 def authority_status(state_dir: Path) -> AuthorityRecord | None:
     """Inspect committed records without creating or repairing a database."""
+    from .credentials import verify_setup_credentials
+
     root = _root(state_dir, create=False)
     if not root.exists():
         return None
@@ -323,6 +333,9 @@ def authority_status(state_dir: Path) -> AuthorityRecord | None:
                 rows = db.execute(
                     "SELECT singleton, owner_id, server_id, created_at FROM authority"
                 ).fetchall()
+                credentials = db.execute(
+                    "SELECT role, certificate_der, private_key_der FROM credentials"
+                ).fetchall()
             if len(rows) != 1:
                 raise ValueError("expected one authority record")
             singleton, owner, server, created = rows[0]
@@ -336,6 +349,9 @@ def authority_status(state_dir: Path) -> AuthorityRecord | None:
             when = datetime.fromisoformat(created)
             if when.tzinfo is None or when.utcoffset() != timezone.utc.utcoffset(None):
                 raise ValueError("invalid creation timestamp")
+            # Offline inspection checks the initial setup at its recorded time.
+            # Network verifiers must use the current time, independently.
+            verify_setup_credentials(credentials, owner, server, when)
             return AuthorityRecord(owner, server, created)
         except (sqlite3.Error, ValueError) as exc:
             if isinstance(exc, AuthorityError):
