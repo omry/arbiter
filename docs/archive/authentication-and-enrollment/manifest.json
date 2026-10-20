@@ -1,0 +1,650 @@
+{
+  "captured_on": "2026-10-20",
+  "purpose": "Byte-preserved evidence before review-package consolidation; not the current design.",
+  "files": [
+    {
+      "original_path": "docs/authentication-and-enrollment.md",
+      "snapshot": "draft-2026-10-20.md",
+      "sha256": "4fe72f7c7628962f6a983900c3d2fb9f7c2a139cb4c3db080cabc15aff9ce404",
+      "bytes": 195250,
+      "lines": 2933
+    },
+    {
+      "original_path": "temp/design-interviews/docs-authentication-and-enrollment.md",
+      "snapshot": "interview-2026-10-20.md",
+      "sha256": "a1c9e4058da8ba970fdd52d95f3561ad01a327b0d7d90c7d890afedab2a278fe",
+      "bytes": 250081,
+      "lines": 3669
+    }
+  ],
+  "decision_provenance": {
+    "snapshot": "interview-2026-10-20.md",
+    "entries": [
+      {
+        "decision": "D1",
+        "source_line": 98,
+        "paragraph_end_line": 147,
+        "source_lead": "- D1 (2026-10-16, user): retain confidential execution as interesting longer-term"
+      },
+      {
+        "decision": "D2",
+        "source_line": 102,
+        "paragraph_end_line": 147,
+        "source_lead": "- D2 (2026-10-16, user, Q1): for now, one operator runs the deployment and"
+      },
+      {
+        "decision": "D3",
+        "source_line": 107,
+        "paragraph_end_line": 147,
+        "source_lead": "- D3 (2026-10-16, user, Q2): yes, each enrolled client has its own identity and"
+      },
+      {
+        "decision": "D4",
+        "source_line": 111,
+        "paragraph_end_line": 147,
+        "source_lead": "- D4 (2026-10-16, user, Q3 discussion): the future server admin interface should"
+      },
+      {
+        "decision": "D5",
+        "source_line": 115,
+        "paragraph_end_line": 147,
+        "source_lead": "- D5 (2026-10-16, user, Q3 follow-up): operator-controlled enrollment windows are"
+      },
+      {
+        "decision": "D6",
+        "source_line": 121,
+        "paragraph_end_line": 147,
+        "source_lead": "- D6 (2026-10-16, user, Q4): yes, use local server-side operator commands,"
+      },
+      {
+        "decision": "D7",
+        "source_line": 126,
+        "paragraph_end_line": 147,
+        "source_lead": "- D7 (2026-10-16, user): account access mapping is part of enrollment and"
+      },
+      {
+        "decision": "D8",
+        "source_line": 130,
+        "paragraph_end_line": 147,
+        "source_lead": "- D8 (2026-10-16, user): establishing bidirectional trust is the first step."
+      },
+      {
+        "decision": "D9",
+        "source_line": 134,
+        "paragraph_end_line": 147,
+        "source_lead": "- D9 (2026-10-16, user): the agent owner can approve the agent and grant access"
+      },
+      {
+        "decision": "D10",
+        "source_line": 139,
+        "paragraph_end_line": 147,
+        "source_lead": "- D10 (2026-10-17, user correction): research established identity systems with"
+      },
+      {
+        "decision": "D11",
+        "source_line": 143,
+        "paragraph_end_line": 147,
+        "source_lead": "- D11 (2026-10-17, user): identity and enrollment must be friendly to existing"
+      },
+      {
+        "decision": "D12",
+        "source_line": 149,
+        "paragraph_end_line": 173,
+        "source_lead": "- D12 (2026-10-17, user): the token must be a server-generated nonce for a"
+      },
+      {
+        "decision": "D13",
+        "source_line": 154,
+        "paragraph_end_line": 173,
+        "source_lead": "- D13 (2026-10-17, user correction): establishing or selecting a client identity"
+      },
+      {
+        "decision": "D14",
+        "source_line": 158,
+        "paragraph_end_line": 173,
+        "source_lead": "- D14 (2026-10-17, user): closed enrollment must provide guidance on how to ask"
+      },
+      {
+        "decision": "D15",
+        "source_line": 162,
+        "paragraph_end_line": 173,
+        "source_lead": "- D15 (2026-10-17, user approval): enrollment works independently of server"
+      },
+      {
+        "decision": "D16",
+        "source_line": 168,
+        "paragraph_end_line": 173,
+        "source_lead": "- D16 (2026-10-17, user): streamline enrollment as much as possible. Minimize"
+      },
+      {
+        "decision": "D17",
+        "source_line": 3287,
+        "paragraph_end_line": 3291,
+        "source_lead": "Owner-registration requirement (D17, 2026-10-17, user): add a flow for registering"
+      },
+      {
+        "decision": "D18",
+        "source_line": 3281,
+        "paragraph_end_line": 3285,
+        "source_lead": "Lightweight setup requirement (D18, 2026-10-17, user): Buzz is interesting but"
+      },
+      {
+        "decision": "D19",
+        "source_line": 175,
+        "paragraph_end_line": 182,
+        "source_lead": "- D19 (2026-10-17, user): identity must not depend on a central external"
+      },
+      {
+        "decision": "D20",
+        "source_line": 180,
+        "paragraph_end_line": 182,
+        "source_lead": "- D20 (2026-10-17, user): the design must accommodate other identity providers"
+      },
+      {
+        "decision": "D21",
+        "source_line": 184,
+        "paragraph_end_line": 189,
+        "source_lead": "- D21 (2026-10-17, corrected after user clarification): lightweight setup is"
+      },
+      {
+        "decision": "D22",
+        "source_line": 191,
+        "paragraph_end_line": 196,
+        "source_lead": "- D22 (2026-10-17, user approval): the lightweight path requires only Arbiter"
+      },
+      {
+        "decision": "D23",
+        "source_line": 198,
+        "paragraph_end_line": 204,
+        "source_lead": "- D23 (2026-10-17, user approval and scope clarification): a registered owner"
+      },
+      {
+        "decision": "D24",
+        "source_line": 206,
+        "paragraph_end_line": 210,
+        "source_lead": "- D24 (2026-10-17, user approval): verified agent key replacement preserves"
+      },
+      {
+        "decision": "D25",
+        "source_line": 212,
+        "paragraph_end_line": 215,
+        "source_lead": "- D25 (2026-10-17, user): only the owner may recover their owner identity;"
+      },
+      {
+        "decision": "D26",
+        "source_line": 217,
+        "paragraph_end_line": 222,
+        "source_lead": "- D26 (2026-10-17, user): an agent may not create a durable identity; owner"
+      },
+      {
+        "decision": "D27",
+        "source_line": 224,
+        "paragraph_end_line": 230,
+        "source_lead": "- D27 (2026-10-17, user approval): transient helpers use the parent agent's"
+      },
+      {
+        "decision": "D28",
+        "source_line": 232,
+        "paragraph_end_line": 239,
+        "source_lead": "- D28 (2026-10-17, user): retain a Reploy-isolated Arbiter client broker as a"
+      },
+      {
+        "decision": "D29",
+        "source_line": 241,
+        "paragraph_end_line": 248,
+        "source_lead": "- D29 (2026-10-17, user; scope subsequently extended by D30): agent-readable client private keys are acceptable"
+      },
+      {
+        "decision": "D30",
+        "source_line": 250,
+        "paragraph_end_line": 257,
+        "source_lead": "- D30 (2026-10-17, user): approve agent-readable client keys for lightweight"
+      },
+      {
+        "decision": "D31",
+        "source_line": 259,
+        "paragraph_end_line": 268,
+        "source_lead": "- D31 (2026-10-17, user): record agent-readable client keys as a known"
+      },
+      {
+        "decision": "D32",
+        "source_line": 270,
+        "paragraph_end_line": 275,
+        "source_lead": "- D32 (2026-10-17, user approval): agent identity and verifiable ownership are"
+      },
+      {
+        "decision": "D33",
+        "source_line": 277,
+        "paragraph_end_line": 285,
+        "source_lead": "- D33 (2026-10-18, user): approve server-managed client identity provisioning"
+      },
+      {
+        "decision": "D34",
+        "source_line": 287,
+        "paragraph_end_line": 288,
+        "source_lead": "- D34 (2026-10-18, user): the agreed name is Arbiter-managed identity (AMI)."
+      },
+      {
+        "decision": "D35",
+        "source_line": 290,
+        "paragraph_end_line": 296,
+        "source_lead": "- D35 (2026-10-18, user correction): the owner, as the person operating the"
+      },
+      {
+        "decision": "D36",
+        "source_line": 298,
+        "paragraph_end_line": 308,
+        "source_lead": "- D36 (2026-10-18, user): approve the AMI enrollment flow otherwise discussed,"
+      },
+      {
+        "decision": "D37",
+        "source_line": 310,
+        "paragraph_end_line": 317,
+        "source_lead": "- D37 (2026-10-18, user approval, Q5): accept ordinary CA-chain and hostname"
+      },
+      {
+        "decision": "D38",
+        "source_line": 319,
+        "paragraph_end_line": 330,
+        "source_lead": "- D38 (2026-10-18, user agreement after correction): AMI uses Bluetooth-style"
+      },
+      {
+        "decision": "D39",
+        "source_line": 332,
+        "paragraph_end_line": 337,
+        "source_lead": "- D39 (2026-10-18, user): administration may be fronted by Apache with"
+      },
+      {
+        "decision": "D40",
+        "source_line": 339,
+        "paragraph_end_line": 348,
+        "source_lead": "- D40 (2026-10-18, user requirement and scope correction): transport-certificate"
+      },
+      {
+        "decision": "D41",
+        "source_line": 350,
+        "paragraph_end_line": 354,
+        "source_lead": "- D41 (2026-10-18, user, Q6): first delivery implements AMI only; defer external"
+      },
+      {
+        "decision": "D42",
+        "source_line": 356,
+        "paragraph_end_line": 360,
+        "source_lead": "- D42 (2026-10-18, user, Q7): approve X.509 for AMI's signed identity-credential"
+      },
+      {
+        "decision": "D43",
+        "source_line": 362,
+        "paragraph_end_line": 368,
+        "source_lead": "- D43 (2026-10-18, user, Q8): approve routine automatic client key rotation"
+      },
+      {
+        "decision": "D44",
+        "source_line": 370,
+        "paragraph_end_line": 383,
+        "source_lead": "- D44 (2026-10-18, user, Q9 and lifecycle steering): approve recovery using"
+      },
+      {
+        "decision": "D45",
+        "source_line": 385,
+        "paragraph_end_line": 389,
+        "source_lead": "- D45 (2026-10-18, user, Q10): approve 180 days since the last authenticated"
+      },
+      {
+        "decision": "D46",
+        "source_line": 391,
+        "paragraph_end_line": 395,
+        "source_lead": "- D46 (2026-10-18, user, Q11): approve a default key-age threshold of 30 days"
+      },
+      {
+        "decision": "D47",
+        "source_line": 397,
+        "paragraph_end_line": 401,
+        "source_lead": "- D47 (2026-10-18, user, Q12): require enrollment for every service-operation"
+      },
+      {
+        "decision": "D48",
+        "source_line": 403,
+        "paragraph_end_line": 408,
+        "source_lead": "- D48 (2026-10-18, user, Q13): require authentication as the client identity"
+      },
+      {
+        "decision": "D49",
+        "source_line": 410,
+        "paragraph_end_line": 414,
+        "source_lead": "- D49 (2026-10-18, user steering): future Arbiter inspection of upstream"
+      },
+      {
+        "decision": "D50",
+        "source_line": 416,
+        "paragraph_end_line": 420,
+        "source_lead": "- D50 (2026-10-18, user, Q14 clarification): preserve Arbiter's ability to"
+      },
+      {
+        "decision": "D51",
+        "source_line": 422,
+        "paragraph_end_line": 427,
+        "source_lead": "- D51 (2026-10-18, user, Q14): encrypt all artifacts by default, using"
+      },
+      {
+        "decision": "D52",
+        "source_line": 429,
+        "paragraph_end_line": 435,
+        "source_lead": "- D52 (2026-10-18, user, Q15): name the explicit plaintext export"
+      },
+      {
+        "decision": "D53",
+        "source_line": 437,
+        "paragraph_end_line": 443,
+        "source_lead": "- D53 (2026-10-18, user, Q16): allow a private plaintext temporary file for"
+      },
+      {
+        "decision": "D54",
+        "source_line": 445,
+        "paragraph_end_line": 449,
+        "source_lead": "- D54 (2026-10-18, user, Q17): account discovery and direct account lookup"
+      },
+      {
+        "decision": "D55",
+        "source_line": 451,
+        "paragraph_end_line": 456,
+        "source_lead": "- D55 (2026-10-18, user, Q18): anonymous API access is limited to minimal"
+      },
+      {
+        "decision": "D56",
+        "source_line": 458,
+        "paragraph_end_line": 464,
+        "source_lead": "- D56 (2026-10-18, user, Q19): on client revocation terminate the client's"
+      },
+      {
+        "decision": "D57",
+        "source_line": 466,
+        "paragraph_end_line": 471,
+        "source_lead": "- D57 (2026-10-18, user correction, Q20): existing policies are intended to"
+      },
+      {
+        "decision": "D58",
+        "source_line": 473,
+        "paragraph_end_line": 480,
+        "source_lead": "- D58 (2026-10-18, user correction, Q20): there is no intended change to"
+      },
+      {
+        "decision": "D59",
+        "source_line": 482,
+        "paragraph_end_line": 489,
+        "source_lead": "- D59 (2026-10-18, user scope clarification): the current model is single-owner;"
+      },
+      {
+        "decision": "D60",
+        "source_line": 491,
+        "paragraph_end_line": 498,
+        "source_lead": "- D60 (2026-10-18, user approval, Q21): trust the operator-controlled"
+      },
+      {
+        "decision": "D61",
+        "source_line": 500,
+        "paragraph_end_line": 506,
+        "source_lead": "- D61 (2026-10-18, user approval, Q22): first-delivery server disaster recovery"
+      },
+      {
+        "decision": "D62",
+        "source_line": 508,
+        "paragraph_end_line": 516,
+        "source_lead": "- D62 (2026-10-18, user selection and migration observation, Q22 follow-up):"
+      },
+      {
+        "decision": "D63",
+        "source_line": 518,
+        "paragraph_end_line": 524,
+        "source_lead": "- D63 (2026-10-18, user steering, Q23): tie backup/recovery to the operator"
+      },
+      {
+        "decision": "D64",
+        "source_line": 526,
+        "paragraph_end_line": 535,
+        "source_lead": "- D64 (2026-10-18, user direction and scope clarification, Q23): retain the"
+      },
+      {
+        "decision": "D65",
+        "source_line": 537,
+        "paragraph_end_line": 544,
+        "source_lead": "- D65 (2026-10-18, user correction/replacement, Q24): keep restoration simple:"
+      },
+      {
+        "decision": "D66",
+        "source_line": 546,
+        "paragraph_end_line": 552,
+        "source_lead": "- D66 (2026-10-18, user approval and release-context clarification, Q25):"
+      },
+      {
+        "decision": "D67",
+        "source_line": 554,
+        "paragraph_end_line": 564,
+        "source_lead": "- D67 (2026-10-18, user approval and credential-source check, Q26): include"
+      },
+      {
+        "decision": "D68",
+        "source_line": 566,
+        "paragraph_end_line": 572,
+        "source_lead": "- D68 (2026-10-18, user approval and review requirement, Q27): the owner"
+      },
+      {
+        "decision": "D69",
+        "source_line": 1258,
+        "paragraph_end_line": 1263,
+        "source_lead": "D69 (2026-10-18, user confirmation, Q28): proceed with short-code pairing as a"
+      },
+      {
+        "decision": "D70",
+        "source_line": 1243,
+        "paragraph_end_line": 1251,
+        "source_lead": "D70 (2026-10-18, user approval, Q29): accept eight random decimal digits,"
+      },
+      {
+        "decision": "D71",
+        "source_line": 1181,
+        "paragraph_end_line": 1186,
+        "source_lead": "D71 (2026-10-18, user approval, Q30): accept twenty concurrent uncommitted"
+      },
+      {
+        "decision": "D72",
+        "source_line": 1112,
+        "paragraph_end_line": 1122,
+        "source_lead": "D72 (2026-10-18, user approval, corrected Q31): use a distinct client"
+      },
+      {
+        "decision": "D73",
+        "source_line": 1020,
+        "paragraph_end_line": 1030,
+        "source_lead": "D73 (2026-10-18, user approval, Q32): defer separately enrolled installation"
+      },
+      {
+        "decision": "D74",
+        "source_line": 884,
+        "paragraph_end_line": 898,
+        "source_lead": "D74 (2026-10-18, user, Q34 replacement decision): the original temporary-"
+      },
+      {
+        "decision": "D75",
+        "source_line": 848,
+        "paragraph_end_line": 857,
+        "source_lead": "D75 (2026-10-18, user approval, Q35): approve a configurable 24-hour"
+      },
+      {
+        "decision": "D76",
+        "source_line": 768,
+        "paragraph_end_line": 781,
+        "source_lead": "D76 (2026-10-18, user requirement and correction): require an early Python/Go"
+      },
+      {
+        "decision": "D77",
+        "source_line": 660,
+        "paragraph_end_line": 675,
+        "source_lead": "D77 (2026-10-18, explicit user decision): use a larger random copy-paste"
+      },
+      {
+        "decision": "D78",
+        "source_line": 634,
+        "paragraph_end_line": 642,
+        "source_lead": "D78 (2026-10-19, user acceptance after Q37 discussion): establish authenticated"
+      },
+      {
+        "decision": "D79",
+        "source_line": 616,
+        "paragraph_end_line": 627,
+        "source_lead": "D79 (2026-10-19, requirement clarification): private Arbiter must be the easiest"
+      },
+      {
+        "decision": "D80",
+        "source_line": 601,
+        "paragraph_end_line": 606,
+        "source_lead": "D80 (2026-10-19, explicit direction): keep the current pairing design for now;"
+      },
+      {
+        "decision": "D81",
+        "source_line": 588,
+        "paragraph_end_line": 599,
+        "source_lead": "D81 (2026-10-19, U40): after clarifying SSH host-key trust and local-browser"
+      },
+      {
+        "decision": "D82",
+        "source_line": 576,
+        "paragraph_end_line": 586,
+        "source_lead": "D82 (2026-10-19, explicit review direction): obtain DBB's recommendation on"
+      },
+      {
+        "decision": "D83",
+        "source_line": 1731,
+        "paragraph_end_line": 1743,
+        "source_lead": "D83 (2026-10-19, user correction and U41 disposition): processing mode is a"
+      },
+      {
+        "decision": "D84",
+        "source_line": 1745,
+        "paragraph_end_line": 1755,
+        "source_lead": "D84 (2026-10-19, user-proposed extension to D83): support a middle path that"
+      },
+      {
+        "decision": "D85",
+        "source_line": 1757,
+        "paragraph_end_line": 1763,
+        "source_lead": "D85 (2026-10-19, user): client guidance must explain that optional verified"
+      },
+      {
+        "decision": "D86",
+        "source_line": 1817,
+        "paragraph_end_line": 1827,
+        "source_lead": "D86 (2026-10-19, user correction): backups should be ongoing from startup."
+      },
+      {
+        "decision": "D87",
+        "source_line": 1835,
+        "paragraph_end_line": 1846,
+        "source_lead": "D87 (2026-10-19, user clarification): recommended backup operation is an external"
+      },
+      {
+        "decision": "D88",
+        "source_line": 1883,
+        "paragraph_end_line": 1889,
+        "source_lead": "D88 (2026-10-19, user \"ok\" accepting the recommendation): first delivery exposes"
+      },
+      {
+        "decision": "D89",
+        "source_line": 1959,
+        "paragraph_end_line": 1964,
+        "source_lead": "D89 (2026-10-19, user accepting the explained UX): restore saved Arbiter"
+      },
+      {
+        "decision": "D90",
+        "source_line": 1966,
+        "paragraph_end_line": 1975,
+        "source_lead": "D90 (2026-10-19, accompanying explicit requirement): provide a way to revert"
+      },
+      {
+        "decision": "D91",
+        "source_line": 2005,
+        "paragraph_end_line": 2008,
+        "source_lead": "D91 (2026-10-19, explicit user decision): \"ok. lets keep the undo.\" Retain the"
+      },
+      {
+        "decision": "D92",
+        "source_line": 2010,
+        "paragraph_end_line": 2018,
+        "source_lead": "D92 (2026-10-19, user reminder): keep the server migration flow in the design."
+      },
+      {
+        "decision": "D93",
+        "source_line": 2063,
+        "paragraph_end_line": 2076,
+        "source_lead": "D93 (2026-10-19, user proposal while U45 remains open): the old server can point"
+      },
+      {
+        "decision": "D94",
+        "source_line": 2078,
+        "paragraph_end_line": 2084,
+        "source_lead": "D94 (2026-10-19, explicit user approval): \"sounds good. and approved on"
+      },
+      {
+        "decision": "D95",
+        "source_line": 2115,
+        "paragraph_end_line": 2122,
+        "source_lead": "D95 (2026-10-19, explicit user scope decision): coordinated clusters are promising"
+      },
+      {
+        "decision": "D96",
+        "source_line": 2169,
+        "paragraph_end_line": 2174,
+        "source_lead": "D96 (2026-10-19, user accepting the clarified repair flow): affected clients"
+      },
+      {
+        "decision": "D97",
+        "source_line": 2176,
+        "paragraph_end_line": 2184,
+        "source_lead": "D97 (2026-10-19, same reply): client should provide proper diagnostics. Added"
+      },
+      {
+        "decision": "D98",
+        "source_line": 2253,
+        "paragraph_end_line": 2261,
+        "source_lead": "U47 answer (2026-10-19): user explicitly answered yes to \"Is that recovery"
+      },
+      {
+        "decision": "D99",
+        "source_line": 2329,
+        "paragraph_end_line": 2335,
+        "source_lead": "U48 answer (2026-10-19): user answered yes. D99 approves only the latest"
+      },
+      {
+        "decision": "D100",
+        "source_line": 2355,
+        "paragraph_end_line": 2363,
+        "source_lead": "D100 (2026-10-19, explicit clarification): user does not want undo totally"
+      },
+      {
+        "decision": "D101",
+        "source_line": 2435,
+        "paragraph_end_line": 2441,
+        "source_lead": "U49 answer (2026-10-19): user confirms the data kept as the key can contain an"
+      },
+      {
+        "decision": "D102",
+        "source_line": 2496,
+        "paragraph_end_line": 2502,
+        "source_lead": "U50 answer (2026-10-19): user approves the recommended name-following grant"
+      },
+      {
+        "decision": "D103",
+        "source_line": 2571,
+        "paragraph_end_line": 2580,
+        "source_lead": "D103 (2026-10-19, U51 response): user says the proposal can work and explicitly"
+      },
+      {
+        "decision": "D104",
+        "source_line": 2623,
+        "paragraph_end_line": 2630,
+        "source_lead": "D104 (2026-10-19, U52): after clarification of planned replacement versus"
+      }
+    ],
+    "note": "Entry locations are provenance, not a claim that historical decisions remain current. See the consolidation coverage map for supersessions and dispositions."
+  }
+}
