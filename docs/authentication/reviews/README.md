@@ -17,6 +17,7 @@ The [HLD](../high-level-design.md) now has its own
 | [HLD DBB review](hld-dbb.md) | Pass on the exact HLD, with no blocking HLD findings. Wire, implementation, dependency, platform and release approval remain separate. |
 | [Plan DBB review](plan-dbb.md) | Two plan gaps repaired: safe slice-3 artifact prefix and certificate renewal ownership/tests. Round-two exact-byte pass; no remaining blocking plan findings. |
 | [Plan sizing DBB review](plan-sizing-dbb.md) | Current sixty-child plan passed after receipt recovery moved before activation and complete live denial moved before ordinary cutover. Size forecasts and hard-cap enforcement remain implementation obligations. |
+| [Milestone rules DBB review](plan-milestones-dbb.md) | The merge boundary and short authentication slice title labels passed without findings; canonical plan identities and all prior safety gates remain unchanged. |
 
 The requirements stamp followed a separate primary-agent requirements review
 through SWE, after the DBB pass. Its immutable round report is retained
@@ -50,6 +51,13 @@ was clean. Its immutable report is retained locally at
 validates recursively against the unchanged requirements/HLD, with the prior plan
 retained as a reviewed predecessor. No implementation PR has started. Forecasts
 are not measured implementation, a guaranteed PR count or platform certification.
+
+The subsequent milestone-rules amendment passed DBB and a primary-agent SWE review
+without findings. The exact-byte stamp was replaced again; the immutable SWE report
+is `temp/reviews/implementation-plan/rounds/round-03.md`. Short title labels such as
+`[authentication/1.1]` map to unchanged canonical ledger IDs. Milestone stacks need
+current final-head approvals, required checks and aggregate acceptance before an
+operator-authorized merge; publication remains gated on all eleven milestones.
 
 The [initial brief](initial-brief.md) and [repair brief](repair-brief.md) preserve
 the historical review requests. Their pending-status text and output filenames
