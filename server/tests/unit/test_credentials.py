@@ -19,6 +19,16 @@ from arbiter_server import authority, credentials as c
 pytestmark = pytest.mark.usefixtures("private_windows_test_parent")
 
 
+def dbpath(root):
+    selector = root / "active-generation.json"
+    name = (
+        json.loads(selector.read_text())["active"]
+        if selector.exists()
+        else ".generation.pending"
+    )
+    return root / "generations" / name / authority.DATABASE
+
+
 def initialize(root):
     parent = next(
         p
@@ -286,7 +296,7 @@ def test_setup_is_real_atomic_private_and_restartable(tmp_path, capsys):
     assert (
         record is not None and record.owner_id in output and record.server_id in output
     )
-    with closing(sqlite3.connect(root / authority.DATABASE)) as db:
+    with closing(sqlite3.connect(dbpath(root))) as db:
         rows = db.execute(
             "SELECT role, certificate_der, private_key_der FROM credentials"
         ).fetchall()
@@ -299,12 +309,16 @@ def test_setup_is_real_atomic_private_and_restartable(tmp_path, capsys):
     )
     for _, _, private in rows:
         assert base64.b64encode(private).decode() not in output
-    before = (root / authority.DATABASE).read_bytes()
+    before = (dbpath(root)).read_bytes()
     with pytest.raises(authority.AuthorityError, match="already exists"):
         initialize(root)
     assert authority.authority_status(root) == record
-    assert (root / authority.DATABASE).read_bytes() == before
-    assert {p.name for p in root.iterdir()} == {authority.DATABASE, authority._LOCK}
+    assert (dbpath(root)).read_bytes() == before
+    assert {p.name for p in root.iterdir()} == {
+        "generations",
+        "active-generation.json",
+        authority._LOCK,
+    }
 
 
 @pytest.mark.parametrize(
@@ -314,7 +328,7 @@ def test_setup_is_real_atomic_private_and_restartable(tmp_path, capsys):
 def test_damaged_setup_never_repairs_or_replaces_keys(tmp_path, damage, capsys):
     root = tmp_path / "state"
     initialize(root)
-    with closing(sqlite3.connect(root / authority.DATABASE)) as db:
+    with closing(sqlite3.connect(dbpath(root))) as db:
         if damage == "old-schema":
             db.execute("PRAGMA user_version=1")
         elif damage == "missing":
@@ -336,10 +350,10 @@ def test_damaged_setup_never_repairs_or_replaces_keys(tmp_path, damage, capsys):
                 f"UPDATE credentials SET {column}=? WHERE role='owner'", (value,)
             )
         db.commit()
-    before = (root / authority.DATABASE).read_bytes()
+    before = (dbpath(root)).read_bytes()
     with pytest.raises(authority.AuthorityError):
         authority.authority_status(root)
-    assert (root / authority.DATABASE).read_bytes() == before
+    assert (dbpath(root)).read_bytes() == before
     if damage == "unsupported-key":
         assert authority.authority_cli("status", root, as_json=True) == 1
         captured = capsys.readouterr()
@@ -358,7 +372,7 @@ def test_crypto_failure_cannot_publish_partial_setup(tmp_path, monkeypatch):
     monkeypatch.setattr(c, "store_setup_credentials", fail)
     with pytest.raises(OSError, match="injected"):
         initialize(root)
-    assert {p.name for p in root.iterdir()} == {authority._LOCK}
+    assert {p.name for p in root.iterdir()} == {authority._LOCK, "generations"}
     monkeypatch.setattr(c, "store_setup_credentials", real)
     assert initialize(root) == authority.authority_status(root)
 

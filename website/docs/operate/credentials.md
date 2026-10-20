@@ -68,6 +68,21 @@ there is no implicit upgrade
 or reinitialization. Preserve old state rather than deleting identity records to
 work around a version error.
 
+Initialized authority now lives in a private `generations/UUID/authority.sqlite3`
+directory, selected by `active-generation.json`. IDs, credentials and registered
+trust are published together. A bounded publication intent lets stopped-instance
+status or the next start finish an interrupted publication of those exact bytes.
+It does not invent a replacement identity or repair damaged database contents.
+Only reserved incomplete staging is removed; unexpected files cause an error.
+
+Missing or damaged selectors and generations require operator investigation.
+Preserve every saved generation and the recovery file. Earlier experimental flat
+database layouts are rejected without conversion or deletion. A failed setup can
+have published durable intent; inspect status before retrying initialization.
+POSIX publication flushes files and parent directories. Windows uses same-volume
+[write-through moves](https://learn.microsoft.com/en-us/windows/win32/fileio/moving-directories)
+for files and generation directories; filesystem errors are reported as failures.
+
 Shared public-only verification vectors are in
 `tests/fixtures/authentication/credential-profiles-v1.json`. They are synthetic
 test trust, consumed by Python now and intended for Go's slice 2.1 verifier.

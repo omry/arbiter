@@ -20,6 +20,16 @@ from arbiter_server.main import main
 pytestmark = pytest.mark.usefixtures("private_windows_test_parent")
 
 
+def dbpath(root):
+    selector = root / "active-generation.json"
+    name = (
+        json.loads(selector.read_text())["active"]
+        if selector.exists()
+        else ".generation.pending"
+    )
+    return root / "generations" / name / authority.DATABASE
+
+
 def initialize(root):
     parent = next(
         p
@@ -42,12 +52,12 @@ def test_initialize_reopen_and_independent_roots(tmp_path: Path) -> None:
     assert {record.owner_id, record.server_id}.isdisjoint(
         {other.owner_id, other.server_id}
     )
-    with closing(sqlite3.connect(root / authority.DATABASE)) as db:
+    with closing(sqlite3.connect(dbpath(root))) as db:
         assert db.execute("PRAGMA integrity_check").fetchone() == ("ok",)
         assert db.execute("PRAGMA user_version").fetchone() == (3,)
     if os.name != "nt":
         assert root.stat().st_mode & 0o777 == 0o700
-        assert (root / authority.DATABASE).stat().st_mode & 0o777 == 0o600
+        assert (dbpath(root)).stat().st_mode & 0o777 == 0o600
 
 
 def test_database_flush_has_write_access(tmp_path: Path, monkeypatch) -> None:
@@ -71,17 +81,17 @@ def test_status_missing_is_not_initialization(tmp_path: Path) -> None:
     assert not root.exists()
     root.mkdir(mode=0o777 if os.name == "nt" else 0o700)
     assert authority.authority_status(root) is None
-    assert not (root / authority.DATABASE).exists()
+    assert not (dbpath(root)).exists()
 
 
 def test_second_initialization_preserves_database(tmp_path: Path) -> None:
     record = initialize(tmp_path / "state")
-    path = tmp_path / "state" / authority.DATABASE
+    path = dbpath(tmp_path / "state")
     original = path.read_bytes()
     with pytest.raises(authority.AuthorityError, match="already exists"):
-        initialize(path.parent)
+        initialize(tmp_path / "state")
     assert path.read_bytes() == original
-    assert authority.authority_status(path.parent) == record
+    assert authority.authority_status(tmp_path / "state") == record
     assert path.read_bytes() == original
 
 
@@ -135,7 +145,7 @@ def test_cli_is_offline_and_reports_errors(tmp_path: Path, capsys, monkeypatch) 
 def test_corrupt_state_never_reinitialized(tmp_path: Path, damage: str) -> None:
     root = tmp_path / "state"
     initialize(root)
-    path = root / authority.DATABASE
+    path = dbpath(root)
     if damage == "garbage":
         path.write_bytes(b"not a database")
     else:
@@ -168,7 +178,7 @@ def test_broad_permissions_rejected(tmp_path: Path, target: str) -> None:
     initialize(root)
     path = {
         "directory": root,
-        "database": root / authority.DATABASE,
+        "database": dbpath(root),
         "lock": root / ".authority.lock",
     }[target]
     path.chmod(0o755 if target == "directory" else 0o644)
@@ -207,7 +217,7 @@ def test_directory_alias_and_hardlinked_database_rejected(tmp_path: Path) -> Non
     alias.symlink_to(root, target_is_directory=True)
     with pytest.raises(authority.AuthorityError, match="symlink"):
         authority.authority_status(alias)
-    os.link(root / authority.DATABASE, tmp_path / "linked-db")
+    os.link(dbpath(root), tmp_path / "linked-db")
     with pytest.raises(authority.AuthorityError, match="exactly one link"):
         authority.authority_status(root)
 
@@ -237,7 +247,7 @@ def test_nested_missing_parent_rejected_after_creation(
     assert root.exists()
     assert root.stat().st_mode & 0o777 == 0o700
     assert root.parent.stat().st_mode & 0o022
-    assert not (root / authority.DATABASE).exists()
+    assert not (dbpath(root)).exists()
     assert not (root / authority._LOCK).exists()
 
 
@@ -280,7 +290,7 @@ def test_failure_leaves_only_complete_published_database(
         raise OSError("injected write failure")
 
     def fail_publish(pending, target):
-        if target.name != authority.DATABASE:
+        if target.name != "active-generation.json":
             return real_publish(pending, target)
         if failure == "after_publish":
             real_publish(pending, target)
@@ -292,11 +302,18 @@ def test_failure_leaves_only_complete_published_database(
     monkeypatch.setattr(authority, "_publish", fail_publish)
     with pytest.raises(OSError, match="injected"):
         initialize(root)
-    assert not (root / ".authority.pending.sqlite3").exists()
-    assert not (root / ".authority.pending.sqlite3-journal").exists()
+    assert not (
+        root / "generations" / ".generation.pending" / ".authority.pending.sqlite3"
+    ).exists()
+    assert not (
+        root
+        / "generations"
+        / ".generation.pending"
+        / ".authority.pending.sqlite3-journal"
+    ).exists()
     monkeypatch.setattr(authority, "_write_database", real_write)
     monkeypatch.setattr(authority, "_publish", real_publish)
-    if failure == "after_publish":
+    if failure != "write":
         assert authority.authority_status(root) is not None
         with pytest.raises(authority.AuthorityError, match="already exists"):
             initialize(root)
@@ -352,22 +369,30 @@ authority.initialize_authority(Path(sys.argv[1]), recovery_file=Path(sys.argv[1]
     )
     try:
         _wait_for_file(ready, child)
-        assert not (root / authority.DATABASE).exists()
+        assert not (dbpath(root)).exists()
         for operation in (initialize, authority.authority_status):
             with pytest.raises(authority.AuthorityError, match="busy"):
                 operation(root)
     finally:
         child.kill()
         child.communicate(timeout=15)
-    assert (root / ".authority.pending.sqlite3").exists()
+    assert (
+        root / "generations" / ".generation.pending" / ".authority.pending.sqlite3"
+    ).exists()
     recovery_path = root.with_name(root.name + ".recovery.json")
     recovery_before = (
         json.loads(recovery_path.read_text()) if recovery_path.exists() else None
     )
     record = initialize(root)
     assert authority.authority_status(root) == record
-    assert not (root / ".authority.pending.sqlite3").exists()
-    assert {p.name for p in root.iterdir()} == {authority.DATABASE, ".authority.lock"}
+    assert not (
+        root / "generations" / ".generation.pending" / ".authority.pending.sqlite3"
+    ).exists()
+    assert {p.name for p in root.iterdir()} == {
+        "generations",
+        "active-generation.json",
+        ".authority.lock",
+    }
     if recovery_before:
         assert (
             json.loads(recovery_path.read_text())["recovery_signer_pkcs8"]
@@ -590,7 +615,7 @@ def test_windows_broad_directory_acl_rejected_without_repair(tmp_path: Path) -> 
 def test_windows_broad_database_acl_rejected(tmp_path: Path) -> None:
     root = tmp_path / "state"
     initialize(root)
-    path = root / authority.DATABASE
+    path = dbpath(root)
     subprocess.run(
         ["icacls", str(path), "/grant", "*S-1-5-32-545:R"],
         check=True,

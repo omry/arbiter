@@ -20,6 +20,16 @@ from arbiter_server.main import main
 pytestmark = pytest.mark.usefixtures("private_windows_test_parent")
 
 
+def dbpath(root):
+    selector = root / "active-generation.json"
+    name = (
+        json.loads(selector.read_text())["active"]
+        if selector.exists()
+        else ".generation.pending"
+    )
+    return root / "generations" / name / a.DATABASE
+
+
 def initialize(tmp_path, name="state", *, reuse=False):
     return a.initialize_authority(
         tmp_path / name,
@@ -57,7 +67,7 @@ def test_real_setup_separates_private_custody_and_public_trust(tmp_path, capsys)
     )
     assert isinstance(signer, ec.EllipticCurvePrivateKey)
     assert isinstance(decryptor, x25519.X25519PrivateKey)
-    with closing(sqlite3.connect(tmp_path / "state" / a.DATABASE)) as db:
+    with closing(sqlite3.connect(dbpath(tmp_path / "state"))) as db:
         _, owner, verifier, recipient, origin_verifier, origin_private = db.execute(
             "SELECT * FROM recovery_trust"
         ).fetchone()
@@ -82,11 +92,15 @@ def test_real_setup_separates_private_custody_and_public_trust(tmp_path, capsys)
     )
     origin = s.load_der_private_key(origin_private, None)
     assert r._public(origin.public_key()) == origin_verifier != verifier
-    database_bytes = (tmp_path / "state" / a.DATABASE).read_bytes()
+    database_bytes = (dbpath(tmp_path / "state")).read_bytes()
     for name in ("recovery_signer_pkcs8", "backup_x25519_pkcs8"):
         assert doc[name] not in output
         assert base64.b64decode(doc[name]) not in database_bytes
-    assert set(p.name for p in (tmp_path / "state").iterdir()) == {a.DATABASE, a._LOCK}
+    assert set(p.name for p in (tmp_path / "state").iterdir()) == {
+        "generations",
+        "active-generation.json",
+        a._LOCK,
+    }
     if os.name != "nt":
         assert (tmp_path / "operator.json").stat().st_mode & 0o777 == 0o600
     # Runtime inspection requires public trust, never the external private file.
@@ -100,7 +114,7 @@ def test_explicit_reuse_preserves_owner_keys_and_all_origin_trust(tmp_path):
     with pytest.raises(a.AuthorityError, match="explicit reuse"):
         initialize(tmp_path, "other")
     assert read(tmp_path) == before
-    assert not (tmp_path / "other" / a.DATABASE).exists()
+    assert not (dbpath(tmp_path / "other")).exists()
     second = initialize(tmp_path, "other", reuse=True)
     after = read(tmp_path)
     assert first.owner_id == second.owner_id and first.server_id != second.server_id
@@ -197,7 +211,7 @@ def test_invalid_recovery_file_never_rewrites_or_initializes(tmp_path, damage):
     with pytest.raises(a.AuthorityError):
         initialize(tmp_path, "other", reuse=True)
     assert path.read_bytes() == data
-    assert not (tmp_path / "other" / a.DATABASE).exists()
+    assert not (dbpath(tmp_path / "other")).exists()
 
 
 @pytest.mark.parametrize(
@@ -206,13 +220,13 @@ def test_invalid_recovery_file_never_rewrites_or_initializes(tmp_path, damage):
 )
 def test_damaged_registered_trust_is_not_repaired(tmp_path, column):
     initialize(tmp_path)
-    path = tmp_path / "state" / a.DATABASE
+    path = dbpath(tmp_path / "state")
     with closing(sqlite3.connect(path)) as db:
         db.execute(f"UPDATE recovery_trust SET {column}=?", ("invalid",))
         db.commit()
     before = path.read_bytes()
     with pytest.raises(a.AuthorityError):
-        a.authority_status(path.parent)
+        a.authority_status(tmp_path / "state")
     assert path.read_bytes() == before
 
 
@@ -228,7 +242,7 @@ def test_setup_requires_explicit_safe_external_destination(tmp_path, destination
         a.initialize_authority(
             root, recovery_file=file, reuse_recovery_file=destination == "missing-reuse"
         )
-    assert not (root / a.DATABASE).exists()
+    assert not (dbpath(root)).exists()
     assert not file.exists()
 
 
@@ -364,7 +378,7 @@ def test_reconciliation_never_accepts_unrelated_hardlinks(tmp_path, state):
     with pytest.raises(a.AuthorityError, match="exactly"):
         initialize(tmp_path, "other", reuse=True)
     assert target.read_bytes() == before and pending.read_bytes() == before
-    assert not (tmp_path / "other" / a.DATABASE).exists()
+    assert not (dbpath(tmp_path / "other")).exists()
 
 
 @pytest.mark.skipif(os.name != "nt", reason="native Windows recovery custody ACL")

@@ -167,9 +167,9 @@ explicit.
 The first authentication milestone provides stopped-instance identity setup:
 
 ```bash
-arbiter-server authority init --state-dir /private/path/authority \
+arbiter-server authority init --state-dir /private/server-data/authority \
   --recovery-file /operator-only/private/operator-recovery.json
-arbiter-server authority status --state-dir /private/path/authority --json
+arbiter-server authority status --state-dir /private/server-data/authority --json
 ```
 
 Use an operator-owned private directory. The command creates persistent owner
@@ -177,6 +177,19 @@ and server UUIDs in a versioned SQLite database. It does not read Hydra
 configuration, load service plugins, or contact upstream accounts. A second
 initialization fails instead of replacing existing identity records. Status
 reports absent or damaged state without creating a replacement database.
+
+Use `authority` beneath the configured `arbiter.storage.server_data_dir` when
+preparing state for the running server. With no override, this is beneath
+Arbiter's existing platform-specific server data directory. Startup takes the
+same persistent instance lock as offline setup and holds it through HTTP cleanup;
+a second start, offline initialization or offline status fails while it is held.
+Stop the instance before using these offline commands. This enforces state
+ownership; runtime caller authentication remains a later milestone.
+
+State is selected from a private generation. Stopped-instance status and startup
+can finish a valid interrupted initial publication, preserving its IDs and keys.
+They refuse malformed selectors, missing saved state and earlier flat layouts.
+Do not delete a selector or generation to bypass an error.
 
 Prepare the recovery file's private parent directory separately. Keep the file
 outside the authority directory, server/agent storage and synced backup storage.
