@@ -185,6 +185,7 @@ def test_json_parsing_uses_admitted_worker_and_keeps_health_responsive(
 
 @pytest.mark.parametrize("chunked", [False, True])
 @pytest.mark.parametrize("finish", ["complete", "disconnect"])
+@pytest.mark.usefixtures("private_windows_test_parent")
 def test_real_socket_slow_body_admission_health_and_recovery(tmp_path, chunked, finish):
     import socket
     import time
@@ -250,6 +251,7 @@ def test_real_socket_slow_body_admission_health_and_recovery(tmp_path, chunked, 
 
 @pytest.mark.parametrize("chunked", [False, True])
 @pytest.mark.parametrize("size,status", [(63, 200), (64, 200), (65, 413)])
+@pytest.mark.usefixtures("private_windows_test_parent")
 def test_real_socket_body_limit_boundaries_and_recovery(
     tmp_path, chunked, size, status
 ):
@@ -277,6 +279,7 @@ def test_real_socket_body_limit_boundaries_and_recovery(
 
 
 @pytest.mark.parametrize("busy", [False, True])
+@pytest.mark.usefixtures("private_windows_test_parent")
 def test_real_socket_oversized_declared_body_is_rejected_before_continue(
     tmp_path, busy
 ):
