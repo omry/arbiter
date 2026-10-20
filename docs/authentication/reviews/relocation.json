@@ -1,0 +1,61 @@
+{
+  "date": "2026-10-20",
+  "reason": "Group authentication design and review documents. Only Markdown link targets changed inside relocated files; wording, historical path/hash tables and findings were preserved.",
+  "historical_references": "Inline original paths and SHA-256 tables still identify the exact pre-organization reviewed inputs. Use this map to locate current files; organized bytes have new hashes because relative navigation changed. Original archived draft/interview/manifest and ignored review snapshots were not moved or edited.",
+  "files": [
+    {
+      "original_path": "docs/authentication-and-enrollment.md",
+      "current_path": "docs/authentication/design.md",
+      "before_sha256": "bfdeee664f33c66a17879742246d9db6f2892d23645b50e9036d1b6112a58dcf",
+      "organized_sha256": "12cdd14bddd904fab19ec9def92aee07dee2ba6c79aad587ed88c79fc2278e55"
+    },
+    {
+      "original_path": "docs/authentication-and-enrollment-security-contracts.md",
+      "current_path": "docs/authentication/security-contracts.md",
+      "before_sha256": "cf531a3a0aa32a94f11e39d99b8957d4ad08f0da8b719c6c3288906460d83acd",
+      "organized_sha256": "1752554eb7e92ce66586f8b74e6428e241bc0173e32f1042a9ab6f3e1b41559d"
+    },
+    {
+      "original_path": "docs/authentication-and-enrollment-evidence.md",
+      "current_path": "docs/authentication/evidence.md",
+      "before_sha256": "67634ab715b51d43de369c2dd3a9828e1de5e530fe4f4b43bc031b06e57e7762",
+      "organized_sha256": "c51f7ac6d4f08df8d31a58d9682c018e67ca13beddc7a06aaf34757988982bbe"
+    },
+    {
+      "original_path": "docs/authentication-and-enrollment-review.md",
+      "current_path": "docs/authentication/reviews/initial-brief.md",
+      "before_sha256": "ab703dd9255445b5f641fa6823d86150aa57d2c7ec67e369c12659f9285dde13",
+      "organized_sha256": "584f52d5c636fc093d3b33874a8696771cbf7062260a5febb7bd5c5b5dbaf9ac"
+    },
+    {
+      "original_path": "docs/authentication-and-enrollment-rereview.md",
+      "current_path": "docs/authentication/reviews/repair-brief.md",
+      "before_sha256": "f6d0041f2ddde7ef10d444ac4cb5f4b7178191f4326d11a3dac6f657058c8b49",
+      "organized_sha256": "794ca568d8a3b24416757a1ecf0ea312c9bbd1a6a5728dd33ecd2efabffccf4d"
+    },
+    {
+      "original_path": "docs/authentication-and-enrollment-fidelity-review.md",
+      "current_path": "docs/authentication/reviews/fidelity.md",
+      "before_sha256": "273bd1ed07c029a67e2b643245fbb991ef18125230c547e8241c5101568c7f5e",
+      "organized_sha256": "0aa078ed4e44fe193d1c4b06a002de5e2f0d70c0da449b946b6ba0ed33f2776b"
+    },
+    {
+      "original_path": "docs/authentication-and-enrollment-dbb-review.md",
+      "current_path": "docs/authentication/reviews/dbb-initial.md",
+      "before_sha256": "9b6f8fa8f9152b37dffb3ed927e077902791399d7bba5f79c0f59ef57c62e644",
+      "organized_sha256": "c29befb2a1f247f02cd8df490ace4d3f2f12e2ad84eca234cf2614452e525ba7"
+    },
+    {
+      "original_path": "docs/authentication-and-enrollment-dbb-rereview.md",
+      "current_path": "docs/authentication/reviews/dbb-repairs.md",
+      "before_sha256": "3a10049323693d896675a76b1b85312b3af4a0c7fc1e0f990203efc0a2ea17b7",
+      "organized_sha256": "fe5a5f597b27f5ec88051f7a96f906bfb9dd7c11ef9decced842766c5cf2cfeb"
+    },
+    {
+      "original_path": "docs/authentication-and-enrollment-dbb-followup.md",
+      "current_path": "docs/authentication/reviews/dbb-followup.md",
+      "before_sha256": "9d63fcb70fc52167b9a0c7e49ab78ab99be2870672b0d10b0a76649431f8a930",
+      "organized_sha256": "9d63fcb70fc52167b9a0c7e49ab78ab99be2870672b0d10b0a76649431f8a930"
+    }
+  ]
+}

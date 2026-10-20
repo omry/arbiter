@@ -76,6 +76,14 @@ This file is the day-to-day queue for design and implementation gaps.
 
 ## Post-v1
 
+- [ ] `P2` Design coordinated Arbiter clusters and multi-endpoint clients.
+      Future work, excluded from the current authentication design delivery.
+      Cover configuration and credential-state synchronization, shared artifact
+      storage and one-time consumption, cluster management, failover and migration
+      availability for one logical server identity. Define safe authority handoff
+      and operation-replay behavior before choosing replication or storage tooling.
+      Context: [authentication design](authentication/design.md).
+
 - [ ] `P2` Research IMAP search bottlenecks and search performance options.
       Current `imap:search_messages` behavior can be slow enough to hit client
       or server operation deadlines on real mailboxes. Acceptance checks:
@@ -394,6 +402,27 @@ This file is the day-to-day queue for design and implementation gaps.
       sidecars, per-user workers, OAuth delegation, PKI-mediated secret release,
       and confidential-computing/enclave designs; and document what each option
       does and does not protect from the Arbiter operator.
+      Note (2026-10-16): owner explicitly deferred implementation; retain this
+      as longer-term research, separate from near-term authentication work.
+      Scope clarification (2026-10-18): current authentication is single-owner.
+      Multi-owner hosting depends on a credible path for hosting others' secrets.
+      Each future owner must have their own policies, and their agents must see
+      only that owner's listed accounts, subject to the agent's account grants.
+      Preserve the existing account-to-policy flow; do not introduce a second
+      policy layer for the current single-owner design.
+      A candidate is a user-provided unlock key delivered only after independent
+      verification of an enclave's attestation. Credential use, request
+      authorization, policy enforcement and upstream TLS must stay inside the
+      protected boundary, rather than returning decrypted passwords to the host
+      or agent. Assess trusted-client provisioning, approved-code updates,
+      encrypted storage, restart/unlock and recovery, tenant isolation, and
+      engineering and operating costs before choosing a platform. AWS Nitro
+      Enclaves is an example, not a selected dependency: the parent can relay
+      encrypted network traffic over vsock. Linux image builds and QEMU
+      emulation permit local development; real Nitro attestation and isolation
+      require supported EC2 infrastructure. See
+      [AWS enclave image builds](https://docs.aws.amazon.com/enclaves/latest/user/cmd-nitro-build-enclave.html)
+      and [QEMU's emulation limitations](https://www.qemu.org/docs/master/system/nitro.html#emulated-nitro-enclaves).
 
 - [ ] `P2` Finish the installation security evaluator.
       Reploy now has `doctor` and `install` checks for generated deployment
