@@ -63,6 +63,17 @@ For focused local runs without `nox`, use the same environment directly, for exa
 - `.venv/bin/python -m pytest server/tests/unit/test_config.py`
 - `.venv/bin/python -m pytest server/tests/unit/test_app.py`
 
+### GitHub Actions references
+
+External actions use full commit SHAs with version comments. Reusable workflows
+also use full SHAs, with one explicit exception: the two Node maintenance calls
+in `.github/workflows/dependency-audit.yml` follow
+`hydra-ecosystem/github-actions@v1` for automatic compatible fixes. This trusts
+the release tag maintained by that repository. A different source, workflow,
+caller, branch, or major release requires a separate policy update. Full SHA
+references remain valid for maintenance too. See the shared
+[release policy](https://github.com/hydra-ecosystem/github-actions/blob/main/docs/workflow-releases.md).
+
 The Docusaurus website lives in [website/](website/):
 
 - `cd website && npm install`
