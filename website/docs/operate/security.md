@@ -161,3 +161,39 @@ OAuth delegation, local credential brokers, per-user execution workers, and
 confidential-computing approaches may all be useful building blocks, but none
 should be documented as solving operator trust until the runtime threat model is
 explicit.
+
+## Offline authority initialization (development)
+
+The first authentication milestone provides stopped-instance identity setup:
+
+```bash
+arbiter-server authority init --state-dir /private/path/authority
+arbiter-server authority status --state-dir /private/path/authority --json
+```
+
+Use an operator-owned private directory. The command creates persistent owner
+and server UUIDs in a versioned SQLite database. It does not read Hydra
+configuration, load service plugins, or contact upstream accounts. A second
+initialization fails instead of replacing existing identity records. Status
+reports absent or damaged state without creating a replacement database.
+
+Stop the instance before initializing. Concurrent initialization attempts use
+one persistent process lock. A failed unpublished initialization can be retried;
+a database already published must be inspected rather than overwritten. Keep
+the directory private; the command rejects unsafe permissions and linked files.
+
+On Windows, prepare a private parent directory with inheritable access for the
+operator, SYSTEM and Administrators only. New authority directories inherit that
+ACL. Initialization validates it and refuses unsafe access; it does not repair
+existing directory or file permissions.
+Ancestors must also be owned by the operator, SYSTEM, Administrators or the
+fixed Windows Modules Installer (TrustedInstaller) service and must not let
+another user replace their children or change their permissions. The fixed
+TrustedInstaller SID exception applies to ancestors only. The authority root and
+every state file must be owned by the caller, SYSTEM or Administrators, in
+addition to passing the existing private ACL checks. Use a private path under the
+operator's profile; other unsupported ownership fails closed.
+
+These commands create identity metadata only. They do not issue credentials or
+enable caller authentication. The current trusted-local-client restriction
+above still applies.
