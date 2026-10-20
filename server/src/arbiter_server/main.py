@@ -4427,6 +4427,18 @@ def _build_parser() -> argparse.ArgumentParser:
         command = authority_commands.add_parser(action)
         command.add_argument("--state-dir", type=Path, required=True)
         command.add_argument("--json", action="store_true")
+        if action == "init":
+            command.add_argument(
+                "--recovery-file",
+                type=Path,
+                required=True,
+                help="external operator-only recovery file in an existing private directory",
+            )
+            command.add_argument(
+                "--reuse-recovery-file",
+                action="store_true",
+                help="reuse existing recovery keys and register this server's backup verifier",
+            )
 
     serve = subcommands.add_parser("serve", help="run the Arbiter HTTP server")
     _add_override_arguments(
@@ -4634,7 +4646,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         from .authority import authority_cli
 
         return authority_cli(
-            namespace.authority_command, namespace.state_dir, as_json=namespace.json
+            namespace.authority_command,
+            namespace.state_dir,
+            as_json=namespace.json,
+            recovery_file=getattr(namespace, "recovery_file", None),
+            reuse_recovery_file=getattr(namespace, "reuse_recovery_file", False),
         )
     if namespace.command == "serve":
         return _run_serve(
