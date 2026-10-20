@@ -344,6 +344,7 @@ def _client(
         }
     }
     cfg.arbiter.storage.plugin_data_dir = str(tmp_path)
+    cfg.arbiter.storage.server_data_dir = str(tmp_path / "server")
     server = build_server(
         OmegaConf.structured(cfg),
         service_plugins=[cast(ServicePlugin, plugin or FakePlugin())],
@@ -505,6 +506,7 @@ def test_worker_failure_releases_capacity_and_preserves_the_error_envelope(tmp_p
     assert calls == 2
 
 
+@pytest.mark.usefixtures("private_windows_test_parent")
 def test_server_shutdown_does_not_block_the_loop_on_running_worker(tmp_path):
     entered = threading.Event()
     release = threading.Event()

@@ -2272,10 +2272,13 @@ def _create_native_http_app(
 
     @asynccontextmanager
     async def lifespan(_app: object) -> AsyncGenerator[None, None]:
-        try:
-            yield
-        finally:
-            http_work.close()
+        from .authority import running_instance
+
+        with running_instance(_server_data_root(_storage_config(cfg)) / "authority"):
+            try:
+                yield
+            finally:
+                http_work.close()
 
     async def health(_request: Request) -> object:
         return _native_response({"status": "ok"})
