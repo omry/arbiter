@@ -54,6 +54,7 @@ _WINDOWS_DIRECTORY_MUTATING_ACCESS_MASK = (
 class _WindowsAccessAce:
     sid: str
     mask: int
+    flags: int = 0
 
 
 @dataclass(frozen=True)
@@ -248,7 +249,11 @@ def _windows_file_security(path: Path) -> _WindowsFileSecurity:
                 if sid_string.value is None:
                     raise OSError("ConvertSidToStringSidW returned a null SID")
                 access_aces.append(
-                    _WindowsAccessAce(sid=sid_string.value, mask=int(ace.Mask))
+                    _WindowsAccessAce(
+                        sid=sid_string.value,
+                        mask=int(ace.Mask),
+                        flags=int(ace.Header.AceFlags),
+                    )
                 )
             finally:
                 local_free(ctypes.cast(sid_string, ctypes.c_void_p))
