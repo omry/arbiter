@@ -161,3 +161,27 @@ OAuth delegation, local credential brokers, per-user execution workers, and
 confidential-computing approaches may all be useful building blocks, but none
 should be documented as solving operator trust until the runtime threat model is
 explicit.
+
+## Offline authority initialization (development)
+
+The first authentication milestone provides stopped-instance identity setup:
+
+```bash
+arbiter-server authority init --state-dir /private/path/authority
+arbiter-server authority status --state-dir /private/path/authority --json
+```
+
+Use an operator-owned private directory. The command creates persistent owner
+and server UUIDs in a versioned SQLite database. It does not read Hydra
+configuration, load service plugins, or contact upstream accounts. A second
+initialization fails instead of replacing existing identity records. Status
+reports absent or damaged state without creating a replacement database.
+
+Stop the instance before initializing. Concurrent initialization attempts use
+one persistent process lock. A failed unpublished initialization can be retried;
+a database already published must be inspected rather than overwritten. Keep
+the directory private; the command rejects unsafe permissions and linked files.
+
+These commands create identity metadata only. They do not issue credentials or
+enable caller authentication. The current trusted-local-client restriction
+above still applies.
