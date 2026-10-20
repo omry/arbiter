@@ -20,19 +20,31 @@ from arbiter_server.main import main
 pytestmark = pytest.mark.usefixtures("private_windows_test_parent")
 
 
+def initialize(root):
+    parent = next(
+        p
+        for p in root.parents
+        if p.is_dir() and (os.name == "nt" or not p.stat().st_mode & 0o077)
+    )
+    recovery = parent / (root.name + ".recovery.json")
+    return authority.initialize_authority(
+        root, recovery_file=recovery, reuse_recovery_file=recovery.exists()
+    )
+
+
 def test_initialize_reopen_and_independent_roots(tmp_path: Path) -> None:
     root = tmp_path / "one"
-    record = authority.initialize_authority(root)
+    record = initialize(root)
     assert authority.authority_status(root) == record
     assert UUID(record.owner_id).version == UUID(record.server_id).version == 4
     assert record.owner_id != record.server_id
-    other = authority.initialize_authority(tmp_path / "two")
+    other = initialize(tmp_path / "two")
     assert {record.owner_id, record.server_id}.isdisjoint(
         {other.owner_id, other.server_id}
     )
     with closing(sqlite3.connect(root / authority.DATABASE)) as db:
         assert db.execute("PRAGMA integrity_check").fetchone() == ("ok",)
-        assert db.execute("PRAGMA user_version").fetchone() == (2,)
+        assert db.execute("PRAGMA user_version").fetchone() == (3,)
     if os.name != "nt":
         assert root.stat().st_mode & 0o777 == 0o700
         assert (root / authority.DATABASE).stat().st_mode & 0o777 == 0o600
@@ -49,7 +61,7 @@ def test_database_flush_has_write_access(tmp_path: Path, monkeypatch) -> None:
         real_fsync(fd)
 
     monkeypatch.setattr(authority.os, "fsync", writable_flush)
-    record = authority.initialize_authority(tmp_path / "state")
+    record = initialize(tmp_path / "state")
     assert authority.authority_status(tmp_path / "state") == record
 
 
@@ -63,11 +75,11 @@ def test_status_missing_is_not_initialization(tmp_path: Path) -> None:
 
 
 def test_second_initialization_preserves_database(tmp_path: Path) -> None:
-    record = authority.initialize_authority(tmp_path / "state")
+    record = initialize(tmp_path / "state")
     path = tmp_path / "state" / authority.DATABASE
     original = path.read_bytes()
     with pytest.raises(authority.AuthorityError, match="already exists"):
-        authority.initialize_authority(path.parent)
+        initialize(path.parent)
     assert path.read_bytes() == original
     assert authority.authority_status(path.parent) == record
     assert path.read_bytes() == original
@@ -83,13 +95,35 @@ def test_cli_is_offline_and_reports_errors(tmp_path: Path, capsys, monkeypatch) 
     state = ["--state-dir", str(tmp_path / "state"), "--json"]
     assert main([*args, "status", *state]) == 0
     assert json.loads(capsys.readouterr().out) == {"initialized": False}
-    assert main([*args, "init", *state]) == 0
+    assert (
+        main(
+            [
+                *args,
+                "init",
+                *state,
+                "--recovery-file",
+                str(tmp_path / "cli.recovery.json"),
+            ]
+        )
+        == 0
+    )
     output = json.loads(capsys.readouterr().out)
     assert output["initialized"] is True
-    assert output["schema_version"] == 2
+    assert output["schema_version"] == 3
     assert main([*args, "status", *state]) == 0
     assert json.loads(capsys.readouterr().out) == output
-    assert main([*args, "init", *state]) == 1
+    assert (
+        main(
+            [
+                *args,
+                "init",
+                *state,
+                "--recovery-file",
+                str(tmp_path / "cli.recovery.json"),
+            ]
+        )
+        == 1
+    )
     captured = capsys.readouterr()
     assert not captured.out
     assert "already exists" in captured.err
@@ -100,7 +134,7 @@ def test_cli_is_offline_and_reports_errors(tmp_path: Path, capsys, monkeypatch) 
 )
 def test_corrupt_state_never_reinitialized(tmp_path: Path, damage: str) -> None:
     root = tmp_path / "state"
-    authority.initialize_authority(root)
+    initialize(root)
     path = root / authority.DATABASE
     if damage == "garbage":
         path.write_bytes(b"not a database")
@@ -123,7 +157,7 @@ def test_corrupt_state_never_reinitialized(tmp_path: Path, damage: str) -> None:
     with pytest.raises(authority.AuthorityError):
         authority.authority_status(root)
     with pytest.raises(authority.AuthorityError, match="already exists"):
-        authority.initialize_authority(root)
+        initialize(root)
     assert path.read_bytes() == original
 
 
@@ -131,7 +165,7 @@ def test_corrupt_state_never_reinitialized(tmp_path: Path, damage: str) -> None:
 @pytest.mark.parametrize("target", ["directory", "database", "lock"])
 def test_broad_permissions_rejected(tmp_path: Path, target: str) -> None:
     root = tmp_path / "state"
-    authority.initialize_authority(root)
+    initialize(root)
     path = {
         "directory": root,
         "database": root / authority.DATABASE,
@@ -156,9 +190,7 @@ def test_symlink_files_rejected_without_touching_destination(
     outside.chmod(0o600)
     (root / name).symlink_to(outside)
     operation = (
-        authority.initialize_authority
-        if name.endswith("pending.sqlite3")
-        else authority.authority_status
+        initialize if name.endswith("pending.sqlite3") else authority.authority_status
     )
     expected: tuple[type[Exception], ...] = (ValueError, OSError)
     with pytest.raises(expected):
@@ -170,7 +202,7 @@ def test_symlink_files_rejected_without_touching_destination(
 @pytest.mark.skipif(os.name == "nt", reason="POSIX symlink and hardlink semantics")
 def test_directory_alias_and_hardlinked_database_rejected(tmp_path: Path) -> None:
     root = tmp_path / "state"
-    authority.initialize_authority(root)
+    initialize(root)
     alias = tmp_path / "alias"
     alias.symlink_to(root, target_is_directory=True)
     with pytest.raises(authority.AuthorityError, match="symlink"):
@@ -186,7 +218,7 @@ def test_writable_parent_rejected(tmp_path: Path) -> None:
     parent.mkdir(mode=0o777)
     parent.chmod(0o777)
     with pytest.raises(authority.AuthorityError, match="another user"):
-        authority.initialize_authority(parent / "state")
+        initialize(parent / "state")
     assert not (parent / "state").exists()
 
 
@@ -199,7 +231,7 @@ def test_nested_missing_parent_rejected_after_creation(
     previous_umask = os.umask(umask)
     try:
         with pytest.raises(authority.AuthorityError, match="another user"):
-            authority.initialize_authority(root)
+            initialize(root)
     finally:
         os.umask(previous_umask)
     assert root.exists()
@@ -224,12 +256,12 @@ def test_nested_missing_parent_with_safe_umask_reopens(tmp_path, monkeypatch) ->
     monkeypatch.setattr(authority.os, "fsync", track)
     previous_umask = os.umask(0o022)
     try:
-        record = authority.initialize_authority(root)
+        record = initialize(root)
     finally:
         os.umask(previous_umask)
     assert authority.authority_status(root) == record
     assert root.parent.stat().st_mode & 0o777 == 0o755
-    assert flushed == [
+    assert flushed[-len((root, *root.parents)) :] == [
         (p.stat().st_dev, p.stat().st_ino) for p in (root, *root.parents)
     ]
 
@@ -248,6 +280,8 @@ def test_failure_leaves_only_complete_published_database(
         raise OSError("injected write failure")
 
     def fail_publish(pending, target):
+        if target.name != authority.DATABASE:
+            return real_publish(pending, target)
         if failure == "after_publish":
             real_publish(pending, target)
         raise OSError("injected publication failure")
@@ -257,7 +291,7 @@ def test_failure_leaves_only_complete_published_database(
     )
     monkeypatch.setattr(authority, "_publish", fail_publish)
     with pytest.raises(OSError, match="injected"):
-        authority.initialize_authority(root)
+        initialize(root)
     assert not (root / ".authority.pending.sqlite3").exists()
     assert not (root / ".authority.pending.sqlite3-journal").exists()
     monkeypatch.setattr(authority, "_write_database", real_write)
@@ -265,10 +299,10 @@ def test_failure_leaves_only_complete_published_database(
     if failure == "after_publish":
         assert authority.authority_status(root) is not None
         with pytest.raises(authority.AuthorityError, match="already exists"):
-            authority.initialize_authority(root)
+            initialize(root)
     else:
         assert authority.authority_status(root) is None
-        assert authority.initialize_authority(root) == authority.authority_status(root)
+        assert initialize(root) == authority.authority_status(root)
 
 
 def _wait_for_file(path: Path, child: subprocess.Popen) -> None:
@@ -308,7 +342,7 @@ if sys.argv[3] == "transaction":
     authority._write_database = partial
 else:
     authority._publish = wait
-authority.initialize_authority(Path(sys.argv[1]))
+authority.initialize_authority(Path(sys.argv[1]), recovery_file=Path(sys.argv[1]).with_name(Path(sys.argv[1]).name + ".recovery.json"))
 """
     child = subprocess.Popen(
         [sys.executable, "-c", script, str(root), str(ready), phase],
@@ -319,17 +353,26 @@ authority.initialize_authority(Path(sys.argv[1]))
     try:
         _wait_for_file(ready, child)
         assert not (root / authority.DATABASE).exists()
-        for operation in (authority.initialize_authority, authority.authority_status):
+        for operation in (initialize, authority.authority_status):
             with pytest.raises(authority.AuthorityError, match="busy"):
                 operation(root)
     finally:
         child.kill()
         child.communicate(timeout=15)
     assert (root / ".authority.pending.sqlite3").exists()
-    record = authority.initialize_authority(root)
+    recovery_path = root.with_name(root.name + ".recovery.json")
+    recovery_before = (
+        json.loads(recovery_path.read_text()) if recovery_path.exists() else None
+    )
+    record = initialize(root)
     assert authority.authority_status(root) == record
     assert not (root / ".authority.pending.sqlite3").exists()
     assert {p.name for p in root.iterdir()} == {authority.DATABASE, ".authority.lock"}
+    if recovery_before:
+        assert (
+            json.loads(recovery_path.read_text())["recovery_signer_pkcs8"]
+            == recovery_before["recovery_signer_pkcs8"]
+        )
 
 
 def test_concurrent_process_initializers_publish_one_identity(tmp_path: Path) -> None:
@@ -339,7 +382,7 @@ import json, sys
 from pathlib import Path
 from arbiter_server.authority import initialize_authority, AuthorityError
 try:
-    print(json.dumps(initialize_authority(Path(sys.argv[1])).to_dict()))
+    print(json.dumps(initialize_authority(Path(sys.argv[1]), recovery_file=Path(sys.argv[1]).parent / "concurrent.recovery.json").to_dict()))
 except AuthorityError as exc:
     print(str(exc), file=sys.stderr)
     sys.exit(1)
@@ -375,7 +418,7 @@ except AuthorityError as exc:
 @pytest.mark.skipif(os.name == "nt", reason="POSIX ownership")
 def test_different_uid_is_not_authorized(tmp_path: Path, monkeypatch) -> None:
     root = tmp_path / "state"
-    authority.initialize_authority(root)
+    initialize(root)
     current = os.geteuid()
     monkeypatch.setattr(authority.os, "geteuid", lambda: current + 1)
     with pytest.raises(authority.AuthorityError):
@@ -393,7 +436,7 @@ def test_windows_non_inheritable_parent_acl_rejected(tmp_path: Path) -> None:
         text=True,
     )
     with pytest.raises(authority.AuthorityError, match="another user"):
-        authority.initialize_authority(parent / "state")
+        initialize(parent / "state")
     assert not (parent / "state").exists()
 
 
@@ -464,11 +507,7 @@ def test_windows_foreign_state_owner_rejected(tmp_path: Path, name: str) -> None
         capture_output=True,
         text=True,
     )
-    operation = (
-        authority.authority_status
-        if name == authority.DATABASE
-        else authority.initialize_authority
-    )
+    operation = authority.authority_status if name == authority.DATABASE else initialize
     with pytest.raises(authority.AuthorityError, match="owned by the caller"):
         operation(root)
     assert _windows_file_security(path).owner_sid == foreign
@@ -542,7 +581,7 @@ def test_windows_broad_directory_acl_rejected_without_repair(tmp_path: Path) -> 
     )
     before = subprocess.check_output(["icacls", str(root)], text=True)
     with pytest.raises(ValueError, match="unsafe config directory permissions"):
-        authority.initialize_authority(root)
+        initialize(root)
     assert not list(root.iterdir())
     assert subprocess.check_output(["icacls", str(root)], text=True) == before
 
@@ -550,7 +589,7 @@ def test_windows_broad_directory_acl_rejected_without_repair(tmp_path: Path) -> 
 @pytest.mark.skipif(os.name != "nt", reason="native Windows ACL boundary")
 def test_windows_broad_database_acl_rejected(tmp_path: Path) -> None:
     root = tmp_path / "state"
-    authority.initialize_authority(root)
+    initialize(root)
     path = root / authority.DATABASE
     subprocess.run(
         ["icacls", str(path), "/grant", "*S-1-5-32-545:R"],

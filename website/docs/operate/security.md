@@ -167,7 +167,8 @@ explicit.
 The first authentication milestone provides stopped-instance identity setup:
 
 ```bash
-arbiter-server authority init --state-dir /private/path/authority
+arbiter-server authority init --state-dir /private/path/authority \
+  --recovery-file /operator-only/private/operator-recovery.json
 arbiter-server authority status --state-dir /private/path/authority --json
 ```
 
@@ -176,6 +177,12 @@ and server UUIDs in a versioned SQLite database. It does not read Hydra
 configuration, load service plugins, or contact upstream accounts. A second
 initialization fails instead of replacing existing identity records. Status
 reports absent or damaged state without creating a replacement database.
+
+Prepare the recovery file's private parent directory separately. Keep the file
+outside the authority directory, server/agent storage and synced backup storage.
+It holds both backup-decryption and live-recovery authority; theft compromises
+both. See [operator recovery custody](credentials.md#operator-recovery-custody)
+for reuse and interrupted setup.
 
 Stop the instance before initializing. Concurrent initialization attempts use
 one persistent process lock. A failed unpublished initialization can be retried;

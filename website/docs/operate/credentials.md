@@ -62,8 +62,9 @@ Certificate status output does not export private material. The setup transactio
 must succeed completely before publication; failure does not replace existing
 IDs or keys. Never copy the authority database into an agent workspace.
 
-Authority schema 2 requires the complete credential set. The earlier experimental
-IDs-only schema 1 is rejected without modification; there is no implicit upgrade
+Authority schema 3 requires the complete credential set and registered recovery
+trust. Earlier experimental schemas 1 and 2 are rejected without modification;
+there is no implicit upgrade
 or reinitialization. Preserve old state rather than deleting identity records to
 work around a version error.
 
@@ -71,3 +72,46 @@ Shared public-only verification vectors are in
 `tests/fixtures/authentication/credential-profiles-v1.json`. They are synthetic
 test trust, consumed by Python now and intended for Go's slice 2.1 verifier.
 They must never become product trust or default credentials.
+
+## Operator recovery custody
+
+Setup requires `--recovery-file PATH` in an existing operator-owned private
+directory outside server state. POSIX directories must be private (normally
+`0700`); files use `0600`. Windows uses the same operator/SYSTEM/Administrators
+ownership and inheritable ACL boundary as authority state. Permissions and
+aliases are validated, never repaired. The parent retains a private
+`.authority.lock` to serialize publication and explicit reuse. Do not delete a
+lock while setup is running.
+
+The version-one JSON file starts with `NEVER SHARE THIS`. It holds a separate
+P-256 recovery signer and X25519 backup decryptor as base64 canonical PKCS8 DER,
+the owner ID, and trusted per-server backup-origin SPKI public keys. Keys are
+unencrypted within this private file. Its combined powers are intentional:
+anyone who steals it can decrypt backups and authorize live identity recovery.
+Keep a safe copy outside the server, agents, export jobs and synced bundles.
+Loss of every copy makes future encrypted backups unrecoverable.
+
+Server state contains only the recovery verifier and backup recipient SPKI,
+plus a separate server-held backup-origin signing key. Private external recovery
+keys never enter that state or status output. The X25519 public/private records
+use standard DER; the future age export adapter will encode them as age
+identities/recipients. This setup does not implement export, restore or live
+credential recovery yet.
+
+Initialization refuses an existing recovery file unless you select
+`--reuse-recovery-file`. Explicit reuse preserves both private keys and the owner
+ID and adds this server's public backup-origin verifier without removing earlier
+verifiers. It does not share server identities or grant access between servers.
+Reuse never regenerates existing private keys; there is no force-reset option.
+
+Custody publishes before the complete authority database. If setup fails before
+custody publication, retry normally. If it publishes the recovery file but not
+the database, retain the file and retry with explicit reuse. An unused public
+origin entry can remain from that failed attempt; it grants no live access.
+A killed initializer can leave one bounded private staging file, named
+`.FILENAME.arbiter-pending`; the next setup reconciles it under the parent lock.
+If the database already exists, inspect `authority status`; never reinitialize
+or delete durable identity records to bypass an error. Status needs only the
+registered public trust, so the recovery file can be moved to safe external
+custody after setup. Filesystem flush failures are reported as failures even if
+publication already occurred; inspect both destinations before retrying.
