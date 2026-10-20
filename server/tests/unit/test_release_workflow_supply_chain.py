@@ -14,6 +14,7 @@ def _approved_reusable_workflow(reference: str, filename: str) -> bool:
     if filename == "dependency-audit.yml" and reference in {
         "hydra-ecosystem/github-actions/.github/workflows/node-audit.yml@v1",
         "hydra-ecosystem/github-actions/.github/workflows/node-publish.yml@v1",
+        "hydra-ecosystem/github-actions/.github/workflows/node-maintenance.yml@v1",
     }:
         return True
     return (
@@ -74,6 +75,26 @@ def test_actions_dependency_updates_are_configured() -> None:
 @pytest.mark.parametrize(
     "filename,reference,allowed",
     [
+        (
+            "dependency-audit.yml",
+            "hydra-ecosystem/github-actions/.github/workflows/node-maintenance.yml@v1",
+            True,
+        ),
+        (
+            "dependency-audit.yml",
+            "hydra-ecosystem/github-actions/.github/workflows/node-maintenance.yml@v2",
+            False,
+        ),
+        (
+            "dependency-audit.yml",
+            "other/actions/.github/workflows/node-maintenance.yml@v1",
+            False,
+        ),
+        (
+            "publish.yml",
+            "hydra-ecosystem/github-actions/.github/workflows/node-maintenance.yml@v1",
+            False,
+        ),
         (
             "dependency-audit.yml",
             "hydra-ecosystem/github-actions/.github/workflows/node-audit.yml@v1",
