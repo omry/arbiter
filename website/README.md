@@ -39,7 +39,7 @@ ten-day cooldown. The repository-root `.github/node-maintenance.json` points to 
 policy; edit its overrides to change project policy, and keep caller cron entries
 in `.github/workflows/dependency-audit.yml` consistent with the resolved schedule.
 
-To run an audit sooner, open **Actions → Node dependency audit → Run workflow**
+To run an audit sooner, open **Actions → Node dependency maintenance → Run workflow**
 on `main` and select `security` or `upgrades`. The action validates dependency
 changes before opening or updating one maintenance PR. A toolchain or schedule
 mismatch fails preflight and opens or updates a configuration issue. The action
