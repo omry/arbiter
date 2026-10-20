@@ -13,7 +13,7 @@ and [HLD](high-level-design.md), SHA-256
 Their exact reviewed stamps are required dependencies of this plan's stamp.
 Neither governing document changes in this stage. This plan authorizes no
 implementation, release, live-account operation or deployment by itself.
-Actual DBB must approve the exact final plan before its SWE design stamp.
+DBB must approve the exact final plan before its SWE design stamp.
 
 ## Delivery identities and rules
 
@@ -25,14 +25,52 @@ aggregate acceptance obligation. A future execution ledger records exact PR URL,
 revision, dependencies, checks, reviews and state for each canonical identity;
 there are no PRs, code changes or completed implementation slices yet.
 
-Each numbered slice is one intended PR with one observable behavior, its own
-negative/failure tests, documentation and applicable package fragments. Work
-serially in the table order. Complete local review, checks, submission and the
-approved remote review cycle for the current PR before advancing; approval binds
+The eleven numbered slices are milestones, not individual PRs. Their child
+identities below are the intended reviewable PRs, each with its own bounded
+behavior, negative/failure tests, documentation and applicable fragments. Work
+serially in milestone order and then the listed child order (not numeric sort). Complete local review, checks,
+submission and the approved remote review cycle for the current PR before advancing; approval binds
 the final PR head, with restacking invalidating affected evidence as appropriate.
 This document does not launch those cycles. If a slice becomes too large to
 review, split it under its identity before implementation rather than hiding
-another feature or introducing a scaffolding-only PR.
+another feature. A foundation PR must implement a real consumed boundary
+(setup/status, registered pending work or an executable protocol peer), not empty
+interfaces, permissive stubs or a throwaway intermediate protocol. A synthetic
+peer may exercise a not-yet-public transport; it cannot authorize product traffic.
+Until child 2.6, the live server has no reachable enrollment activation/ready-commit
+route: 2.7/2.8 may use synthetic already-activated fixture rows only in tests, never
+a production trust initializer. Until child 3.5, ordinary public server dispatch
+remains closed on the new native boundary. Child 3.6 installs and tests complete
+live denial first through the prepared inner handlers and real synthetic sockets.
+The eventual cutovers cannot rely on development-only publication policy as their
+safety mechanism; the respective runtime routes must actually remain closed.
+
+Every implementation and review-fix commit subject, and its PR title, starts with
+the short slice label in brackets. For example:
+`[authentication/1.1] Private authority initialization`. The repository already
+identifies Arbiter; do not repeat its name in the title prefix. This display label
+maps to canonical ledger identity `arbiter-authentication/1.1`; the plan key and
+tracking identities remain unchanged. Use the deeper child ID after an approved
+further split, and preserve the label through restacks and corrections. A title or
+PR number does not replace the execution-ledger identity. This does not rename
+historical commits.
+
+### Milestone stacks and merge boundary
+
+Deliver one connected PR stack per milestone. Review and approve its child PRs
+serially as described above, retaining the stack until the milestone is complete.
+Before merging, require current approval and required checks for every final PR
+head, the parent milestone's full acceptance and integration checks, and relevant
+integration with completed milestones. Reconcile approval/check evidence after
+any correction or restack. Safe intermediate behavior remains mandatory.
+
+Present the verified milestone stack for operator-authorized merge, bottom-up.
+Do not merge automatically. Verify the resulting main-branch state before basing
+the next milestone on it; do not carry the previous milestone's unmerged stack
+into the next one. A delivery request may stop with the approved stack ready for
+the operator to merge. Merging is separate from publishing authentication support:
+all eleven milestones and the combined publication gate remain required. No
+milestone merge authorizes a package release, deployment or live-account operation.
 
 Use existing towncrier release surfaces: `server/news/` for core/native-client
 integration behavior, `plugins/imap/news/` or `plugins/smtp/news/` for changed plugin
@@ -52,11 +90,16 @@ in slice 3, anonymous legacy operation/artifact paths stay closed; an incomplete
 artifact path must fail safely rather than emit an ownerless/plaintext substitute.
 Missing authority state fails closed and directs the operator to trusted setup.
 
-## Ordered PR queue
+## Ordered milestone queue
 
 Dependencies below are direct semantic prerequisites. Serial delivery additionally
 requires the preceding PR to finish its review cycle. Final integration covers
-every combination, not just each slice in isolation.
+cross-milestone interactions, not just each milestone in isolation. The listed child order is authoritative: milestone 2 runs 2.1–2.5, 2.7, 2.8,
+2.6, 2.9; milestone 3 runs 3.1–3.4, 3.6, 3.5, 3.7. These orders preserve child
+identities while repairing the reviewed cutover order. The explicit
+child dependencies below are technical prerequisites; serial delivery also
+requires the preceding child PR to finish its review cycle. An external dependency
+on a milestone means all of that milestone's children, not just its first PR.
 
 | Slice | Observable result | Direct dependencies | Governing coverage |
 | --- | --- | --- | --- |
@@ -71,6 +114,99 @@ every combination, not just each slice in isolation.
 | 9 | External local/SSH jobs obtain coherent, signed encrypted application backups. | 1, 3, 4, 5, 6, 7 | R21–R22; HLD B5 |
 | 10 | Operator restores offline and can undo the latest restore, including after use. | 4, 5, 6, 9 | R23–R24; HLD B5 |
 | 11 | Operator migrates paired clients during maintenance with verified URL handoff. | 3, 4, 6, 9, 10 | R10, R14, R17, R25; HLD B5 |
+
+## PR sizing and estimation basis
+
+The current breakdown contains **60 planned PRs** across eleven milestones.
+This count follows the boundaries below; it is not a delivery quota or a measured
+implementation size. The earlier 30–45 PR conversation estimate was preliminary.
+All children are unstarted. Preserve parent identities and aggregate acceptance;
+if a child later needs splitting, use `2.7.1`, `2.7.2`, etc., without renumbering
+other work. The execution ledger must retain the parent closure obligation.
+
+Target **about 600 changed handwritten code lines** per PR. The **hard maximum is
+1,000**, counting additions plus deletions in production code, tests and handwritten
+fixtures across Python and Go combined. This is not 1,000 per language or per
+category. Count moved/reformatted code too; avoid incidental cleanup. Do not drop
+negative tests, move a PR's tests into a later PR, compress code, label handwritten
+fixtures generated or weaken a boundary to fit. Estimate and report documentation,
+generated fixtures/code, lockfiles and tooling output separately in the PR; they
+still contribute review burden. Do not introduce new generation tooling merely to
+avoid the limit. A large mechanical change should be a separate coherent PR.
+
+The target is flexible; the maximum is not. Before coding each child, check its
+forecast against the inspected implementation and predecessor changes. If it
+cannot fit, split it before proceeding. If actual changes approach/exceed 1,000,
+stop expansion and split before submission. A changed split needs focused review
+and updated dependency/acceptance mapping; changes to the stamped plan require
+DBB/SWE re-review and replacement stamp before treating that revision as approved.
+No additional owner interview is required for a mechanical split that preserves
+approved requirements, HLD, size policy and acceptance.
+
+Ranges below estimate handwritten churn, including assertion/helpers and fixture
+construction. Production and test ranges are separate; the total is their sum.
+They are task-by-task engineering estimates, not statistical confidence intervals
+or a guarantee that the implementation will stay within the forecast. `Medium`
+means there is a close existing implementation to extend. `Low` means new protocol,
+durable state, platform custody or fault behavior dominates. No high-confidence
+estimate is claimed. Exact files/modules follow implementation style, not a promise
+to create one file for each PR. Existing code/tests are reused rather than copied;
+only new/changed lines count. Shared harness work is charged to the first child
+that uses it, and later children budget their own scenario additions.
+
+Inspection basis (2026-10-20, checkout `9d5cfc198bb4`):
+
+| Existing surface | Measured lines | Consequence for estimates |
+| --- | ---: | --- |
+| `server/src/arbiter_server/artifacts.py` / `server/tests/unit/test_artifacts.py` | 570 / 810 | Extend the real store and tests; encryption, quota and access cutovers need separate boundaries. |
+| `server/src/arbiter_server/http_work.py` / `server/tests/unit/test_artifact_http_admission.py` | 170 / 497 | Reuse bounded streaming owners and real contention barriers; do not budget cancellation as a few happy-path assertions. |
+| `server/src/arbiter_server/blocking.py` / `server/tests/unit/test_blocking_pool.py` | 93 / 138 | Preserve the existing worker pool; add authority coordination rather than replace it. |
+| `client/go-cli/internal/arbiterhttp/client.go` / `client/go-cli/internal/arbiterhttp/client_test.go` | 212 / 251 | Preserve API construction/error shape while changing the carrier. |
+| `client/go-cli/internal/arbiterhttp/timeouts.go` / `client/go-cli/internal/arbiterhttp/timeouts_test.go` | 306 / 368 | Reuse budgets; extend real socket coverage at transport cutover. |
+| `client/go-cli/internal/cli/cli.go` / `client/go-cli/internal/cli/artifact_commands_test.go` | 2,306 / 869 | Change relevant command paths; avoid an unrelated whole-file rewrite. |
+| `server/tests/unit/test_native_http_protocol.py` / `server/tests/integration/test_cli_entrypoint.py` | 1,394 / 1,245 | Reuse synthetic ASGI and installed Go-wheel fixtures; charge new authenticated/process scenarios separately. |
+| `server/src/arbiter_server/storage.py` / `server/src/arbiter_server/config.py` | 57 / 376 | Private generation/authority/ACL recovery is mostly new work, not an existing backup subsystem. |
+
+Read-through of these paths, native route/admission construction in `main.py` and
+the HLD’s retained Python/Go probe results informs the estimates. Probe code is not assumed
+to be production-ready or copied wholesale. Native Windows custody/durability,
+full TLS adapter shutdown and dependency matrix work remain particularly uncertain.
+No product tests or new feasibility probes were run for this sizing revision.
+
+The per-child tables define scope, a focused minimum acceptance check, code ranges,
+confidence and direct dependencies. Every child also owns relevant tests from the
+shared contracts and its parent milestone: a parent acceptance requirement is not
+postponed until its final closure PR when the behavior already exists. Closure PRs
+exercise composition, native builds and additional process-level failure cases;
+they are not permission to submit earlier untested behavior. Any new runtime
+setting/format is documented and tested where first consumed. Each child includes
+its applicable package fragment and command/operator guidance; final documentation
+passes only reconcile the complete journey. Documentation effort is not included
+in the handwritten-code totals, and must be called out before each PR starts.
+
+### Estimate summary
+
+| Milestone | Planned PRs | Production churn | Test churn | Combined churn |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 6 | 1,340–2,240 | 1,520–2,630 | 2,860–4,870 |
+| 2 | 9 | 2,160–3,490 | 2,600–4,380 | 4,760–7,870 |
+| 3 | 7 | 1,400–2,410 | 1,950–3,430 | 3,350–5,840 |
+| 4 | 5 | 960–1,640 | 1,420–2,440 | 2,380–4,080 |
+| 5 | 5 | 960–1,650 | 1,320–2,280 | 2,280–3,930 |
+| 6 | 4 | 840–1,430 | 1,080–1,880 | 1,920–3,310 |
+| 7 | 6 | 1,160–2,000 | 1,680–2,920 | 2,840–4,920 |
+| 8 | 5 | 810–1,430 | 1,300–2,290 | 2,110–3,720 |
+| 9 | 5 | 990–1,700 | 1,420–2,450 | 2,410–4,150 |
+| 10 | 5 | 920–1,580 | 1,460–2,520 | 2,380–4,100 |
+| 11 | 3 | 480–860 | 860–1,500 | 1,340–2,360 |
+| **Total** | **60** | **12,020–20,430** | **16,610–28,720** | **28,630–49,150** |
+
+These totals sum estimated PR churn, including edits to previously introduced code;
+they are not final repository size or time estimates. Existing fixtures are reused.
+Generated/binary fixtures, dependency locks and documentation have no credible
+line forecast yet: quantify them at each child kickoff and separate them in the
+review summary. Their absence here is uncertainty, not zero work. No fixed delivery
+date or throughput promise follows from these ranges.
 
 ## Shared implementation contracts
 
@@ -185,6 +321,17 @@ private material never appears in server state, logs, argv, env or ordinary APIs
 Test native POSIX and Windows control boundaries. Add setup/trust documentation,
 operator command help and an `arbiter-server` news fragment.
 
+### Child PRs
+
+| PR | Scope and focused acceptance | Production | Tests | Total | Confidence | Direct prerequisites |
+| --- | --- | ---: | ---: | ---: | --- | --- |
+| `1.1` — Private authority initialization | Create UUID-backed owner/server records and versioned SQLite authority schema through stopped-instance init/status; reject a second initialization. **Check:** Reopen preserves IDs; concurrent init and partial DB writes cannot publish two instances. | 200–340 | 220–380 | 420–720 | Medium | None |
+| `1.2` — Role-separated credential profiles | Issue and validate setup credentials with explicit SAN/EKU/issuer profiles, exact certificate bounds and validity/renewal schedules. Publish shared profile fixtures consumed by Python now and Go in 2.1. **Check:** Reject cross-role, duplicate SAN, unregistered issuer, malformed DER and wrong key usage; verify profile time boundaries. | 260–420 | 280–450 | 540–870 | Low | 1.1 |
+| `1.3` — External operator recovery file | Extend initialization with external recovery signer/decryptor, backup public configuration and registered public trust; keep private recovery material out of server state. **Check:** No overwrite or secret leakage; interrupted publication never reports successful setup with missing recovery trust. | 200–330 | 230–400 | 430–730 | Low | 1.2 |
+| `1.4` — Durable application-state publication | Put initialized authority in a private generation with a durable active selector, instance lock and restart reconciliation; validate native ownership and ACLs. **Check:** Faults around flush/reference changes leave one coherent active state; Windows/POSIX locking prevents concurrent start. | 260–420 | 300–500 | 560–920 | Low | 1.3 |
+| `1.5` — POSIX authenticated local control | Serve setup/status and bounded administrative messages over a private Unix socket; verify peer credentials and keep live DB writes server-owned. **Check:** Wrong UID, path replacement, oversized input and disconnect fail without loopback authority or leaked slots. | 190–330 | 230–400 | 420–730 | Medium | 1.4 |
+| `1.6` — Windows authenticated local control | Provide the same real setup/status journey via named-pipe ACL and caller-token checks, with platform selection and trusted SSH instructions. **Check:** Native unauthorized caller, permissive ACL and pipe replacement fail; installed local commands work on both OS families. | 230–400 | 260–500 | 490–900 | Low | 1.5 |
+
 ## Slice 2 — pairing a real client and reconciling activation
 
 Deliver `enrol` from a real Go CLI against a real initialized Python server:
@@ -211,6 +358,19 @@ before/after commit and after lost reply prove one durable identity/grant/result
 Restart invalidates uncommitted PSKs only; denial beats stale completion. Abandoned
 client/server state cleans within bounds. Add enrollment/recovery diagnostics,
 custody guidance and fragments for server and native client packaging as applicable.
+
+### Child PRs
+| PR | Scope and focused acceptance | Production | Tests | Total | Confidence | Direct prerequisites |
+| --- | --- | ---: | ---: | ---: | --- | --- |
+| `2.1` — Client provisional identity custody | Add real enrol key generation, private atomic client state and closed-server diagnostics; Go consumes 1.2 profile fixtures. **Check:** Restart, failed save and bad permissions leave recoverable provisional state; keys/PSK never reach argv, env or logs. | 240–380 | 260–430 | 500–810 | Low | 1.6 |
+| `2.2` — Pending requests and operator approval | Add bounded public request registration and local open/list/approve/reject; bind immutable proposed keys/grants, protected PSK input and original deadlines. **Check:** Closed enrollment cannot open remotely; twenty pending entries include approved work; reopen/expiry races never reset deadlines. | 240–400 | 280–460 | 520–860 | Low | 2.1 |
+| `2.3` — Bounded Python pairing responder | Wire binary WebSocket framing and Noise responder into approved pending requests with carrier/crypto reservations and authenticated first-flight accounting. **Check:** Anonymous failures spend no attempts; authenticated duplicates share one owner; five distinct attempts, byte limits and cancellation retain correct ownership. | 300–450 | 300–500 | 600–950 | Low | 2.2 |
+| `2.4` — Go pairing initiator and transcript proof | Connect the real enrol command through the bounded WebSocket/Noise adapter; prove proposed keys and exact role/request transcript to the Python responder. **Check:** Wrong PSK/prologue/selector/key or fragmented oversized input cannot advance; a real Python/Go exchange verifies both peers. | 260–420 | 280–470 | 540–890 | Low | 2.3 |
+| `2.5` — Prepared enrollment and durable client ready | Issue the owner-approved prepared result, verify it at the client and flush complete keys/trust/result before emitting ready proof. **Check:** Tampered prepared data, wrong issuer/IDs and save failures prevent ready; prepared certificates alone cannot authorize ordinary work. | 260–430 | 300–500 | 560–930 | Low | 2.4 |
+| `2.7` — Server-authenticated inner TLS carrier | Implement bounded Python memory-BIO and Go TLS-over-WebSocket streams for fixed receipt control; verify remembered server and exporter, with no ASGI dispatch. No live activation is reachable yet; activated state exists only in synthetic test fixtures. **Check:** Wrong server/ALPN, overrun, blocked writes and cancellation fail; dedicated outer TLS exception leaks no inherited credentials or redirects. | 300–450 | 300–500 | 600–950 | Low | 2.5 |
+| `2.8` — Authenticated receipt reconciliation | Implement exact-result receipt control and client reconciliation against synthetic already-activated fixture rows; no product activation route exists until 2.6. **Check:** Test lost reply, restart, wrong key, replay and denial using exact stored results without PSK; synthetic fixtures cannot become product trust or create another activation. | 200–340 | 260–450 | 460–790 | Low | 2.7 |
+| `2.6` — Single activation and receipt | With 2.7/2.8 present, wire the first reachable ready/activation commit: conditionally persist identity, credential, grants and result; promote only from authenticated receipt/retrieval. **Check:** Real Python/Go crash/lost-reply/restart at ready/commit/receipt proves one durable result, authenticated promotion and denial precedence; retries create no second identity or grant. | 280–440 | 320–520 | 600–960 | Low | 2.8 |
+| `2.9` — Pairing installation and overload closure | Complete prefix packaging/platform checks and process-level pairing failures, reusing earlier fixtures rather than deferring core assertions here. **Check:** Installed CLI pairs/reconciles; dependency builds, proxy fragmentation and simultaneous expiry/shutdown release real owners and keep health responsive. | 80–180 | 300–550 | 380–730 | Low | 2.6 |
 
 ## Slice 3 — native API, account grants and live denial
 
@@ -255,6 +415,17 @@ and cancellation/repeated failure release bounded staging and worker ownership.
 Use a legacy-store spy plus filesystem inspection, including restart cleanup;
 the final no-publication gate alone is not this acceptance evidence.
 
+### Child PRs
+| PR | Scope and focused acceptance | Production | Tests | Total | Confidence | Direct prerequisites |
+| --- | --- | ---: | ---: | ---: | --- | --- |
+| `3.1` — Ordinary inner mTLS caller context | Add strict access-leaf verification and single-request HTTP/1.1-to-ASGI adapter with immutable verified identity; ordinary API remains closed until 3.5. **Check:** Portable/cross-server/expired leaves fail; no proxy header or outer identity creates a caller; early body input stays admission-bounded. | 260–420 | 280–470 | 540–890 | Low | 2.9 |
+| `3.2` — Live grants and admission revision | Implement local grant changes and a coordinator that admits work against current enrollment/account revision, retaining actual worker ownership. **Check:** Grant/revoke and dispatch barriers serialize; caches cannot authorize stale revisions; existing account policy remains the only operation policy. | 220–360 | 260–460 | 480–820 | Low | 3.1 |
+| `3.3` — Authenticated discovery filtering | Apply verified grants to catalog, schema, policy/account summaries and direct lookup in the inner API. **Check:** Hidden accounts/policies cannot be learned by guessed paths, errors, previews or shared-account clients; existing payload contracts remain. | 160–300 | 250–430 | 410–730 | Medium | 3.2 |
+| `3.4` — Authorized dispatch and closed artifact adapter | Bind account policy and immutable creator context to operation dispatch; replace plugin artifact creation/inspection with a closed adapter before native API cutover. **Check:** Real dispatch to an artifact-producing synthetic plugin rejects before legacy store entry, file/nonce/descriptor publication; upstream effects are reported honestly. | 220–370 | 280–500 | 500–870 | Low | 3.3 |
+| `3.6` — Cross-connection live denial | Cancel affected admitted work/output on all connections at grant removal/enrollment denial, preserving pre-body admission and blocking-worker lifetime. Install and test this through prepared inner handlers and real synthetic sockets while the public ordinary boundary stays closed until 3.5. **Check:** Real sockets and slow/chunked bodies prove no post-denial dispatch/output; worker slots stay held until underlying calls exit; no uncertain replay. | 220–380 | 300–520 | 520–900 | Low | 3.4 |
+| `3.5` — CLI transport cutover and anonymous closure | Route every Go discovery/invocation/artifact constructor to verified inner transport; atomically close anonymous legacy API/artifact routes on the server. **Check:** First reachable installed Python/Go ordinary prefix tests denial against queued admission, bodies, upstream dispatch and ongoing output with real worker retention; legacy routes stay closed and artifact creation leaves no plaintext/nonce. | 240–400 | 280–500 | 520–900 | Low | 3.6 |
+| `3.7` — Native transport regression closure | Complete changed-cert/inspecting-relay/TCP-passthrough, installed-client and timeout/error compatibility checks across native routes. **Check:** Proxy sees no native secret; connect versus API/idle budgets, long active calls and eight-worker/1 MiB limits remain; no new bypass is needed. | 80–180 | 300–550 | 380–730 | Low | 3.5 |
+
 ## Slice 4 — rotation, late completion and bounded fallback
 
 Deliver on-contact due rotation, fixed grace, durable candidate save/confirmation
@@ -276,6 +447,16 @@ by the same verified server; never after denial/timeout/unverified peer or opera
 submission, and never replay uncertain mutation/GET. Test across both languages
 with real controlled clocks/sockets and malicious control transcripts. Add lifecycle
 configuration/help, repair guidance and server/client fragments.
+
+### Child PRs
+
+| PR | Scope and focused acceptance | Production | Tests | Total | Confidence | Direct prerequisites |
+| --- | --- | ---: | ---: | ---: | --- | --- |
+| `4.1` — Server pending rotation and fixed grace | Prepare a due transition on authenticated contact, bind one candidate and preserve current ordinary access until its original deadline. **Check:** Controlled 30-day/24-hour/180-day boundaries, withheld candidates and restart cannot slide grace or inactivity. | 220–360 | 260–450 | 480–810 | Low | 3.7 |
+| `4.2` — Durable candidate confirmation | Save candidate state in Go, prove possession and conditionally activate/promote with one retained predecessor and idempotent result. **Check:** Crash/lost reply at save/activate/promote cannot install an unsaved key, clear denial or duplicate transition. | 240–400 | 300–500 | 540–900 | Low | 4.1 |
+| `4.3` — Expired-key restricted completion | Add the fixed exporter-bound old-plus-candidate control and reissue only that pending candidate after grace/certificate expiry. **Check:** Ordinary TLS remains strict; wrong pending purpose/revision, replay, inactivity and denial cannot complete or refresh deadlines. | 260–420 | 300–520 | 560–940 | Low | 4.2 |
+| `4.4` — Authenticated predecessor assistance | Return authenticated credential status and permit one authentication-only predecessor attempt after the same verified server rejects current credentials. **Check:** Never fallback after timeout, unverified peer, denial or submitted operation/consuming GET; superseding recovery discards history. | 160–280 | 240–420 | 400–700 | Low | 4.3 |
+| `4.5` — Lifecycle race and clock closure | Exercise the implemented transitions through process restarts and competing denial/recovery, with final lifecycle diagnostics and retained-receipt cleanup. **Check:** Full Python/Go boundary matrix preserves unattended completion where permitted; incomplete exchanges cannot keep an inactive enrollment alive. | 80–180 | 320–550 | 400–730 | Low | 4.4 |
 
 ## Slice 5 — owner-authorized client recovery
 
@@ -301,6 +482,16 @@ preserving owner/agent IDs and purpose separation. Controlled-clock tests cover
 before-expiry renewal, signer/key mismatch, denial and renewal races, rejection
 of portable credentials on ordinary TLS, restart and missed-renewal diagnostics.
 Certificate renewal must not become an automatic access-key replacement or grant.
+
+### Child PRs
+
+| PR | Scope and focused acceptance | Production | Tests | Total | Confidence | Direct prerequisites |
+| --- | --- | ---: | ---: | ---: | --- | --- |
+| `5.1` — Owner-approved pairing repair | Extend local pairing for an existing enrollment with explicit owner selection while retaining durable identity, grants and denial. **Check:** New-client enrollment cannot silently select an existing identity; repair invalidates superseded pending/current credentials without regranting. | 180–300 | 240–420 | 420–720 | Low | 4.5 |
+| `5.2` — External owner challenge proofs | Implement strict ES256 recovery statements, externally held signer tooling and fresh server-bound challenge with replacement possession proof. **Check:** Shared Python/Go fixtures reject wrong algorithm, purpose, signer, server, expiry, duplicate fields and changed signed bytes. | 220–370 | 280–480 | 500–850 | Low | 5.1 |
+| `5.3` — Atomic access-key recovery | Consume the exact challenge and replace access state in one conditional live-authority transaction; reconcile lost response. **Check:** Recovery/rotation/denial races consume once; revoked state stays revoked; no second per-server approval or issuer private-key sharing. | 200–330 | 260–450 | 460–780 | Low | 5.2 |
+| `5.4` — Portable identity repair across servers | Apply the owner-authorized portable replacement and orchestrate distinct per-server recovery proofs using the same external owner trust. **Check:** Two real isolated servers keep independent access keys and grants; portable possession alone cannot replace access or trust another server credential. | 180–320 | 280–480 | 460–800 | Low | 5.3 |
+| `5.5` — Owner and portable certificate renewal | Implement authorized before-expiry owner-issuer/portable-leaf renewal under 1.2 schedules, keeping purpose and durable IDs. **Check:** Controlled time, wrong signer, denial, concurrent renewal and restart cannot grant native access or masquerade as access-key rotation. | 180–330 | 260–450 | 440–780 | Low | 5.4 |
 
 ## Slice 6 — server identity replacement
 
@@ -330,6 +521,15 @@ Test expiry/restart/renewal races and ensure HTTPS renewal/URL changes do not re
 native identity or silently extend authority. Keep these tests distinct from
 access-key rotation and planned server-key replacement.
 
+### Child PRs
+
+| PR | Scope and focused acceptance | Production | Tests | Total | Confidence | Direct prerequisites |
+| --- | --- | ---: | ---: | ---: | --- | --- |
+| `6.1` — Planned server transition publication | Produce old endorsement plus new possession with stable server ID and durable transition history through operator tooling. **Check:** Wrong identity/key, incomplete publication and restart cannot install unsigned trust or lose the prior complete history. | 200–340 | 260–450 | 460–790 | Low | 5.5 |
+| `6.2` — Client transition adoption | Fetch and verify legitimate transition chains, then durably adopt server trust for online and long-offline clients. **Check:** Missing/interleaved history, replay and failed save reject safely; credentials are withheld until destination identity is verified. | 200–340 | 260–450 | 460–790 | Low | 6.1 |
+| `6.3` — Independent compromise recovery | Use registered external owner authorization for server-key compromise recovery and propagate explicit client repair diagnostics. **Check:** Stolen old server key alone cannot bless a replacement; owner proof cannot clear client denial, change server ID or duplicate grants. | 220–370 | 280–480 | 500–850 | Low | 6.2 |
+| `6.4` — Server authority and leaf renewal | Renew server-authority and inner-server-leaf certificates before expiry without scheduled identity-key replacement; use independent owner recovery after missed trust validity. **Check:** Controlled clocks reject expired peer-driven trust renewal; stable IDs/keys, restart and renewal races work; outer HTTPS renewal changes no native trust. | 220–380 | 280–500 | 500–880 | Low | 6.3 |
+
 ## Slice 7 — encrypted server artifacts and ownership
 
 Deliver server-side age encryption for the creator's registered recipient and
@@ -352,6 +552,17 @@ flows exercise real artifact adapters. Legacy cleanup is idempotent and confined
 to server-managed ownerless files. Add storage/ownership docs and affected server/
 plugin fragments; server encryption is not whole client-processing completion.
 
+### Child PRs
+
+| PR | Scope and focused acceptance | Production | Tests | Total | Confidence | Direct prerequisites |
+| --- | --- | ---: | ---: | ---: | --- | --- |
+| `7.1` — Artifact recipient registration and retention | Register fresh recipient possession through authenticated identity, persist bounded client/server recipient history and separate it from access-key rotation. **Check:** Wrong origin/key/version or unauthenticated change fails; keys needed by active artifacts survive access rotation until bounded expiry. | 220–370 | 260–450 | 480–820 | Low | 6.4, 3.6 |
+| `7.2` — Encrypted payload and metadata writing | Add streaming age dual-recipient creation and encrypted descriptors behind the closed plugin adapter; preserve server inspection capability. **Check:** Python/Go fixtures prove both recipients, wrong-key/tamper/truncation failure and no persistent plaintext staging; disabled delivery cannot publish a usable nonce. | 240–400 | 280–480 | 520–880 | Low | 7.1 |
+| `7.3` — Physical quota and encrypted-store recovery | Integrate ciphertext/metadata/staging reservations, 50 MiB plaintext and existing count/storage/retention limits, plus restart orphan cleanup. **Check:** Near-cap overhead, full disk, concurrent writers, cancellation and open readers hold reservation until actual cleanup; no cap is silently lowered. | 220–360 | 280–480 | 500–840 | Low | 7.2 |
+| `7.4` — Creator-bound HEAD and consuming GET | Authorize descriptors/HEAD/GET by creator, account grant and nonce, with atomic consume-before-open and authenticated origin. **Check:** Shared account/copied URL/revocation fails; HEAD never consumes; failed/slow GET stays consumed across restart. | 220–370 | 300–500 | 520–870 | Low | 7.3 |
+| `7.5` — Plugin adapter and descriptor activation | Replace the closed adapter with creator-bound encrypted creation for all artifact-producing and inline result paths, retaining legacy-route closure. **Check:** Real mock IMAP/SMTP and Python/Go dispatch cannot choose another creator or return a legacy descriptor; ownerless cleanup stays confined. | 180–320 | 260–460 | 440–780 | Low | 7.4 |
+| `7.6` — Artifact contention and packaging closure | Complete real storage-lock/consume/revoke/stream races and age dependency/install checks on supported platforms. **Check:** Health stays responsive under valid/invalid nonces; disconnect/shutdown retain file/crypto owners until cleanup; no replay reopens GET. | 80–180 | 300–550 | 380–730 | Low | 7.5 |
+
 ## Slice 8 — four client artifact paths
 
 Deliver immediate plaintext stdin, fully verified encrypted-temp-to-stdin,
@@ -372,6 +583,16 @@ partial final export. Access/recipient rotation and grant denial during download
 compose with slices 3/4/7. Explain delay/storage/partial-effects/plaintext exposure
 in both client reference and operation help, discourage persistent agent exports,
 and add native-client fragments and affected skill updates.
+
+### Child PRs
+
+| PR | Scope and focused acceptance | Production | Tests | Total | Confidence | Direct prerequisites |
+| --- | --- | ---: | ---: | ---: | --- | --- |
+| `8.1` — Immediate authenticated plaintext stdin | Decrypt the one native GET directly to child stdin using the authenticated descriptor and bounded process ownership. **Check:** Final digest/EOF failure reports honestly after any valid prefix; no automatic retry, sensitive stdout or default plaintext file. | 180–320 | 260–450 | 440–770 | Medium | 7.6 |
+| `8.2` — Verified encrypted-temp stdin | Reserve ciphertext staging, fully verify to a discard sink, then process exact immutable bytes via native handles or bounded memory fallback. **Check:** Path replacement/writable aliases, tamper/truncation and failed verification cannot start tools on POSIX or Windows; four transfers bound fallback memory. | 260–420 | 300–520 | 560–940 | Low | 8.1 |
+| `8.3` — Explicit plaintext-temp path | Require explicit selection, privately stage and fully verify plaintext before tool launch, and clean up on exit/cancellation. **Check:** Bad origin, child failure, signals and path abuse cannot expose unverified files or publish a final artifact; document best-effort crash cleanup. | 150–260 | 220–400 | 370–660 | Medium | 8.2 |
+| `8.4` — Deliberate save-decrypted export | Rename intentional persistent plaintext export without the ambiguous save alias; verify private staging before atomic final publication. **Check:** No partial output on full disk/tamper/cancellation; overwrite permissions and explicit user-facing warnings are tested. | 140–250 | 220–400 | 360–650 | Medium | 8.3 |
+| `8.5` — Four-mode process and platform closure | Finish CLI/skill tradeoff guidance and real child-process, cleanup and rotation/revocation composition checks without adding a universal mode default. **Check:** Installed tools demonstrate all four paths; consumed GET cannot be resumed from an orphan; native platform process/handle limits are enforced. | 80–180 | 300–520 | 380–700 | Low | 8.4 |
 
 ## Slice 9 — useful consistent encrypted export
 
@@ -394,6 +615,16 @@ manifest/file digests using external trusted metadata in a round-trip harness,
 not a signer supplied by the bundle. Include job examples for durable storage and
 failure reporting without adding scheduler/cloud integration/first-enrollment
 gate. Add backup CLI/docs and an arbiter-server fragment.
+
+### Child PRs
+
+| PR | Scope and focused acceptance | Production | Tests | Total | Confidence | Direct prerequisites |
+| --- | --- | ---: | ---: | ---: | --- | --- |
+| `9.1` — Saved configuration and real secret capture | Extend private generations to active config/policies and materialized configured file-backed secrets on activation/reload. **Check:** Changed-source capture aborts before publication; arbitrary environment/host files never enter saved state; normal reload remains coherent. | 240–400 | 280–480 | 520–880 | Low | 8.5, 1.4 |
+| `9.2` — Coherent authority snapshot | Fence live mutations briefly and capture SQLite plus the exact saved config/key/secret generation, releasing the fence before encrypted streaming. **Check:** Concurrent enroll/grant/revoke/rotate/reload yields one coherent snapshot; failure/shutdown releases the real admin owner and preserves service state. | 200–340 | 280–470 | 480–810 | Low | 9.1 |
+| `9.3` — Signed bounded recovery records | Write versioned uncompressed records and exact-byte ES256 manifest; provide strict verification primitives consumed by export self-checks and later restore. **Check:** Reject duplicate paths/fields, links, traversal, oversized entries/count/manifest and bundle-supplied verifier substitution in shared synthetic fixtures. | 250–420 | 300–520 | 550–940 | Low | 9.2 |
+| `9.4` — Encrypted local and SSH export | Stream the coherent snapshot through age to external recipient with one admin job and safe publication of complete outputs. **Check:** Private recovery signer/decryptor never enters server/job/bundle; 4 GiB limit, disconnect/full disk and cancellation preserve last good bundle. | 220–360 | 280–480 | 500–840 | Low | 9.3 |
+| `9.5` — External job and concurrent-export closure | Document startup/periodic external scheduling, durable destination/alerting and round-trip verifier usage; finish process-level snapshot contention tests. **Check:** Real local/verified-SSH jobs produce usable signed encrypted snapshots; excluded transient artifacts/PSKs/client keys remain absent across failures. | 80–180 | 280–500 | 360–680 | Low | 9.4 |
 
 ## Slice 10 — offline restore and latest undo
 
@@ -421,6 +652,16 @@ restore failure, undo after use and explicit discard. Show clear repair diagnost
 without claiming to know unseen client history. Add full restore/undo examples,
 host-configuration exclusions and arbiter-server fragment.
 
+### Child PRs
+
+| PR | Scope and focused acceptance | Production | Tests | Total | Confidence | Direct prerequisites |
+| --- | --- | ---: | ---: | ---: | --- | --- |
+| `10.1` — Strict offline bundle validation | Decrypt against external trust, validate all record/hash/EOF/certificate/key/config constraints before exposing a restorable generation. **Check:** Malformed/traversing/duplicate/oversized records, wrong verifier and incomplete stream fail with bounded I/O and no active-state changes. | 240–400 | 300–520 | 540–920 | Low | 9.5 |
+| `10.2` — Stopped-instance private restore staging | Require exclusive stopped-instance lock, available-disk reservation and same-filesystem private staging; reconcile incomplete restore on restart. **Check:** Concurrent server start/restore, disk failure and real process termination preserve active generation and existing undo. | 200–340 | 280–480 | 480–820 | Low | 10.1 |
+| `10.3` — Atomic full restore activation | Publish verified generation with active/undo references in one durable control transaction, retaining saved lifecycle timestamps and host exclusions. **Check:** Empty/existing hosts restore coherently; faults at flush/reference boundaries choose only old or new complete state, never merge or extend authority. | 220–360 | 300–520 | 520–880 | Low | 10.2 |
+| `10.4` — Latest undo and explicit discard | Implement offline undo without expiry or post-use hard cutoff; retain the point through ordinary operation and warn prominently before discarding later changes. **Check:** Failed restore preserves undo; next successful restore replaces it; undo after use and discard have no redo/history or upstream rollback promise. | 180–300 | 260–450 | 440–750 | Low | 10.3 |
+| `10.5` — Restore-client and native crash closure | Complete controlled process-crash and native durability tests, stale client/predecessor diagnostics and useful full restore/undo examples. **Check:** Multiple paired clients either recover within bounded fallback or require explicit repair; old snapshot denial/deadlines reflect snapshot, not guessed unseen history. | 80–180 | 320–550 | 400–730 | Low | 10.4 |
+
 ## Slice 11 — cooperative migration and handoff
 
 Deliver maintenance/migration tooling and runbook: disable source ordinary work
@@ -443,10 +684,18 @@ copies. Run actual Reploy staging on its separate port using synthetic state;
 no live installation migration is authorized by this plan. Add maintenance/handoff
 docs, client diagnostics and affected server/client fragments.
 
+### Child PRs
+
+| PR | Scope and focused acceptance | Production | Tests | Total | Confidence | Direct prerequisites |
+| --- | --- | ---: | ---: | ---: | --- | --- |
+| `11.1` — Cooperative maintenance and migration | Disable source ordinary work/admin mutations, drain real owners, export final snapshot and restore stopped destination under documented operator coordination. **Check:** Source stays disabled through failures; no new fencing/epoch/cluster mechanism or automatic old-host restart is introduced. | 180–300 | 260–450 | 440–750 | Low | 10.5 |
+| `11.2` — Verified source URL handoff | Serve only a fixed authenticated destination URL from disabled source; client verifies same durable identity/transition chain before adopting and sending any credential. **Check:** Mismatch/unavailable URL/later destination replacement/lost response never replays submitted mutation or GET; handoff cannot mutate authority. | 220–380 | 280–500 | 500–880 | Low | 11.1 |
+| `11.3` — Migration and combined release evidence | Finish synthetic multi-client Reploy staging on its separate port and the full combined journey/matrix; reconcile release/help/skill/dependency metadata. **Check:** Migration with grants/pending rotations and post-use undo is honest; all required checks pass or remain explicitly unverified and block publication. | 80–180 | 320–550 | 400–730 | Low | 11.2 |
+
 ## Combined acceptance and publication gate
 
 Every slice runs prefix integration; do not defer first Python/Go composition,
-platform packaging or cancellation testing until this gate. Once all eleven PRs
+platform packaging or cancellation testing until this gate. Once all child PRs across the eleven milestones
 have approved final heads and required checks, run the complete synthetic journey:
 
 1. Fresh private setup with no public CA/DNS or external identity account; enroll
