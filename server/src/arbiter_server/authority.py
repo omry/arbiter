@@ -16,7 +16,7 @@ from uuid import UUID, uuid4
 DATABASE = "authority.sqlite3"
 _PENDING = ".authority.pending.sqlite3"
 _LOCK = ".authority.lock"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 # Windows Modules Installer is part of the trusted host OS. This exception is
 # for ancestors only; authority-root and file ACL allowlists remain unchanged.
 _TRUSTED_INSTALLER = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
@@ -36,7 +36,9 @@ class AuthorityRecord:
         return {"initialized": True, "schema_version": SCHEMA_VERSION, **asdict(self)}
 
 
-def _check_path(path: Path, *, directory: bool = False) -> None:
+def _check_path(
+    path: Path, *, directory: bool = False, expected_links: int = 1
+) -> None:
     info = path.lstat()
     expected = stat.S_ISDIR if directory else stat.S_ISREG
     if not expected(info.st_mode) or (
@@ -53,8 +55,9 @@ def _check_path(path: Path, *, directory: bool = False) -> None:
             )
     else:
         _check_windows_permissions(path, directory=directory)
-    if not directory and info.st_nlink != 1:
-        raise AuthorityError(f"authority file must have exactly one link: {path}")
+    if not directory and info.st_nlink != expected_links:
+        count = "one link" if expected_links == 1 else f"{expected_links} links"
+        raise AuthorityError(f"authority file must have exactly {count}: {path}")
 
 
 def _windows_caller_sid() -> str:
@@ -277,8 +280,12 @@ def _write_database(path: Path, record: AuthorityRecord) -> None:
 
 def _publish(pending: Path, target: Path) -> None:
     os.replace(pending, target)
+    _flush_parents(target.parent)
+
+
+def _flush_parents(parent: Path) -> None:
     if os.name != "nt":
-        for directory in (target.parent, *target.parent.parents):
+        for directory in (parent, *parent.parents):
             fd = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
             try:
                 os.fsync(fd)
@@ -286,7 +293,12 @@ def _publish(pending: Path, target: Path) -> None:
                 os.close(fd)
 
 
-def initialize_authority(state_dir: Path) -> AuthorityRecord:
+def initialize_authority(
+    state_dir: Path,
+    *,
+    recovery_file: Path | None = None,
+    reuse_recovery_file: bool = False,
+) -> AuthorityRecord:
     """Create one private set of IDs, refusing to replace any existing database."""
     root = _root(state_dir, create=True)
     with _locked(root):
@@ -295,23 +307,34 @@ def initialize_authority(state_dir: Path) -> AuthorityRecord:
             raise AuthorityError(
                 "authority database already exists; inspect authority status"
             )
-        _remove_pending(root)
-        record = AuthorityRecord(
-            str(uuid4()), str(uuid4()), datetime.now(timezone.utc).isoformat()
-        )
-        try:
-            _write_database(root / _PENDING, record)
-            _publish(root / _PENDING, target)
-        finally:
-            # A killed process may leave only these bounded, unpublished files.
-            # Never remove the target after a possibly successful publication.
+        if recovery_file is None:
+            raise AuthorityError(
+                "select an external private --recovery-file destination"
+            )
+        from .recovery import register_and_publish, setup_file
+
+        with setup_file(recovery_file, root, reuse=reuse_recovery_file) as (
+            path,
+            material,
+        ):
             _remove_pending(root)
-        return record
+            record = AuthorityRecord(
+                material.owner_id, str(uuid4()), datetime.now(timezone.utc).isoformat()
+            )
+            try:
+                _write_database(root / _PENDING, record)
+                register_and_publish(path, record, material, root / _PENDING)
+                _publish(root / _PENDING, target)
+            finally:
+                # Keep external recovery custody even if database publication fails.
+                _remove_pending(root)
+            return record
 
 
 def authority_status(state_dir: Path) -> AuthorityRecord | None:
     """Inspect committed records without creating or repairing a database."""
     from .credentials import verify_setup_credentials
+    from .recovery import verify_registration
 
     root = _root(state_dir, create=False)
     if not root.exists():
@@ -336,6 +359,9 @@ def authority_status(state_dir: Path) -> AuthorityRecord | None:
                 credentials = db.execute(
                     "SELECT role, certificate_der, private_key_der FROM credentials"
                 ).fetchall()
+                if len(rows) != 1:
+                    raise ValueError("expected one authority record")
+                verify_registration(db, rows[0][1])
             if len(rows) != 1:
                 raise ValueError("expected one authority record")
             singleton, owner, server, created = rows[0]
@@ -361,13 +387,24 @@ def authority_status(state_dir: Path) -> AuthorityRecord | None:
             ) from exc
 
 
-def authority_cli(action: str, state_dir: Path, *, as_json: bool) -> int:
+def authority_cli(
+    action: str,
+    state_dir: Path,
+    *,
+    as_json: bool,
+    recovery_file: Path | None = None,
+    reuse_recovery_file: bool = False,
+) -> int:
     from .cli_errors import print_cli_error
     import json
 
     try:
         record = (
-            initialize_authority(state_dir)
+            initialize_authority(
+                state_dir,
+                recovery_file=recovery_file,
+                reuse_recovery_file=reuse_recovery_file,
+            )
             if action == "init"
             else authority_status(state_dir)
         )

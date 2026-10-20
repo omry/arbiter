@@ -4,6 +4,7 @@ import base64
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 import json
+import os
 from pathlib import Path
 import sqlite3
 
@@ -16,6 +17,19 @@ from cryptography.x509.oid import ExtendedKeyUsageOID, ObjectIdentifier
 from arbiter_server import authority, credentials as c
 
 pytestmark = pytest.mark.usefixtures("private_windows_test_parent")
+
+
+def initialize(root):
+    parent = next(
+        p
+        for p in root.parents
+        if p.is_dir() and (os.name == "nt" or not p.stat().st_mode & 0o077)
+    )
+    recovery = parent / (root.name + ".recovery.json")
+    return authority.initialize_authority(
+        root, recovery_file=recovery, reuse_recovery_file=recovery.exists()
+    )
+
 
 NOW = datetime(2026, 10, 21, tzinfo=timezone.utc)
 OWNER = "00000000-0000-4000-8000-000000000001"
@@ -261,7 +275,12 @@ def test_der_boundaries_and_signature(issuers, change):
 
 def test_setup_is_real_atomic_private_and_restartable(tmp_path, capsys):
     root = tmp_path / "state"
-    assert authority.authority_cli("init", root, as_json=True) == 0
+    assert (
+        authority.authority_cli(
+            "init", root, as_json=True, recovery_file=tmp_path / "cli.recovery.json"
+        )
+        == 0
+    )
     output = capsys.readouterr().out
     record = authority.authority_status(root)
     assert (
@@ -282,7 +301,7 @@ def test_setup_is_real_atomic_private_and_restartable(tmp_path, capsys):
         assert base64.b64encode(private).decode() not in output
     before = (root / authority.DATABASE).read_bytes()
     with pytest.raises(authority.AuthorityError, match="already exists"):
-        authority.initialize_authority(root)
+        initialize(root)
     assert authority.authority_status(root) == record
     assert (root / authority.DATABASE).read_bytes() == before
     assert {p.name for p in root.iterdir()} == {authority.DATABASE, authority._LOCK}
@@ -294,7 +313,7 @@ def test_setup_is_real_atomic_private_and_restartable(tmp_path, capsys):
 )
 def test_damaged_setup_never_repairs_or_replaces_keys(tmp_path, damage, capsys):
     root = tmp_path / "state"
-    authority.initialize_authority(root)
+    initialize(root)
     with closing(sqlite3.connect(root / authority.DATABASE)) as db:
         if damage == "old-schema":
             db.execute("PRAGMA user_version=1")
@@ -338,10 +357,10 @@ def test_crypto_failure_cannot_publish_partial_setup(tmp_path, monkeypatch):
 
     monkeypatch.setattr(c, "store_setup_credentials", fail)
     with pytest.raises(OSError, match="injected"):
-        authority.initialize_authority(root)
+        initialize(root)
     assert {p.name for p in root.iterdir()} == {authority._LOCK}
     monkeypatch.setattr(c, "store_setup_credentials", real)
-    assert authority.initialize_authority(root) == authority.authority_status(root)
+    assert initialize(root) == authority.authority_status(root)
 
 
 def test_shared_profile_fixtures():
