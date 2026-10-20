@@ -87,7 +87,15 @@ LOGGER = logging.getLogger(__name__)
 TransportMode = Literal["https"]
 HydraConfig = AppConfig | DictConfig
 BootstrapObjectKind = Literal["account", "policy"]
-CLI_COMMANDS = {"serve", "config", "plugins", "bootstrap", "env", "version"}
+CLI_COMMANDS = {
+    "serve",
+    "config",
+    "plugins",
+    "bootstrap",
+    "env",
+    "version",
+    "authority",
+}
 BOOTSTRAP_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 ENV_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 ENV_FILE_CONFIG_KEY = "arbiter.env_file"
@@ -4409,6 +4417,17 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     subcommands = parser.add_subparsers(dest="command", required=True)
 
+    authority = subcommands.add_parser(
+        "authority", help="initialize or inspect offline authority identity records"
+    )
+    authority_commands = authority.add_subparsers(
+        dest="authority_command", required=True
+    )
+    for action in ("init", "status"):
+        command = authority_commands.add_parser(action)
+        command.add_argument("--state-dir", type=Path, required=True)
+        command.add_argument("--json", action="store_true")
+
     serve = subcommands.add_parser("serve", help="run the Arbiter HTTP server")
     _add_override_arguments(
         serve,
@@ -4611,6 +4630,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     namespace = parser.parse_args(args)
+    if namespace.command == "authority":
+        from .authority import authority_cli
+
+        return authority_cli(
+            namespace.authority_command, namespace.state_dir, as_json=namespace.json
+        )
     if namespace.command == "serve":
         return _run_serve(
             config_dir=namespace.config_dir,
