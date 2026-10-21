@@ -83,9 +83,10 @@ POSIX publication flushes files and parent directories. Windows uses same-volume
 [write-through moves](https://learn.microsoft.com/en-us/windows/win32/fileio/moving-directories)
 for files and generation directories; filesystem errors are reported as failures.
 
-On Linux and macOS, `authority init` and `authority status` also work while the
-server is running, when invoked by the server's OS user. They use a private Unix socket
-and authenticate both peers through kernel credentials. Only the running server
+On Linux, macOS and Windows, `authority init` and `authority status` also work while the
+server is running, when invoked by the server's OS user. Linux and macOS use a private
+Unix socket with kernel peer credentials. Windows uses local-only named pipes with
+restricted ACLs and checks both caller and server OS identities. Only the running server
 writes its live authority state. Other users must use trusted OS tooling to run
 the command as the service account; an HTTP connection cannot administer it.
 Repeated initialization still refuses to replace IDs, credentials or recovery
@@ -93,16 +94,30 @@ trust. Keep the recovery file outside the server's state and agent storage.
 
 Live control on other POSIX systems is unsupported in this slice. An unavailable
 native peer-credential backend fails closed; stop the server for offline setup
-or status on those systems. Windows live control follows in a separate slice.
+or status on those systems.
+
+For remote administration, first open a verified SSH session as the server's OS
+account, then run the installed `arbiter-server authority` command on that host.
+On Windows, select the same authority directory used by the service:
+
+```console
+ssh service-user@windows-host
+arbiter-server authority status --state-dir "C:\Arbiter\server\authority"
+```
+
+Use the actual service account and configured path. An SSH tunnel to an HTTP
+port does not grant local authority. Windows live control does not expose a
+TCP listener or require forwarding a named pipe. A missing or exhausted local
+endpoint reports an error; it does not bypass the instance lock.
 
 After an interrupted control exchange, query status before retrying setup: a
 missing reply does not prove the server stopped writing. A later startup removes
-only a validated stale private socket while holding the instance lock. Unexpected
-endpoint files or permissions require investigation and are preserved. If no live
+only a validated stale private socket or pipe locator while holding the instance
+lock. Unexpected endpoint files or permissions require investigation and are preserved. If no live
 endpoint exists during startup, shutdown or another offline command, the CLI
 retains the authority-busy diagnostic. Unsafe endpoints still report their safety
-error. The socket resides in the private authority directory; select a short
-local server-data path within the OS Unix-socket path limit.
+error. On Linux and macOS, select a short local server-data path within the OS
+Unix-socket path limit.
 
 Shared public-only verification vectors are in
 `tests/fixtures/authentication/credential-profiles-v1.json`. They are synthetic

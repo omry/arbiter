@@ -183,7 +183,7 @@ preparing state for the running server. With no override, this is beneath
 Arbiter's existing platform-specific server data directory. Startup takes the
 same persistent instance lock as offline setup and holds it through HTTP cleanup;
 a second start, offline initialization or offline status fails while it is held.
-On Linux and macOS, these commands contact the lock-owning running instance
+On Linux, macOS and Windows, these commands contact the lock-owning running instance
 through authenticated local control when offline access reports busy. Run them as the
 same OS account as the server, directly or through verified SSH to that account.
 With the server stopped, the commands keep using the private offline state.
@@ -200,11 +200,22 @@ a filesystem that supports Unix sockets. Startup reports binding errors; it does
 not fall back to a shared temporary directory or start without local control.
 Changed ownership, permissions, file type or endpoint identity fail closed.
 
+Windows uses a fresh unpredictable local pipe name on each start. The name is
+published in the private `control-pipe.json` locator only after all native pipe
+instances exist. The listener retains those handles until shutdown. Both ends
+check native ACLs; the client checks the server process account, and the server
+checks the caller token after reading. Remote pipe access is rejected. A changed,
+oversized, linked or unsafe locator fails closed. A locator is discovery data,
+not an administrative credential. Use trusted SSH to run commands as the service
+account on the server host; an HTTP proxy or tunnel grants no local authority.
+
 Control accepts at most 16 connections, a 64 KiB message and a ten-second
 exchange. One authority job runs at a time, outside the HTTP event loop. A
 disconnect or deadline can close the reply while that job continues; inspect
 status before retrying initialization. Shutdown retains the instance lock until
-the actual authority job finishes. Windows live control follows in its own slice.
+the actual authority job finishes. Windows also retains pending native I/O memory
+and handles until cancellation actually completes. Replies are acknowledged before
+the server disconnects the pipe, preventing unread replies from being discarded.
 
 State is selected from a private generation. Stopped-instance status and startup
 can finish a valid interrupted initial publication, preserving its IDs and keys.
@@ -217,10 +228,9 @@ It holds both backup-decryption and live-recovery authority; theft compromises
 both. See [operator recovery custody](credentials.md#operator-recovery-custody)
 for reuse and interrupted setup.
 
-Stopped-instance initialization takes the same persistent process lock. On Linux
-and macOS, the running instance handles authenticated local initialization instead. Windows
-currently requires the instance to be stopped. A failed unpublished initialization
-can be retried;
+Stopped-instance initialization takes the same persistent process lock. On Linux,
+macOS and Windows, the running instance handles authenticated local initialization
+instead. A failed unpublished initialization can be retried;
 a database already published must be inspected rather than overwritten. Keep
 the directory private; the command rejects unsafe permissions and linked files.
 
