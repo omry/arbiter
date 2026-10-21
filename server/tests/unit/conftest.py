@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import subprocess
+import tempfile
 
 import pytest
 
@@ -42,3 +43,13 @@ def private_windows_test_parent(tmp_path: Path) -> None:
             text=True,
         )
     ensure_runtime_config_permissions(config_dir=tmp_path, env_file=None)
+
+
+@pytest.fixture
+def tmp_path(tmp_path_factory):
+    # Unix socket addresses include the full path; keep native tests portable.
+    if os.name == "nt":
+        yield tmp_path_factory.mktemp("test")
+    else:
+        with tempfile.TemporaryDirectory(prefix="arbiter-", dir="/tmp") as directory:
+            yield Path(directory)
