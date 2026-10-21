@@ -62,6 +62,7 @@ class _WindowsFileSecurity:
     owner_sid: str | None
     access_aces: tuple[_WindowsAccessAce, ...]
     has_null_dacl: bool
+    has_unsupported_aces: bool = False
 
 
 def _windows_principal_name(sid: str) -> str:
@@ -95,7 +96,7 @@ def _windows_unallowed_access_reason(
     return None
 
 
-def _windows_file_security(path: Path) -> _WindowsFileSecurity:
+def _windows_file_security(path: Path | int) -> _WindowsFileSecurity:
     import ctypes
     from ctypes import wintypes
 
@@ -185,8 +186,17 @@ def _windows_file_security(path: Path) -> _WindowsFileSecurity:
     dacl = ctypes.c_void_p()
     owner_sid = ctypes.c_void_p()
     security_descriptor = ctypes.c_void_p()
-    result = get_named_security_info(
-        str(path),
+    get_security_info = advapi32.GetSecurityInfo
+    get_security_info.argtypes = [
+        ctypes.c_void_p,
+        *get_named_security_info.argtypes[1:],
+    ]
+    get_security_info.restype = wintypes.DWORD
+    inspect_security = (
+        get_security_info if isinstance(path, int) else get_named_security_info
+    )
+    result = inspect_security(
+        path if isinstance(path, int) else str(path),
         se_file_object,
         owner_security_information | dacl_security_information,
         ctypes.byref(owner_sid),
@@ -227,6 +237,7 @@ def _windows_file_security(path: Path) -> _WindowsFileSecurity:
             raise last_windows_error("GetAclInformation failed")
 
         access_aces: list[_WindowsAccessAce] = []
+        unsupported = False
         for index in range(acl_info.AceCount):
             ace_pointer = ctypes.c_void_p()
             if not get_ace(dacl, index, ctypes.byref(ace_pointer)):
@@ -238,6 +249,7 @@ def _windows_file_security(path: Path) -> _WindowsFileSecurity:
                 ctypes.POINTER(AccessAllowedAce),
             ).contents
             if ace.Header.AceType != access_allowed_ace_type:
+                unsupported = True
                 continue
             sid_pointer = ctypes.c_void_p(
                 ace_pointer.value + AccessAllowedAce.SidStart.offset
@@ -261,6 +273,7 @@ def _windows_file_security(path: Path) -> _WindowsFileSecurity:
             owner_sid=owner_sid_string_value,
             access_aces=tuple(access_aces),
             has_null_dacl=False,
+            has_unsupported_aces=unsupported,
         )
     finally:
         if security_descriptor:
