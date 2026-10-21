@@ -59,6 +59,7 @@ class Native:
             "CloseHandle": (b, [h]),
             "LocalFree": (p, [p]),
             "ConnectNamedPipe": (b, [h, p]),
+            "DisconnectNamedPipe": (b, [h]),
             "SetNamedPipeHandleState": (b, [h, p, p, p]),
             "ReadFile": (b, [h, p, d, p, p]),
             "WriteFile": (b, [h, p, d, p, p]),
