@@ -102,8 +102,6 @@ def request(
     state_dir: Path, action: str, recovery_file: Path | None, reuse: bool
 ) -> dict[str, Any]:
     root = a._root(state_dir, create=False)
-    endpoint = root / "control.sock"
-    identity = _socket_identity(endpoint)
     value: dict[str, object] = {"root": str(root), "action": action}
     if action == "init":
         if recovery_file is None:
@@ -113,6 +111,12 @@ def request(
         value.update(
             recovery_file=str(recovery_file.expanduser().absolute()), reuse=reuse
         )
+    if os.name == "nt":
+        from .windows_control import request as windows_request
+
+        return windows_request(root, value)
+    endpoint = root / "control.sock"
+    identity = _socket_identity(endpoint)
     with socket.socket(socket.AF_UNIX) as peer:
         deadline = time.monotonic() + EXCHANGE_TIMEOUT
         peer.settimeout(EXCHANGE_TIMEOUT)
@@ -124,6 +128,10 @@ def request(
         if size > MAX_MESSAGE:
             raise a.AuthorityError("local control message is too large")
         reply = _decode(_receive(peer, size, deadline))
+    return _result(reply)
+
+
+def _result(reply: dict[str, Any]) -> dict[str, Any]:
     if reply.get("ok") is not True:
         raise a.AuthorityError(str(reply.get("error", "local control failed")))
     result = reply.get("result")
@@ -169,9 +177,74 @@ class _Protocol(asyncio.StreamReaderProtocol):
                 self.control.drained.set()
 
 
-class LocalControl:
+class AuthorityControl:
+    """Shared dispatch and actual-work ownership for OS-authenticated controls."""
+
     def __init__(self, root: Path) -> None:
         self.root = a._root(root, create=False)
+        self.work: asyncio.Task[dict[str, Any]] | None = None
+
+    def dispatch(self, value: dict[str, Any]) -> dict[str, Any]:
+        action = value.get("action")
+        keys = (
+            {"root", "action", "recovery_file", "reuse"}
+            if action == "init"
+            else {"root", "action"}
+        )
+        if value.get("root") != str(self.root) or set(value) != keys:
+            raise a.AuthorityError("invalid local control request")
+        if action == "init":
+            if (
+                not isinstance(value["recovery_file"], str)
+                or type(value["reuse"]) is not bool
+            ):
+                raise a.AuthorityError("invalid local setup arguments")
+            record = a._initialize_locked(
+                self.root, Path(value["recovery_file"]), value["reuse"]
+            )
+        elif action == "status":
+            record = a._current_record(self.root)
+        else:
+            raise a.AuthorityError("unsupported local control action")
+        return record.to_dict() if record else {"initialized": False}
+
+    async def response(self, value: dict[str, Any]) -> dict[str, object]:
+        if self.work is not None and not self.work.done():
+            return {
+                "ok": False,
+                "error": "local authority work is busy; try again later",
+            }
+        self.work = asyncio.create_task(asyncio.to_thread(self.dispatch, value))
+        self.work.add_done_callback(
+            lambda done: done.exception() if not done.cancelled() else None
+        )
+        try:
+            return {"ok": True, "result": await asyncio.shield(self.work)}
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            return {"ok": False, "error": str(exc)}
+
+    async def finish_work(self) -> bool:
+        cancelled = False
+        while self.work is not None and not self.work.done():
+            try:
+                await asyncio.shield(self.work)
+            except asyncio.CancelledError:
+                cancelled = True
+            except (OSError, ValueError, sqlite3.Error):
+                pass
+        return cancelled
+
+    @staticmethod
+    def acceptor_finished(task: asyncio.Task[None]) -> None:
+        if not task.cancelled() and (error := task.exception()) is not None:
+            task.get_loop().call_exception_handler(
+                {"message": "Arbiter local control listener failed", "exception": error}
+            )
+
+
+class LocalControl(AuthorityControl):
+    def __init__(self, root: Path) -> None:
+        super().__init__(root)
         self.path = self.root / "control.sock"
         self.identity: tuple[int, int] | None = None
         self.listener: _Listener | None = None
@@ -181,7 +254,6 @@ class LocalControl:
         self.transports: set[asyncio.Transport] = set()
         self.drained = asyncio.Event()
         self.drained.set()
-        self.work: asyncio.Task[dict[str, Any]] | None = None
         self.closed = False
 
     async def start(self) -> None:
@@ -204,12 +276,6 @@ class LocalControl:
         self.listener.setblocking(False)
         self.acceptor = asyncio.create_task(self.listen())
         self.acceptor.add_done_callback(self.acceptor_finished)
-
-    def acceptor_finished(self, task: asyncio.Task[None]) -> None:
-        if not task.cancelled() and (error := task.exception()) is not None:
-            task.get_loop().call_exception_handler(
-                {"message": "Arbiter local control listener failed", "exception": error}
-            )
 
     async def listen(self) -> None:
         assert self.listener is not None
@@ -255,30 +321,6 @@ class LocalControl:
 
         task.add_done_callback(finished)
 
-    def dispatch(self, value: dict[str, Any]) -> dict[str, Any]:
-        action = value.get("action")
-        keys = (
-            {"root", "action", "recovery_file", "reuse"}
-            if action == "init"
-            else {"root", "action"}
-        )
-        if value.get("root") != str(self.root) or set(value) != keys:
-            raise a.AuthorityError("invalid local control request")
-        if action == "init":
-            if (
-                not isinstance(value["recovery_file"], str)
-                or type(value["reuse"]) is not bool
-            ):
-                raise a.AuthorityError("invalid local setup arguments")
-            record = a._initialize_locked(
-                self.root, Path(value["recovery_file"]), value["reuse"]
-            )
-        elif action == "status":
-            record = a._current_record(self.root)
-        else:
-            raise a.AuthorityError("unsupported local control action")
-        return record.to_dict() if record else {"initialized": False}
-
     async def exchange(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
@@ -290,28 +332,7 @@ class LocalControl:
         if size > MAX_MESSAGE:
             raise a.AuthorityError("local control message is too large")
         value = _decode(await reader.readexactly(size))
-        if self.work is not None and not self.work.done():
-            writer.write(
-                _frame(
-                    {
-                        "ok": False,
-                        "error": "local authority work is busy; try again later",
-                    }
-                )
-            )
-            await writer.drain()
-            return
-        # Shield the actual work: a disconnect/deadline must not free capacity
-        # or release the instance lock while file/SQLite work is still running.
-        self.work = asyncio.create_task(asyncio.to_thread(self.dispatch, value))
-        self.work.add_done_callback(
-            lambda done: done.exception() if not done.cancelled() else None
-        )
-        try:
-            result = await asyncio.shield(self.work)
-            response: dict[str, object] = {"ok": True, "result": result}
-        except (OSError, ValueError, sqlite3.Error) as exc:
-            response = {"ok": False, "error": str(exc)}
+        response = await self.response(value)
         writer.write(_frame(response))
         await writer.drain()
 
@@ -357,14 +378,7 @@ class LocalControl:
         if self.handlers:
             await asyncio.gather(*self.handlers, return_exceptions=True)
         await self.drained.wait()
-        cancelled = False
-        while self.work is not None and not self.work.done():
-            try:
-                await asyncio.shield(self.work)
-            except asyncio.CancelledError:
-                cancelled = True
-            except (OSError, ValueError, sqlite3.Error):
-                pass
+        cancelled = await self.finish_work()
         if self.identity is not None and self.path.exists():
             if _socket_identity(self.path) == self.identity:
                 self.path.unlink()
@@ -375,9 +389,11 @@ class LocalControl:
 @asynccontextmanager
 async def running(root: Path) -> AsyncGenerator[None, None]:
     if os.name == "nt":
-        yield
-        return
-    control = LocalControl(root)
+        from .windows_control import WindowsControl
+
+        control = WindowsControl(root)
+    else:
+        control = LocalControl(root)
     try:
         await control.start()
         yield

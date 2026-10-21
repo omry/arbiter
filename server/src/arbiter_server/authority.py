@@ -440,8 +440,6 @@ def authority_cli(
             )
             payload = record.to_dict() if record is not None else {"initialized": False}
         except AuthorityBusy as busy:
-            if os.name == "nt":
-                raise
             from .local_control import request
 
             try:
