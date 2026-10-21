@@ -83,6 +83,23 @@ POSIX publication flushes files and parent directories. Windows uses same-volume
 [write-through moves](https://learn.microsoft.com/en-us/windows/win32/fileio/moving-directories)
 for files and generation directories; filesystem errors are reported as failures.
 
+On POSIX, `authority init` and `authority status` also work while the server is
+running, when invoked by the server's OS user. They use a private Unix socket
+and authenticate both peers through kernel credentials. Only the running server
+writes its live authority state. Other users must use trusted OS tooling to run
+the command as the service account; an HTTP connection cannot administer it.
+Repeated initialization still refuses to replace IDs, credentials or recovery
+trust. Keep the recovery file outside the server's state and agent storage.
+
+After an interrupted control exchange, query status before retrying setup: a
+missing reply does not prove the server stopped writing. A later startup removes
+only a validated stale private socket while holding the instance lock. Unexpected
+endpoint files or permissions require investigation and are preserved. If no live
+endpoint exists during startup, shutdown or another offline command, the CLI
+retains the authority-busy diagnostic. Unsafe endpoints still report their safety
+error. The socket resides in the private authority directory; select a short
+local server-data path within the OS Unix-socket path limit.
+
 Shared public-only verification vectors are in
 `tests/fixtures/authentication/credential-profiles-v1.json`. They are synthetic
 test trust, consumed by Python now and intended for Go's slice 2.1 verifier.
