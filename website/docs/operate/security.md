@@ -183,8 +183,25 @@ preparing state for the running server. With no override, this is beneath
 Arbiter's existing platform-specific server data directory. Startup takes the
 same persistent instance lock as offline setup and holds it through HTTP cleanup;
 a second start, offline initialization or offline status fails while it is held.
-Stop the instance before using these offline commands. This enforces state
-ownership; runtime caller authentication remains a later milestone.
+On POSIX, these same commands contact the lock-owning running instance through
+authenticated local control when offline access reports busy. Run them as the
+same OS account as the server, directly or through verified SSH to that account.
+With the server stopped, the commands keep using the private offline state.
+This enforces administrative state ownership; runtime API caller authentication
+remains a later milestone.
+
+The Unix socket is private and checks kernel peer credentials in both directions.
+Knowing its name or connecting to a loopback TCP port does not grant local control.
+It lives beneath validated private `/tmp/arbiter-control-UID`, independently
+of service, login or SSH runtime-directory environment settings. Its name
+binds the canonical authority directory, so long state paths need no truncation.
+Changed ownership, permissions, file type or endpoint identity fail closed.
+
+Control accepts at most 16 connections, a 64 KiB message and a ten-second
+exchange. One authority job runs at a time, outside the HTTP event loop. A
+disconnect or deadline can close the reply while that job continues; inspect
+status before retrying initialization. Shutdown retains the instance lock until
+the actual authority job finishes. Windows live control follows in its own slice.
 
 State is selected from a private generation. Stopped-instance status and startup
 can finish a valid interrupted initial publication, preserving its IDs and keys.
@@ -197,8 +214,10 @@ It holds both backup-decryption and live-recovery authority; theft compromises
 both. See [operator recovery custody](credentials.md#operator-recovery-custody)
 for reuse and interrupted setup.
 
-Stop the instance before initializing. Concurrent initialization attempts use
-one persistent process lock. A failed unpublished initialization can be retried;
+Stopped-instance initialization takes the same persistent process lock; on POSIX,
+the running instance handles authenticated local initialization instead. Windows
+currently requires the instance to be stopped. A failed unpublished initialization
+can be retried;
 a database already published must be inspected rather than overwritten. Keep
 the directory private; the command rejects unsafe permissions and linked files.
 

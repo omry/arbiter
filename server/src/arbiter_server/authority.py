@@ -26,6 +26,10 @@ class AuthorityError(ValueError):
     """An offline authority operation could not complete safely."""
 
 
+class AuthorityBusy(AuthorityError):
+    """The running instance must handle this administrative operation."""
+
+
 @dataclass(frozen=True)
 class AuthorityRecord:
     owner_id: str
@@ -233,7 +237,7 @@ def _locked(root: Path) -> Iterator[None]:
         try:
             lock()
         except OSError as exc:
-            raise AuthorityError("authority state is busy; try again later") from exc
+            raise AuthorityBusy("authority state is busy; try again later") from exc
         try:
             yield
         finally:
@@ -311,31 +315,33 @@ def initialize_authority(
     """Create one private set of IDs, refusing to replace any existing database."""
     root = _root(state_dir, create=True)
     with _locked(root):
-        from . import generations
+        return _initialize_locked(root, recovery_file, reuse_recovery_file)
 
-        if generations.reconcile(root) is not None:
-            raise AuthorityError(
-                "authority database already exists; inspect authority status"
-            )
-        if recovery_file is None:
-            raise AuthorityError(
-                "select an external private --recovery-file destination"
-            )
-        from .recovery import register_and_publish, setup_file
 
-        with setup_file(recovery_file, root, reuse=reuse_recovery_file) as (
-            path,
-            material,
-        ):
-            record = AuthorityRecord(
-                material.owner_id, str(uuid4()), datetime.now(timezone.utc).isoformat()
-            )
-            with generations.staging(root) as staged:
-                _write_database(staged / _PENDING, record)
-                register_and_publish(path, record, material, staged / _PENDING)
-                _publish(staged / _PENDING, staged / DATABASE)
-                generations.activate(root, staged)
-            return record
+def _initialize_locked(
+    root: Path, recovery_file: Path | None, reuse_recovery_file: bool
+) -> AuthorityRecord:
+    """Run only while this process owns the persistent instance lock."""
+    from . import generations
+
+    if generations.reconcile(root) is not None:
+        raise AuthorityError(
+            "authority database already exists; inspect authority status"
+        )
+    if recovery_file is None:
+        raise AuthorityError("select an external private --recovery-file destination")
+    from .recovery import register_and_publish, setup_file
+
+    with setup_file(recovery_file, root, reuse=reuse_recovery_file) as (path, material):
+        record = AuthorityRecord(
+            material.owner_id, str(uuid4()), datetime.now(timezone.utc).isoformat()
+        )
+        with generations.staging(root) as staged:
+            _write_database(staged / _PENDING, record)
+            register_and_publish(path, record, material, staged / _PENDING)
+            _publish(staged / _PENDING, staged / DATABASE)
+            generations.activate(root, staged)
+        return record
 
 
 def authority_status(state_dir: Path) -> AuthorityRecord | None:
@@ -422,25 +428,30 @@ def authority_cli(
     import json
 
     try:
-        record = (
-            initialize_authority(
-                state_dir,
-                recovery_file=recovery_file,
-                reuse_recovery_file=reuse_recovery_file,
+        try:
+            record = (
+                initialize_authority(
+                    state_dir,
+                    recovery_file=recovery_file,
+                    reuse_recovery_file=reuse_recovery_file,
+                )
+                if action == "init"
+                else authority_status(state_dir)
             )
-            if action == "init"
-            else authority_status(state_dir)
-        )
+            payload = record.to_dict() if record is not None else {"initialized": False}
+        except AuthorityBusy:
+            from .local_control import request
+
+            payload = request(state_dir, action, recovery_file, reuse_recovery_file)
     except (OSError, ValueError, sqlite3.Error) as exc:
         print_cli_error(str(exc), area="authority")
         return 1
-    payload = record.to_dict() if record is not None else {"initialized": False}
     if as_json:
         print(json.dumps(payload, sort_keys=True))
-    elif record is None:
+    elif not payload["initialized"]:
         print("authority: not initialized")
     else:
         print(
-            f"authority: initialized\nowner: {record.owner_id}\nserver: {record.server_id}"
+            f"authority: initialized\nowner: {payload['owner_id']}\nserver: {payload['server_id']}"
         )
     return 0

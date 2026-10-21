@@ -2273,10 +2273,13 @@ def _create_native_http_app(
     @asynccontextmanager
     async def lifespan(_app: object) -> AsyncGenerator[None, None]:
         from .authority import running_instance
+        from .local_control import running
 
-        with running_instance(_server_data_root(_storage_config(cfg)) / "authority"):
+        root = _server_data_root(_storage_config(cfg)) / "authority"
+        with running_instance(root):
             try:
-                yield
+                async with running(root):
+                    yield
             finally:
                 http_work.close()
 
@@ -4421,7 +4424,8 @@ def _build_parser() -> argparse.ArgumentParser:
     subcommands = parser.add_subparsers(dest="command", required=True)
 
     authority = subcommands.add_parser(
-        "authority", help="initialize or inspect offline authority identity records"
+        "authority",
+        help="initialize or inspect authority through local OS authentication",
     )
     authority_commands = authority.add_subparsers(
         dest="authority_command", required=True
