@@ -170,10 +170,41 @@ The public advertisement contains only its version, selector, name and the
 three SPKI public keys. A live Python/Go test checks signing and recipient-key
 interoperability after the private format round-trip.
 
-This library does not yet write files, contact a server, expose an enrollment
-command or activate an identity. Private native filesystem publication, cleanup
-and CLI integration are separate follow-on work. Losing the in-memory pairing
-secret does not make a provisional record an enrolled identity.
+The library can save, load and explicitly remove a provisional request in a
+caller-selected private directory. It creates only the final directory; its
+parent must already exist with safe ownership and replacement permissions.
+POSIX private directories and files must belong to the caller with no group or
+other permissions. Windows permits only the caller, SYSTEM and Administrators
+to own private state or read/write its files. Existing unsafe permissions are
+rejected, never repaired. File links and Windows reparse points are rejected.
+Parent aliases are resolved once to accommodate platform paths such as macOS
+`/tmp`; the final directory itself cannot be an alias.
+The POSIX backend requires read and search access to every ancestor directory,
+and write access to the direct parent when creating the private directory.
+Search-only ancestors are currently unsupported, even when their ownership and
+modes are safe. Permission failures preserve existing state.
+
+Each public selector names one immutable private record. A save writes exclusive
+private staging, flushes and closes the file, then publishes without replacing
+an existing record. POSIX publication flushes the directory and its owning parent,
+including retries with an existing directory; flush errors cannot report a
+successful save. Windows uses native
+write-through publication without a cross-volume copy fallback. Cancellation is
+checked before mutation and publication; it cannot interrupt a kernel disk call.
+An error after publication can leave a complete recoverable record, so an error
+never means that no file exists. Retrying an existing selector retries the
+directory flush, preserves the file, and still returns the existing-record error;
+any flush failure is also returned. A process crash before publication can leave
+private staging. Explicit removal discards that request's final and staging
+names, including the exact two-link POSIX interruption state, and does not claim
+secure deletion.
+
+The executable Python/Go peer reloads keys from this native storage before
+producing its public cryptographic proofs. Native permission, cancellation and
+process-crash tests exercise supported platforms. The library does not contact
+a server, expose an enrollment command or activate an identity. Automatic
+startup, expiry and restart cleanup and CLI integration remain follow-on work.
+Losing the in-memory pairing secret does not enroll a provisional record.
 
 ## Operator recovery custody
 
