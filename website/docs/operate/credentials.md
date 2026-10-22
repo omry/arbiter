@@ -231,6 +231,36 @@ actual enrollment CLI, deliberate secret handoff and live closed-server
 diagnostics are integrated with the client pairing carrier in slice `2.4`.
 Losing the in-memory pairing secret does not enroll a provisional record.
 
+### Public enrollment request boundary
+
+`POST /api/v1/enrollment/requests` accepts version-one provisional public
+advertisements as strict UTF-8 JSON without a byte-order marker. UTF-16 and
+UTF-32 bodies are rejected. Registration does not grant access, approve an agent,
+or install server trust. The endpoint stays closed until local administration opens a
+ten-minute window. Its closed response explains that an operator must open it;
+there is no remote opening endpoint. The local command and approval flow are
+the next delivery slice (`2.2.2`).
+
+Core Arbiter limits pending requests with
+`arbiter.limits.max_pending_enrollments`, a positive integer that defaults to
+20. Requests are memory-only and disappear on server restart/shutdown. Each
+request has an immutable ten-minute deadline. Reopening the window and retrying
+the same exact advertisement cannot extend it. Expired records are discarded
+on the next bounded registry operation. A later registration is a new revision,
+not a continuation of an expired approval context.
+
+The public payload contains only version, selector, untrusted display name and
+separate access, portable and recipient public keys. Private keys and pairing
+secrets are rejected fields. The returned request digest is SHA-256 of the exact
+accepted request-body bytes; clients retain those bytes for later pairing proof.
+Changing a selector's payload conflicts with the existing request. A repeated
+identical payload consumes no additional slot.
+
+Registration uses the existing bounded worker admission before reading body
+bytes. The body limit is the smaller of the core request-body limit and 64 KiB,
+with a ten-second total body-read budget. Full capacity returns a retryable
+`resource_exhausted` error. None of these public requests activate an identity.
+
 ## Operator recovery custody
 
 Setup requires `--recovery-file PATH` in an existing operator-owned private
