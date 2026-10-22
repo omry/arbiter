@@ -2,6 +2,7 @@ package identity
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -13,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -207,8 +209,11 @@ func TestPythonProvisionalPeer(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, _ := provisional(t)
-	encoded, _ := p.EncodePrivate()
-	p, err = DecodeProvisional(encoded)
+	root := filepath.Join(custodyTestDir(t), "state")
+	if err := SaveProvisional(context.Background(), root, p); err != nil {
+		t.Fatal(err)
+	}
+	p, err = LoadProvisional(root, p.record.Selector)
 	if err != nil {
 		t.Fatal(err)
 	}
