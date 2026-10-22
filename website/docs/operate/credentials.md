@@ -199,11 +199,36 @@ private staging. Explicit removal discards that request's final and staging
 names, including the exact two-link POSIX interruption state, and does not claim
 secure deletion.
 
-The executable Python/Go peer reloads keys from this native storage before
-producing its public cryptographic proofs. Native permission, cancellation and
-process-crash tests exercise supported platforms. The library does not contact
-a server, expose an enrollment command or activate an identity. Automatic
-startup, expiry and restart cleanup and CLI integration remain follow-on work.
+The client lifecycle library holds a native, non-waiting process lock for the
+entire exchange, including underlying work that has not yet stopped after
+cancellation. A second process cannot clean or start an exchange in that same
+directory while it is owned. The empty private `.enrollment.lock` file remains
+afterward; do not delete it while an exchange is running. Process exit releases
+the native lock even after a crash.
+
+Startup/restart cleanup removes abandoned provisional records and torn staging
+before generating fresh keys. Each call reads at most 65 names and processes at
+most 64. If more entries remain after removing owned files, it reports incomplete
+cleanup; explicitly retry before starting enrollment. If a full batch removes
+nothing, it instead reports unexpected contents: move unrelated files out of the
+provisional directory before retrying. Repeating cleanup alone cannot resolve
+that condition. Unknown filenames are preserved. An unrecognized
+complete record or unsafe permissions stop cleanup without deleting that record.
+Use a dedicated provisional directory, separate from prepared or enrolled state.
+
+The consumer receives keys and the in-memory secret only after a successful
+durable save. Its deadline is ten minutes from original client creation. On
+success, failure, expiry or cancellation, the request is removed after the
+consumer actually returns. Removal failures are reported, retaining recoverable
+files for the next cleanup; no secure deletion is promised. Any durable prepared
+result or activated identity must be saved separately before the consumer returns.
+
+The executable Python/Go peer uses this lifecycle, reloads the saved keys before
+producing public cryptographic proofs, and checks removal afterward. Native
+permission, ownership, cancellation and process-crash tests exercise supported
+platforms. The library does not contact a server or activate an identity. The
+actual enrollment CLI, deliberate secret handoff and live closed-server
+diagnostics are integrated with the client pairing carrier in slice `2.4`.
 Losing the in-memory pairing secret does not enroll a provisional record.
 
 ## Operator recovery custody
