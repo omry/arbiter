@@ -31,6 +31,7 @@ classifiers = [
 dependencies = [
   "cryptography>=42,<49",
   "hydra-core>=1.4.0.dev4,<2.0",
+  "noiseprotocol==0.3.1",
   "omegaconf==2.4.0.dev11",
   "starlette>=0.37,<1.0",
   "uvicorn>=0.30,<1.0",
