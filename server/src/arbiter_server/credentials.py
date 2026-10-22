@@ -227,7 +227,9 @@ def _signature_profile(cert: x509.Certificate) -> None:
     # ECDSA-with-SHA256 AlgorithmIdentifier: OID 1.2.840.10045.4.3.2,
     # with absent parameters. Compare complete structurally selected fields.
     expected = bytes.fromhex("300a06082a8648ce3d040302")
-    if len(outer) != 3 or len(tbs) < 3 or outer[1] != expected or tbs[2] != expected:
+    if len(tbs) != 8:
+        raise CredentialError("unsupported optional certificate fields")
+    if len(outer) != 3 or outer[1] != expected or tbs[2] != expected:
         raise CredentialError("invalid ECDSA signature AlgorithmIdentifier")
 
 
