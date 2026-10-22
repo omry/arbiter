@@ -2262,13 +2262,21 @@ def _create_native_http_app(
     max_request_body_bytes: int,
     max_blocking_workers: int,
 ) -> object:
+    import asyncio
+
     from starlette.applications import Starlette
     from starlette.requests import ClientDisconnect, Request
     from starlette.responses import Response
     from starlette.routing import Route
+    from .enrollment import (
+        EnrollmentRequests,
+        MAX_ADVERTISEMENT_BYTES,
+        REGISTRATION_TIMEOUT,
+    )
 
     operation_pool = BlockingOperationPool(max_blocking_workers)
     http_work = HTTPWork(operation_pool)
+    enrollment_requests = EnrollmentRequests(cfg.arbiter.limits.max_pending_enrollments)
 
     @asynccontextmanager
     async def lifespan(_app: object) -> AsyncGenerator[None, None]:
@@ -2277,11 +2285,51 @@ def _create_native_http_app(
 
         root = _server_data_root(_storage_config(cfg)) / "authority"
         with running_instance(root):
+            enrollment_requests.reset()
             try:
                 async with running(root):
                     yield
             finally:
+                enrollment_requests.reset()
                 http_work.close()
+
+    async def register_enrollment(request: Request) -> object:
+        limit = min(MAX_ADVERTISEMENT_BYTES, max_request_body_bytes)
+
+        def register(bridge: LoopBridge) -> object:
+            enrollment_requests.require_open()
+            _check_operation_content_length(request, max_body_bytes=limit)
+            body = bridge.call(
+                asyncio.wait_for(
+                    _read_operation_body(request, max_body_bytes=limit),
+                    REGISTRATION_TIMEOUT,
+                )
+            )
+            pending = enrollment_requests.register(body)
+            return _native_response(
+                {
+                    "selector": pending.advertisement.selector,
+                    "request_digest": pending.advertisement.digest,
+                    "status": "pending",
+                }
+            )
+
+        try:
+            return await http_work.run(register)
+        except _RequestBodyTooLarge:
+            return _native_error_response(
+                status_code=413,
+                code="validation_error",
+                message="Enrollment advertisement exceeds the size limit.",
+            )
+        except (ClientDisconnect, asyncio.TimeoutError):
+            return _native_error_response(
+                status_code=400,
+                code="validation_error",
+                message="Enrollment advertisement was not received completely in time.",
+            )
+        except Exception as exc:
+            return _native_exception_response(exc)
 
     async def health(_request: Request) -> object:
         return _native_response({"status": "ok"})
@@ -2524,10 +2572,15 @@ def _create_native_http_app(
         except Exception as exc:
             return _native_exception_response(exc)
 
-    return Starlette(
+    application = Starlette(
         lifespan=lifespan,
         routes=[
             Route(HEALTH_ROUTE, health, methods=["GET"]),
+            Route(
+                f"{API_ROUTE_PREFIX}/enrollment/requests",
+                register_enrollment,
+                methods=["POST"],
+            ),
             Route(f"{API_ROUTE_PREFIX}/info", info, methods=["GET"]),
             Route(f"{API_ROUTE_PREFIX}/plugins", plugins, methods=["GET"]),
             Route(
@@ -2577,6 +2630,8 @@ def _create_native_http_app(
             ),
         ],
     )
+    application.state.enrollment_requests = enrollment_requests
+    return application
 
 
 def build_server(
