@@ -208,15 +208,24 @@ func TestPythonProvisionalPeer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, _ := provisional(t)
 	root := filepath.Join(custodyTestDir(t), "state")
-	if err := SaveProvisional(context.Background(), root, p); err != nil {
-		t.Fatal(err)
-	}
-	p, err = LoadProvisional(root, p.record.Selector)
+	err = RunProvisional(context.Background(), root, "https://localhost", "Agent Smith",
+		func(_ context.Context, p *Provisional, _ PairingSecret) error {
+			loaded, err := LoadProvisional(root, p.record.Selector)
+			if err != nil {
+				return err
+			}
+			proveProvisionalToPython(t, loaded, peer)
+			return nil
+		})
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertOnlyProvisionalLock(t, root)
+}
+
+func proveProvisionalToPython(t *testing.T, p *Provisional, peer *ecdh.PublicKey) {
+	t.Helper()
 	message := []byte("arbiter-provisional-peer-v1")
 	digest := sha256.Sum256(message)
 	access, err := ecdsa.SignASN1(rand.Reader, p.access, digest[:])
