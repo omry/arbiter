@@ -37,6 +37,13 @@ issuer ID. Portable and ordinary access identities use different issuer purposes
 and SAN roles. Future enrollment additionally checks live approval and grants;
 these certificate functions do not grant access by themselves.
 
+The native Go verifier applies the same version-one profiles. Shared positive
+and negative vectors and a test using freshly issued Python credentials check
+cross-language agreement. A caller supplies the expected role, IDs, registered
+issuer and verification time; the verifier does not discover trust from a peer's
+certificate. This development foundation does not enable client enrollment or
+ordinary authenticated API traffic.
+
 Version-one profiles support noncritical Subject Key Identifier values with one
 nonempty DER OCTET STRING and Authority Key Identifier values with only one
 nonempty key-identifier field. Other recognized optional extensions are
@@ -45,7 +52,8 @@ complete DER element with no trailing bytes or malformed constructed-child
 framing. Primitive contents remain opaque; Arbiter does not interpret the
 semantics of unknown extensions.
 Both signature AlgorithmIdentifiers must use ECDSA with SHA-256 and absent
-parameters. Negative certificate serial numbers are rejected. These restrictions
+parameters. Negative serial numbers and unused issuer/subject unique-identifier
+fields are rejected. These restrictions
 apply to issuer and leaf verification; normal setup and issuance already produce
 this profile.
 
