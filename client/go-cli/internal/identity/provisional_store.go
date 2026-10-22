@@ -167,6 +167,10 @@ func saveProvisional(ctx context.Context, directory string, p *Provisional, phas
 }
 
 func LoadProvisional(directory, selector string) (*Provisional, error) {
+	return loadProvisional(directory, selector, 1)
+}
+
+func loadProvisional(directory, selector string, links uint32) (*Provisional, error) {
 	root, dir, err := custodyRoot(directory, false)
 	if err != nil {
 		return nil, err
@@ -181,14 +185,14 @@ func LoadProvisional(directory, selector string) (*Provisional, error) {
 		return nil, err
 	}
 	defer f.Close()
-	if err := checkBoundCustody(f, false, false, 1); err != nil {
+	if err := checkBoundCustody(f, false, false, links); err != nil {
 		return nil, err
 	}
 	raw, err := io.ReadAll(io.LimitReader(f, MaxProvisionalBytes+1))
 	if err != nil {
 		return nil, err
 	}
-	if err := checkBoundCustody(f, false, false, 1); err != nil {
+	if err := checkBoundCustody(f, false, false, links); err != nil {
 		return nil, err
 	}
 	p, err := DecodeProvisional(raw)
