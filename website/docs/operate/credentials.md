@@ -37,6 +37,18 @@ issuer ID. Portable and ordinary access identities use different issuer purposes
 and SAN roles. Future enrollment additionally checks live approval and grants;
 these certificate functions do not grant access by themselves.
 
+Version-one profiles support noncritical Subject Key Identifier values with one
+nonempty DER OCTET STRING and Authority Key Identifier values with only one
+nonempty key-identifier field. Other recognized optional extensions are
+rejected. Unknown noncritical extensions remain opaque but must contain one
+complete DER element with no trailing bytes or malformed constructed-child
+framing. Primitive contents remain opaque; Arbiter does not interpret the
+semantics of unknown extensions.
+Both signature AlgorithmIdentifiers must use ECDSA with SHA-256 and absent
+parameters. Negative certificate serial numbers are rejected. These restrictions
+apply to issuer and leaf verification; normal setup and issuance already produce
+this profile.
+
 ## Validity and renewal schedule
 
 New issuers expire 3,650 days after issuance; renewal becomes due 366 days before
