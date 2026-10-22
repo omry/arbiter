@@ -21,6 +21,31 @@ LEAF_LIFETIME = timedelta(days=365)
 BACKDATE = timedelta(minutes=5)
 ISSUER_RENEW_BEFORE = timedelta(days=366)
 LEAF_RENEW_BEFORE = timedelta(days=30)
+SUPPORTED_OPTIONAL_OIDS = {"2.5.29.14", "2.5.29.35"}
+UNSUPPORTED_OPTIONAL_OIDS = {
+    "1.3.36.8.3.3",
+    "1.3.6.1.4.1.11129.2.4.2",
+    "1.3.6.1.4.1.11129.2.4.3",
+    "1.3.6.1.4.1.11129.2.4.5",
+    "1.3.6.1.4.1.311.21.7",
+    "1.3.6.1.5.5.7.1.1",
+    "1.3.6.1.5.5.7.1.11",
+    "1.3.6.1.5.5.7.1.24",
+    "1.3.6.1.5.5.7.48.1.5",
+    "2.5.29.9",
+    "2.5.29.16",
+    "2.5.29.18",
+    "2.5.29.20",
+    "2.5.29.27",
+    "2.5.29.28",
+    "2.5.29.30",
+    "2.5.29.31",
+    "2.5.29.32",
+    "2.5.29.33",
+    "2.5.29.36",
+    "2.5.29.46",
+    "2.5.29.54",
+}
 
 
 class CredentialError(ValueError):
@@ -125,6 +150,100 @@ def parse_certificate(data: bytes) -> x509.Certificate:
         raise CredentialError("invalid certificate DER") from exc
 
 
+def _der_bounds(data: bytes, offset: int = 0) -> tuple[int, int]:
+    if len(data) - offset < 2:
+        raise CredentialError("incomplete DER element")
+    high_tag = data[offset] & 0x1F == 0x1F
+    offset += 1
+    if high_tag:
+        if offset >= len(data) or data[offset] == 0x80:
+            raise CredentialError("invalid DER tag")
+        tag = 0
+        while True:
+            if offset >= len(data):
+                raise CredentialError("incomplete DER tag")
+            value = data[offset]
+            offset += 1
+            tag = tag * 128 + (value & 0x7F)
+            if value & 0x80 == 0:
+                break
+        if tag < 0x1F or tag > 0x7FFFFFFF:
+            raise CredentialError("invalid DER tag")
+    if offset >= len(data):
+        raise CredentialError("missing DER length")
+    length = data[offset]
+    offset += 1
+    if length & 0x80:
+        width = length & 0x7F
+        if width == 0 or width > 8 or offset + width > len(data):
+            raise CredentialError("invalid DER length")
+        if data[offset] == 0 or width == 1 and data[offset] < 0x80:
+            raise CredentialError("nonminimal DER length")
+        length = int.from_bytes(data[offset : offset + width], "big")
+        offset += width
+    end = offset + length
+    if end > len(data):
+        raise CredentialError("incomplete DER content")
+    return offset, end
+
+
+def _one_der(data: bytes) -> bool:
+    try:
+        return _der_bounds(data)[1] == len(data)
+    except CredentialError:
+        return False
+
+
+def _der_sequence_parts(data: bytes) -> list[bytes]:
+    offset, end = _der_bounds(data)
+    if data[0] != 0x30 or end != len(data):
+        raise CredentialError("expected one complete DER SEQUENCE")
+    parts = []
+    while offset < end:
+        _, next_offset = _der_bounds(data, offset)
+        parts.append(data[offset:next_offset])
+        offset = next_offset
+    return parts
+
+
+def _signature_profile(cert: x509.Certificate) -> None:
+    outer = _der_sequence_parts(cert.public_bytes(serialization.Encoding.DER))
+    tbs = _der_sequence_parts(cert.tbs_certificate_bytes)
+    # ECDSA-with-SHA256 AlgorithmIdentifier: OID 1.2.840.10045.4.3.2,
+    # with absent parameters. Compare complete structurally selected fields.
+    expected = bytes.fromhex("300a06082a8648ce3d040302")
+    if len(outer) != 3 or len(tbs) < 3 or outer[1] != expected or tbs[2] != expected:
+        raise CredentialError("invalid ECDSA signature AlgorithmIdentifier")
+
+
+def _validate_optional_extension(extension: x509.Extension[x509.ExtensionType]) -> None:
+    oid = extension.oid.dotted_string
+    if oid in SUPPORTED_OPTIONAL_OIDS:
+        if extension.critical:
+            raise CredentialError("supported optional extension must be noncritical")
+        if oid == "2.5.29.14" and (
+            not isinstance(extension.value, x509.SubjectKeyIdentifier)
+            or not extension.value.digest
+        ):
+            raise CredentialError("invalid subject key identifier extension")
+        if oid == "2.5.29.35":
+            value = extension.value
+            if (
+                not isinstance(value, x509.AuthorityKeyIdentifier)
+                or not value.key_identifier
+                or value.authority_cert_issuer is not None
+                or value.authority_cert_serial_number is not None
+            ):
+                raise CredentialError("invalid authority key identifier extension")
+        return
+    if oid in UNSUPPORTED_OPTIONAL_OIDS:
+        raise CredentialError("unsupported optional certificate extension")
+    if not isinstance(extension.value, x509.UnrecognizedExtension) or not _one_der(
+        extension.value.value
+    ):
+        raise CredentialError("unknown extension is not one complete DER value")
+
+
 def _profile(cert: x509.Certificate, identity: Identity, now: datetime) -> None:
     ca = _ca(identity.role)
     expected: dict[x509.ObjectIdentifier, x509.ExtensionType] = {
@@ -156,8 +275,16 @@ def _profile(cert: x509.Certificate, identity: Identity, now: datetime) -> None:
         e.oid == x509.ExtensionOID.EXTENDED_KEY_USAGE for e in cert.extensions
     ):
         raise CredentialError("issuer must not have an ordinary leaf purpose")
-    if any(e.critical and e.oid not in expected for e in cert.extensions):
-        raise CredentialError("unknown critical certificate extension")
+    for extension in cert.extensions:
+        if extension.oid in expected:
+            continue
+        if (
+            extension.critical
+            or ca
+            and extension.oid == x509.ExtensionOID.EXTENDED_KEY_USAGE
+        ):
+            raise CredentialError("unknown critical certificate extension")
+        _validate_optional_extension(extension)
     try:
         public_key = cert.public_key()
     except (UnsupportedAlgorithm, ValueError) as exc:
@@ -166,8 +293,12 @@ def _profile(cert: x509.Certificate, identity: Identity, now: datetime) -> None:
     if (
         cert.version is not x509.Version.v3
         or cert.signature_algorithm_oid != SignatureAlgorithmOID.ECDSA_WITH_SHA256
+        or cert.serial_number < 0
     ):
-        raise CredentialError("unsupported certificate version or signature algorithm")
+        raise CredentialError(
+            "unsupported certificate version, serial or signature algorithm"
+        )
+    _signature_profile(cert)
     lifetime = ISSUER_LIFETIME if ca else LEAF_LIFETIME
     if not cert.not_valid_before_utc <= now <= cert.not_valid_after_utc:
         raise CredentialError("certificate is not currently valid")
