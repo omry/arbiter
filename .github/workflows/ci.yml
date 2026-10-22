@@ -154,6 +154,12 @@ jobs:
           GOCACHE: ${{ runner.temp }}/go-build
         run: nox -s ${{ matrix.nox_session }}
 
+      - name: Verify fresh Python-Go credential interoperability
+        if: ${{ matrix.go_tests == true }}
+        env:
+          GOCACHE: ${{ runner.temp }}/go-build
+        run: nox -s unit -- server/tests/integration/test_credential_peer.py
+
       - name: Verify native local-control rejection across OS users
         if: ${{ startsWith(matrix.platform_id, 'linux-') || startsWith(matrix.platform_id, 'macos-') }}
         run: sudo .nox/unit/bin/python -m pytest server/tests/unit/test_local_control.py::test_real_different_os_user_is_rejected -q
