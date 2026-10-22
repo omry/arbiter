@@ -297,6 +297,41 @@ complete zeroization of every Python string or temporary copy. The Noise exchang
 and complete client `enrol` flow are subsequent delivery slices; approval alone
 installs no identity, certificate or account access.
 
+### Pairing component limits
+
+The Noise pairing component uses a 256-bit pairing secret and the approved
+`Noise_NNpsk0_25519_ChaChaPoly_SHA256` profile. It binds the client/server roles,
+public selector, exact advertised request and proposed keys. Anonymous failures
+do not consume the five distinct admitted exchanges allowed per approval.
+Authenticated replays share an existing exchange; they cannot create a second
+mutable handshake. Five failed or abandoned admitted exchanges discard pending
+approval and require a new request and owner approval.
+
+The component has these operator-owned settings:
+
+```yaml
+arbiter:
+  limits:
+    native_transport:
+      max_connections: 16
+      max_handshakes: 4
+      handshake_timeout_seconds: 10
+      max_handshake_bytes: 262144
+      max_noise_frame_bytes: 65535
+```
+
+Counts and byte limits must be positive integers. The handshake timeout is a
+positive, finite number of seconds. The Noise frame ceiling cannot exceed
+65,535 bytes, including the authentication tag. The total handshake-byte budget
+applies separately to each direction and includes the initial Noise messages.
+Admission has no waiting queue; cancellation retains capacity until underlying
+crypto work actually finishes. These limits belong to core Arbiter.
+
+This is a tested protocol foundation using `noiseprotocol==0.3.1`; it is not yet
+a publicly reachable pairing endpoint. WebSocket integration, signing-key
+proofs, client trust persistence and activation remain subsequent delivery steps.
+The current local approval commands alone still grant no ordinary API access.
+
 Registration uses the existing bounded worker admission before reading body
 bytes. The body limit is the smaller of the core request-body limit and 64 KiB,
 with a ten-second total body-read budget. Full capacity returns a retryable
