@@ -193,7 +193,7 @@ def test_invalid_or_duplicate_identity_is_rejected(identity):
         c.Identity(*identity)
 
 
-def changed_leaf(issuers, change):
+def changed_leaf(issuers, change, optional=None):
     identity, data, issuer = leaf(issuers)
     original = c.parse_certificate(data)
     key = original.public_key()
@@ -232,6 +232,8 @@ def changed_leaf(issuers, change):
             )
             value = x509.SubjectAlternativeName(names)
         builder = builder.add_extension(value, ext.critical)
+    if optional is not None:
+        builder = builder.add_extension(optional[0], optional[1])
     if change == "critical":
         builder = builder.add_extension(
             x509.UnrecognizedExtension(ObjectIdentifier("1.2.3.4"), b"\x05\x00"), True
@@ -265,6 +267,135 @@ def test_validly_signed_malformed_profiles_are_rejected(issuers, change):
     identity, data, issuer = changed_leaf(issuers, change)
     with pytest.raises(c.CredentialError):
         verify(data, identity, issuer)
+
+
+def _der_content(data):
+    return data[2 + (data[1] & 127) if data[1] & 128 else 2 :]
+
+
+def _der_wrap(tag, content):
+    size = len(content)
+    width = (size.bit_length() + 7) // 8
+    length = (
+        bytes([size])
+        if size < 128
+        else bytes([128 + width]) + size.to_bytes(width, "big")
+    )
+    return bytes([tag]) + length + content
+
+
+def _sequence_fields(data):
+    assert data[0] == 0x30
+    content = _der_content(data)
+    fields = []
+    while content:
+        width = content[1] & 127 if content[1] & 128 else 0
+        size = int.from_bytes(content[2 : 2 + width], "big") if width else content[1]
+        end = 2 + width + size
+        assert end <= len(content)
+        fields.append(content[:end])
+        content = content[end:]
+    return fields
+
+
+def _signed_profile_variant(data, signer, change):
+    outer = _sequence_fields(data)
+    tbs = _sequence_fields(outer[0])
+    if change in {"inner-null", "both-null"}:
+        tbs[2] = _der_wrap(0x30, _der_content(tbs[2]) + b"\x05\x00")
+    if change in {"outer-null", "both-null"}:
+        outer[1] = _der_wrap(0x30, _der_content(outer[1]) + b"\x05\x00")
+    if change in {"negative-serial", "zero-serial"}:
+        tbs[1] = b"\x02\x01" + (b"\xff" if change == "negative-serial" else b"\x00")
+    outer[0] = _der_wrap(0x30, b"".join(tbs))
+    signature = signer.private_key.sign(outer[0], ec.ECDSA(hashes.SHA256()))
+    outer[2] = _der_wrap(0x03, b"\x00" + signature)
+    return _der_wrap(0x30, b"".join(outer))
+
+
+@pytest.mark.parametrize("role", list(c.Role))
+@pytest.mark.parametrize(
+    "change",
+    [
+        "control",
+        "inner-null",
+        "outer-null",
+        "both-null",
+        "negative-serial",
+        "zero-serial",
+    ],
+)
+@pytest.mark.filterwarnings("ignore::cryptography.utils.CryptographyDeprecationWarning")
+def test_signed_algorithm_and_serial_profile(issuers, role, change):
+    if role in {c.Role.OWNER, c.Role.SERVER_AUTHORITY}:
+        signer = issuers[0] if role is c.Role.OWNER else issuers[1]
+        identity, data, issuer = signer.identity, signer.certificate_der, None
+    else:
+        identity, data, issuer = leaf(issuers, role)
+        signer = issuer
+    altered = _signed_profile_variant(data, signer, change)
+    parsed = x509.load_der_x509_certificate(altered)
+    list(parsed.extensions)
+    signer.private_key.public_key().verify(
+        parsed.signature, parsed.tbs_certificate_bytes, ec.ECDSA(hashes.SHA256())
+    )
+    kwargs = (
+        {}
+        if issuer is None
+        else {
+            "issuer_der": issuer.certificate_der,
+            "issuer_id": issuer.identity.subject_id,
+        }
+    )
+    if change in {"control", "zero-serial"}:
+        c.verify_certificate(altered, identity, now=NOW, **kwargs)
+    else:
+        with pytest.raises(c.CredentialError):
+            c.verify_certificate(altered, identity, now=NOW, **kwargs)
+
+
+@pytest.mark.parametrize(
+    "oid,raw,critical,valid",
+    [
+        ("2.5.29.14", b"\x04\x01\xaa", False, True),
+        ("2.5.29.14", b"\x04\x00", False, False),
+        ("2.5.29.14", b"\x04\x01\xaa\x05\x00", False, False),
+        ("2.5.29.35", b"\x30\x03\x80\x01\xaa", False, True),
+        ("2.5.29.35", b"\x30\x02\x80\x00", False, False),
+        ("2.5.29.35", b"\x30\x05\x80\x01\xaa\x05\x00", False, False),
+        ("2.5.29.35", b"\x30\x03\x80\x01\xaa\x05\x00", False, False),
+        ("1.3.36.8.3.3", b"\x30\x02\x30\x00", False, False),
+        ("1.2.3.4", b"\x05\x00", False, True),
+        ("1.2.3.4", b"\x05\x00", True, False),
+        ("1.2.3.4", b"\x05\x00\x05\x00", False, False),
+        ("1.2.3.4", bytes.fromhex("3001ff"), False, False),
+        ("1.2.3.4", bytes.fromhex("30033001ff"), False, False),
+        ("1.2.3.4", bytes.fromhex("30023002"), False, False),
+        ("1.2.3.4", bytes.fromhex("3006300204020500"), False, False),
+        ("1.2.3.4", bytes.fromhex("30030500ff"), False, False),
+        ("1.2.3.4", bytes.fromhex("30023000"), False, True),
+        ("1.2.3.4", bytes.fromhex("9f888080800000"), False, False),
+        ("1.2.3.4", bytes.fromhex("9f87ffffff7f00"), False, True),
+    ],
+)
+def test_signed_optional_extension_profile(issuers, oid, raw, critical, valid):
+    extension = x509.UnrecognizedExtension(ObjectIdentifier(oid), raw)
+    identity, data, issuer = changed_leaf(issuers, "optional", (extension, critical))
+    x509.load_der_x509_certificate(data)
+    if valid:
+        verify(data, identity, issuer)
+    else:
+        with pytest.raises(c.CredentialError):
+            verify(data, identity, issuer)
+
+
+def test_signed_deep_opaque_extension_uses_bounded_iteration(issuers):
+    raw = b"\x05\x00"
+    for _ in range(500):
+        raw = _der_wrap(0x30, raw)
+    extension = x509.UnrecognizedExtension(ObjectIdentifier("1.2.3.4"), raw)
+    identity, data, issuer = changed_leaf(issuers, "optional", (extension, False))
+    verify(data, identity, issuer)
 
 
 @pytest.mark.parametrize(
