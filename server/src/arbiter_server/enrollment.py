@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import base64
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
+import hmac
 import json
 import threading
 import time
@@ -21,6 +22,7 @@ from .errors import OperationError
 MAX_ADVERTISEMENT_BYTES = 64 * 1024
 ENROLLMENT_LIFETIME = 600
 REGISTRATION_TIMEOUT = 10
+LIST_PAGE_SIZE = 32
 
 
 def _invalid() -> OperationError:
@@ -147,6 +149,13 @@ class PendingRequest:
     deadline: float
 
 
+@dataclass(frozen=True)
+class ApprovedRequest:
+    request: PendingRequest
+    grants: tuple[tuple[str, str], ...]
+    secret: bytes = field(repr=False)
+
+
 class EnrollmentRequests:
     """One instance per server lifetime; local administration alone opens it."""
 
@@ -163,17 +172,170 @@ class EnrollmentRequests:
         self._window_deadline = 0.0
         self._epoch = 0
         self._requests: dict[str, PendingRequest] = {}
+        self._approved: dict[str, ApprovedRequest] = {}
 
     def reset(self) -> None:
         with self._lock:
             self._window_deadline = 0.0
             self._epoch += 1
             self._requests.clear()
+            self._approved.clear()
 
     def _prune(self, now: float) -> None:
         for selector, request in tuple(self._requests.items()):
             if request.deadline <= now:
                 del self._requests[selector]
+                self._approved.pop(selector, None)
+
+    def approved(self, selector: str) -> ApprovedRequest | None:
+        """Trusted pairing code only; never serialize a secret-bearing context."""
+        with self._lock:
+            self._prune(self._clock())
+            return self._approved.get(selector)
+
+    def _summary(self, request: PendingRequest, now: float) -> dict[str, object]:
+        advertisement = request.advertisement
+        approved = self._approved.get(advertisement.selector)
+        return {
+            "selector": advertisement.selector,
+            "name": advertisement.name,
+            "revision": request.revision,
+            "request_digest": advertisement.digest,
+            "key_fingerprints": {
+                role: hashlib.sha256(key).hexdigest()
+                for role, key in (
+                    ("access", advertisement.access_spki),
+                    ("portable", advertisement.portable_spki),
+                    ("recipient", advertisement.recipient_spki),
+                )
+            },
+            "status": "approved" if approved else "pending",
+            "remaining_seconds": max(0, int(request.deadline - now)),
+            "grant_count": len(approved.grants) if approved else 0,
+        }
+
+    def control(
+        self,
+        command: str,
+        arguments: dict[str, object],
+        accounts: set[tuple[str, str]],
+    ) -> dict[str, object]:
+        """Called only through the OS-authenticated local control dispatcher."""
+        if command == "open":
+            if arguments:
+                raise ValueError("Invalid enrollment control arguments.")
+            self.open_window()
+            with self._lock:
+                now = self._clock()
+                self._prune(now)
+                return {
+                    "initialized": True,
+                    "open": now < self._window_deadline,
+                    "pending_count": len(self._requests),
+                }
+        if command == "list":
+            fields = set(arguments)
+            if fields not in (set(), {"cursor"}, {"selector"}):
+                raise ValueError("Invalid enrollment control arguments.")
+            cursor = arguments.get("cursor")
+            selector = arguments.get("selector")
+            if cursor is not None and not isinstance(cursor, str):
+                raise ValueError("Invalid enrollment list cursor.")
+            if selector is not None and not isinstance(selector, str):
+                raise ValueError("Invalid enrollment selector.")
+            with self._lock:
+                now = self._clock()
+                self._prune(now)
+                requests = tuple(self._requests.values())
+                if selector is not None:
+                    request = self._requests.get(selector)
+                    rows = [self._summary(request, now)] if request else []
+                    next_cursor = None
+                else:
+                    start = 0
+                    if cursor is not None:
+                        boundary = cursor.split(":", 1)
+                        if len(boundary) != 2:
+                            raise ValueError(
+                                "Enrollment list cursor is invalid; list again."
+                            )
+                        boundary_selector, boundary_revision = boundary
+                        for index, request in enumerate(requests):
+                            if request.advertisement.selector == boundary_selector:
+                                if request.revision != boundary_revision:
+                                    raise ValueError(
+                                        "Enrollment list cursor is invalid; list again."
+                                    )
+                                start = index + 1
+                                break
+                        else:
+                            raise ValueError(
+                                "Enrollment list cursor is invalid; list again."
+                            )
+                    page = requests[start : start + LIST_PAGE_SIZE]
+                    rows = [self._summary(request, now) for request in page]
+                    next_cursor = (
+                        f"{page[-1].advertisement.selector}:{page[-1].revision}"
+                        if start + len(page) < len(requests)
+                        else None
+                    )
+                return {
+                    "initialized": True,
+                    "open": now < self._window_deadline,
+                    "pending_count": len(requests),
+                    "requests": rows,
+                    "next_cursor": next_cursor,
+                }
+        fields = {"selector", "revision", "request_digest"}
+        if command == "approve":
+            fields |= {"psk", "grants"}
+        if command not in {"approve", "reject"} or set(arguments) != fields:
+            raise ValueError("Invalid enrollment control arguments.")
+        secret, grants = b"", ()
+        if command == "approve":
+            try:
+                secret = _decode64(arguments["psk"], 32, url=True)
+                names = arguments["grants"]
+                if not isinstance(names, list) or not all(
+                    isinstance(name, str) and name.count("/") == 1 for name in names
+                ):
+                    raise ValueError
+                grants = tuple(sorted(tuple(name.split("/")) for name in names))
+                if len(set(grants)) != len(grants) or any(
+                    grant not in accounts for grant in grants
+                ):
+                    raise ValueError
+            except (ValueError, TypeError, UnicodeError):
+                raise ValueError(
+                    "Invalid enrollment secret or account grants."
+                ) from None
+        selector = arguments["selector"]
+        if not isinstance(selector, str):
+            raise ValueError("Invalid enrollment selector.")
+        with self._lock:
+            now = self._clock()
+            self._prune(now)
+            request = self._requests.get(selector)
+            if request is None:
+                raise ValueError("Enrollment request is missing or expired.")
+            if (
+                request.revision != arguments["revision"]
+                or request.advertisement.digest != arguments["request_digest"]
+            ):
+                raise ValueError("Enrollment selection changed; list requests again.")
+            if command == "reject":
+                self._approved.pop(selector, None)
+                del self._requests[selector]
+                return {"initialized": True, "rejected": selector}
+            existing = self._approved.get(selector)
+            if existing is not None:
+                if existing.grants != grants or not hmac.compare_digest(
+                    existing.secret, secret
+                ):
+                    raise ValueError("Enrollment approval is immutable; reject first.")
+            else:
+                self._approved[selector] = ApprovedRequest(request, grants, secret)
+            return {"initialized": True, "request": self._summary(request, now)}
 
     def open_window(self) -> None:
         """Local-only primitive; reopening never rewrites existing requests."""
