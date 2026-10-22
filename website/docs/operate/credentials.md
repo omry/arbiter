@@ -144,6 +144,37 @@ Shared public-only verification vectors are in
 test trust, consumed by Python now and intended for Go's slice 2.1 verifier.
 They must never become product trust or default credentials.
 
+## Provisional client material (development)
+
+The Go enrollment foundation generates separate P-256 access and portable keys,
+an X25519 artifact-recipient key, and an independent public 128-bit request
+selector. Its pairing secret is 32 fresh random bytes, encoded as 43 unpadded
+Base64url characters for the explicit operator handoff. The public selector is
+22 unpadded Base64url characters and is not a password. Version framing keeps
+these values separate.
+
+The version-one private JSON format starts with a `NEVER SHARE THIS` warning.
+It contains the version, selector, HTTPS server URL, display name, UTC creation
+time and three separate canonical PKCS8 DER keys, encoded with padded Base64.
+It has no pairing secret, approved agent ID, certificate, grant or server trust.
+The decoder rejects duplicate or unknown fields, noncanonical keys, wrong key
+roles, reused signing keys, and records over 8 KiB. Names are bounded to 256
+UTF-8 bytes without control characters; URLs are bounded to 2 KiB and cannot
+contain user information, query credentials or fragments.
+
+Ordinary formatting redacts the material and generic JSON serialization refuses
+to export it. Explicit private encoding is intended only for the later private
+state layer. These protections help prevent accidental logging; they do not
+prevent an agent in lightweight mode from reading its own private keys.
+The public advertisement contains only its version, selector, name and the
+three SPKI public keys. A live Python/Go test checks signing and recipient-key
+interoperability after the private format round-trip.
+
+This library does not yet write files, contact a server, expose an enrollment
+command or activate an identity. Private native filesystem publication, cleanup
+and CLI integration are separate follow-on work. Losing the in-memory pairing
+secret does not make a provisional record an enrolled identity.
+
 ## Operator recovery custody
 
 Setup requires `--recovery-file PATH` in an existing operator-owned private
