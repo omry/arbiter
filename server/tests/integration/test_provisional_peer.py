@@ -8,10 +8,19 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+from typing import cast
 
 import pytest
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, x25519
+from arbiter_server.errors import OperationError
+from starlette.applications import Starlette
+
+# Reuse the native test setup: short Unix socket paths and real private Windows
+# parent ACLs. The new loopback server runs the normal local-control lifespan.
+from server.tests.unit.conftest import private_windows_test_parent, tmp_path
+from server.tests.unit.test_artifact_http_admission import live_server
+from server.tests.unit.test_native_http_protocol import _client
 
 
 def test_fresh_go_provisional_material_in_python() -> None:
@@ -80,3 +89,56 @@ def test_fresh_go_provisional_material_in_python() -> None:
     assert isinstance(recipient, x25519.X25519PublicKey)
     expected = hmac.digest(private.exchange(recipient), message, hashlib.sha256)
     assert hmac.compare_digest(expected, base64.b64decode(proof["recipient_proof"]))
+
+
+@pytest.mark.usefixtures("private_windows_test_parent")
+def test_fresh_go_public_request_reaches_python_server(tmp_path) -> None:
+    if shutil.which("go") is None:
+        pytest.skip("go is not installed")
+    app = cast(Starlette, _client(tmp_path)._app)
+    with live_server(app) as port:
+        # Synthetic local administration opens only this test server. The
+        # product local open/list/approve/reject entrypoint belongs to2.2.2.
+        app.state.enrollment_requests.open_window()
+        result = subprocess.run(
+            [
+                "go",
+                "test",
+                "-count=1",
+                "-run",
+                "^TestPythonRegistrationPeer$",
+                "-v",
+                "./internal/identity",
+            ],
+            cwd=Path(__file__).resolve().parents[3] / "client" / "go-cli",
+            env={
+                **os.environ,
+                "ARBITER_TEST_REGISTRATION_URL": f"http://127.0.0.1:{port}/api/v1/enrollment/requests",
+            },
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert result.returncode == 0, "fresh Go registration peer failed"
+        public = [
+            line.removeprefix("ARBITER_PUBLIC_REGISTRATION=")
+            for line in result.stdout.splitlines()
+            if line.startswith("ARBITER_PUBLIC_REGISTRATION=")
+        ]
+        assert len(public) == 1
+        advertised = json.loads(public[0])
+        (pending,) = app.state.enrollment_requests.pending()
+        assert pending.advertisement.selector == advertised["selector"]
+        assert pending.advertisement.access_spki == base64.b64decode(
+            advertised["access_spki"]
+        )
+        assert pending.advertisement.portable_spki == base64.b64decode(
+            advertised["portable_spki"]
+        )
+        assert pending.advertisement.recipient_spki == base64.b64decode(
+            advertised["recipient_spki"]
+        )
+        assert pending.advertisement.name == "Agent Smith"
+    assert app.state.enrollment_requests.pending() == ()
+    with pytest.raises(OperationError, match="Enrollment is closed"):
+        app.state.enrollment_requests.require_open()

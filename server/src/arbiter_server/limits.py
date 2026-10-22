@@ -15,3 +15,4 @@ class CoreLimitsConfig:
     max_artifact_storage_bytes: int = DEFAULT_MAX_ARTIFACT_STORAGE_BYTES
     max_artifact_count: int = DEFAULT_MAX_ARTIFACT_COUNT
     max_blocking_workers: int = DEFAULT_MAX_BLOCKING_WORKERS
+    max_pending_enrollments: int = 20
