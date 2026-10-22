@@ -8,12 +8,14 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 from typing import cast
 
 import pytest
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, x25519
 from arbiter_server.errors import OperationError
+from arbiter_server.authority import initialize_authority
 from starlette.applications import Starlette
 
 # Reuse the native test setup: short Unix socket paths and real private Windows
@@ -96,10 +98,26 @@ def test_fresh_go_public_request_reaches_python_server(tmp_path) -> None:
     if shutil.which("go") is None:
         pytest.skip("go is not installed")
     app = cast(Starlette, _client(tmp_path)._app)
+    root = tmp_path / "server" / "authority"
+    initialize_authority(root, recovery_file=tmp_path / "operator.json")
     with live_server(app) as port:
-        # Synthetic local administration opens only this test server. The
-        # product local open/list/approve/reject entrypoint belongs to2.2.2.
-        app.state.enrollment_requests.open_window()
+        opened = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "arbiter_server",
+                "enrollment",
+                "open",
+                "--state-dir",
+                str(root),
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        assert opened.returncode == 0, opened.stderr
+        assert json.loads(opened.stdout)["open"] is True
         result = subprocess.run(
             [
                 "go",

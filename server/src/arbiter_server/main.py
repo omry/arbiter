@@ -2278,6 +2278,16 @@ def _create_native_http_app(
     http_work = HTTPWork(operation_pool)
     enrollment_requests = EnrollmentRequests(cfg.arbiter.limits.max_pending_enrollments)
 
+    def enrollment_control(
+        command: str, arguments: dict[str, object]
+    ) -> dict[str, object]:
+        accounts = {
+            (plugin, str(account))
+            for plugin in configured_service_names(cfg.arbiter.account)
+            for account in (service_accounts_for(cfg, plugin) or {})
+        }
+        return enrollment_requests.control(command, arguments, accounts)
+
     @asynccontextmanager
     async def lifespan(_app: object) -> AsyncGenerator[None, None]:
         from .authority import running_instance
@@ -2287,7 +2297,7 @@ def _create_native_http_app(
         with running_instance(root):
             enrollment_requests.reset()
             try:
-                async with running(root):
+                async with running(root, enrollment_control):
                     yield
             finally:
                 enrollment_requests.reset()
@@ -4502,6 +4512,30 @@ def _build_parser() -> argparse.ArgumentParser:
                 help="reuse existing recovery keys and register this server's backup verifier",
             )
 
+    enrollment = subcommands.add_parser(
+        "enrollment",
+        help="open or approve enrollment through authenticated local control",
+    )
+    enrollment_commands = enrollment.add_subparsers(
+        dest="enrollment_command", required=True
+    )
+    for action in ("open", "list", "approve", "reject"):
+        command = enrollment_commands.add_parser(action)
+        command.add_argument("--state-dir", type=Path, required=True)
+        command.add_argument("--json", action="store_true")
+        if action in {"approve", "reject"}:
+            command.add_argument(
+                "selector", help="public selector from enrollment list"
+            )
+        if action == "approve":
+            command.add_argument(
+                "--grant",
+                action="append",
+                default=[],
+                metavar="PLUGIN/ACCOUNT",
+                help="grant this configured account; repeat for multiple accounts",
+            )
+
     serve = subcommands.add_parser("serve", help="run the Arbiter HTTP server")
     _add_override_arguments(
         serve,
@@ -4704,6 +4738,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     namespace = parser.parse_args(args)
+    if namespace.command == "enrollment":
+        from .enrollment_admin import enrollment_cli
+
+        return enrollment_cli(
+            namespace.enrollment_command,
+            namespace.state_dir,
+            selector=getattr(namespace, "selector", None),
+            grants=getattr(namespace, "grant", None),
+            as_json=namespace.json,
+        )
     if namespace.command == "authority":
         from .authority import authority_cli
 
