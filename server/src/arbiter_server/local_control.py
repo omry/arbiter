@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 import ctypes
 from errno import ECONNABORTED, EMFILE, ENFILE, ENOBUFS, ENOMEM
@@ -23,6 +24,7 @@ MAX_MESSAGE = 64 * 1024
 MAX_CONNECTIONS = 16
 EXCHANGE_TIMEOUT = 10
 _TRANSIENT = {ECONNABORTED, EMFILE, ENFILE, ENOBUFS, ENOMEM}
+EnrollmentDispatch = Callable[[str, dict[str, object]], dict[str, object]]
 
 
 def _socket_identity(path: Path) -> tuple[int, int]:
@@ -111,6 +113,25 @@ def request(
         value.update(
             recovery_file=str(recovery_file.expanduser().absolute()), reuse=reuse
         )
+    return _exchange(root, value)
+
+
+def enrollment_request(
+    state_dir: Path, command: str, arguments: dict[str, object]
+) -> dict[str, Any]:
+    root = a._root(state_dir, create=False)
+    return _exchange(
+        root,
+        {
+            "root": str(root),
+            "action": "enrollment",
+            "command": command,
+            "arguments": arguments,
+        },
+    )
+
+
+def _exchange(root: Path, value: dict[str, object]) -> dict[str, Any]:
     if os.name == "nt":
         from .windows_control import request as windows_request
 
@@ -180,12 +201,29 @@ class _Protocol(asyncio.StreamReaderProtocol):
 class AuthorityControl:
     """Shared dispatch and actual-work ownership for OS-authenticated controls."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(
+        self, root: Path, enrollment_control: EnrollmentDispatch | None = None
+    ) -> None:
         self.root = a._root(root, create=False)
         self.work: asyncio.Task[dict[str, Any]] | None = None
+        self.enrollment_control = enrollment_control
 
     def dispatch(self, value: dict[str, Any]) -> dict[str, Any]:
         action = value.get("action")
+        if action == "enrollment":
+            if (
+                set(value) != {"root", "action", "command", "arguments"}
+                or value["root"] != str(self.root)
+                or not isinstance(value["command"], str)
+                or not isinstance(value["arguments"], dict)
+                or self.enrollment_control is None
+            ):
+                raise a.AuthorityError("invalid enrollment control request")
+            if a._current_record(self.root) is None:
+                raise a.AuthorityError(
+                    "initialize server authority before opening enrollment"
+                )
+            return self.enrollment_control(value["command"], value["arguments"])
         keys = (
             {"root", "action", "recovery_file", "reuse"}
             if action == "init"
@@ -243,8 +281,10 @@ class AuthorityControl:
 
 
 class LocalControl(AuthorityControl):
-    def __init__(self, root: Path) -> None:
-        super().__init__(root)
+    def __init__(
+        self, root: Path, enrollment_control: EnrollmentDispatch | None = None
+    ) -> None:
+        super().__init__(root, enrollment_control)
         self.path = self.root / "control.sock"
         self.identity: tuple[int, int] | None = None
         self.listener: _Listener | None = None
@@ -387,13 +427,15 @@ class LocalControl(AuthorityControl):
 
 
 @asynccontextmanager
-async def running(root: Path) -> AsyncGenerator[None, None]:
+async def running(
+    root: Path, enrollment_control: EnrollmentDispatch | None = None
+) -> AsyncGenerator[None, None]:
     if os.name == "nt":
         from .windows_control import WindowsControl
 
-        control = WindowsControl(root)
+        control = WindowsControl(root, enrollment_control)
     else:
-        control = LocalControl(root)
+        control = LocalControl(root, enrollment_control)
     try:
         await control.start()
         yield

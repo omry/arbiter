@@ -75,8 +75,10 @@ def request(root: Path, value: dict[str, object]) -> dict[str, Any]:
 
 
 class WindowsControl(c.AuthorityControl):
-    def __init__(self, root: Path) -> None:
-        super().__init__(root)
+    def __init__(
+        self, root: Path, enrollment_control: c.EnrollmentDispatch | None = None
+    ) -> None:
+        super().__init__(root, enrollment_control)
         self.api = w.Native()
         self.path = self.root / _LOCATOR
         self.name = r"\\.\pipe\arbiter-" + secrets.token_hex(16)

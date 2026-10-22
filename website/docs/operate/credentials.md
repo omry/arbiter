@@ -238,8 +238,8 @@ advertisements as strict UTF-8 JSON without a byte-order marker. UTF-16 and
 UTF-32 bodies are rejected. Registration does not grant access, approve an agent,
 or install server trust. The endpoint stays closed until local administration opens a
 ten-minute window. Its closed response explains that an operator must open it;
-there is no remote opening endpoint. The local command and approval flow are
-the next delivery slice (`2.2.2`).
+there is no remote opening endpoint. Use the local commands below on the server
+host, or through a trusted SSH terminal to that host.
 
 Core Arbiter limits pending requests with
 `arbiter.limits.max_pending_enrollments`, a positive integer that defaults to
@@ -255,6 +255,47 @@ secrets are rejected fields. The returned request digest is SHA-256 of the exact
 accepted request-body bytes; clients retain those bytes for later pairing proof.
 Changing a selector's payload conflicts with the existing request. A repeated
 identical payload consumes no additional slot.
+
+### Local enrollment approval
+
+Initialize server authority first, then run these commands as the same OS user
+that runs the server. `--state-dir` selects its private authority directory,
+not the client state directory. The server must be running:
+
+```bash
+arbiter-server enrollment open --state-dir /path/to/server/authority
+arbiter-server enrollment list --state-dir /path/to/server/authority
+arbiter-server enrollment approve --selector=SELECTOR --state-dir /path/to/server/authority --grant imap/personal
+arbiter-server enrollment reject --selector=SELECTOR --state-dir /path/to/server/authority
+```
+
+Opening admits requests for ten minutes and returns a bounded acknowledgement.
+List shows public selectors, untrusted names, key fingerprints and remaining
+request lifetime. The local control list is paged, while the command combines
+all pages for complete output. Approval and rejection look up the exact
+selector before sending its revision and request digest. Use the
+`--selector=VALUE` form so selectors that begin with `-` remain values.
+Approval displays the selected public summary and prompts for the client's
+43-character pairing secret with terminal echo disabled. It refuses redirected input or an echoing
+fallback. There is no secret command-line option or environment variable. Do
+not paste the secret into a shell command. Use `--json` for machine-readable
+public results.
+
+Repeat `--grant PLUGIN/ACCOUNT` to select configured accounts. Omitting it grants
+no accounts. Approval freezes those names, the request revision, digest and keys;
+it does not create another policy or activate ordinary API access. An identical
+approval is idempotent. To change an approval, reject it and start again. Approval
+and rejection bind the revision selected before the prompt, so a replaced or
+expired request cannot receive a stale approval.
+
+Approved requests still count toward the configured pending-request capacity and
+keep their original ten-minute deadline. Reopening does not extend it. Secrets
+remain only in bounded server memory and are omitted from listings, logs, files
+and backups. Expiry,
+rejection and server shutdown/restart remove approval state. This does not promise
+complete zeroization of every Python string or temporary copy. The Noise exchange
+and complete client `enrol` flow are subsequent delivery slices; approval alone
+installs no identity, certificate or account access.
 
 Registration uses the existing bounded worker admission before reading body
 bytes. The body limit is the smaller of the core request-body limit and 64 KiB,
