@@ -1,0 +1,1 @@
+Add bounded Python/Go mutual signing-key proofs inside the enrollment Noise channel. Proofs bind the exact request, handshake, roles and server certificates; invalid proofs close the exchange. Durable trust publication, the enrollment CLI and activation remain later steps.
