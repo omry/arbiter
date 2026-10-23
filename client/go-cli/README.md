@@ -2,14 +2,14 @@
 
 Experimental native Arbiter client.
 
-The goal of this subproject is a small, portable, dependency-free client binary
+The goal of this subproject is a small, portable client binary
 that agents can run without a Python environment. The Python server remains the
 source of truth for Arbiter runtime behavior, plugin loading, configuration
 composition, and deployment tooling.
 
 Current scope:
 
-- no third-party Go dependencies
+- one native executable, with build dependencies pinned in `go.mod` and `go.sum`
 - CLI shell for the native `arbiter` client
 - URL resolution from command-line override, environment, or client config
 - native HTTP transport
@@ -64,6 +64,11 @@ arbiter_client-<version>.data/scripts/arbiter.exe
 ```bash
 go test ./...
 ```
+
+The Linux and macOS terminal regression harness requires Python 3. Windows tests
+create a private console. These tests check actual expiry, private-state cleanup
+and lock reacquisition; CI requires them on all six native platform targets.
+Python is a test dependency here, not a dependency of the installed client binary.
 
 When running in a sandbox where the default Go build cache is not writable, set
 `GOCACHE` to a writable directory:
