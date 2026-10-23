@@ -7,20 +7,31 @@ handoff; it is not a plaintext product pairing carrier. Nothing secret is logged
 import asyncio
 import base64
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
 import shutil
 import socket
 import subprocess
+from uuid import uuid4
 
+from cryptography.hazmat.primitives.asymmetric import ec
 import pytest
 
+from arbiter_server.credentials import (
+    Identity,
+    Role,
+    SigningCredential,
+    create_issuer,
+    issue_certificate,
+)
 from arbiter_server.enrollment import EnrollmentRequests
-from arbiter_server.pairing import PairingResponder, PairingSession
+from arbiter_server.pairing import PairingResponder, PairingSession, prologue
+from arbiter_server.pairing_proofs import server_proof
 
 
-@pytest.mark.parametrize("invalid", [None, "secret", "request"])
+@pytest.mark.parametrize("invalid", [None, "secret", "request", "server-proof"])
 def test_fresh_python_go_pairing_peer(invalid):
     if shutil.which("go") is None:
         pytest.skip("go is not installed")
@@ -65,7 +76,7 @@ def test_fresh_python_go_pairing_peer(invalid):
                     lease = responder.reserve()
                     first = base64.b64decode(packet["first"], validate=True)
                     selector = pending.advertisement.selector
-                    if invalid:
+                    if invalid in {"secret", "request"}:
                         with pytest.raises(ValueError):
                             await responder.start(lease, selector, first)
                         assert not responder._attempts[selector].digests
@@ -76,20 +87,58 @@ def test_fresh_python_go_pairing_peer(invalid):
                     message = await responder.message(
                         session, b"Python server payload", encrypt=True
                     )
+                    now = datetime.now(timezone.utc)
+                    root = create_issuer(
+                        Identity(Role.SERVER_AUTHORITY, str(uuid4())), now=now
+                    )
+                    key = ec.generate_private_key(ec.SECP256R1())
+                    identity = Identity(Role.SERVER_TLS, root.identity.subject_id)
+                    leaf = SigningCredential(
+                        identity,
+                        issue_certificate(identity, key.public_key(), root, now=now),
+                        key,
+                    )
+                    if invalid == "server-proof":
+                        proof, _ = server_proof(
+                            session.handshake_hash,
+                            prologue(pending.advertisement),
+                            leaf,
+                            root.certificate_der,
+                            now,
+                        )
+                        proof = proof[:-1] + bytes([proof[-1] ^ 1])
+                        proof_wire = await responder.message(
+                            session, proof, encrypt=True
+                        )
+                    else:
+                        proof_wire = await responder.prove_server(
+                            session, leaf, root.certificate_der, now
+                        )
                     send(
                         {
                             "response": base64.b64encode(session.response).decode(),
                             "hash": base64.b64encode(session.handshake_hash).decode(),
                             "message": base64.b64encode(message).decode(),
+                            "proof": base64.b64encode(proof_wire).decode(),
                         }
                     )
                     reply = json.loads(stream.readline(16385))
+                    if invalid == "server-proof":
+                        assert reply["proof_rejected"] is True
+                        assert not session.proof_complete
+                        send({"OK": True})
+                        return
                     assert (
                         await responder.message(
                             session, base64.b64decode(reply["message"], validate=True)
                         )
                         == b"Go client payload"
                     )
+                    await responder.prove_client(
+                        session, base64.b64decode(reply["proof"], validate=True)
+                    )
+                    assert session.proof_complete
+                    assert reply["server_id"] == root.identity.subject_id
                     send({"OK": True})
 
                 try:
@@ -117,7 +166,12 @@ def test_fresh_python_go_pairing_peer(invalid):
                 env={
                     **os.environ,
                     "ARBITER_TEST_PAIRING_CONTROL": f"127.0.0.1:{listener.getsockname()[1]}",
-                    "ARBITER_TEST_PAIRING_REJECT": "1" if invalid else "0",
+                    "ARBITER_TEST_PAIRING_REJECT": (
+                        "1" if invalid in {"secret", "request"} else "0"
+                    ),
+                    "ARBITER_TEST_PAIRING_PROOF_REJECT": (
+                        "1" if invalid == "server-proof" else "0"
+                    ),
                 },
                 capture_output=True,
                 text=True,
