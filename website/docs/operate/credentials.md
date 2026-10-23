@@ -305,9 +305,10 @@ proposed public keys, authenticates the server role, and limits each frame and
 the total bytes in each direction. A protocol or authentication failure closes
 that exchange. The Python/Go integration tests execute both libraries with fresh
 keys; they also reject a substituted request or secret. This foundation has no
-public enrollment CLI yet and does not establish signing-key possession, durable
-server trust or an activated enrollment. Those checks remain required before
-ordinary authenticated use.
+public enrollment CLI/carrier wiring yet. It establishes in-channel possession
+of the exact proposed access and portable signing keys, but does not persist
+server trust, prepare or activate an enrollment, or grant ordinary API access.
+Durable trust, prepared/ready state and activation remain later delivery steps.
 
 The Noise pairing component uses a 256-bit pairing secret and the approved
 `Noise_NNpsk0_25519_ChaChaPoly_SHA256` profile. It binds the client/server roles,
@@ -358,14 +359,41 @@ fresh HTTP connection; an upgrade that bypasses this guard is rejected.
 Ordinary HTTP body, operation and download budgets remain separate.
 
 This endpoint currently completes only the encrypted handshake, then closes.
-Signing-key proofs, client trust persistence and activation remain subsequent
-delivery steps. The current local approval commands and handshake alone still
+The Python/Go signing-key proof foundation is exercised by fresh executable
+peers; the public CLI/carrier wiring, client trust persistence and activation
+remain subsequent delivery steps. Local approval and the handshake alone still
 grant no ordinary API access.
 
 Registration uses the existing bounded worker admission before reading body
 bytes. The body limit is the smaller of the core request-body limit and 64 KiB,
 with a ten-second total body-read budget. Full capacity returns a retryable
 `resource_exhausted` error. None of these public requests activate an identity.
+
+### Pairing possession proof profile
+
+After Noise authenticates the approved PSK and exact advertisement, the server
+proves possession of its distinct server TLS leaf key. It sends the public
+server authority, leaf and server ID inside Noise. The Go client validates the
+existing strict certificate profiles, signature chain, role, ID and validity.
+It then proves both exact proposed access and portable signing keys. These
+steps neither install public trust durably nor activate an enrollment.
+
+Version-one server proof plaintext is the ASCII tag
+`arbiter-pairing-server-v1` plus NUL, the canonical 36-byte server UUID, the
+authority DER and leaf DER each prefixed by an unsigned big-endian 16-bit byte
+length, then a 64-byte ES256 signature. Each certificate is at most 4,096 bytes;
+no trailing bytes are accepted. Client proof plaintext is
+`arbiter-pairing-client-v1` plus NUL, then separate 64-byte access and portable
+signatures. Signatures use standard P-256 ECDSA/SHA-256 with raw `r || s` encoding.
+
+The common context is SHA-256 of `arbiter-enrollment-possession-v1` plus NUL,
+the 32-byte Noise handshake hash, SHA-256 of the exact existing prologue, and
+SHA-256 of the complete server proof header before its signature. Each signer
+signs SHA-256 of that context, NUL and its ASCII role: `server`, `access` or
+`portable`. This binds both directions to one request, exchange, server and
+certificate set. Invalid or repeated proofs close the shared exchange. Existing
+frame/total-byte limits, worker admission and the absolute handshake deadline
+also cover proofs. No proof can extend approval or authorize ordinary traffic.
 
 ## Operator recovery custody
 

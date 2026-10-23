@@ -3,7 +3,8 @@
 The prologue joins the fixed prefix, ASCII selector (22 bytes), exact request
 SHA-256 (32 bytes), and access/portable/recipient DER SPKIs (91/91/44 bytes).
 The first payload on each side binds its role and SHA-256 of that prologue.
-Signing-key possession and durable server trust remain later protocol steps.
+Signing-key proofs run inside this channel; durable trust and activation remain
+later protocol steps.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 import hashlib
 import hmac
 import threading
@@ -20,9 +22,11 @@ from typing import Any, TypeVar
 from noise.connection import NoiseConnection
 
 from .blocking import BlockingOperationPool
+from .credentials import SigningCredential
 from .enrollment import Advertisement, ApprovedRequest, EnrollmentRequests
 from .errors import OperationError
 from .limits import NativeTransportLimitsConfig
+from .pairing_proofs import server_proof, verify_client_proof
 
 PROFILE = b"Noise_NNpsk0_25519_ChaChaPoly_SHA256"
 MAX_ATTEMPTS = 5
@@ -95,6 +99,8 @@ class PairingSession:
     handshake_hash: bytes
     received: int
     sent: int
+    proof_context: bytes = b""
+    proof_complete: bool = False
 
 
 @dataclass(repr=False)
@@ -315,37 +321,83 @@ class PairingResponder:
     async def message(
         self, session: PairingSession, data: bytes, *, encrypt: bool = False
     ) -> bytes:
-        def exchange() -> bytes:
+        return await self._run(
+            session.lease, lambda: self._message(session, data, encrypt=encrypt)
+        )
+
+    def _message(self, session: PairingSession, data: bytes, *, encrypt: bool) -> bytes:
+        with self._lock:
+            self._live(session)
+            if type(data) is not bytes:
+                raise _failed()
+            limit = self._limits.max_noise_frame_bytes - (16 if encrypt else 0)
+            size = len(data) + (16 if encrypt else 0)
+            used = session.sent if encrypt else session.received
+            if (
+                not 1 <= len(data) <= limit
+                or used + size > self._limits.max_handshake_bytes
+            ):
+                raise _failed()
+        try:
+            result = (
+                session.noise.encrypt(data) if encrypt else session.noise.decrypt(data)
+            )
+        except Exception:
+            raise _failed() from None
+        with self._lock:
+            self._live(session)
+            if encrypt:
+                session.sent += len(result)
+            else:
+                session.received += len(data)
+        return result
+
+    async def prove_server(
+        self,
+        session: PairingSession,
+        credential: SigningCredential,
+        authority_der: bytes,
+        now: datetime,
+    ) -> bytes:
+        def prove() -> bytes:
             with self._lock:
                 self._live(session)
-                if type(data) is not bytes:
-                    raise _failed()
-                limit = self._limits.max_noise_frame_bytes - (16 if encrypt else 0)
-                size = len(data) + (16 if encrypt else 0)
-                used = session.sent if encrypt else session.received
-                if (
-                    type(data) is not bytes
-                    or not 1 <= len(data) <= limit
-                    or used + size > self._limits.max_handshake_bytes
-                ):
+                if session.proof_context or session.proof_complete:
                     raise _failed()
             try:
-                result = (
-                    session.noise.encrypt(data)
-                    if encrypt
-                    else session.noise.decrypt(data)
+                proof, context = server_proof(
+                    session.handshake_hash,
+                    prologue(session.approval.request.advertisement),
+                    credential,
+                    authority_der,
+                    now,
                 )
-            except Exception:
+            except ValueError:
+                raise _failed() from None
+            wire = self._message(session, proof, encrypt=True)
+            session.proof_context = context
+            return wire
+
+        return await self._run(session.lease, prove)
+
+    async def prove_client(self, session: PairingSession, wire: bytes) -> None:
+        def verify() -> None:
+            with self._lock:
+                self._live(session)
+                if not session.proof_context or session.proof_complete:
+                    raise _failed()
+            proof = self._message(session, wire, encrypt=False)
+            try:
+                verify_client_proof(
+                    proof, session.proof_context, session.approval.request.advertisement
+                )
+            except ValueError:
                 raise _failed() from None
             with self._lock:
                 self._live(session)
-                if encrypt:
-                    session.sent += len(result)
-                else:
-                    session.received += len(data)
-            return result
+                session.proof_complete = True
 
-        return await self._run(session.lease, exchange)
+        await self._run(session.lease, verify)
 
     def close(self) -> None:
         with self._lock:
