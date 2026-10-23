@@ -166,6 +166,8 @@ func Main(
 		return 0
 	case "bootstrap":
 		return runBootstrap(remaining[1:], options, stdout, stderr, lookupEnv, homeDir)
+	case "enrol":
+		return runEnrol(remaining[1:], options, stdout, stderr, lookupEnv, homeDir)
 	case "config":
 		return runConfig(remaining[1:], options, stdout, stderr, lookupEnv, homeDir)
 	case "info":
@@ -2088,7 +2090,7 @@ func printHelp(w io.Writer) {
 }
 
 func printExtendedHelp(w io.Writer) {
-	fmt.Fprintln(w, "usage: arbiter [--version] {info,plugins,op,artifact,bootstrap,config} ...")
+	fmt.Fprintln(w, "usage: arbiter [--version] {info,plugins,op,artifact,bootstrap,config,enrol} ...")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Native Arbiter client.")
 	fmt.Fprintln(w)
@@ -2099,6 +2101,7 @@ func printExtendedHelp(w io.Writer) {
 	fmt.Fprintln(w, "  artifact         safely read, process, or explicitly save artifacts")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "setup:")
+	fmt.Fprintln(w, "  enrol        request pairing with an initialized Arbiter server")
 	fmt.Fprintln(w, "  bootstrap client create the Arbiter client config")
 	fmt.Fprintln(w, "  config url   print the resolved URL and source")
 	fmt.Fprintln(w)
