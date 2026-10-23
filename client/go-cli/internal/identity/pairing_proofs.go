@@ -125,5 +125,6 @@ func (p *PairingInitiator) ProveClient(serverWire []byte, material *Provisional,
 		return nil, nil, errPairing
 	}
 	p.proofSent = true
+	p.serverTrust = &PairingServer{server.ServerID, bytes.Clone(server.AuthorityDER), bytes.Clone(server.CertificateDER)}
 	return wire, server, nil
 }

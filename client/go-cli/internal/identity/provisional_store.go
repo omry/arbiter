@@ -87,14 +87,19 @@ func SaveProvisional(ctx context.Context, directory string, p *Provisional) erro
 }
 
 func saveProvisional(ctx context.Context, directory string, p *Provisional, phase func(string) error) (result error) {
+	data, err := p.EncodePrivate()
+	if err != nil {
+		return err
+	}
+	return savePrivateRecord(ctx, directory, p.record.Selector, data, phase)
+}
+
+// Shared private, no-replace, fully flushed publication for distinct record domains.
+func savePrivateRecord(ctx context.Context, directory, selector string, data []byte, phase func(string) error) (result error) {
 	if ctx == nil {
 		return errCustody
 	}
 	if err := ctx.Err(); err != nil {
-		return err
-	}
-	data, err := p.EncodePrivate()
-	if err != nil {
 		return err
 	}
 	root, dir, err := custodyRoot(directory, true)
@@ -102,7 +107,7 @@ func saveProvisional(ctx context.Context, directory string, p *Provisional, phas
 		return err
 	}
 	defer dir.Close()
-	final, pending, err := custodyNames(root, p.record.Selector)
+	final, pending, err := custodyNames(root, selector)
 	if err != nil {
 		return err
 	}

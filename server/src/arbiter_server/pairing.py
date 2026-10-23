@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import hashlib
 import hmac
@@ -102,6 +102,7 @@ class PairingSession:
     sent: int
     proof_context: bytes = b""
     proof_complete: bool = False
+    ready_complete: bool = False
 
 
 @dataclass(repr=False)
@@ -110,6 +111,7 @@ class _Attempts:
     digests: set[bytes] = field(default_factory=set)
     active: PairingSession | None = None
     verifying: bool = False
+    prepared: bytes = b""
 
 
 class PairingResponder:
@@ -407,6 +409,56 @@ class PairingResponder:
             with self._lock:
                 self._live(session)
                 session.proof_complete = True
+
+        await self._run(session.lease, verify)
+
+    async def prepare(self, session: PairingSession, root: Path) -> bytes:
+        from .prepared import prepare
+
+        def build() -> bytes:
+            with self._lock:
+                self._live(session)
+                if not session.proof_complete:
+                    raise _failed()
+                state = self._state(session.approval.request.advertisement.selector)
+                existing = state.prepared
+                # Sample wall time first, so elapsed work cannot extend expiry.
+                wall_now = datetime.now(timezone.utc).timestamp()
+                remaining = session.approval.request.deadline - self._requests._clock()
+                expires_at = int(wall_now + remaining)
+            result = existing or prepare(root, session.approval, expires_at)
+            with self._lock:
+                self._live(session)
+                state.prepared = result
+            return result
+
+        return await self._run(session.lease, build)
+
+    async def ready(self, session: PairingSession, data: bytes) -> None:
+        from .prepared import ready_context, verify_ready
+
+        def verify() -> None:
+            with self._lock:
+                self._live(session)
+                result = self._state(
+                    session.approval.request.advertisement.selector
+                ).prepared
+                if not result or not session.proof_complete or session.ready_complete:
+                    raise _failed()
+            verify_ready(
+                data,
+                result,
+                ready_context(
+                    session.handshake_hash,
+                    prologue(session.approval.request.advertisement),
+                    result,
+                ),
+                session.approval,
+            )
+            with self._lock:
+                self._live(session)
+                session.ready_complete = True
+            # No identity/access/grant write or activation is reachable here.
 
         await self._run(session.lease, verify)
 

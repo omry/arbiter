@@ -96,7 +96,7 @@ func TestEnrollmentRegistrationAndCarrierBounds(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
-			err = PairEnrollment(ctx, p, secret, 100*time.Millisecond, func(context.Context, string, string) error { handoff++; return nil })
+			err = PairEnrollment(ctx, p, secret, 100*time.Millisecond, t.TempDir(), func(context.Context, string, string) error { handoff++; return nil })
 			if err == nil {
 				t.Fatal("invalid peer accepted")
 			}
@@ -191,7 +191,7 @@ func TestEnrollmentRegistrationRejectsDuplicateFields(t *testing.T) {
 			t.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
-			err = PairEnrollment(ctx, p, secret, time.Second, func(context.Context, string, string) error {
+			err = PairEnrollment(ctx, p, secret, time.Second, t.TempDir(), func(context.Context, string, string) error {
 				handoff++
 				return nil
 			})
@@ -251,7 +251,7 @@ func TestEnrollmentCancellationWakesStalledUpgrade(t *testing.T) {
 	}
 	result := make(chan error, 1)
 	go func() {
-		result <- PairEnrollment(ctx, p, secret, 5*time.Second, func(context.Context, string, string) error { return nil })
+		result <- PairEnrollment(ctx, p, secret, 5*time.Second, t.TempDir(), func(context.Context, string, string) error { return nil })
 	}()
 	select {
 	case <-entered:
