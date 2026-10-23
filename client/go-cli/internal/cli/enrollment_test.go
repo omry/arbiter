@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/omry/arbiter/client/go-cli/internal/identity"
 )
 
 // The control socket is a trusted synthetic operator, never a product endpoint.
@@ -79,6 +81,46 @@ func TestPythonEnrollmentCLI(t *testing.T) {
 	if start.Mode == "ok" {
 		if code != 0 || !strings.Contains(stdout.String(), "Enrollment is not active") {
 			t.Fatalf("code=%d stderr=%s", code, stderr.String())
+		}
+		entries, err := os.ReadDir(filepath.Join(start.Directory, "prepared"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		count := 0
+		for _, entry := range entries {
+			if !strings.HasSuffix(entry.Name(), ".json") {
+				continue
+			}
+			selector := strings.TrimSuffix(entry.Name(), ".json")
+			material, prepared, err := identity.LoadPrepared(filepath.Join(start.Directory, "prepared"), selector, time.Now().UTC())
+			if err != nil || material == nil || prepared == nil || !strings.Contains(stdout.String(), "Prepared enrollment saved") {
+				t.Fatal("prepared private result did not survive reload", err)
+			}
+			path := filepath.Join(start.Directory, "prepared", entry.Name())
+			original, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, changed := range [][]byte{
+				append(append([]byte{}, original[:len(original)-1]...), []byte(`,"version":1}`)...),
+				append(append([]byte{}, original[:len(original)-1]...), []byte(`,"unexpected":true}`)...),
+				[]byte(strings.Replace(string(original), `"NEVER SHARE THIS:`, `"MODIFIED:`, 1)),
+				append(append([]byte{}, original...), []byte(`{}`)...),
+			} {
+				if err := os.WriteFile(path, changed, 0600); err != nil {
+					t.Fatal(err)
+				}
+				if _, _, err := identity.LoadPrepared(filepath.Join(start.Directory, "prepared"), selector, time.Now().UTC()); err == nil {
+					t.Fatal("corrupted prepared record accepted")
+				}
+			}
+			if err := os.WriteFile(path, original, 0600); err != nil {
+				t.Fatal(err)
+			}
+			count++
+		}
+		if count != 1 {
+			t.Fatal("expected one prepared result", count)
 		}
 	} else if code != 1 {
 		t.Fatalf("failure accepted: %d", code)
