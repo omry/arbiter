@@ -42,9 +42,9 @@ class Peer:
 
     def next(self):
         while True:
-            pending = list(self.ws.events())
-            if pending:
-                return pending
+            event = next(self.ws.events(), None)
+            if event is not None:
+                return [event]
             try:
                 data = self.socket.recv(4096)
             except ConnectionResetError:
@@ -81,6 +81,37 @@ class Peer:
 
 def binary_frame(payload):
     return b"\x82" + bytes([0x80 | len(payload)]) + b"\0" * 4 + payload
+
+
+def test_peer_preserves_coalesced_wsproto_events(monkeypatch):
+    class CoalescedSocket:
+        def __init__(self):
+            self.server = WSConnection(ConnectionType.SERVER)
+            self.data = b""
+
+        def sendall(self, data):
+            self.server.receive_data(data)
+            assert isinstance(next(self.server.events()), events.Request)
+            self.data = (
+                self.server.send(events.AcceptConnection())
+                + self.server.send(events.BytesMessage(data=b"synthetic reply"))
+                + self.server.send(events.CloseConnection(code=1000))
+            )
+
+        def recv(self, size):
+            part, self.data = self.data[:size], self.data[size:]
+            return part
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        socket, "create_connection", lambda *args, **kwargs: CoalescedSocket()
+    )
+    with Peer(1, "/synthetic") as peer:
+        assert isinstance(peer.next()[0], events.AcceptConnection)
+        assert peer.message() == b"synthetic reply"
+        assert isinstance(peer.next()[0], events.CloseConnection)
 
 
 @pytest.fixture
