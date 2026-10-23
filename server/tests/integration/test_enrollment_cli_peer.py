@@ -5,6 +5,9 @@ Secrets stay in memory and are never printed, passed in argv/env or persisted.
 """
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+import hashlib
+import base64
 import json
 import os
 from pathlib import Path
@@ -18,18 +21,108 @@ from starlette.applications import Starlette
 
 from arbiter_server.authority import initialize_authority
 from arbiter_server.main import _generate_self_signed_tls_certificate
+from arbiter_server.prepared import PREPARED_TAG
 from server.tests.unit.conftest import private_windows_test_parent, tmp_path
 from server.tests.unit.test_artifact_http_admission import live_server
 from server.tests.unit.test_native_http_protocol import _client
 
 
-@pytest.mark.parametrize("mode", ["ok", "closed", "restart", "wrong-secret"])
-def test_fresh_python_go_enrollment_cli(tmp_path, private_windows_test_parent, mode):
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "ok",
+        "closed",
+        "restart",
+        "wrong-secret",
+        "server-id",
+        "agent-id",
+        "issuer",
+        "leaf",
+        "recipient",
+        "recovery",
+        "expiry",
+        "grants",
+        "trailing",
+        "truncated",
+        "save-failure",
+    ],
+)
+def test_fresh_python_go_enrollment_cli(
+    tmp_path, private_windows_test_parent, mode, monkeypatch
+):
     if shutil.which("go") is None:
         pytest.skip("go is not installed")
     server_root = tmp_path / "server" / "authority"
     initialize_authority(server_root, recovery_file=tmp_path / "operator.json")
     app = cast(Starlette, _client(tmp_path)._app)
+    responder = app.state.pairing_responder
+    original_prepare, original_ready = responder.prepare, responder.ready
+    ready_calls = []
+    saved_result = []
+
+    async def prepare(session, root):
+        raw = await original_prepare(session, root)
+        saved_result.append(raw)
+        fixed = len(PREPARED_TAG) + 144 + 22 + 32 + 32 + 8
+        header, data = bytearray(raw[:fixed]), raw[fixed:]
+        fields: list[bytes] = []
+        while data:
+            size = int.from_bytes(data[:2], "big")
+            fields.append(data[2 : 2 + size])
+            data = data[2 + size :]
+        if mode in {"server-id", "agent-id"}:
+            position = len(PREPARED_TAG) + (72 if mode == "agent-id" else 0)
+            header[position] = ord("1") if header[position] != ord("1") else ord("2")
+        if mode == "issuer":
+            fields[2] = fields[0]
+        if mode == "leaf":
+            fields[4] = fields[3]
+        if mode == "recipient":
+            fields[5] = bytes(44)
+        if mode == "recovery":
+            fields[6] = bytes(91)
+        if mode == "expiry":
+            header[-8:] = int(datetime.now(timezone.utc).timestamp() - 1).to_bytes(
+                8, "big"
+            )
+        if mode == "grants":
+            fields[8] = b'[["smtp","bot"],["smtp","bot"]]'
+        raw = bytes(header) + b"".join(
+            len(value).to_bytes(2, "big") + value for value in fields
+        )
+        if mode == "trailing":
+            raw += b"X"
+        if mode == "truncated":
+            raw = raw[:-1]
+        return raw
+
+    async def ready(session, data):
+        # Inspect the real private publication before the server sees ready.
+        path = (
+            tmp_path
+            / "client"
+            / "prepared"
+            / (session.approval.request.advertisement.selector + ".json")
+        )
+        bundle = path.read_bytes()
+        stored = json.loads(bundle)
+        assert stored["warning"].startswith("NEVER SHARE THIS:")
+        private = stored["provisional"]
+        assert base64.b64decode(stored["result"], validate=True) == saved_result[-1]
+        assert (
+            base64.urlsafe_b64encode(session.approval.secret).rstrip(b"=") not in bundle
+        )
+        assert set(private) >= {
+            "access_key_pkcs8",
+            "portable_key_pkcs8",
+            "recipient_key_pkcs8",
+        }
+        assert "psk" not in private and "secret" not in private
+        ready_calls.append(hashlib.sha256(data).hexdigest())
+        await original_ready(session, data)
+
+    monkeypatch.setattr(responder, "prepare", prepare)
+    monkeypatch.setattr(responder, "ready", ready)
     cert, key = tmp_path / "outer.crt", tmp_path / "outer.key"
     _generate_self_signed_tls_certificate(
         cert_path=cert, key_path=key, names=("127.0.0.1",)
@@ -91,6 +184,17 @@ def test_fresh_python_go_enrollment_cli(tmp_path, private_windows_test_parent, m
                     )
                     if mode == "restart":
                         requests.reset()
+                    if mode == "save-failure":
+                        # A failed no-replace save must not emit ready or erase
+                        # an existing private record.
+                        path = (
+                            tmp_path
+                            / "client"
+                            / "prepared"
+                            / (pending.advertisement.selector + ".json")
+                        )
+                        path.write_text("preserve existing private record")
+                        path.chmod(0o600)
                     stream.write(b"true\n")
                     stream.flush()
 
@@ -116,8 +220,13 @@ def test_fresh_python_go_enrollment_cli(tmp_path, private_windows_test_parent, m
                 )
                 assert result.returncode == 0, result.stdout + result.stderr
                 owner.result(timeout=5)
-        # Proofs do not create identities, grants, credentials or trust on disk.
+        # Prepared credentials do not create an enrollment or grant access.
         assert not (tmp_path / "client" / "enrolled").exists()
+        assert len(ready_calls) == (1 if mode == "ok" else 0)
+        if mode == "ok":
+            assert len(list((tmp_path / "client" / "prepared").glob("*.json"))) == 1
+        elif mode != "save-failure":
+            assert not list((tmp_path / "client" / "prepared").glob("*.json"))
         if mode == "ok":
             sessions = app.state.pairing_responder._attempts.values()
             assert all(state.active is None for state in sessions)

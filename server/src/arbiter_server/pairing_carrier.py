@@ -27,7 +27,7 @@ class PairingChannel:
         self.session = session
 
     async def prove(self, root: Path) -> None:
-        """Prove possession only; this never prepares or activates a client."""
+        """Prepare only after mutual proof; never activate an enrollment."""
         proof = await self._carrier.responder.prove_server_from_authority(
             self.session, root, datetime.now(timezone.utc)
         )
@@ -35,7 +35,12 @@ class PairingChannel:
         await self._carrier.responder.prove_client(
             self.session, await self._carrier.receive()
         )
-        await self.send(b"arbiter-pairing-proof-complete-v1\0")
+        from .prepared import PREPARED_COMPLETE
+
+        result = await self._carrier.responder.prepare(self.session, root)
+        await self.send(result)
+        await self._carrier.responder.ready(self.session, await self.receive())
+        await self.send(PREPARED_COMPLETE)
 
     async def receive(self) -> bytes:
         return await self._carrier.responder.message(
