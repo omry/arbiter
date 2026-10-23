@@ -77,6 +77,10 @@ class PairingLease:
         self._closed = False
         self._busy = False
 
+    @property
+    def remaining_seconds(self) -> float:
+        return max(0.0, self.deadline - self._owner._clock())
+
     def close(self) -> None:
         self._owner._close_lease(self)
 

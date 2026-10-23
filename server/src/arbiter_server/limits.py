@@ -16,6 +16,11 @@ class NativeTransportLimitsConfig:
     handshake_timeout_seconds: float = 10.0
     max_handshake_bytes: int = 256 * 1024
     max_noise_frame_bytes: int = 65535
+    max_headers_bytes: int = 32 * 1024
+    max_websocket_message_bytes: int = 64 * 1024
+    max_buffered_bytes: int = 256 * 1024
+    max_control_frames_per_second: int = 32
+    max_control_bytes_per_second: int = 4096
 
     def __post_init__(self) -> None:
         for name in (
@@ -23,6 +28,11 @@ class NativeTransportLimitsConfig:
             "max_handshakes",
             "max_handshake_bytes",
             "max_noise_frame_bytes",
+            "max_headers_bytes",
+            "max_websocket_message_bytes",
+            "max_buffered_bytes",
+            "max_control_frames_per_second",
+            "max_control_bytes_per_second",
         ):
             value = getattr(self, name)
             if type(value) is not int or value < 1:

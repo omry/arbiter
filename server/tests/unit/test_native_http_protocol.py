@@ -308,8 +308,11 @@ def _client(
     max_artifact_storage_bytes: int | None = None,
     max_artifact_count: int | None = None,
     max_blocking_workers: int | None = None,
+    native_transport: Any = None,
 ) -> ASGIClient:
     cfg = AppConfig()
+    if native_transport is not None:
+        cfg.arbiter.limits.native_transport = native_transport
     if max_request_body_bytes is not None:
         cfg.arbiter.limits.max_request_body_bytes = max_request_body_bytes
     if max_artifact_bytes is not None:

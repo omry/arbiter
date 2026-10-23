@@ -4892,23 +4892,31 @@ def test_run_server_preserves_hydra_logging_for_http_transport(
     setattr(fake_uvicorn, "run", fake_run)
     monkeypatch.setitem(sys.modules, "uvicorn", fake_uvicorn)
 
+    protocol = object()
+    app = object()
     fake_server = SimpleNamespace(
-        app="native-http-app",
+        app=app,
         host="127.0.0.1",
         port=8075,
         ssl_certfile="/tls/cert.pem",
         ssl_keyfile="/tls/key.pem",
+        websocket_protocol=protocol,
+        http_protocol=protocol,
+        max_headers_bytes=32768,
     )
 
     _run_server(cast(Any, fake_server), cast(Any, "https"))
 
-    assert captured["app"] == "native-http-app"
+    assert captured["app"] is app
     assert captured["run_kwargs"] == {
         "host": "127.0.0.1",
         "port": 8075,
         "ssl_certfile": "/tls/cert.pem",
         "ssl_keyfile": "/tls/key.pem",
         "log_config": None,
+        "ws": protocol,
+        "http": protocol,
+        "h11_max_incomplete_event_size": 32 * 1024,
     }
 
 
