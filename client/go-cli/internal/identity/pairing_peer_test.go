@@ -30,7 +30,15 @@ func TestPythonPairingPeer(t *testing.T) {
 	if err := conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	p, secret := pairingFixture(t)
+	material, secret, err := NewProvisional("https://localhost", "Agent Smith", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := NewPairingInitiator(material, secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
 	first, err := p.FirstFlight()
 	if err != nil {
 		t.Fatal(err)
@@ -50,6 +58,7 @@ func TestPythonPairingPeer(t *testing.T) {
 		Response []byte `json:"response"`
 		Hash     []byte `json:"hash"`
 		Message  []byte `json:"message"`
+		Proof    []byte `json:"proof"`
 	}
 	if input.Decode(&reply) != nil {
 		t.Fatal("test-control response failed")
@@ -73,10 +82,25 @@ func TestPythonPairingPeer(t *testing.T) {
 		t.Fatal("Python transport cipher rejected")
 	}
 	wire, err := p.Encrypt([]byte("Go client payload"))
-	if err != nil || output.Encode(struct {
-		Message []byte `json:"message"`
-	}{wire}) != nil {
-		t.Fatal("Go transport cipher failed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof, trust, err := p.ProveClient(reply.Proof, material, time.Now())
+	if os.Getenv("ARBITER_TEST_PAIRING_PROOF_REJECT") == "1" {
+		if err == nil || trust != nil {
+			t.Fatal("accepted forged server possession proof")
+		}
+		if output.Encode(struct {
+			ProofRejected bool `json:"proof_rejected"`
+		}{true}) != nil {
+			t.Fatal("proof rejection response failed")
+		}
+	} else if err != nil || trust == nil || output.Encode(struct {
+		Message  []byte `json:"message"`
+		Proof    []byte `json:"proof"`
+		ServerID string `json:"server_id"`
+	}{wire, proof, trust.ServerID}) != nil {
+		t.Fatal("Go mutual possession proof failed")
 	}
 	var result struct{ OK bool }
 	if input.Decode(&result) != nil || !result.OK {

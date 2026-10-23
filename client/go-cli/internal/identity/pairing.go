@@ -16,8 +16,9 @@ const MaxPairingBytes = 256 * 1024
 var errPairing = errors.New("pairing exchange is unavailable or invalid; start again")
 
 // PairingInitiator refers to one Noise exchange owner, shared by all copies. It authenticates
-// the shared secret and request context, not signing-key possession or durable
-// server identity. The carrier must enforce its own absolute deadline and bounds.
+// the shared secret and request context. ProveClient separately verifies signing
+// keys and server public trust; durable enrollment is a later step. The carrier
+// must enforce its own absolute deadline and bounds.
 type PairingInitiator struct {
 	*pairingState
 }
@@ -31,6 +32,7 @@ type pairingState struct {
 	hash          []byte
 	phase         int
 	sent, read    int
+	proofSent     bool
 }
 
 func (PairingInitiator) String() string     { return "<private pairing exchange redacted>" }
@@ -158,6 +160,10 @@ func (p *PairingInitiator) Encrypt(plaintext []byte) ([]byte, error) {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	return p.encryptLocked(plaintext)
+}
+
+func (p *PairingInitiator) encryptLocked(plaintext []byte) ([]byte, error) {
 	if p.phase != 2 || len(plaintext) == 0 || len(plaintext) > MaxPairingFrame-16 || p.sent+len(plaintext)+16 > MaxPairingBytes {
 		return nil, p.fail()
 	}
@@ -175,6 +181,10 @@ func (p *PairingInitiator) Decrypt(wire []byte) ([]byte, error) {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	return p.decryptLocked(wire)
+}
+
+func (p *PairingInitiator) decryptLocked(wire []byte) ([]byte, error) {
 	if p.phase != 2 || len(wire) < 17 || len(wire) > MaxPairingFrame || p.read+len(wire) > MaxPairingBytes {
 		return nil, p.fail()
 	}
