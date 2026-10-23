@@ -2281,7 +2281,7 @@ def _create_native_http_app(
     http_work = HTTPWork(operation_pool)
     enrollment_requests = EnrollmentRequests(cfg.arbiter.limits.max_pending_enrollments)
     from .pairing import PairingResponder
-    from .pairing_carrier import http_protocol_factory, protocol_factory
+    from .pairing_carrier import PairingChannel, http_protocol_factory, protocol_factory
     from .limits import NativeTransportLimitsConfig
 
     native_limits = NativeTransportLimitsConfig(
@@ -2291,6 +2291,9 @@ def _create_native_http_app(
         }
     )
     pairing_responder = PairingResponder(enrollment_requests, native_limits)
+
+    async def continue_pairing(channel: PairingChannel) -> None:
+        await channel.prove(_server_data_root(_storage_config(cfg)) / "authority")
 
     def enrollment_control(
         command: str, arguments: dict[str, object]
@@ -2662,7 +2665,7 @@ def _create_native_http_app(
         pairing_responder, native_limits
     )
     application.state.native_websocket_protocol = protocol_factory(
-        pairing_responder, native_limits
+        pairing_responder, native_limits, continue_pairing=continue_pairing
     )
     return application
 

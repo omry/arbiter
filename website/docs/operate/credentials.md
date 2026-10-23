@@ -226,10 +226,41 @@ result or activated identity must be saved separately before the consumer return
 The executable Python/Go peer uses this lifecycle, reloads the saved keys before
 producing public cryptographic proofs, and checks removal afterward. Native
 permission, ownership, cancellation and process-crash tests exercise supported
-platforms. The library does not contact a server or activate an identity. The
-actual enrollment CLI, deliberate secret handoff and live closed-server
-diagnostics are integrated with the client pairing carrier in slice `2.4`.
+platforms. The storage lifecycle itself does not contact a server or activate an
+identity. The enrollment command below consumes it through the pairing carrier.
 Losing the in-memory pairing secret does not enroll a provisional record.
+
+### Interactive pairing command
+
+Run `arbiter enrol url=https://HOST name=NAME` from an interactive terminal.
+The initialized server operator first runs `arbiter-server enrollment open`
+through local administration. The client durably saves fresh provisional keys,
+then registers only the public advertisement. A closed server returns local
+opening guidance; registration never opens enrollment itself.
+
+The client displays its request selector and 43-character secret on the
+controlling terminal, separately from stdout/stderr. At the server's local
+approval prompt, enter that secret for the matching request and select account
+grants. Return to the client and press Enter. There is no secret argument,
+environment variable, file or redirected-output fallback. Do not capture the
+terminal or share the secret with an untrusted server operator.
+
+The client then has one connect-timeout budget (ten seconds by default) for
+outer TLS, WebSocket upgrade, Noise and both signing-key proofs. Operator waiting
+does not consume it; the original ten-minute provisional lifetime still applies.
+The dedicated bootstrap connection accepts an unverified outer certificate;
+the PSK-authenticated Noise channel authenticates the signing identities.
+It inherits no proxy, cookies, authorization, client certificate or redirects.
+WebSocket compression/subprotocols, text, oversized or excessive control frames
+are rejected. Unauthenticated failure cannot establish that a client was revoked.
+For an expired, restarted, rejected or unavailable request, ask the operator and
+start again. Private provisional files are removed on exit, with the existing
+bounded startup cleanup handling interruptions.
+
+This development step verifies pairing proofs only. It explicitly reports
+`Enrollment is not active` and does not persist server trust, prepare credentials
+or grant ordinary API access. Prepared enrollment and activation follow in later
+delivery slices.
 
 ### Public enrollment request boundary
 
@@ -293,8 +324,8 @@ keep their original ten-minute deadline. Reopening does not extend it. Secrets
 remain only in bounded server memory and are omitted from listings, logs, files
 and backups. Expiry,
 rejection and server shutdown/restart remove approval state. This does not promise
-complete zeroization of every Python string or temporary copy. The Noise exchange
-and complete client `enrol` flow are subsequent delivery slices; approval alone
+complete zeroization of every Python string or temporary copy. The interactive
+client can now exchange Noise and signing-key proofs; approval alone
 installs no identity, certificate or account access.
 
 ### Pairing component limits
@@ -304,8 +335,8 @@ responder. It binds the exact public advertisement bytes, selector and three
 proposed public keys, authenticates the server role, and limits each frame and
 the total bytes in each direction. A protocol or authentication failure closes
 that exchange. The Python/Go integration tests execute both libraries with fresh
-keys; they also reject a substituted request or secret. This foundation has no
-public enrollment CLI/carrier wiring yet. It establishes in-channel possession
+keys; they also reject a substituted request or secret. The interactive CLI uses
+the bounded public carrier. It establishes in-channel possession
 of the exact proposed access and portable signing keys, but does not persist
 server trust, prepare or activate an enrollment, or grant ordinary API access.
 Durable trust, prepared/ready state and activation remain later delivery steps.

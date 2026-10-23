@@ -1,0 +1,1 @@
+Connect the interactive `arbiter enrol url=https://HOST name=NAME` command to bounded public registration and mutual signing-key proofs. Pairing secrets use only the controlling terminal; provisional keys are cleaned on exit, and bootstrap connections inherit no proxy, redirects or API credentials. This development step does not activate enrollments or grant API access.
