@@ -193,6 +193,22 @@ class EnrollmentRequests:
             self._prune(self._clock())
             return self._approved.get(selector)
 
+    def approval_is_current(self, approval: ApprovedRequest) -> bool:
+        """A retained secret-bearing snapshot is never live authorization."""
+        with self._lock:
+            self._prune(self._clock())
+            return (
+                self._approved.get(approval.request.advertisement.selector) is approval
+            )
+
+    def exhaust_approval(self, approval: ApprovedRequest) -> None:
+        """Trusted pairing admission uses this only after five admitted failures."""
+        with self._lock:
+            selector = approval.request.advertisement.selector
+            if self._approved.get(selector) is approval:
+                self._approved.pop(selector)
+                self._requests.pop(selector, None)
+
     def _summary(self, request: PendingRequest, now: float) -> dict[str, object]:
         advertisement = request.advertisement
         approved = self._approved.get(advertisement.selector)

@@ -29,8 +29,15 @@ class BlockingOperationPool:
         self._pending: set[Future[Any]] = set()
         self._closed = False
 
-    async def run(self, operation: Callable[[], Result]) -> Result:
+    async def run(
+        self,
+        operation: Callable[[], Result],
+        *,
+        on_finished: Callable[[], None] | None = None,
+    ) -> Result:
         if not self._slots.acquire(blocking=False):
+            if on_finished is not None:
+                on_finished()
             raise OperationError(
                 "resource_exhausted",
                 "Server operation capacity is full; try again later.",
@@ -40,6 +47,8 @@ class BlockingOperationPool:
             )
         future: Future[Result] = Future()
         future.add_done_callback(self._finished)
+        if on_finished is not None:
+            future.add_done_callback(lambda _future: on_finished())
         try:
             with self._state_lock:
                 self._pending.add(future)
