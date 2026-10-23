@@ -246,7 +246,8 @@ environment variable, file or redirected-output fallback. Do not capture the
 terminal or share the secret with an untrusted server operator.
 
 The client then has one connect-timeout budget (ten seconds by default) for
-outer TLS, WebSocket upgrade, Noise and both signing-key proofs. Operator waiting
+outer TLS, WebSocket upgrade, Noise, both signing-key proofs, preparation,
+private persistence and the ready exchange. Operator waiting
 does not consume it; the original ten-minute provisional lifetime still applies.
 The dedicated bootstrap connection accepts an unverified outer certificate;
 the PSK-authenticated Noise channel authenticates the signing identities.
@@ -257,10 +258,10 @@ For an expired, restarted, rejected or unavailable request, ask the operator and
 start again. Private provisional files are removed on exit, with the existing
 bounded startup cleanup handling interruptions.
 
-This development step verifies pairing proofs only. It explicitly reports
-`Enrollment is not active` and does not persist server trust, prepare credentials
-or grant ordinary API access. Prepared enrollment and activation follow in later
-delivery slices.
+This development step saves verified prepared credentials, keys and public
+trust before sending ready. It explicitly reports `Enrollment is not active`
+and grants no ordinary API access. Durable activation and receipt reconciliation
+follow in later delivery slices.
 
 ### Public enrollment request boundary
 
@@ -336,10 +337,23 @@ proposed public keys, authenticates the server role, and limits each frame and
 the total bytes in each direction. A protocol or authentication failure closes
 that exchange. The Python/Go integration tests execute both libraries with fresh
 keys; they also reject a substituted request or secret. The interactive CLI uses
-the bounded public carrier. It establishes in-channel possession
-of the exact proposed access and portable signing keys, but does not persist
-server trust, prepare or activate an enrollment, or grant ordinary API access.
-Durable trust, prepared/ready state and activation remain later delivery steps.
+the bounded public carrier. After both peers prove their signing keys, the server
+issues a prepared result for the exact approved request. The client checks the
+server, owner and leaf certificate profiles, reserved IDs, proposed keys, recovery
+public trust, expiry and grant summary. It flushes its complete keys and result to
+a private `prepared/` record before signing a ready proof over that result and
+the current Noise transcript. The record carries `NEVER SHARE THIS` and contains
+no pairing secret.
+
+This is still uncommitted enrollment. Prepared certificates and a ready proof
+cannot authorize ordinary work. The CLI reports that activation is unavailable;
+durable server activation and authenticated receipt reconciliation follow in
+later slices. One prepared result per request shares the existing bounded
+pending capacity and original deadline. Rejection, expiry and server restart
+invalidate it. Explicitly starting another enrollment discards abandoned private
+prepared records in bounded batches while holding the client enrollment owner.
+It preserves enrolled state. No secure deletion is promised. Do not start a new
+pairing to retry an operation or infer activation from the presence of a file.
 
 The Noise pairing component uses a 256-bit pairing secret and the approved
 `Noise_NNpsk0_25519_ChaChaPoly_SHA256` profile. It binds the client/server roles,
@@ -389,11 +403,11 @@ upgrade, which preserves the original deadline. Each native carrier uses a
 fresh HTTP connection; an upgrade that bypasses this guard is rejected.
 Ordinary HTTP body, operation and download budgets remain separate.
 
-This endpoint currently completes only the encrypted handshake, then closes.
-The Python/Go signing-key proof foundation is exercised by fresh executable
-peers; the public CLI/carrier wiring, client trust persistence and activation
-remain subsequent delivery steps. Local approval and the handshake alone still
-grant no ordinary API access.
+This endpoint completes the encrypted handshake, mutual signing-key proofs,
+prepared-result delivery and ready verification before closing. Fresh Python/Go
+peers exercise the public CLI/carrier and private prepared persistence.
+Activation remains a subsequent delivery step. Local approval, prepared
+certificates and ready verification still grant no ordinary API access.
 
 Registration uses the existing bounded worker admission before reading body
 bytes. The body limit is the smaller of the core request-body limit and 64 KiB,

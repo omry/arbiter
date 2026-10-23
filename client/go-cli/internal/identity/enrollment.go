@@ -18,8 +18,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-const proofComplete = "arbiter-pairing-proof-complete-v1\x00"
-
 var ErrEnrollmentClosed = errors.New("enrollment is closed; ask the server operator to run arbiter-server enrollment open, then start again")
 var ErrEnrollmentUnavailable = errors.New("enrollment is unavailable or invalid; the request may have expired, restarted or been rejected; ask the operator and start again")
 
@@ -47,8 +45,8 @@ func enrollmentURL(raw, path string) (*url.URL, error) {
 
 // PairEnrollment consumes saved provisional keys. Handoff must show the secret
 // only through a protected explicit interaction and wait for operator approval.
-// Its successful return proves possession only: no enrolled state is persisted.
-func PairEnrollment(ctx context.Context, p *Provisional, secret PairingSecret, timeout time.Duration,
+// Its successful return saves prepared material only, never enrolled state.
+func PairEnrollment(ctx context.Context, p *Provisional, secret PairingSecret, timeout time.Duration, preparedDirectory string,
 	handoff func(context.Context, string, string) error,
 ) error {
 	if p == nil || handoff == nil || timeout <= 0 {
@@ -130,7 +128,7 @@ func PairEnrollment(ctx context.Context, p *Provisional, secret PairingSecret, t
 	defer cancel()
 	target, _ = enrollmentURL(p.record.ServerURL, "/api/v1/enrollment/requests/"+pending.Selector+"/pair")
 	target.Scheme = "wss"
-	return pairingSocket(ctx, target.String(), initiator, p)
+	return pairingSocket(ctx, target.String(), initiator, p, preparedDirectory)
 }
 
 // Count plaintext wire bytes, including HTTP and fragmented/control framing.
@@ -165,7 +163,7 @@ func (c *pairingConn) Write(p []byte) (int, error) {
 	return n, err
 }
 
-func pairingSocket(ctx context.Context, target string, initiator *PairingInitiator, material *Provisional) error {
+func pairingSocket(ctx context.Context, target string, initiator *PairingInitiator, material *Provisional, preparedDirectory string) error {
 	var bounded *pairingConn
 	stopCancel := func() bool { return true }
 	cancelDone := make(chan struct{})
@@ -257,12 +255,27 @@ func pairingSocket(ctx context.Context, target string, initiator *PairingInitiat
 	if err != nil || ws.WriteMessage(websocket.BinaryMessage, clientProof) != nil {
 		return ErrEnrollmentUnavailable
 	}
+	preparedWire, err := read()
+	if err != nil {
+		return err
+	}
+	prepared, err := initiator.Decrypt(preparedWire)
+	if err != nil {
+		return ErrEnrollmentUnavailable
+	}
+	ready, err := initiator.SaveReady(ctx, preparedDirectory, material, prepared, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if ws.WriteMessage(websocket.BinaryMessage, ready) != nil {
+		return ErrEnrollmentUnavailable
+	}
 	ack, err := read()
 	if err != nil {
 		return err
 	}
 	plain, err := initiator.Decrypt(ack)
-	if err != nil || string(plain) != proofComplete {
+	if err != nil || string(plain) != preparedComplete {
 		return ErrEnrollmentUnavailable
 	}
 	return ctx.Err()

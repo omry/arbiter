@@ -33,6 +33,7 @@ type pairingState struct {
 	phase         int
 	sent, read    int
 	proofSent     bool
+	serverTrust   *PairingServer
 }
 
 func (PairingInitiator) String() string     { return "<private pairing exchange redacted>" }
@@ -90,6 +91,7 @@ func pairingPayload(prologue []byte, role string) []byte {
 func (p *PairingInitiator) fail() error {
 	p.phase = 3
 	p.handshake, p.send, p.receive, p.hash = nil, nil, nil, nil
+	p.serverTrust = nil
 	return errPairing
 }
 
