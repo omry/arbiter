@@ -159,6 +159,9 @@ class NativeHTTPServer:
     port: int
     ssl_certfile: str
     ssl_keyfile: str
+    websocket_protocol: type[Any] | None = None
+    http_protocol: type[Any] | None = None
+    max_headers_bytes: int = 32 * 1024
 
 
 @dataclass(frozen=True)
@@ -2277,6 +2280,17 @@ def _create_native_http_app(
     operation_pool = BlockingOperationPool(max_blocking_workers)
     http_work = HTTPWork(operation_pool)
     enrollment_requests = EnrollmentRequests(cfg.arbiter.limits.max_pending_enrollments)
+    from .pairing import PairingResponder
+    from .pairing_carrier import http_protocol_factory, protocol_factory
+    from .limits import NativeTransportLimitsConfig
+
+    native_limits = NativeTransportLimitsConfig(
+        **{
+            name: getattr(cfg.arbiter.limits.native_transport, name)
+            for name in NativeTransportLimitsConfig.__dataclass_fields__
+        }
+    )
+    pairing_responder = PairingResponder(enrollment_requests, native_limits)
 
     def enrollment_control(
         command: str, arguments: dict[str, object]
@@ -2300,6 +2314,7 @@ def _create_native_http_app(
                 async with running(root, enrollment_control):
                     yield
             finally:
+                pairing_responder.close()
                 enrollment_requests.reset()
                 http_work.close()
 
@@ -2641,6 +2656,14 @@ def _create_native_http_app(
         ],
     )
     application.state.enrollment_requests = enrollment_requests
+    application.state.pairing_responder = pairing_responder
+    application.state.native_transport_limits = native_limits
+    application.state.native_http_protocol = http_protocol_factory(
+        pairing_responder, native_limits
+    )
+    application.state.native_websocket_protocol = protocol_factory(
+        pairing_responder, native_limits
+    )
     return application
 
 
@@ -2706,6 +2729,11 @@ def build_server(
         port=int(cfg.arbiter.server.bind.port),
         ssl_certfile=str(ssl_certfile),
         ssl_keyfile=str(ssl_keyfile),
+        websocket_protocol=cast(Any, native_app).state.native_websocket_protocol,
+        http_protocol=cast(Any, native_app).state.native_http_protocol,
+        max_headers_bytes=cast(
+            Any, native_app
+        ).state.native_transport_limits.max_headers_bytes,
     )
 
 
@@ -2738,6 +2766,9 @@ def _run_server(server: NativeHTTPServer, transport: TransportMode) -> None:
         ssl_certfile=server.ssl_certfile,
         ssl_keyfile=server.ssl_keyfile,
         log_config=None,
+        ws=server.websocket_protocol or "none",
+        http=server.http_protocol or "h11",
+        h11_max_incomplete_event_size=server.max_headers_bytes,
     )
 
 
