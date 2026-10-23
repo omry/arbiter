@@ -318,7 +318,7 @@ def test_shutdown_unblocks_a_worker_waiting_on_transport():
 
 
 @contextmanager
-def live_server(app):
+def live_server(app, **config):
     import logging
     import socket
     import time
@@ -340,9 +340,10 @@ def live_server(app):
             log_level=None,
             access_log=False,
             lifespan="on",
-            http="h11",
+            http=config.pop("http", "h11"),
             loop="asyncio",
             timeout_graceful_shutdown=1,
+            **config,
         )
     )
     thread = threading.Thread(

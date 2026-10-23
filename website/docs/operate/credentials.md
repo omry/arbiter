@@ -318,6 +318,11 @@ arbiter:
       handshake_timeout_seconds: 10
       max_handshake_bytes: 262144
       max_noise_frame_bytes: 65535
+      max_headers_bytes: 32768
+      max_websocket_message_bytes: 65536
+      max_buffered_bytes: 262144
+      max_control_frames_per_second: 32
+      max_control_bytes_per_second: 4096
 ```
 
 Counts and byte limits must be positive integers. The handshake timeout is a
@@ -327,10 +332,25 @@ applies separately to each direction and includes the initial Noise messages.
 Admission has no waiting queue; cancellation retains capacity until underlying
 crypto work actually finishes. These limits belong to core Arbiter.
 
-This is a tested protocol foundation using `noiseprotocol==0.3.1`; it is not yet
-a publicly reachable pairing endpoint. WebSocket integration, signing-key
-proofs, client trust persistence and activation remain subsequent delivery steps.
-The current local approval commands alone still grant no ordinary API access.
+The binary WebSocket endpoint is
+`/api/v1/enrollment/requests/SELECTOR/pair`. It uses `wsproto` for standard
+framing and `noiseprotocol==0.3.1` for the Noise handshake. Extensions and text
+messages are rejected. Fragmented messages share one cumulative limit. The
+smaller Noise/message limit applies, with additional headroom reserved within
+the buffer budget. Header, framing and control bytes count toward each
+direction's total exchange budget. Pings do not extend the absolute deadline.
+Overload rejects before upgrade without a queue; per-request failures close
+generically. Socket and crypto ownership survive cancellation until cleanup.
+The initial connection has a bounded target-decision deadline. Once the pairing
+target is known, its native slot covers the remaining raw headers and the
+upgrade, which preserves the original deadline. Each native carrier uses a
+fresh HTTP connection; an upgrade that bypasses this guard is rejected.
+Ordinary HTTP body, operation and download budgets remain separate.
+
+This endpoint currently completes only the encrypted handshake, then closes.
+Signing-key proofs, client trust persistence and activation remain subsequent
+delivery steps. The current local approval commands and handshake alone still
+grant no ordinary API access.
 
 Registration uses the existing bounded worker admission before reading body
 bytes. The body limit is the smaller of the core request-body limit and 64 KiB,
