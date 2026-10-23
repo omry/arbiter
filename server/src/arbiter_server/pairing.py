@@ -13,6 +13,7 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from pathlib import Path
 import hashlib
 import hmac
 import threading
@@ -351,6 +352,16 @@ class PairingResponder:
             else:
                 session.received += len(data)
         return result
+
+    async def prove_server_from_authority(
+        self, session: PairingSession, root: Path, now: datetime
+    ) -> bytes:
+        from .pairing_identity import load_pairing_identity
+
+        material = await self._run(session.lease, lambda: load_pairing_identity(root))
+        if material is None:
+            raise _failed()
+        return await self.prove_server(session, *material, now)
 
     async def prove_server(
         self,

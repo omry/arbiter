@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
+from datetime import datetime, timezone
 from functools import partial
+from pathlib import Path
 import re
 from typing import Any, cast
 
@@ -23,6 +25,17 @@ class PairingChannel:
     def __init__(self, carrier: PairingProtocol, session: PairingSession) -> None:
         self._carrier = carrier
         self.session = session
+
+    async def prove(self, root: Path) -> None:
+        """Prove possession only; this never prepares or activates a client."""
+        proof = await self._carrier.responder.prove_server_from_authority(
+            self.session, root, datetime.now(timezone.utc)
+        )
+        await self._carrier.send(proof)
+        await self._carrier.responder.prove_client(
+            self.session, await self._carrier.receive()
+        )
+        await self.send(b"arbiter-pairing-proof-complete-v1\0")
 
     async def receive(self) -> bytes:
         return await self._carrier.responder.message(
