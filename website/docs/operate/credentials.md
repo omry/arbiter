@@ -299,6 +299,16 @@ installs no identity, certificate or account access.
 
 ### Pairing component limits
 
+The Go client contains the same bounded Noise initiator profile as the Python
+responder. It binds the exact public advertisement bytes, selector and three
+proposed public keys, authenticates the server role, and limits each frame and
+the total bytes in each direction. A protocol or authentication failure closes
+that exchange. The Python/Go integration tests execute both libraries with fresh
+keys; they also reject a substituted request or secret. This foundation has no
+public enrollment CLI yet and does not establish signing-key possession, durable
+server trust or an activated enrollment. Those checks remain required before
+ordinary authenticated use.
+
 The Noise pairing component uses a 256-bit pairing secret and the approved
 `Noise_NNpsk0_25519_ChaChaPoly_SHA256` profile. It binds the client/server roles,
 public selector, exact advertised request and proposed keys. Anonymous failures
