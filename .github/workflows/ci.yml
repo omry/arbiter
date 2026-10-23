@@ -140,7 +140,9 @@ jobs:
         working-directory: client/go-cli
         env:
           GOCACHE: ${{ runner.temp }}/go-build
-        run: go test ./...
+        run: |
+          go test ./...
+          go test -count=1 -v -run '^TestEnrollmentTerminal(PTY|Windows)$' ./internal/cli
 
       - name: Run Python compatibility unit suite
         if: ${{ matrix.go_tests != true }}
