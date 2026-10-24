@@ -81,6 +81,7 @@ class PairingLease:
         self.deadline = owner._clock() + owner._limits.handshake_timeout_seconds
         self._closed = False
         self._busy = False
+        self._handshake = False
 
     @property
     def remaining_seconds(self) -> float:
@@ -128,6 +129,7 @@ class PairingResponder:
         self._lock = threading.RLock()
         self._pool = BlockingOperationPool(self._limits.max_handshakes)
         self._leases: set[PairingLease] = set()
+        self._handshakes: set[PairingLease] = set()
         self._attempts: dict[str, _Attempts] = {}
         self._closed = False
 
@@ -158,6 +160,7 @@ class PairingResponder:
                     if len(state.digests) == MAX_ATTEMPTS:
                         self._exhaust(state)
             self._leases.discard(lease)
+            self._handshakes.discard(lease)
 
     def _exhaust(self, state: _Attempts) -> None:
         self._requests.exhaust_approval(state.approval)
@@ -187,6 +190,12 @@ class PairingResponder:
                 raise
             if lease._busy:
                 raise _busy()
+            if not lease._handshake:
+                if len(self._handshakes) >= self._limits.max_handshakes:
+                    lease.close()
+                    raise _busy()
+                self._handshakes.add(lease)
+                lease._handshake = True
             lease._busy = True
 
         def work() -> Result:

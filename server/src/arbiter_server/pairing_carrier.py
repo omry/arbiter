@@ -18,6 +18,7 @@ from .limits import NativeTransportLimitsConfig
 from .pairing import PairingLease, PairingResponder, PairingSession, ReplayedHandshake
 
 PAIRING_PATH = "/api/v1/enrollment/requests/"
+CONTROL_PATH = "/api/v1/native/control"
 _TARGET = re.compile(re.escape(PAIRING_PATH) + r"([A-Za-z0-9_-]{22})/pair\Z")
 
 
@@ -64,6 +65,7 @@ class PairingProtocol(asyncio.Protocol):
         responder: PairingResponder,
         limits: NativeTransportLimitsConfig,
         continue_pairing: Callable[[PairingChannel], Awaitable[None]] | None = None,
+        continue_control: Callable[[PairingProtocol], Awaitable[None]] | None = None,
         lease: PairingLease | None = None,
         header_bytes: int = 0,
         initial_header: bytes = b"",
@@ -72,6 +74,7 @@ class PairingProtocol(asyncio.Protocol):
         self.responder = responder
         self.limits = replace(limits)
         self.continue_pairing = continue_pairing
+        self.continue_control = continue_control
         self.loop = _loop or asyncio.get_running_loop()
         self.connections, self.tasks = server_state.connections, server_state.tasks
         self.transport: asyncio.Transport | None = None
@@ -88,6 +91,8 @@ class PairingProtocol(asyncio.Protocol):
         self.control_started = self.loop.time()
         self.control_count = self.control_bytes = 0
         self.accepted = self.closed = False
+        self.control = False
+        self.control_started_once = False
         self.frame_limit = min(
             limits.max_noise_frame_bytes,
             limits.max_websocket_message_bytes,
@@ -179,24 +184,47 @@ class PairingProtocol(asyncio.Protocol):
     def _event(self, event: events.Event) -> None:
         if isinstance(event, events.Request):
             match = _TARGET.fullmatch(event.target)
-            if match is None or event.extensions or event.subprotocols:
+            control = event.target == CONTROL_PATH and self.continue_control is not None
+            if (
+                (match is None and not control)
+                or event.extensions
+                or event.subprotocols
+            ):
                 self.abort()
                 return
             self._write(events.AcceptConnection())
             self.accepted = True
-            self.task = self.loop.create_task(self._exchange(match[1]))
+            self.control = control
+            if control:
+                self.frame_limit = min(
+                    self.limits.max_websocket_message_bytes,
+                    self.limits.max_buffered_bytes // 4,
+                )
+            selector = match[1] if match is not None else None
+            self.task = self.loop.create_task(
+                self._exchange(None if control else selector)
+            )
             self.tasks.add(self.task)
             self.task.add_done_callback(self.tasks.discard)
         elif isinstance(event, events.BytesMessage):
-            if (
-                not self.queue.empty()
-                or len(self.buffer) + len(event.data) > self.frame_limit
-            ):
+            if (not self.control and not self.queue.empty()) or len(self.buffer) + len(
+                event.data
+            ) > self.frame_limit:
                 self.abort()
                 return
             self.buffer.extend(event.data)
             if event.message_finished:
-                self.queue.put_nowait(bytes(self.buffer))
+                pending = self.queue.get_nowait() if not self.queue.empty() else b""
+                pending_size = len(pending)
+                frame_size = len(self.buffer)
+                projected_live = 2 * pending_size + 3 * frame_size
+                if projected_live + self.frame_limit > self.limits.max_buffered_bytes:
+                    # pending + buffer + bytes(buffer) + pending+buffer remain
+                    # live during coalescing. Reserve one frame for decoding and
+                    # consuming the result before allocating the concatenation.
+                    self.abort()
+                    return
+                self.queue.put_nowait(pending + bytes(self.buffer))
                 self.buffer.clear()
                 assert self.transport is not None
                 self.transport.pause_reading()
@@ -232,8 +260,11 @@ class PairingProtocol(asyncio.Protocol):
     async def receive(self) -> bytes:
         if self.closed or self.transport is None:
             raise ValueError("Pairing carrier is closed")
+        if self.control and self.queue.empty():
+            self.transport.resume_reading()
         result = await self.queue.get()
-        self.transport.resume_reading()
+        if not self.control:
+            self.transport.resume_reading()
         return result
 
     async def send(self, wire: bytes) -> None:
@@ -243,18 +274,40 @@ class PairingProtocol(asyncio.Protocol):
         self._write(events.BytesMessage(data=wire))
         await self.writable.wait()
 
-    async def _exchange(self, selector: str) -> None:
+    def begin_control(self) -> None:
+        """Start exactly one fixed exchange budget after authenticated TLS."""
+        if not self.control or self.control_started_once or self.closed:
+            raise ValueError("Control is unavailable")
+        assert self.lease is not None and self.timer is not None
+        with self.responder._lock:
+            self.responder._check(self.lease)
+            self.responder._handshakes.discard(self.lease)
+            self.lease.deadline = self.responder._clock() + 10.0
+        self.control_started_once = True
+        self.timer.cancel()
+        self.timer = self.loop.call_later(10.0, cast(Callable[..., object], self.abort))
+
+    async def _exchange(self, selector: str | None) -> None:
         assert self.lease is not None
         lease = self.lease
 
         async def run() -> None:
+            if selector is None:
+                assert self.continue_control is not None
+                await self.continue_control(self)
+                return
             session = await self.responder.start(lease, selector, await self.receive())
             await self.send(session.response)
             if not isinstance(session, ReplayedHandshake) and self.continue_pairing:
                 await self.continue_pairing(PairingChannel(self, session))
 
         try:
-            await asyncio.wait_for(run(), lease.remaining_seconds)
+            if selector is None:
+                # The timer covers handshake, then the independent control
+                # budget. Cancellation still joins the same underlying owner.
+                await run()
+            else:
+                await asyncio.wait_for(run(), lease.remaining_seconds)
             if not self.closed:
                 self._write(events.CloseConnection(code=1000))
                 assert self.transport is not None
@@ -268,6 +321,7 @@ def protocol_factory(
     limits: NativeTransportLimitsConfig,
     *,
     continue_pairing: Callable[[PairingChannel], Awaitable[None]] | None = None,
+    continue_control: Callable[[PairingProtocol], Awaitable[None]] | None = None,
 ) -> type[PairingProtocol]:
     class BoundPairingProtocol(PairingProtocol):
         def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -276,6 +330,7 @@ def protocol_factory(
                 responder=responder,
                 limits=limits,
                 continue_pairing=continue_pairing,
+                continue_control=continue_control,
                 **kwargs,
             )
 
@@ -321,8 +376,9 @@ def http_protocol_factory(
             line_end = prefix.find(b"\r\n")
             if self.classified is None and line_end >= 0:
                 request_line = prefix[:line_end].split(b" ")
-                self.classified = len(request_line) == 3 and request_line[1].startswith(
-                    PAIRING_PATH.encode()
+                self.classified = len(request_line) == 3 and (
+                    request_line[1].startswith(PAIRING_PATH.encode())
+                    or request_line[1] == CONTROL_PATH.encode()
                 )
                 if self.classified:
                     try:
