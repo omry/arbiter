@@ -1,0 +1,1 @@
+Add a bounded TLS 1.3 lifecycle-control carrier over WebSocket for the Python server foundation. Remembered-server verification and channel binding for the held Go client remain pending in the separate client delivery. This transport foundation does not activate enrollment or expose ordinary operations.

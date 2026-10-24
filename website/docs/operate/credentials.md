@@ -440,6 +440,31 @@ certificate set. Invalid or repeated proofs close the shared exchange. Existing
 frame/total-byte limits, worker admission and the absolute handshake deadline
 also cover proofs. No proof can extend approval or authorize ordinary traffic.
 
+## Native lifecycle transport
+
+Lifecycle controls use `/api/v1/native/control` as a binary WebSocket byte
+carrier. Configure reverse proxies to forward WebSocket upgrades. TLS 1.3 runs
+inside this carrier with the purpose-specific `arbiter-control-v1` ALPN. The
+client checks the remembered Arbiter authority and server ID before sending
+client identifiers or proofs. Changing the outer proxy certificate does not
+change that remembered identity. The outer upgrade sends no client certificate,
+application credentials or cookies, and does not follow redirects or use proxy
+settings from the environment. This exception is confined to the native carrier;
+it does not alter ordinary HTTP or browser certificate checks.
+
+Each connection permits one length-prefixed control exchange, at most 64 KiB
+in each plaintext message. Smaller configured buffer budgets also reduce this
+plaintext limit to the carrier frame limit, reserving space for TLS and framing.
+The connect budget covers outer dial, upgrade and
+inner handshake. A separate absolute ten-second control budget starts once the
+inner handshake authenticates the server. Progress and pings reset neither budget. Carrier byte,
+buffer and shared crypto limits also apply. This Python server foundation exposes
+the RFC 9266 TLS exporter for later proof binding. Remembered-server verification
+and exporter binding for the held Go endpoint remain pending in the separate
+client delivery. This transport foundation
+cannot activate enrollment, retrieve a receipt or dispatch ordinary operations;
+those controls are delivered separately. A prepared client is still not enrolled.
+
 ## Operator recovery custody
 
 Setup requires `--recovery-file PATH` in an existing operator-owned private
