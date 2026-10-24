@@ -2295,6 +2295,17 @@ def _create_native_http_app(
     async def continue_pairing(channel: PairingChannel) -> None:
         await channel.prove(_server_data_root(_storage_config(cfg)) / "authority")
 
+    async def continue_control(carrier: Any) -> None:
+        from .control_tls import ControlTLS
+
+        channel = await ControlTLS.accept(
+            carrier, _server_data_root(_storage_config(cfg)) / "authority"
+        )
+        await channel.receive()
+        # Receipt dispatch is installed by the next slice. No control may enter
+        # ordinary ASGI routing or activate enrollment at this boundary.
+        raise ValueError("Control unavailable")
+
     def enrollment_control(
         command: str, arguments: dict[str, object]
     ) -> dict[str, object]:
@@ -2665,7 +2676,10 @@ def _create_native_http_app(
         pairing_responder, native_limits
     )
     application.state.native_websocket_protocol = protocol_factory(
-        pairing_responder, native_limits, continue_pairing=continue_pairing
+        pairing_responder,
+        native_limits,
+        continue_pairing=continue_pairing,
+        continue_control=continue_control,
     )
     return application
 
