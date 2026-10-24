@@ -198,7 +198,8 @@ def test_control_deadline_starts_once_after_handshake():
         with pytest.raises(OperationError):
             await owner._run(owner.reserve(), lambda: None)
         assert not owner._pool._pending
-        now = [owner._clock()]
+        # Keep the fake origin integral so exact deadline checks avoid rounding.
+        now = [float(int(owner._clock()))]
         owner._clock = lambda: now[0]
         now[0] += 9
         protocol.begin_control()
