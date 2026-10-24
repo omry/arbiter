@@ -482,3 +482,7 @@ or delete durable identity records to bypass an error. Status needs only the
 registered public trust, so the recovery file can be moved to safe external
 custody after setup. Filesystem flush failures are reported as failures even if
 publication already occurred; inspect both destinations before retrying.
+
+### Shared native transport capacity
+
+Native carriers share the configured handshake capacity for the full handshake lifetime. Cancelling a connection releases its slot after the underlying cryptographic work finishes. Byte limits and backpressure also apply while peers are slow.
