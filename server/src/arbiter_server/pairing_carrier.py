@@ -83,6 +83,7 @@ class PairingProtocol(asyncio.Protocol):
         self.timer: asyncio.TimerHandle | None = None
         self.conn = WSConnection(ConnectionType.SERVER)
         self.queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=1)
+        self.closed_event = asyncio.Event()
         self.writable = asyncio.Event()
         self.writable.set()
         self.buffer = bytearray()
@@ -93,6 +94,12 @@ class PairingProtocol(asyncio.Protocol):
         self.accepted = self.closed = False
         self.control = False
         self.control_started_once = False
+        # TLS keeps a copy of accepted ciphertext while it may also retain
+        # decoded plaintext.  Keep a conservative half-budget owner for that
+        # input so both native sides fit inside the inclusive carrier budget.
+        self._control_tls_fed = 0
+        self._control_tls_pending = 0
+        self._control_queued = 0
         self.frame_limit = min(
             limits.max_noise_frame_bytes,
             limits.max_websocket_message_bytes,
@@ -141,6 +148,7 @@ class PairingProtocol(asyncio.Protocol):
         if self.closed:
             return
         self.closed = True
+        self.closed_event.set()
         if self.timer is not None:
             self.timer.cancel()
         if self.task is not None and not self.task.done():
@@ -212,19 +220,36 @@ class PairingProtocol(asyncio.Protocol):
             ) > self.frame_limit:
                 self.abort()
                 return
+            frame_size = len(self.buffer) + len(event.data)
+            if self.control:
+                if (
+                    self._control_tls_fed
+                    + self._control_tls_pending
+                    + 2 * self._control_queued
+                    + 3 * frame_size
+                    > self.limits.max_buffered_bytes
+                ):
+                    self.abort()
+                    return
             self.buffer.extend(event.data)
             if event.message_finished:
                 pending = self.queue.get_nowait() if not self.queue.empty() else b""
                 pending_size = len(pending)
                 frame_size = len(self.buffer)
                 projected_live = 2 * pending_size + 3 * frame_size
-                if projected_live + self.frame_limit > self.limits.max_buffered_bytes:
+                if (
+                    projected_live + self._control_tls_fed + self._control_tls_pending
+                    > self.limits.max_buffered_bytes
+                ):
                     # pending + buffer + bytes(buffer) + pending+buffer remain
-                    # live during coalescing. Reserve one frame for decoding and
-                    # consuming the result before allocating the concatenation.
+                    # live during coalescing. TLS-owned input is charged
+                    # separately before allocating the concatenation.
                     self.abort()
                     return
-                self.queue.put_nowait(pending + bytes(self.buffer))
+                combined = pending + bytes(self.buffer)
+                if self.control:
+                    self._control_queued = len(combined)
+                self.queue.put_nowait(combined)
                 self.buffer.clear()
                 assert self.transport is not None
                 self.transport.pause_reading()
@@ -262,7 +287,25 @@ class PairingProtocol(asyncio.Protocol):
             raise ValueError("Pairing carrier is closed")
         if self.control and self.queue.empty():
             self.transport.resume_reading()
-        result = await self.queue.get()
+        if self.queue.empty():
+            queue_task = self.loop.create_task(self.queue.get())
+            closed_task = self.loop.create_task(self.closed_event.wait())
+            try:
+                done, _ = await asyncio.wait(
+                    (queue_task, closed_task), return_when=asyncio.FIRST_COMPLETED
+                )
+                if queue_task not in done:
+                    raise ValueError("Pairing carrier is closed")
+                result = queue_task.result()
+            finally:
+                for task in (queue_task, closed_task):
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(queue_task, closed_task, return_exceptions=True)
+        else:
+            result = await self.queue.get()
+        if self.control:
+            self._control_queued -= len(result)
         if not self.control:
             self.transport.resume_reading()
         return result
@@ -279,6 +322,8 @@ class PairingProtocol(asyncio.Protocol):
         if not self.control or self.control_started_once or self.closed:
             raise ValueError("Control is unavailable")
         assert self.lease is not None and self.timer is not None
+        if self._control_queued > self._control_tls_budget:
+            raise ValueError("Control TLS input exceeded limit")
         with self.responder._lock:
             self.responder._check(self.lease)
             self.responder._handshakes.discard(self.lease)
@@ -286,6 +331,24 @@ class PairingProtocol(asyncio.Protocol):
         self.control_started_once = True
         self.timer.cancel()
         self.timer = self.loop.call_later(10.0, cast(Callable[..., object], self.abort))
+
+    @property
+    def _control_tls_budget(self) -> int:
+        return max(1, self.limits.max_buffered_bytes // 2)
+
+    def reserve_control_tls_input(self, size: int) -> None:
+        if (
+            not self.control
+            or size < 0
+            or self._control_tls_fed + size > self._control_tls_budget
+        ):
+            raise ValueError("Control TLS input exceeded limit")
+        self._control_tls_fed += size
+
+    def update_control_tls_pending(self, size: int) -> None:
+        if size < 0 or self._control_tls_fed + size > self.limits.max_buffered_bytes:
+            raise ValueError("Control TLS pending data exceeded limit")
+        self._control_tls_pending = size
 
     async def _exchange(self, selector: str | None) -> None:
         assert self.lease is not None
