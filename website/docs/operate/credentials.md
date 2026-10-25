@@ -458,10 +458,10 @@ plaintext limit to the carrier frame limit, reserving space for TLS and framing.
 The connect budget covers outer dial, upgrade and
 inner handshake. A separate absolute ten-second control budget starts once the
 inner handshake authenticates the server. Progress and pings reset neither budget. Carrier byte,
-buffer and shared crypto limits also apply. This Python server foundation exposes
-the RFC 9266 TLS exporter for later proof binding. Remembered-server verification
-and exporter binding for the held Go endpoint remain pending in the separate
-client delivery. This transport foundation
+buffer and shared crypto limits also apply. The Python server foundation and Go
+client expose the RFC 9266 TLS exporter for later proof binding. The Go client
+verifies the remembered server authority and server ID before exposing the
+stream. This transport foundation
 cannot activate enrollment, retrieve a receipt or dispatch ordinary operations;
 those controls are delivered separately. A prepared client is still not enrolled.
 
@@ -511,3 +511,28 @@ publication already occurred; inspect both destinations before retrying.
 ### Shared native transport capacity
 
 Native carriers share the configured handshake capacity for the full handshake lifetime. Cancelling a connection releases its slot after the underlying cryptographic work finishes. Byte limits and backpressure also apply while peers are slow.
+
+### Remembered-server lifecycle control transport
+
+The Go client now has a fixed lifecycle-control transport over binary WebSocket
+at `/api/v1/native/control`. Inner TLS requires TLS 1.3 and the exact
+`arbiter-control-v1` ALPN. The client verifies the expected durable server ID
+and registered server authority before exposing the stream. Its TLS exporter
+binds later control proofs to that connection. The outer HTTPS certificate can
+change without changing remembered Arbiter trust.
+
+This dedicated outer carrier sends no inherited cookies, authorization headers
+or client certificates, and uses neither inherited proxies nor redirects. Its
+certificate and upgrade input is bounded before untrusted parsing. Reverse
+proxies must forward WebSocket traffic without terminating the inner TLS.
+This exception is not a general HTTP or browser trust setting.
+
+Connection setup, including the outer dial, upgrade and inner handshake, has
+one budget of at most ten seconds. A separate ten-second control deadline starts
+after the inner handshake; a shorter caller deadline still applies. One stream
+permits one nonempty request and reply, each at most 64 KiB decoded. Cancellation
+closes the carrier, and exchanges are never automatically replayed.
+
+The transport and fresh Python/Go tests are development foundations. Receipt
+reconciliation and durable enrollment activation are not wired yet; the normal
+server endpoint closes without enabling arbitrary control or HTTP operations.
