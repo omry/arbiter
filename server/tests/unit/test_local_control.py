@@ -97,7 +97,10 @@ def test_real_asgi_cli_setup_status_and_restart(tmp_path):
         assert not (root / "control.sock").exists()
         restored = a.authority_status(root)
         assert restored is not None and restored.to_dict() == initial
-        async with app.router.lifespan_context(app):
+        restart_app = cast(
+            Any, build_server(cfg, service_plugins=[], prepare_tls=False).app
+        )
+        async with restart_app.router.lifespan_context(restart_app):
             assert json.loads((await command("status")).stdout) == initial
             assert recovery.read_bytes() == custody
 

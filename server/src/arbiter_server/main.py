@@ -24,7 +24,7 @@ from collections.abc import (
     Sequence,
 )
 from dataclasses import asdict, dataclass, is_dataclass
-from contextlib import asynccontextmanager
+from contextlib import ExitStack, asynccontextmanager
 from ipaddress import ip_address
 from pathlib import Path, PurePath
 from tempfile import mkstemp
@@ -2321,15 +2321,26 @@ def _create_native_http_app(
         from .local_control import running
 
         root = _server_data_root(_storage_config(cfg)) / "authority"
-        with running_instance(root):
-            enrollment_requests.reset()
+        with ExitStack() as instance:
+            instance.enter_context(running_instance(root))
+            release_instance = instance.pop_all().close
             try:
+                pairing_responder.handoff_instance(release_instance)
+            except BaseException:
+                release_instance()
+                raise
+            try:
+                enrollment_requests.reset()
                 async with running(root, enrollment_control):
                     yield
             finally:
-                pairing_responder.close()
-                enrollment_requests.reset()
-                http_work.close()
+                try:
+                    enrollment_requests.reset()
+                finally:
+                    try:
+                        http_work.close()
+                    finally:
+                        pairing_responder.close()
 
     async def register_enrollment(request: Request) -> object:
         limit = min(MAX_ADVERTISEMENT_BYTES, max_request_body_bytes)

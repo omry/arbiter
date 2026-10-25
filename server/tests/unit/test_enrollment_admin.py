@@ -395,7 +395,8 @@ def test_installed_local_cli_and_protected_approval_on_native_transport(
             manager.pending() == ()
             and manager.approved(pending.advertisement.selector) is None
         )
-        async with app.router.lifespan_context(app):
+        restart_app = cast(Any, _client(tmp_path)._app)
+        async with restart_app.router.lifespan_context(restart_app):
             listing = await command("list")
             assert listing["requests"] == [] and listing["open"] is False
         for path in root.rglob("*"):

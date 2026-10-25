@@ -1,10 +1,9 @@
-"""Bounded Noise channel foundation; this module cannot activate an enrollment.
+"""Bounded Noise pairing, key proofs and conditional durable activation.
 
 The prologue joins the fixed prefix, ASCII selector (22 bytes), exact request
 SHA-256 (32 bytes), and access/portable/recipient DER SPKIs (91/91/44 bytes).
 The first payload on each side binds its role and SHA-256 of that prologue.
-Signing-key proofs run inside this channel; durable trust and activation remain
-later protocol steps.
+Signing-key proofs and private client readiness precede durable activation.
 """
 
 from __future__ import annotations
@@ -132,6 +131,19 @@ class PairingResponder:
         self._handshakes: set[PairingLease] = set()
         self._attempts: dict[str, _Attempts] = {}
         self._closed = False
+        self._instance_release: Callable[[], None] | None = None
+
+    def handoff_instance(self, release: Callable[[], None]) -> None:
+        """Release the instance context only after every lease has settled."""
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("Pairing responder is closed")
+            if self._instance_release is not None:
+                raise RuntimeError("Pairing instance ownership was already handed off")
+            self._instance_release = release
+            finished = self._take_instance_release()
+        if finished is not None:
+            finished()
 
     def reserve(self) -> PairingLease:
         """Reserve before reading/parsing a carrier; there is no admission queue."""
@@ -162,6 +174,13 @@ class PairingResponder:
             self._leases.discard(lease)
             self._handshakes.discard(lease)
 
+    def _take_instance_release(self) -> Callable[[], None] | None:
+        if not self._closed or self._leases or self._instance_release is None:
+            return None
+        release = self._instance_release
+        self._instance_release = None
+        return release
+
     def _exhaust(self, state: _Attempts) -> None:
         self._requests.exhaust_approval(state.approval)
         selector = state.approval.request.advertisement.selector
@@ -172,11 +191,17 @@ class PairingResponder:
         with self._lock:
             lease._closed = True
             self._release(lease)
+            finished = self._take_instance_release()
+        if finished is not None:
+            finished()
 
     def _finished(self, lease: PairingLease) -> None:
         with self._lock:
             lease._busy = False
             self._release(lease)
+            finished = self._take_instance_release()
+        if finished is not None:
+            finished()
 
     async def _run(
         self, lease: PairingLease, operation: Callable[[], Result]
@@ -467,9 +492,50 @@ class PairingResponder:
             with self._lock:
                 self._live(session)
                 session.ready_complete = True
-            # No identity/access/grant write or activation is reachable here.
 
         await self._run(session.lease, verify)
+
+    async def activate(
+        self,
+        session: PairingSession,
+        root: Path,
+        accounts: Callable[[], set[tuple[str, str]]],
+    ) -> bytes:
+        from .enrollment_activation import activate
+
+        def commit() -> bytes:
+            with self._lock:
+                self._live(session)
+                state = self._state(session.approval.request.advertisement.selector)
+                if not session.ready_complete or not state.prepared:
+                    raise _failed()
+                # Build the encrypted receipt before retiring the Noise owner;
+                # it cannot leave this worker until SQLite commit succeeds.
+                wire = self._message(session, state.prepared, encrypt=True)
+
+            def transaction(current: Callable[[], None]) -> bytes:
+                def check() -> None:
+                    with self._lock:
+                        self._check(session.lease)
+                        current()
+
+                return activate(
+                    root,
+                    session.approval,
+                    state.prepared,
+                    accounts,
+                    check,
+                    datetime.now(timezone.utc),
+                )
+
+            self._requests.complete(session.approval, transaction)
+            with self._lock:
+                self._attempts.pop(
+                    session.approval.request.advertisement.selector, None
+                )
+            return wire
+
+        return await self._run(session.lease, commit)
 
     def close(self) -> None:
         with self._lock:
@@ -477,4 +543,7 @@ class PairingResponder:
             for lease in tuple(self._leases):
                 lease.close()
             self._attempts.clear()
+            finished = self._take_instance_release()
         self._pool.close()
+        if finished is not None:
+            finished()
