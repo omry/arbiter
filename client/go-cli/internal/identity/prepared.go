@@ -51,6 +51,10 @@ func preparedField(data *[]byte) ([]byte, error) {
 }
 
 func verifyPrepared(raw []byte, material *Provisional, server *PairingServer, now time.Time) (*PreparedEnrollment, error) {
+	return verifyPreparedResult(raw, material, server, now, false)
+}
+
+func verifyPreparedResult(raw []byte, material *Provisional, server *PairingServer, now time.Time, receipt bool) (*PreparedEnrollment, error) {
 	const fixed = len(preparedTag) + 144 + 22 + 32 + 32 + 8
 	if len(raw) < fixed || len(raw) > MaxPairingFrame-16 || !bytes.HasPrefix(raw, []byte(preparedTag)) || material == nil || server == nil {
 		return nil, errPairing
@@ -80,7 +84,7 @@ func verifyPrepared(raw []byte, material *Provisional, server *PairingServer, no
 		}
 	}
 	expires := binary.BigEndian.Uint64(data[86:94])
-	if expires > uint64(now.Add(10*time.Minute).Unix()) || expires <= uint64(now.Unix()) {
+	if expires == 0 || expires > uint64(now.Add(10*time.Minute).Unix()) || !receipt && expires <= uint64(now.Unix()) {
 		return nil, errPairing
 	}
 	data = data[94:]
@@ -199,6 +203,10 @@ func (p *PairingInitiator) SaveReady(ctx context.Context, directory string, mate
 
 // LoadPrepared validates complete stored material without making it enrolled.
 func LoadPrepared(directory, selector string, now time.Time) (*Provisional, *PreparedEnrollment, error) {
+	return loadPrepared(directory, selector, now, false)
+}
+
+func loadPrepared(directory, selector string, now time.Time, receipt bool) (*Provisional, *PreparedEnrollment, error) {
 	root, dir, err := custodyRoot(directory, false)
 	if err != nil {
 		return nil, nil, err
@@ -252,7 +260,7 @@ func LoadPrepared(directory, selector string, now time.Time) (*Provisional, *Pre
 		return nil, nil, err
 	}
 	server := &PairingServer{ServerID: string(raw[len(preparedTag) : len(preparedTag)+36]), AuthorityDER: authority, CertificateDER: leaf}
-	prepared, err := verifyPrepared(raw, material, server, now)
+	prepared, err := verifyPreparedResult(raw, material, server, now, receipt)
 	return material, prepared, err
 }
 
