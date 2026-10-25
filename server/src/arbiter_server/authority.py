@@ -357,6 +357,28 @@ def _current_record(root: Path) -> AuthorityRecord | None:
     from .generations import reconcile
 
     path = reconcile(root)
+    if path is not None:
+        # The instance owner alone may recover an interrupted live SQLite
+        # transaction. Network readers remain read-only and never recover it.
+        journal = path.with_name(path.name + "-journal")
+        if journal.exists() or journal.is_symlink():
+            _check_path(journal)
+        for suffix in ("-wal", "-shm"):
+            sidecar = path.with_name(path.name + suffix)
+            if sidecar.exists() or sidecar.is_symlink():
+                raise AuthorityError(
+                    "unexpected authority SQLite sidecar; preserve state"
+                )
+        if journal.exists():
+            try:
+                with closing(
+                    sqlite3.connect(path.as_uri() + "?mode=rw", uri=True, timeout=0)
+                ) as db:
+                    db.execute("PRAGMA schema_version").fetchone()
+            except sqlite3.Error as exc:
+                raise AuthorityError(
+                    "authority journal recovery failed; preserve state"
+                ) from exc
     return _read_record(path) if path is not None else None
 
 
