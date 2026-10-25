@@ -173,6 +173,7 @@ class EnrollmentRequests:
         self._epoch = 0
         self._requests: dict[str, PendingRequest] = {}
         self._approved: dict[str, ApprovedRequest] = {}
+        self._committing: dict[str, ApprovedRequest] = {}
 
     def reset(self) -> None:
         with self._lock:
@@ -208,6 +209,66 @@ class EnrollmentRequests:
             if self._approved.get(selector) is approval:
                 self._approved.pop(selector)
                 self._requests.pop(selector, None)
+
+    def complete(
+        self,
+        approval: ApprovedRequest,
+        commit: Callable[[Callable[[], None]], bytes],
+    ) -> bytes:
+        """Reserve an approval, then consume it at one live commit decision.
+
+        That decision orders reset/expiry against activation without holding a
+        registry lock during SQLite I/O. Later invalidation cannot undo an
+        already authorized transaction. A failed write restores only the same
+        still-live approval, never a request invalidated in the meantime.
+        """
+        decided = False
+        with self._lock:
+            selector = approval.request.advertisement.selector
+            epoch = self._epoch
+
+            def check() -> None:
+                nonlocal decided
+                with self._lock:
+                    if (
+                        decided
+                        or self._approved.get(selector) is not approval
+                        or self._requests.get(selector) is not approval.request
+                        or self._clock() >= approval.request.deadline
+                    ):
+                        raise ValueError("Enrollment approval is no longer current")
+                    # Only this transaction can consume the approval. Keep the
+                    # request counted until the write settles or is invalidated.
+                    self._approved.pop(selector)
+                    decided = True
+
+            if selector in self._committing:
+                raise ValueError("Enrollment activation is in progress; try again")
+            if (
+                self._approved.get(selector) is not approval
+                or self._clock() >= approval.request.deadline
+            ):
+                raise ValueError("Enrollment approval is no longer current")
+            self._committing[selector] = approval
+        try:
+            result = commit(check)
+            with self._lock:
+                if self._requests.get(selector) is approval.request:
+                    self._requests.pop(selector)
+            return result
+        except BaseException:
+            with self._lock:
+                if (
+                    decided
+                    and self._epoch == epoch
+                    and self._requests.get(selector) is approval.request
+                    and self._clock() < approval.request.deadline
+                ):
+                    self._approved[selector] = approval
+            raise
+        finally:
+            with self._lock:
+                self._committing.pop(selector, None)
 
     def _summary(self, request: PendingRequest, now: float) -> dict[str, object]:
         advertisement = request.advertisement
@@ -339,6 +400,11 @@ class EnrollmentRequests:
                 or request.advertisement.digest != arguments["request_digest"]
             ):
                 raise ValueError("Enrollment selection changed; list requests again.")
+            committing = self._committing.get(selector)
+            if committing is not None and (
+                command != "reject" or self._approved.get(selector) is not committing
+            ):
+                raise ValueError("Enrollment activation is in progress; try again")
             if command == "reject":
                 self._approved.pop(selector, None)
                 del self._requests[selector]
@@ -380,6 +446,8 @@ class EnrollmentRequests:
         epoch, window_deadline = self.require_open()
         advertisement = decode_advertisement(raw)
         with self._lock:
+            if advertisement.selector in self._committing:
+                raise _invalid()
             now = self._clock()
             if epoch != self._epoch or now >= min(
                 window_deadline, self._window_deadline
