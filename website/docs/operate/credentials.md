@@ -461,9 +461,10 @@ inner handshake authenticates the server. Progress and pings reset neither budge
 buffer and shared crypto limits also apply. The Python server foundation and Go
 client expose the RFC 9266 TLS exporter for later proof binding. The Go client
 verifies the remembered server authority and server ID before exposing the
-stream. This transport foundation
-cannot activate enrollment, retrieve a receipt or dispatch ordinary operations;
-those controls are delivered separately. A prepared client is still not enrolled.
+stream. This transport foundation supports authenticated retrieval of the exact
+result for an already committed enrollment, but it cannot activate enrollment,
+promote a client durably or dispatch ordinary operations. Those controls are
+delivered separately. A prepared client is still not enrolled.
 
 ## Operator recovery custody
 
@@ -534,5 +535,19 @@ permits one nonempty request and reply, each at most 64 KiB decoded. Cancellatio
 closes the carrier, and exchanges are never automatically replayed.
 
 The transport and fresh Python/Go tests are development foundations. Receipt
-reconciliation and durable enrollment activation are not wired yet; the normal
-server endpoint closes without enabling arbitrary control or HTTP operations.
+reconciliation is available only for already committed results. Durable enrollment
+activation is a separate slice; no arbitrary control or HTTP operation is enabled.
+
+## Enrollment receipt reconciliation
+
+The native control carrier supports retrieval of an already committed enrollment
+result. The client authenticates remembered server trust before sending its
+enrollment ID, then proves possession of the registered access key over the fresh
+TLS connection and exact prepared-result digest. No pairing secret is required.
+Denial and inactivity prevent retrieval. A network failure does not prove that
+enrollment failed; retain the private prepared record for a later authenticated
+retry. Receipt retrieval cannot create an identity, grant access, or enter the
+ordinary API. The activation and durable client-promotion flow is delivered
+separately; this transport foundation does not yet enable an enrollment CLI to
+become an ordinary authenticated client.
+

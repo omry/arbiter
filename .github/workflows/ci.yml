@@ -160,7 +160,7 @@ jobs:
         if: ${{ matrix.go_tests == true }}
         env:
           GOCACHE: ${{ runner.temp }}/go-build
-        run: nox -s unit -- server/tests/integration/test_credential_peer.py server/tests/integration/test_provisional_peer.py server/tests/integration/test_pairing_peer.py server/tests/integration/test_enrollment_cli_peer.py server/tests/integration/test_control_tls_peer.py
+        run: nox -s unit -- server/tests/integration/test_credential_peer.py server/tests/integration/test_provisional_peer.py server/tests/integration/test_pairing_peer.py server/tests/integration/test_enrollment_cli_peer.py server/tests/integration/test_control_tls_peer.py server/tests/integration/test_enrollment_receipt_peer.py
 
       - name: Verify native local-control rejection across OS users
         if: ${{ startsWith(matrix.platform_id, 'linux-') || startsWith(matrix.platform_id, 'macos-') }}
