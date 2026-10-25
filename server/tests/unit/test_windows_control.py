@@ -164,7 +164,10 @@ class TestNativeControl:
             assert not (root / wc._LOCATOR).exists()
             with pytest.raises(OSError):
                 wc.w.Native().open(name)
-            async with app.router.lifespan_context(app):
+            fresh = cast(
+                Any, build_server(cfg, service_plugins=[], prepare_tls=False).app
+            )
+            async with fresh.router.lifespan_context(fresh):
                 assert wc._locator(root)[0] != name
                 assert json.loads((await command("status")).stdout) == expected
                 assert recovery.read_bytes() == custody
