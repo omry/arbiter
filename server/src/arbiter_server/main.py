@@ -2301,10 +2301,9 @@ def _create_native_http_app(
         channel = await ControlTLS.accept(
             carrier, _server_data_root(_storage_config(cfg)) / "authority"
         )
-        await channel.receive()
-        # Receipt dispatch is installed by the next slice. No control may enter
-        # ordinary ASGI routing or activate enrollment at this boundary.
-        raise ValueError("Control unavailable")
+        from .enrollment_receipt import dispatch
+
+        await dispatch(channel, _server_data_root(_storage_config(cfg)) / "authority")
 
     def enrollment_control(
         command: str, arguments: dict[str, object]
