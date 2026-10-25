@@ -1,0 +1,1 @@
+Add bounded, authenticated enrollment receipt retrieval using the registered access key and remembered server trust. Reconciliation returns only the exact committed result, survives loss of pairing state, and respects denial and inactivity. Enrollment activation remains unavailable until its separate delivery slice.
