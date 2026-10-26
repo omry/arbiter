@@ -136,6 +136,9 @@ func TestPythonReceiptPeer(t *testing.T) {
 	if (err == nil) != want || want && (receipt == nil || !bytes.Equal(receipt.prepared.raw, fixture.Result)) {
 		t.Fatal("receipt result", fixture.Mode, err)
 	}
+	if fixture.Mode == "ok" {
+		testPromotionRecovery(t, receipt, directory)
+	}
 	after, err := os.ReadFile(filepath.Join(directory, material.record.Selector+".json"))
 	if err != nil || !bytes.Equal(after, bundle) {
 		t.Fatal("prepared material changed")

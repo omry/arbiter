@@ -19,7 +19,6 @@ from .pairing_proofs import _digest
 
 PREPARED_TAG = b"arbiter-enrollment-prepared-v1\0"
 READY_TAG = b"arbiter-enrollment-ready-v1\0"
-PREPARED_COMPLETE = b"arbiter-enrollment-prepared-not-active-v1\0"
 
 
 def prepare(root: Path, approval: ApprovedRequest, expires_at: int) -> bytes:
