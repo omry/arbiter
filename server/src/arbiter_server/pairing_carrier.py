@@ -1,4 +1,4 @@
-"""Bounded RFC 6455 carrier for pairing; it cannot activate an enrollment."""
+"""Bounded RFC 6455 carrier for authenticated pairing and receipt control."""
 
 from __future__ import annotations
 
@@ -27,8 +27,10 @@ class PairingChannel:
         self._carrier = carrier
         self.session = session
 
-    async def prove(self, root: Path) -> None:
-        """Prepare only after mutual proof; never activate an enrollment."""
+    async def prove(
+        self, root: Path, accounts: Callable[[], set[tuple[str, str]]]
+    ) -> None:
+        """Commit only after mutual proof and durable client readiness."""
         proof = await self._carrier.responder.prove_server_from_authority(
             self.session, root, datetime.now(timezone.utc)
         )
@@ -36,12 +38,11 @@ class PairingChannel:
         await self._carrier.responder.prove_client(
             self.session, await self._carrier.receive()
         )
-        from .prepared import PREPARED_COMPLETE
-
         result = await self._carrier.responder.prepare(self.session, root)
         await self.send(result)
         await self._carrier.responder.ready(self.session, await self.receive())
-        await self.send(PREPARED_COMPLETE)
+        receipt = await self._carrier.responder.activate(self.session, root, accounts)
+        await self._carrier.send(receipt)
 
     async def receive(self) -> bytes:
         return await self._carrier.responder.message(

@@ -1,7 +1,7 @@
 """Read one committed result using its registered access key, never a pairing PSK.
 
-No table or activation is created here. Until the activation slice installs its
-writer, only explicit test fixtures can supply committed enrollment rows.
+No table or activation is created here. Only the separate ready/activation
+transaction may register product enrollments.
 """
 
 from contextlib import closing

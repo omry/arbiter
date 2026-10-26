@@ -19,7 +19,6 @@ import (
 
 const preparedTag = "arbiter-enrollment-prepared-v1\x00"
 const readyTag = "arbiter-enrollment-ready-v1\x00"
-const preparedComplete = "arbiter-enrollment-prepared-not-active-v1\x00"
 const maxPreparedPrivateBytes = MaxProvisionalBytes + 2*MaxPairingFrame
 
 type preparedPrivateRecord struct {
@@ -226,6 +225,10 @@ func LoadPrepared(directory, selector string, now time.Time) (*Provisional, *Pre
 }
 
 func loadPrepared(directory, selector string, now time.Time, receipt bool) (*Provisional, *PreparedEnrollment, error) {
+	return loadPreparedLinked(directory, selector, now, receipt, 1)
+}
+
+func loadPreparedLinked(directory, selector string, now time.Time, receipt bool, links uint32) (*Provisional, *PreparedEnrollment, error) {
 	root, dir, err := custodyRoot(directory, false)
 	if err != nil {
 		return nil, nil, err
@@ -240,14 +243,14 @@ func loadPrepared(directory, selector string, now time.Time, receipt bool) (*Pro
 		return nil, nil, err
 	}
 	defer f.Close()
-	if err := checkBoundCustody(f, false, false, 1); err != nil {
+	if err := checkBoundCustody(f, false, false, links); err != nil {
 		return nil, nil, err
 	}
 	bundle, err := io.ReadAll(io.LimitReader(f, int64(maxPreparedPrivateBytes+1)))
 	if err != nil || len(bundle) > maxPreparedPrivateBytes || !utf8.Valid(bundle) {
 		return nil, nil, errCustody
 	}
-	if err := checkBoundCustody(f, false, false, 1); err != nil {
+	if err := checkBoundCustody(f, false, false, links); err != nil {
 		return nil, nil, err
 	}
 	var record preparedPrivateRecord

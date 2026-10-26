@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -34,6 +35,28 @@ func TestPythonEnrollmentCLI(t *testing.T) {
 	decoder := json.NewDecoder(control)
 	if err := decoder.Decode(&start); err != nil {
 		t.Fatal(err)
+	}
+	if start.Mode == "resume" {
+		entries, err := os.ReadDir(filepath.Join(start.Directory, "prepared"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range entries {
+			if !strings.HasSuffix(entry.Name(), ".json") {
+				continue
+			}
+			selector := strings.TrimSuffix(entry.Name(), ".json")
+			var out, diagnostics bytes.Buffer
+			if Main([]string{"--config-dir", start.Directory, "arbiter.connect_timeout=15s", "enrol", "resume=" + selector}, &out, &diagnostics,
+				func(string) (string, bool) { return "", false }, func() (string, error) { return start.Directory, nil }) != 0 {
+				t.Fatal(diagnostics.String())
+			}
+			if _, err := os.Stat(filepath.Join(start.Directory, "enrolled", entry.Name())); err != nil {
+				t.Fatal(err)
+			}
+			return
+		}
+		t.Fatal("missing recoverable prepared state")
 	}
 	in, feed, _ := os.Pipe()
 	output, out, _ := os.Pipe()
@@ -70,7 +93,15 @@ func TestPythonEnrollmentCLI(t *testing.T) {
 		finished <- secret
 	}()
 	var stdout, stderr bytes.Buffer
-	code := Main([]string{"--config-dir", start.Directory, "enrol", "url=" + start.URL, "name=Fresh CLI"}, &stdout, &stderr,
+	args := []string{"--config-dir", start.Directory}
+	if start.Mode == "ok" {
+		args = append(args, "arbiter.connect_timeout=15s")
+	}
+	if start.Mode == "lost-reply" || start.Mode == "delayed-reply" {
+		args = append(args, "arbiter.connect_timeout=10s")
+	}
+	args = append(args, "enrol", "url="+start.URL, "name=Fresh CLI")
+	code := Main(args, &stdout, &stderr,
 		func(string) (string, bool) { return "", false }, func() (string, error) { return start.Directory, nil })
 	// Closing the command's terminal output also releases the synthetic reader
 	// when closed enrollment fails before a handoff.
@@ -78,11 +109,11 @@ func TestPythonEnrollmentCLI(t *testing.T) {
 	if secret != "" && (strings.Contains(stdout.String(), secret) || strings.Contains(stderr.String(), secret)) {
 		t.Fatal("secret reached output")
 	}
-	if start.Mode == "ok" {
-		if code != 0 || !strings.Contains(stdout.String(), "Enrollment is not active") {
+	if start.Mode == "ok" || start.Mode == "lost-reply" || start.Mode == "delayed-reply" {
+		if code != 0 || !strings.Contains(stdout.String(), "Enrollment activated and saved") {
 			t.Fatalf("code=%d stderr=%s", code, stderr.String())
 		}
-		entries, err := os.ReadDir(filepath.Join(start.Directory, "prepared"))
+		entries, err := os.ReadDir(filepath.Join(start.Directory, "enrolled"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -92,11 +123,21 @@ func TestPythonEnrollmentCLI(t *testing.T) {
 				continue
 			}
 			selector := strings.TrimSuffix(entry.Name(), ".json")
-			material, prepared, err := identity.LoadPrepared(filepath.Join(start.Directory, "prepared"), selector, time.Now().UTC())
-			if err != nil || material == nil || prepared == nil || !strings.Contains(stdout.String(), "Prepared enrollment saved") {
-				t.Fatal("prepared private result did not survive reload", err)
+			if start.Mode == "lost-reply" || start.Mode == "delayed-reply" {
+				receipt, reconcileErr := identity.ReconcileEnrollment(context.Background(), filepath.Join(start.Directory, "enrolled"), selector, 10*time.Second)
+				if reconcileErr == nil {
+					reconcileErr = receipt.Promote(context.Background(), filepath.Join(start.Directory, "enrolled"))
+				}
+				if reconcileErr != nil {
+					t.Fatal("expired enrolled receipt did not survive reload", reconcileErr)
+				}
+			} else {
+				material, prepared, err := identity.LoadPrepared(filepath.Join(start.Directory, "enrolled"), selector, time.Now().UTC())
+				if err != nil || material == nil || prepared == nil {
+					t.Fatal("enrolled private result did not survive reload", err)
+				}
 			}
-			path := filepath.Join(start.Directory, "prepared", entry.Name())
+			path := filepath.Join(start.Directory, "enrolled", entry.Name())
 			original, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)
@@ -110,7 +151,13 @@ func TestPythonEnrollmentCLI(t *testing.T) {
 				if err := os.WriteFile(path, changed, 0600); err != nil {
 					t.Fatal(err)
 				}
-				if _, _, err := identity.LoadPrepared(filepath.Join(start.Directory, "prepared"), selector, time.Now().UTC()); err == nil {
+				var loadErr error
+				if start.Mode == "lost-reply" || start.Mode == "delayed-reply" {
+					_, loadErr = identity.ReconcileEnrollment(context.Background(), filepath.Join(start.Directory, "enrolled"), selector, 10*time.Second)
+				} else {
+					_, _, loadErr = identity.LoadPrepared(filepath.Join(start.Directory, "enrolled"), selector, time.Now().UTC())
+				}
+				if loadErr == nil {
 					t.Fatal("corrupted prepared record accepted")
 				}
 			}
@@ -118,6 +165,13 @@ func TestPythonEnrollmentCLI(t *testing.T) {
 				t.Fatal(err)
 			}
 			count++
+			// Explicit recovery after cleanup authenticates against enrolled
+			// custody and never creates another activation or handoff.
+			var resumed, resumeErr bytes.Buffer
+			if Main([]string{"--config-dir", start.Directory, "arbiter.connect_timeout=15s", "enrol", "resume=" + selector}, &resumed, &resumeErr,
+				func(string) (string, bool) { return "", false }, func() (string, error) { return start.Directory, nil }) != 0 {
+				t.Fatal("resume after promotion", resumeErr.String())
+			}
 		}
 		if count != 1 {
 			t.Fatal("expected one prepared result", count)

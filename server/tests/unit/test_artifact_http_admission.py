@@ -325,7 +325,9 @@ def live_server(app, **config):
     import uvicorn
 
     listener = socket.socket()
-    listener.bind(("127.0.0.1", 0))
+    if "bind_port" in config:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", config.pop("bind_port", 0)))
     port = listener.getsockname()[1]
     access_logger = logging.getLogger("uvicorn.access")
     logging_patch = pytest.MonkeyPatch()
