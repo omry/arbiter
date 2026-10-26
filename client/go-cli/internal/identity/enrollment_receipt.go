@@ -5,16 +5,21 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/json"
+	"errors"
+	"os"
 	"time"
 )
 
 const receiptRequestTag = "arbiter-enrollment-receipt-request-v1\x00"
 const receiptProofTag = "arbiter-enrollment-receipt-possession-v1\x00"
 
-// EnrollmentReceipt proves retrieval of the exact committed result over current
-// remembered server trust. It cannot by itself activate ordinary API access.
-// Durable promotion is a separate operation, added with the activation writer.
-type EnrollmentReceipt struct{ prepared *PreparedEnrollment }
+// EnrollmentReceipt proves the exact committed result over current remembered
+// server trust. Only this authenticated result can be durably promoted.
+type EnrollmentReceipt struct {
+	prepared *PreparedEnrollment
+	material *Provisional
+}
 
 // ReconcileEnrollment needs no pairing secret. Keep prepared keys on transport
 // failures: a lost reply does not prove that the original commit failed.
@@ -43,7 +48,73 @@ func ReconcileEnrollment(ctx context.Context, directory, selector string, timeou
 	if err != nil || !bytes.Equal(reply, prepared.raw) {
 		return nil, errControl
 	}
-	return &EnrollmentReceipt{prepared: prepared}, nil
+	return &EnrollmentReceipt{prepared: prepared, material: material}, nil
+}
+
+// Promote publishes complete enrolled custody before the caller removes any
+// prepared state. An ambiguous filesystem failure retains the recovery source.
+// Repeated publication is successful only for the same exact private result.
+// The caller must hold the same enrollment owner used by RunProvisional.
+func (r *EnrollmentReceipt) Promote(ctx context.Context, directory string) error {
+	if r == nil || r.prepared == nil || r.material == nil {
+		return errCustody
+	}
+	private, err := r.material.EncodePrivate()
+	if err != nil {
+		return err
+	}
+	bundle, err := json.Marshal(preparedPrivateRecord{privateWarning, 1, private, r.prepared.raw})
+	if err != nil {
+		return err
+	}
+	if err := savePrivateRecord(ctx, directory, r.material.record.Selector, bundle, func(string) error { return nil }); err != nil {
+		if !errors.Is(err, os.ErrExist) {
+			return err
+		}
+		root, dir, openErr := custodyRoot(directory, false)
+		if openErr != nil {
+			return openErr
+		}
+		dir.Close()
+		final, pending, _ := custodyNames(root, r.material.record.Selector)
+		links := uint32(1)
+		a, ae := os.Lstat(final)
+		b, be := os.Lstat(pending)
+		if errors.Is(ae, os.ErrNotExist) {
+			// A killed writer can leave only staging. The authenticated source
+			// is intact; discard only this selector's private single-link file.
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if err := removeCustodyFile(pending, 1); err != nil {
+				return err
+			}
+			return savePrivateRecord(ctx, root, r.material.record.Selector, bundle, func(string) error { return nil })
+		}
+		if ae != nil {
+			return ae
+		}
+		if ae == nil && be == nil && os.SameFile(a, b) {
+			links = 2
+		}
+		material, prepared, loadErr := loadPreparedLinked(root, r.material.record.Selector, time.Now().UTC(), true, links)
+		if loadErr != nil || !bytes.Equal(prepared.raw, r.prepared.raw) {
+			return errCustody
+		}
+		existing, loadErr := material.EncodePrivate()
+		if loadErr != nil || !bytes.Equal(existing, private) {
+			return errCustody
+		}
+		if links == 2 {
+			if err := removeCustodyFile(pending, 2); err != nil {
+				return err
+			}
+		}
+		// savePrivateRecord includes the durable-directory sync in ErrExist;
+		// repeat it explicitly so joined sync failures cannot become success.
+		return nativeSyncCustody(directory)
+	}
+	return nil
 }
 
 func receiptRequest(material *Provisional, prepared *PreparedEnrollment, exporter []byte) ([]byte, error) {

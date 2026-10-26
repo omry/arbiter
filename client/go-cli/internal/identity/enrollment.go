@@ -275,7 +275,7 @@ func pairingSocket(ctx context.Context, target string, initiator *PairingInitiat
 		return err
 	}
 	plain, err := initiator.Decrypt(ack)
-	if err != nil || string(plain) != preparedComplete {
+	if err != nil || !bytes.Equal(plain, prepared) {
 		return ErrEnrollmentUnavailable
 	}
 	return ctx.Err()

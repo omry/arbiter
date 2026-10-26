@@ -17,6 +17,20 @@ var ErrProvisionalUnexpectedContents = errors.New("provisional cleanup made no p
 const provisionalLockName = ".enrollment.lock"
 const provisionalCleanupBatch = 64
 
+// WithEnrollmentOwner serializes receipt recovery with new enrollment cleanup.
+// It uses the same native lock as RunProvisional without generating another key.
+func WithEnrollmentOwner(ctx context.Context, directory string, action func() error) (result error) {
+	if action == nil {
+		return errCustody
+	}
+	_, lock, err := lockProvisional(ctx, directory)
+	if err != nil {
+		return err
+	}
+	defer func() { result = errors.Join(result, lock.Close()) }()
+	return action()
+}
+
 // lockProvisional holds native ownership until the actual consumer exits. The
 // empty lock file persists: unlinking it would allow two independent lock owners.
 func lockProvisional(ctx context.Context, directory string) (string, *os.File, error) {
