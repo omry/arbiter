@@ -2293,7 +2293,9 @@ def _create_native_http_app(
     pairing_responder = PairingResponder(enrollment_requests, native_limits)
 
     async def continue_pairing(channel: PairingChannel) -> None:
-        await channel.prove(_server_data_root(_storage_config(cfg)) / "authority")
+        await channel.prove(
+            _server_data_root(_storage_config(cfg)) / "authority", enrollment_accounts
+        )
 
     async def continue_control(carrier: Any) -> None:
         from .control_tls import ControlTLS
@@ -2305,15 +2307,17 @@ def _create_native_http_app(
 
         await dispatch(channel, _server_data_root(_storage_config(cfg)) / "authority")
 
-    def enrollment_control(
-        command: str, arguments: dict[str, object]
-    ) -> dict[str, object]:
-        accounts = {
+    def enrollment_accounts() -> set[tuple[str, str]]:
+        return {
             (plugin, str(account))
             for plugin in configured_service_names(cfg.arbiter.account)
             for account in (service_accounts_for(cfg, plugin) or {})
         }
-        return enrollment_requests.control(command, arguments, accounts)
+
+    def enrollment_control(
+        command: str, arguments: dict[str, object]
+    ) -> dict[str, object]:
+        return enrollment_requests.control(command, arguments, enrollment_accounts())
 
     @asynccontextmanager
     async def lifespan(_app: object) -> AsyncGenerator[None, None]:

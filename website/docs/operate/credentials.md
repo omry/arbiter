@@ -5,8 +5,8 @@ title: Development Credential Profiles
 Offline `arbiter-server authority init` creates separate owner-issuer,
 server-authority and inner server-TLS credentials. They are committed with the
 owner/server IDs in the private SQLite database. Status returns public identity
-metadata, never private keys. Setup is still development work: pairing and runtime
-caller authentication are separate milestones. Keep trusted-local-only operation.
+metadata, never private keys. Pairing can activate an enrollment; ordinary runtime
+caller authentication remains a later milestone. Keep trusted-local-only operation.
 
 ## Certificate profiles, version 1
 
@@ -41,7 +41,7 @@ The native Go verifier applies the same version-one profiles. Shared positive
 and negative vectors and a test using freshly issued Python credentials check
 cross-language agreement. A caller supplies the expected role, IDs, registered
 issuer and verification time; the verifier does not discover trust from a peer's
-certificate. This development foundation does not enable client enrollment or
+certificate. Certificate verification alone does not enroll a client or authorize
 ordinary authenticated API traffic.
 
 Version-one profiles support noncritical Subject Key Identifier values with one
@@ -258,10 +258,20 @@ For an expired, restarted, rejected or unavailable request, ask the operator and
 start again. Private provisional files are removed on exit, with the existing
 bounded startup cleanup handling interruptions.
 
-This development step saves verified prepared credentials, keys and public
-trust before sending ready. It explicitly reports `Enrollment is not active`
-and grants no ordinary API access. Durable activation and receipt reconciliation
-follow in later delivery slices.
+The command saves verified prepared credentials, keys and public trust before
+sending ready. The server commits the approved identity, credentials, grants and
+exact result together. The client verifies the committed result through remembered
+server trust, flushes complete private state into `enrolled/`, then removes its
+prepared record. It reports `Enrollment activated and saved`. Ordinary authenticated
+API access remains unavailable in this milestone.
+
+If the final reply or private publication fails, keep the saved state and run
+`arbiter enrol resume=SELECTOR`. This needs no terminal secret or new approval.
+It authenticates the server and retrieves only that exact committed result. A
+retry after successful promotion is also safe. Denial, inactivity or an absent
+commit prevents confirmation. If the server never committed, ask the operator and
+explicitly start a new pairing. Do not restart pairing merely to recover a lost
+receipt: new pairing discards abandoned prepared records.
 
 ### Public enrollment request boundary
 
@@ -345,10 +355,11 @@ a private `prepared/` record before signing a ready proof over that result and
 the current Noise transcript. The record carries `NEVER SHARE THIS` and contains
 no pairing secret.
 
-This is still uncommitted enrollment. Prepared certificates and a ready proof
-cannot authorize ordinary work. The CLI reports that activation is unavailable;
-durable server activation and authenticated receipt reconciliation follow in
-later slices. One prepared result per request shares the existing bounded
+Prepared certificates and a ready proof alone cannot authorize ordinary work.
+Only the final conditional transaction activates the exact result, after rechecking
+live approval, original expiry, attempt ownership and configured account names.
+Committed results survive restart without a PSK; rejected or expired uncommitted
+requests do not. One prepared result per request shares the existing bounded
 pending capacity and original deadline. Rejection, expiry and server restart
 invalidate it. Explicitly starting another enrollment discards abandoned private
 prepared records in bounded batches while holding the client enrollment owner.
@@ -458,13 +469,14 @@ plaintext limit to the carrier frame limit, reserving space for TLS and framing.
 The connect budget covers outer dial, upgrade and
 inner handshake. A separate absolute ten-second control budget starts once the
 inner handshake authenticates the server. Progress and pings reset neither budget. Carrier byte,
-buffer and shared crypto limits also apply. The Python server foundation and Go
-client expose the RFC 9266 TLS exporter for later proof binding. The Go client
+buffer and shared crypto limits also apply. The Python server and Go client
+expose the RFC 9266 TLS exporter for channel-bound receipt proofs. The Go client
 verifies the remembered server authority and server ID before exposing the
 stream. This transport foundation supports authenticated retrieval of the exact
-result for an already committed enrollment, but it cannot activate enrollment,
-promote a client durably or dispatch ordinary operations. Those controls are
-delivered separately. A prepared client is still not enrolled.
+result for an already committed enrollment. The `enrol` command uses that
+authenticated receipt to publish complete enrolled custody. Only the pairing
+ready/activation transaction can activate enrollment; this transport cannot
+dispatch ordinary operations. Prepared state alone remains uncommitted.
 
 ## Operator recovery custody
 
@@ -534,9 +546,9 @@ after the inner handshake; a shorter caller deadline still applies. One stream
 permits one nonempty request and reply, each at most 64 KiB decoded. Cancellation
 closes the carrier, and exchanges are never automatically replayed.
 
-The transport and fresh Python/Go tests are development foundations. Receipt
-reconciliation is available only for already committed results. Durable enrollment
-activation is a separate slice; no arbitrary control or HTTP operation is enabled.
+Receipt reconciliation is available only for already committed results. Pairing
+can now commit such a result. No arbitrary control or ordinary HTTP operation is
+enabled by this transport.
 
 ## Enrollment receipt reconciliation
 
@@ -547,7 +559,9 @@ TLS connection and exact prepared-result digest. No pairing secret is required.
 Denial and inactivity prevent retrieval. A network failure does not prove that
 enrollment failed; retain the private prepared record for a later authenticated
 retry. Receipt retrieval cannot create an identity, grant access, or enter the
-ordinary API. The activation and durable client-promotion flow is delivered
-separately; this transport foundation does not yet enable an enrollment CLI to
-become an ordinary authenticated client.
+ordinary API. The CLI promotes the complete private result only after authenticated
+confirmation, using the same private atomic custody contract as preparation.
+Enrolled records are separate from provisional/prepared cleanup. Startup under the
+exclusive authority instance lock recovers a validated interrupted SQLite journal;
+network control readers never perform that recovery.
 

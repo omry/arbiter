@@ -4,6 +4,7 @@ The separate loopback control socket is the trusted synthetic human handoff.
 Secrets stay in memory and are never printed, passed in argv/env or persisted.
 """
 
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import hashlib
@@ -20,6 +21,7 @@ import pytest
 from starlette.applications import Starlette
 
 from arbiter_server.authority import initialize_authority
+from arbiter_server.limits import NativeTransportLimitsConfig
 from arbiter_server.main import _generate_self_signed_tls_certificate
 from arbiter_server.prepared import PREPARED_TAG
 from server.tests.unit.conftest import private_windows_test_parent, tmp_path
@@ -45,6 +47,11 @@ from server.tests.unit.test_native_http_protocol import _client
         "trailing",
         "truncated",
         "save-failure",
+        "lost-reply",
+        "delayed-reply",
+        "reject-ready",
+        "cancel-ready",
+        "promotion-failure",
     ],
 )
 def test_fresh_python_go_enrollment_cli(
@@ -52,15 +59,28 @@ def test_fresh_python_go_enrollment_cli(
 ):
     if shutil.which("go") is None:
         pytest.skip("go is not installed")
+    deadline_modes = {"lost-reply", "delayed-reply"}
     server_root = tmp_path / "server" / "authority"
     initialize_authority(server_root, recovery_file=tmp_path / "operator.json")
-    app = cast(Starlette, _client(tmp_path)._app)
+    native_transport = (
+        NativeTransportLimitsConfig(handshake_timeout_seconds=10.0)
+        if mode in deadline_modes
+        else None
+    )
+    app = cast(Starlette, _client(tmp_path, native_transport=native_transport)._app)
     responder = app.state.pairing_responder
     original_prepare, original_ready = responder.prepare, responder.ready
+    original_activate = responder.activate
     ready_calls = []
     saved_result = []
+    request_clock = [0.0]
+    request_deadline = None
+    prepared_expiry = None
+    commit_before_deadline = False
+    reply_after_deadline = False
 
     async def prepare(session, root):
+        nonlocal prepared_expiry
         raw = await original_prepare(session, root)
         saved_result.append(raw)
         fixed = len(PREPARED_TAG) + 144 + 22 + 32 + 32 + 8
@@ -90,6 +110,19 @@ def test_fresh_python_go_enrollment_cli(
         raw = bytes(header) + b"".join(
             len(value).to_bytes(2, "big") + value for value in fields
         )
+        if mode in deadline_modes:
+            assert raw == saved_result[-1]
+            assert request_deadline is not None
+            remaining = request_deadline - request_clock[0]
+            assert 5 <= remaining <= 7
+            prepared_expiry = int.from_bytes(raw[fixed - 8 : fixed], "big")
+            wall_now = datetime.now(timezone.utc).timestamp()
+            assert (
+                int(wall_now + remaining) - 1
+                <= prepared_expiry
+                <= int(wall_now + remaining) + 1
+            )
+            assert prepared_expiry > int(wall_now) + 4
         if mode == "trailing":
             raw += b"X"
         if mode == "truncated":
@@ -120,9 +153,32 @@ def test_fresh_python_go_enrollment_cli(
         assert "psk" not in private and "secret" not in private
         ready_calls.append(hashlib.sha256(data).hexdigest())
         await original_ready(session, data)
+        if mode == "reject-ready":
+            app.state.enrollment_requests.exhaust_approval(session.approval)
+        if mode == "cancel-ready":
+            session.lease.close()
+
+    async def activate(*args):
+        nonlocal commit_before_deadline, reply_after_deadline
+        receipt = await original_activate(*args)
+        if mode in deadline_modes:
+            assert request_deadline is not None and prepared_expiry is not None
+            commit_before_deadline = request_clock[0] < request_deadline
+            assert commit_before_deadline
+            request_clock[0] = request_deadline + 1
+            assert request_clock[0] > request_deadline
+            await asyncio.sleep(8)
+            assert datetime.now(timezone.utc).timestamp() > prepared_expiry
+            reply_after_deadline = True
+            if mode == "lost-reply":
+                raise ValueError(
+                    "synthetic dropped reply after durable commit and expiry"
+                )
+        return receipt
 
     monkeypatch.setattr(responder, "prepare", prepare)
     monkeypatch.setattr(responder, "ready", ready)
+    monkeypatch.setattr(responder, "activate", activate)
     cert, key = tmp_path / "outer.crt", tmp_path / "outer.key"
     _generate_self_signed_tls_certificate(
         cert_path=cert, key_path=key, names=("127.0.0.1",)
@@ -135,6 +191,8 @@ def test_fresh_python_go_enrollment_cli(
         ssl_keyfile=str(key),
     ) as port:
         requests = app.state.enrollment_requests
+        if mode in deadline_modes:
+            requests._clock = lambda: request_clock[0]
         if mode != "closed":
             requests.open_window()
         with socket.socket() as listener:
@@ -143,6 +201,7 @@ def test_fresh_python_go_enrollment_cli(
             listener.settimeout(30)
 
             def operator():
+                nonlocal request_deadline
                 connection, _ = listener.accept()
                 with connection, connection.makefile("rwb") as stream:
                     connection.settimeout(20)
@@ -182,6 +241,13 @@ def test_fresh_python_go_enrollment_cli(
                         ),
                         set(),
                     )
+                    if mode in deadline_modes:
+                        request_deadline = pending.deadline
+                        assert pending.deadline - pending.created_at == pytest.approx(
+                            600
+                        )
+                        request_clock[0] = request_deadline - 6
+                        assert request_clock[0] < request_deadline
                     if mode == "restart":
                         requests.reset()
                     if mode == "save-failure":
@@ -195,6 +261,10 @@ def test_fresh_python_go_enrollment_cli(
                         )
                         path.write_text("preserve existing private record")
                         path.chmod(0o600)
+                    if mode == "promotion-failure":
+                        (tmp_path / "client" / "enrolled").write_text(
+                            "preserve existing file"
+                        )
                     stream.write(b"true\n")
                     stream.flush()
 
@@ -220,13 +290,49 @@ def test_fresh_python_go_enrollment_cli(
                 )
                 assert result.returncode == 0, result.stdout + result.stderr
                 owner.result(timeout=5)
-        # Prepared credentials do not create an enrollment or grant access.
-        assert not (tmp_path / "client" / "enrolled").exists()
-        assert len(ready_calls) == (1 if mode == "ok" else 0)
-        if mode == "ok":
+        success = mode in {"ok", "lost-reply", "delayed-reply"}
+        if mode in deadline_modes:
+            assert commit_before_deadline
+            assert reply_after_deadline
+            assert prepared_expiry is not None
+            assert datetime.now(timezone.utc).timestamp() > prepared_expiry
+        assert (tmp_path / "client" / "enrolled").is_dir() == success
+        assert len(ready_calls) == (
+            1
+            if success or mode in {"reject-ready", "cancel-ready", "promotion-failure"}
+            else 0
+        )
+        if mode in {"reject-ready", "cancel-ready", "promotion-failure"}:
             assert len(list((tmp_path / "client" / "prepared").glob("*.json"))) == 1
         elif mode != "save-failure":
             assert not list((tmp_path / "client" / "prepared").glob("*.json"))
-        if mode == "ok":
+        if success:
+            enrolled_files = list((tmp_path / "client" / "enrolled").glob("*.json"))
+            assert len(enrolled_files) == 1
+            enrolled = json.loads(enrolled_files[0].read_text())
+            assert (
+                base64.b64decode(enrolled["result"], validate=True) == saved_result[-1]
+            )
+            assert set(enrolled["provisional"]) >= {
+                "access_key_pkcs8",
+                "portable_key_pkcs8",
+                "recipient_key_pkcs8",
+            }
+            assert not list((tmp_path / "client" / "prepared").glob("*.json"))
             sessions = app.state.pairing_responder._attempts.values()
             assert all(state.active is None for state in sessions)
+            from contextlib import closing
+            import sqlite3
+            from server.tests.unit.test_enrollment_activation import database
+
+            enrollment_id = saved_result[-1][
+                len(PREPARED_TAG) + 108 : len(PREPARED_TAG) + 144
+            ].decode()
+            with closing(sqlite3.connect(database(server_root))) as db:
+                row = db.execute(
+                    "SELECT COUNT(*), prepared FROM enrollments WHERE enrollment_id=?",
+                    (enrollment_id,),
+                ).fetchone()
+                assert row[0] == 1 and bytes(row[1]) == saved_result[-1]
+                assert db.execute("SELECT COUNT(*) FROM enrollments").fetchone() == (1,)
+            assert not requests.pending() and not responder._attempts
