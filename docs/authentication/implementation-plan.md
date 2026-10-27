@@ -5,15 +5,53 @@ slice_convention: hierarchical-v1
 
 # Authentication and mutual enrollment: implementation plan
 
-Stage: implementation-plan candidate, 2026-10-20. Governing documents are the
+Stage: design-update candidate after the milestone-2 stack merge, 2026-10-28.
+Governing documents are the
 [requirements](requirements.md), SHA-256
 `d56e92a7cb01f131ba499650c4a5d7b2c8d17adf2cdc7d612eee7c5f53d07929`,
 and [HLD](high-level-design.md), SHA-256
 `b6511414b3a9b485542df83c8f7abfc499dc8d06e522819b48e162a562d21c57`.
-Their exact reviewed stamps are required dependencies of this plan's stamp.
-Neither governing document changes in this stage. This plan authorizes no
+Their exact reviewed stamps, the [portable enrollment LLD](portable-enrollment-lld.md)
+and the [milestone-3 LLD](milestone-3-lld.md) are explicit design dependencies of
+this plan's stamp. The LLDs own their detailed schemas, state transitions,
+acceptance cases and already sized cuts. Neither requirements nor HLD changes.
+This plan authorizes no
 implementation, release, live-account operation or deployment by itself.
 DBB must approve the exact final plan before its SWE design stamp.
+
+## Current delivery state and next design scope
+
+Source baseline is merged main `25a8cf2196f36499ff92ce890f313901b51b4f2b`.
+Milestone 1 authority/setup/local control and the milestone-2 fresh enrollment,
+single activation and receipt stack are merged. The latter closed with
+[PR74](https://github.com/omry/arbiter/pull/74); its 21 delivered PRs consumed the
+22-attempt allowance, including one unshipped parent attempt. Those delivery
+identities, approvals and spent allowance remain history, not permission for
+additional work. All 13 reported post-merge checks passed in the
+[baseline workflow run](https://github.com/omry/arbiter/actions/runs/40579826766).
+
+Milestone 2 still lacks the approved existing-portable-identity journey. Current
+Go provisional creation always generates a new portable key; Python prepare
+always assigns a new agent. Fresh-key possession and same-selector receipt
+resume do not satisfy reuse of a registered portable identity at a second server.
+This is an implementation gap, not an accepted scope deferral. Proposed `2.10`
+closes it through the portable LLD before milestone 3 starts. These documents
+specify that fix; no product fix is implemented by this design update.
+
+The original milestone-3 seven-PR estimate lacks the streaming, authority
+integration and failure-test detail needed for a credible execution cut. Its approved
+behavior is retained, with the LLD's 13 already sized proposed cuts replacing the
+old boundaries. Milestones 4–11 retain their ordered scope and historical child
+outlines below; their old estimates are not newly validated execution forecasts.
+Refine them into source-based, reviewed LLDs with bounded complete cuts before
+implementing each milestone. No cumulative remaining-PR or LOC promise follows
+from adding those old outline counts to the newly sized work.
+
+The current authorized work is design and its local/PR review only. Implementing
+`2.10`, milestone 3 or a later milestone requires separate authorization. No old
+allowance is reset; no merge, release, deployment or live account work is authorized.
+The [original plan at the merged baseline](https://github.com/omry/arbiter/blob/25a8cf2196f36499ff92ce890f313901b51b4f2b/docs/authentication/implementation-plan.md)
+preserves the exact earlier text, forecasts and original cuts.
 
 ## Delivery identities and rules
 
@@ -21,27 +59,28 @@ DBB must approve the exact final plan before its SWE design stamp.
 references below use `arbiter-authentication/1`, for example. Under
 `hierarchical-v1`, an approved later split of `4` becomes `4.1`, `4.2`, etc.; never
 renumber another slice or reuse a completed identity. The parent retains the
-aggregate acceptance obligation. A future execution ledger records exact PR URL,
-revision, dependencies, checks, reviews and state for each canonical identity;
-there are no PRs, code changes or completed implementation slices yet.
+aggregate acceptance obligation. Delivery records bind exact PR URL, revision,
+dependencies, checks, reviews and state for each canonical identity. Merged
+deliveries are not renumbered or reclassified as unstarted by this plan revision.
 
-The eleven numbered slices are milestones, not individual PRs. Their child
-identities below are the intended reviewable PRs, each with its own bounded
-behavior, negative/failure tests, documentation and applicable fragments. Work
+The eleven numbered slices are milestones, not individual PRs. The current LLD
+cuts are proposed reviewable PRs with bounded behavior, failure tests and relevant
+guidance/fragments. Older child tables are historical outlines as labeled. Work
 serially in milestone order and then the listed child order (not numeric sort). Complete local review, checks,
 submission and the approved remote review cycle for the current PR before advancing; approval binds
 the final PR head, with restacking invalidating affected evidence as appropriate.
-This document does not launch those cycles. If a slice becomes too large to
-review, split it under its identity before implementation rather than hiding
-another feature. A foundation PR must implement a real consumed boundary
+This document does not launch those cycles. An LLD must produce already sized
+implementable slices; dynamic resizing should be rare. If source evidence shows
+a cut is insufficient, revise and review the design before implementing it rather
+than treating an execution split as routine capacity. A foundation PR must implement a real consumed boundary
 (setup/status, registered pending work or an executable protocol peer), not empty
 interfaces, permissive stubs or a throwaway intermediate protocol. A synthetic
 peer may exercise a not-yet-public transport; it cannot authorize product traffic.
-Until child 2.6, the live server has no reachable enrollment activation/ready-commit
-route: 2.7/2.8 may use synthetic already-activated fixture rows only in tests, never
-a production trust initializer. Until child 3.5, ordinary public server dispatch
-remains closed on the new native boundary. Child 3.6 installs and tests complete
-live denial first through the prepared inner handlers and real synthetic sockets.
+The historical 2.7/2.8 cuts used synthetic already-activated fixture rows only in
+tests before 2.6 enabled real activation; this is not a production trust initializer.
+Ordinary public dispatch on the new native boundary remains closed until `3.5.2`.
+Both `3.6.1` and `3.6.2` install and test complete live denial first through
+private real peers and synthetic accounts.
 The eventual cutovers cannot rely on development-only publication policy as their
 safety mechanism; the respective runtime routes must actually remain closed.
 
@@ -94,9 +133,11 @@ Missing authority state fails closed and directs the operator to trusted setup.
 
 Dependencies below are direct semantic prerequisites. Serial delivery additionally
 requires the preceding PR to finish its review cycle. Final integration covers
-cross-milestone interactions, not just each milestone in isolation. The listed child order is authoritative: milestone 2 runs 2.1–2.5, 2.7, 2.8,
-2.6, 2.9; milestone 3 runs 3.1–3.4, 3.6, 3.5, 3.7. These orders preserve child
-identities while repairing the reviewed cutover order. The explicit
+cross-milestone interactions, not just each milestone in isolation. The historical
+milestone-2 parent order was 2.1–2.5, 2.7, 2.8, 2.6, 2.9. Proposed next work is
+`2.10.1 -> 2.10.2 -> 2.10.3 -> 2.10.4`, then the exact displayed milestone-3
+LLD order: `3.1.1–3.1.4`, `3.2.1–3.2.2`, `3.3`, `3.4`, `3.6.1–3.6.2`,
+`3.5.1–3.5.2`, `3.7`. Existing parents retain their aggregate obligations. The explicit
 child dependencies below are technical prerequisites; serial delivery also
 requires the preceding child PR to finish its review cycle. An external dependency
 on a milestone means all of that milestone's children, not just its first PR.
@@ -117,12 +158,20 @@ on a milestone means all of that milestone's children, not just its first PR.
 
 ## PR sizing and estimation basis
 
-The current breakdown contains **60 planned PRs** across eleven milestones.
-This count follows the boundaries below; it is not a delivery quota or a measured
-implementation size. The earlier 30–45 PR conversation estimate was preliminary.
-All children are unstarted. Preserve parent identities and aggregate acceptance;
-if a child later needs splitting, use `2.7.1`, `2.7.2`, etc., without renumbering
-other work. The execution ledger must retain the parent closure obligation.
+The original 2026-10-20 breakdown contained **60 planned PRs**; the earlier
+30–45 conversation estimate was preliminary. Both are historical, not the
+current remaining queue. Only `2.10` and milestone 3 have newly sized LLDs here:
+
+| Proposed work | Cuts | Production | Tests/fixtures | Handwritten CI | Total |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `2.10` portable reuse | 4 | 850–1,220 | 1,300–1,770 | 0–25 | 2,150–3,015 |
+| `3` native API/grants/denial | 13 | 2,350–3,360 | 4,340–5,830 | 0–70 | 6,690–9,260 |
+
+These are engineering estimates for review and later authorization, not approved
+delivery allowances or guaranteed future diffs. Each full cut includes code
+motion, helpers, fixtures, negative/race/native composition tests and correction
+headroom. Shared harness code is charged once. The LLDs own the per-cut tables;
+the plan does not maintain a second detailed sizing copy.
 
 Target **about 600 changed handwritten code lines** per PR. The **hard maximum is
 1,000**, counting additions plus deletions in production code, tests and handwritten
@@ -135,15 +184,16 @@ still contribute review burden. Do not introduce new generation tooling merely t
 avoid the limit. A large mechanical change should be a separate coherent PR.
 
 The target is flexible; the maximum is not. Before coding each child, check its
-forecast against the inspected implementation and predecessor changes. If it
-cannot fit, split it before proceeding. If actual changes approach/exceed 1,000,
-stop expansion and split before submission. A changed split needs focused review
+source-based forecast against predecessor changes. Do not begin an overlarge or
+underspecified cut expecting to split it later. If actual evidence invalidates
+the cut, stop expansion and return to the design boundary before submission.
+A rare changed split needs focused review
 and updated dependency/acceptance mapping; changes to the stamped plan require
 DBB/SWE re-review and replacement stamp before treating that revision as approved.
 No additional owner interview is required for a mechanical split that preserves
 approved requirements, HLD, size policy and acceptance.
 
-Ranges below estimate handwritten churn, including assertion/helpers and fixture
+Historical ranges below estimate handwritten churn, including assertions/helpers and fixture
 construction. Production and test ranges are separate; the total is their sum.
 They are task-by-task engineering estimates, not statistical confidence intervals
 or a guarantee that the implementation will stay within the forecast. `Medium`
@@ -154,7 +204,8 @@ to create one file for each PR. Existing code/tests are reused rather than copie
 only new/changed lines count. Shared harness work is charged to the first child
 that uses it, and later children budget their own scenario additions.
 
-Inspection basis (2026-10-20, checkout `9d5cfc198bb4`):
+Historical inspection basis for the original forecast (2026-10-20,
+checkout `9d5cfc198bb4`):
 
 | Existing surface | Measured lines | Consequence for estimates |
 | --- | ---: | --- |
@@ -167,11 +218,13 @@ Inspection basis (2026-10-20, checkout `9d5cfc198bb4`):
 | `server/tests/unit/test_native_http_protocol.py` / `server/tests/integration/test_cli_entrypoint.py` | 1,394 / 1,245 | Reuse synthetic ASGI and installed Go-wheel fixtures; charge new authenticated/process scenarios separately. |
 | `server/src/arbiter_server/storage.py` / `server/src/arbiter_server/config.py` | 57 / 376 | Private generation/authority/ACL recovery is mostly new work, not an existing backup subsystem. |
 
-Read-through of these paths, native route/admission construction in `main.py` and
-the HLD’s retained Python/Go probe results informs the estimates. Probe code is not assumed
-to be production-ready or copied wholesale. Native Windows custody/durability,
-full TLS adapter shutdown and dependency matrix work remain particularly uncertain.
-No product tests or new feasibility probes were run for this sizing revision.
+Read-through of these paths and the retained HLD probes informed the original
+estimates. The two new LLDs use actual merged `25a8cf2` primitives and their named
+missing work; old source-line counts above are not measurements of that baseline.
+Probe code is not assumed production-ready or copied wholesale. No product code
+or product tests were created/run by this design revision. Future streaming,
+race/crash and installed-native acceptance remains implementation work, not proof
+supplied by design checks or the existing baseline's green CI.
 
 The per-child tables define scope, a focused minimum acceptance check, code ranges,
 confidence and direct dependencies. Every child also owns relevant tests from the
@@ -184,7 +237,12 @@ its applicable package fragment and command/operator guidance; final documentati
 passes only reconcile the complete journey. Documentation effort is not included
 in the handwritten-code totals, and must be called out before each PR starts.
 
-### Estimate summary
+### Historical estimate summary (2026-10-20)
+
+The following table preserves the original 60-PR forecast for comparison. It is
+not a statement that those cuts remain unstarted, an actual delivered-LOC count,
+or a newly reviewed forecast for the remaining milestones. In particular, the
+old rows for 2 and 3 are superseded for future work by the status and LLDs above.
 
 | Milestone | Planned PRs | Production churn | Test churn | Combined churn |
 | --- | ---: | ---: | ---: | ---: |
@@ -299,6 +357,9 @@ reviewer substitution. This plan does not authorize automatic merging/deployment
 
 ## Slice 1 — operator authority and local control
 
+Historical note: the original child table in this section records the design cuts, not an unstarted queue. Authority/setup/local-control implementation is already merged at the source baseline above.
+
+
 Deliver a complete operator setup/status journey: create durable owner/server IDs,
 issuer and role-separated keys, external operator recovery file/public trust and
 private SQLite authority state; inspect/manage it through authenticated Unix
@@ -333,6 +394,9 @@ operator command help and an `arbiter-server` news fragment.
 | `1.6` — Windows authenticated local control | Provide the same real setup/status journey via named-pipe ACL and caller-token checks, with platform selection and trusted SSH instructions. **Check:** Native unauthorized caller, permissive ACL and pipe replacement fail; installed local commands work on both OS families. | 230–400 | 260–500 | 490–900 | Low | 1.5 |
 
 ## Slice 2 — pairing a real client and reconciling activation
+
+Historical note: the original child table below retains parent identities and initial forecasts. The delivered stack used reviewed descendant cuts and is merged; existing-portable reuse remains the explicit `2.10` gap below.
+
 
 Deliver `enrol` from a real Go CLI against a real initialized Python server:
 generate provisional per-server/portable/recipient keys and 32-byte secret; closed
@@ -372,17 +436,38 @@ custody guidance and fragments for server and native client packaging as applica
 | `2.6` — Single activation and receipt | With 2.7/2.8 present, wire the first reachable ready/activation commit: conditionally persist identity, credential, grants and result; promote only from authenticated receipt/retrieval. **Check:** Real Python/Go crash/lost-reply/restart at ready/commit/receipt proves one durable result, authenticated promotion and denial precedence; retries create no second identity or grant. | 280–440 | 320–520 | 600–960 | Low | 2.8 |
 | `2.9` — Pairing installation and overload closure | Complete prefix packaging/platform checks and process-level pairing failures, reusing earlier fixtures rather than deferring core assertions here. **Check:** Installed CLI pairs/reconciles; dependency builds, proxy fragmentation and simultaneous expiry/shutdown release real owners and keep health responsive. | 80–180 | 300–550 | 380–730 | Low | 2.6 |
 
+### Proposed corrective parent `2.10` — existing portable identity enrollment
+
+The [portable enrollment LLD](portable-enrollment-lld.md) owns the exact source
+selection, independently registered issuer, v2 schema, custody/proof, unique
+agent binding, migration and receipt contract. Its P01–P10 acceptance and four
+complete implementation cuts are normative for this proposed correction:
+`2.10.1 -> 2.10.2 -> 2.10.3 -> 2.10.4`, then `3.1.1`.
+The first schema/backfill cut also installs binding maintenance in every fresh-v1
+activation transaction; intermediate enrollments cannot evade later uniqueness or
+denial. P05/P09 cover active/denied/inactive records created on both intermediate
+prefixes. Each cut has its own real consumer and failure tests; `2.10.4` adds
+installed fresh/reuse closure to the existing driver. The total is 2,150–3,015 handwritten
+production/test/CI lines with all per-cut upper bounds below 1,000. This is no
+reset of the exhausted milestone-2 allowance and no implementation authorization.
+Existing-enrollment repair stays in milestone 5 and does not substitute for P01.
+
 ## Slice 3 — native API, account grants and live denial
 
 Route every ordinary CLI discovery/schema/invocation/download constructor through
 the expected-server-verified inner TLS 1.3 transport, including errors and tool
 paths. Preserve API shape and existing policies after `(plugin, account)` grants.
+Exercise the native factory through private peers in `3.5.1`; keep production
+constructor selection on its working route until the atomic client/server switch
+in `3.5.2`, with no anonymous fallback after that cut.
 Reject anonymous/proxy-header callers and hide ungranted account information from
 discovery and direct routes. Provide local grant add/remove and enrollment denial.
 Creator/account caller context is mandatory for subsequent artifact work.
 
 Implement shared coordinator admission and output cancellation across connections;
 ordinary TLS checks exact live enrollment/accepted key, certificate and role.
+Use `agent_enrollments` as the sole agent-to-enrollment relation; live admission
+must not create an independently authoritative `enrollments.agent_id` copy.
 Remove anonymous legacy API/artifact routing in the same cutover, invalidate
 server-managed ownerless artifacts without guessing ownership or touching mail/
 client files. No artifact storage fallback may bypass caller context. Keep
@@ -415,18 +500,40 @@ and cancellation/repeated failure release bounded staging and worker ownership.
 Use a legacy-store spy plus filesystem inspection, including restart cleanup;
 the final no-publication gate alone is not this acceptance evidence.
 
-### Child PRs
-| PR | Scope and focused acceptance | Production | Tests | Total | Confidence | Direct prerequisites |
-| --- | --- | ---: | ---: | ---: | --- | --- |
-| `3.1` — Ordinary inner mTLS caller context | Add strict access-leaf verification and single-request HTTP/1.1-to-ASGI adapter with immutable verified identity; ordinary API remains closed until 3.5. **Check:** Portable/cross-server/expired leaves fail; no proxy header or outer identity creates a caller; early body input stays admission-bounded. | 260–420 | 280–470 | 540–890 | Low | 2.9 |
-| `3.2` — Live grants and admission revision | Implement local grant changes and a coordinator that admits work against current enrollment/account revision, retaining actual worker ownership. **Check:** Grant/revoke and dispatch barriers serialize; caches cannot authorize stale revisions; existing account policy remains the only operation policy. | 220–360 | 260–460 | 480–820 | Low | 3.1 |
-| `3.3` — Authenticated discovery filtering | Apply verified grants to catalog, schema, policy/account summaries and direct lookup in the inner API. **Check:** Hidden accounts/policies cannot be learned by guessed paths, errors, previews or shared-account clients; existing payload contracts remain. | 160–300 | 250–430 | 410–730 | Medium | 3.2 |
-| `3.4` — Authorized dispatch and closed artifact adapter | Bind account policy and immutable creator context to operation dispatch; replace plugin artifact creation/inspection with a closed adapter before native API cutover. **Check:** Real dispatch to an artifact-producing synthetic plugin rejects before legacy store entry, file/nonce/descriptor publication; upstream effects are reported honestly. | 220–370 | 280–500 | 500–870 | Low | 3.3 |
-| `3.6` — Cross-connection live denial | Cancel affected admitted work/output on all connections at grant removal/enrollment denial, preserving pre-body admission and blocking-worker lifetime. Install and test this through prepared inner handlers and real synthetic sockets while the public ordinary boundary stays closed until 3.5. **Check:** Real sockets and slow/chunked bodies prove no post-denial dispatch/output; worker slots stay held until underlying calls exit; no uncertain replay. | 220–380 | 300–520 | 520–900 | Low | 3.4 |
-| `3.5` — CLI transport cutover and anonymous closure | Route every Go discovery/invocation/artifact constructor to verified inner transport; atomically close anonymous legacy API/artifact routes on the server. **Check:** First reachable installed Python/Go ordinary prefix tests denial against queued admission, bodies, upstream dispatch and ongoing output with real worker retention; legacy routes stay closed and artifact creation leaves no plaintext/nonce. | 240–400 | 280–500 | 520–900 | Low | 3.6 |
-| `3.7` — Native transport regression closure | Complete changed-cert/inspecting-relay/TCP-passthrough, installed-client and timeout/error compatibility checks across native routes. **Check:** Proxy sees no native secret; connect versus API/idle budgets, long active calls and eight-worker/1 MiB limits remain; no new bypass is needed. | 80–180 | 300–550 | 380–730 | Low | 3.5 |
+### Current proposed cuts and dependencies
+
+The [milestone-3 LLD](milestone-3-lld.md) owns exact N01–N12 acceptance, complete
+per-cut scope and production/test/CI ranges. Its 13 cuts replace the historical
+seven rows; do not add the two forecasts together. All work remains unimplemented.
+
+| Cut | Direct implementation prerequisite | Owning result / acceptance |
+| --- | --- | --- |
+| `3.1.1` | `2.10.4` | Shared carrier/pump with real existing-control and streaming consumers; N03/N04. |
+| `3.1.2` | `3.1.1` | Strict Python ordinary mTLS peer; N01. |
+| `3.1.3` | `3.1.2` | Go native identity/dial and standard HTTP transport peer; N01/N02/N11. |
+| `3.1.4` | `3.1.3` | Bounded single-request HTTP/ASGI, absolute request-receipt timer and pre-body admission; N03/N04. |
+| `3.2.1` | `3.1.4` | Existing enrollment-row live fields/grants, migration and OS-local controls; N05/N06. |
+| `3.2.2` | `3.2.1` | Coordinator, writer/read epochs and actual worker ownership; N04/N05/N07. |
+| `3.3` | `3.2.2` | Discovery/direct/policy/error filtering; N06. |
+| `3.4` | `3.3` | Real dispatch caller context, closed artifact dependency/inline/legacy cleanup; N09. |
+| `3.6.1` | `3.4` | Cross-connection body/dispatch denial and retained actual workers; N07/N08. |
+| `3.6.2` | `3.6.1` | Final output permission after backpressure and abort without revoked flush; N03/N07/N08. |
+| `3.5.1` | `3.6.2` | Every CLI constructor and explicit enrollment selection through private real peers; production selection retains its working route. N10/N11. |
+| `3.5.2` | `3.5.1` | Atomic production CLI/native server switch, anonymous closure and first installed denial/artifact prefix; N01/N04/N07/N09/N10/N12. |
+| `3.7` | `3.5.2` | Installed relay/timeouts/native composition and full N01–N12 closure. |
+
+All `3.1` descendants close parent 3.1, both `3.2` descendants close 3.2, both
+`3.6` descendants close 3.6 before cutover, and both `3.5` descendants close 3.5.
+Later references to a parent still require all its descendants and aggregate
+acceptance. The first public ordinary prefix includes denial and safe artifact
+failure; final 3.7 is not a budget for missing earlier mechanisms or tests.
 
 ## Slice 4 — rotation, late completion and bounded fallback
+
+Milestones 4–11 below retain their approved scope/order and historical outlines.
+Their child boundaries and estimates require source-based LLD refinement/review
+before implementation. This design revision does not claim those future cuts
+are already sized or predictive after milestone-2 implementation changes.
 
 Deliver on-contact due rotation, fixed grace, durable candidate save/confirmation
 and lost-response reconciliation. A pending deadline is recorded before asking
@@ -700,6 +807,8 @@ have approved final heads and required checks, run the complete synthetic journe
 
 1. Fresh private setup with no public CA/DNS or external identity account; enroll
    first and additional clients with one handoff/approval, restart and reconcile.
+   Reuse one portable identity at a separately registered second server with
+   distinct access/grants and no source-server availability requirement (P01–P10).
 2. Authenticated discovery/direct invocation of mock SMTP/IMAP accounts with
    distinct grants, existing policies, grant change/denial and concurrent output.
 3. Due rotation, fixed grace, expired-certificate control completion, inactivity,
@@ -726,7 +835,7 @@ live accounts to prove safety or mark unavailable checks as passed. Remaining
 failures require fixes/re-review or an explicit requirements/HLD decision; no
 scope reduction, platform drop or readiness claim is hidden in release wording.
 
-Plan approval means this is an acceptable order and verification obligation,
-not that any slice is implemented or has a PR. Execution begins only on separate
-authorization. Reviews and exact-byte stamp evidence are stored outside this
+Approval of this revision attests its design, ordering and verification
+obligations. Implemented/merged state is reported explicitly above; the newly
+proposed work begins only on separate implementation authorization. Reviews and exact-byte stamp evidence are stored outside this
 document so recording its verdict does not invalidate the reviewed plan.
