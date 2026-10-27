@@ -473,6 +473,89 @@ def test_real_server_shutdown_closes_idle_native_carrier(server):
         peer.close()
 
 
+def test_simultaneous_expiry_shutdown_retains_two_real_workers(server, monkeypatch):
+    from noise.connection import NoiseConnection
+
+    entered = threading.Barrier(3)
+    release, stopped = threading.Event(), threading.Event()
+    original_read = NoiseConnection.read_message
+    original_connection = PairingProtocol.connection_made
+    carriers = []
+
+    def blocked(noise, data):
+        if threading.current_thread().name == "arbiter-operation":
+            entered.wait(timeout=10)
+            assert release.wait(20)
+        return original_read(noise, data)
+
+    def connected(protocol, transport):
+        original_connection(protocol, transport)
+        if not protocol.closed:
+            carriers.append(protocol)
+
+    monkeypatch.setattr(NoiseConnection, "read_message", blocked)
+    monkeypatch.setattr(PairingProtocol, "connection_made", connected)
+    peers = []
+    with server(max_connections=2, max_handshakes=2) as (app, port, first, path):
+        requests, responder = app.state.enrollment_requests, app.state.pairing_responder
+        pending = requests.register(json.dumps(advertisement()).encode())
+        requests.control(
+            "approve",
+            dict(
+                selector=pending.advertisement.selector,
+                revision=pending.revision,
+                request_digest=pending.advertisement.digest,
+                psk=base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("="),
+                grants=[],
+            ),
+            set(),
+        )
+        second = requests.approved(pending.advertisement.selector)
+        try:
+            for context in (first, second):
+                peer = Peer(
+                    port,
+                    PAIRING_PATH + context.request.advertisement.selector + "/pair",
+                )
+                peers.append(peer)
+                assert isinstance(peer.next()[0], events.AcceptConnection)
+                _, flight = initiator(context)
+                peer.send(events.BytesMessage(data=flight))
+            entered.wait(timeout=10)
+            with Peer(port, path) as excess:
+                rejected = excess.next()[0]
+                assert isinstance(rejected, events.RejectConnection)
+                assert rejected.status_code == 503
+            assert wire_request(port, "GET", "/_health_")[0] == 200
+
+            def expire_and_stop():
+                requests._clock = lambda: pending.deadline + 1
+                assert not requests.pending()
+                for carrier in carriers:
+                    carrier.shutdown()
+                responder.close()
+                stopped.set()
+
+            carriers[0].loop.call_soon_threadsafe(expire_and_stop)
+            assert stopped.wait(5)
+            assert len(responder._leases) == len(responder._handshakes) == 2
+            assert len(responder._pool._pending) == 2
+            assert all(lease._busy for lease in responder._leases)
+            assert wire_request(port, "GET", "/_health_")[0] == 200
+            release.set()
+            deadline = time.monotonic() + 5
+            while responder._leases or responder._handshakes:
+                assert time.monotonic() < deadline
+                time.sleep(0.001)
+            assert not responder._attempts and not requests.pending()
+            assert not responder._pool._pending
+            assert wire_request(port, "GET", "/_health_")[0] == 200
+        finally:
+            release.set()
+            for peer in peers:
+                peer.close()
+
+
 def test_negative_native_framing_settings_are_rejected():
     for name in (
         "max_headers_bytes",
