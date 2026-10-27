@@ -273,6 +273,12 @@ commit prevents confirmation. If the server never committed, ask the operator an
 explicitly start a new pairing. Do not restart pairing merely to recover a lost
 receipt: new pairing discards abandoned prepared records.
 
+Use the installed `arbiter` command for both enrollment and recovery. New enrollment
+opens the native terminal even when ordinary output is redirected. Run it from a
+terminal you control; `resume=SELECTOR` can run without a terminal. A network proxy
+must preserve the binary WebSocket stream and permit the separate receipt-control
+connection. Interrupted connections do not justify deleting saved private state.
+
 ### Public enrollment request boundary
 
 `POST /api/v1/enrollment/requests` accepts version-one provisional public
@@ -415,15 +421,17 @@ fresh HTTP connection; an upgrade that bypasses this guard is rejected.
 Ordinary HTTP body, operation and download budgets remain separate.
 
 This endpoint completes the encrypted handshake, mutual signing-key proofs,
-prepared-result delivery and ready verification before closing. Fresh Python/Go
-peers exercise the public CLI/carrier and private prepared persistence.
-Activation remains a subsequent delivery step. Local approval, prepared
-certificates and ready verification still grant no ordinary API access.
+prepared-result delivery and ready verification. After the client durably saves
+the prepared result, ready verification permits the server to recheck approval
+and commit activation. The endpoint returns the recorded receipt before closing.
+Fresh Python/Go peers exercise the installed CLI/carrier and private prepared
+persistence. Local approval or prepared certificates alone do not activate an
+enrollment, and this milestone provides no ordinary authenticated API access.
 
 Registration uses the existing bounded worker admission before reading body
 bytes. The body limit is the smaller of the core request-body limit and 64 KiB,
 with a ten-second total body-read budget. Full capacity returns a retryable
-`resource_exhausted` error. None of these public requests activate an identity.
+`resource_exhausted` error. Registration alone does not activate an identity.
 
 ### Pairing possession proof profile
 
