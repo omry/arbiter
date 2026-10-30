@@ -8,11 +8,13 @@ from dataclasses import dataclass, field
 import hashlib
 import hmac
 import json
+import re
 import threading
 import time
 import unicodedata
-from uuid import uuid4
+from uuid import UUID, uuid4
 
+from cryptography import x509
 from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, x25519
@@ -60,6 +62,55 @@ def _decode64(value: object, size: int, *, url: bool = False) -> bytes:
 
 
 @dataclass(frozen=True)
+class PortableIdentityClaim:
+    owner_id: str
+    agent_id: str
+    issuer_sha256: str
+    certificate_der: bytes
+
+
+def _portable_claim(
+    value: object, portable_spki: bytes
+) -> PortableIdentityClaim | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) != {
+        "owner_id",
+        "agent_id",
+        "issuer_sha256",
+        "certificate_der",
+    }:
+        raise ValueError("portable claim shape")
+    owner, agent = value["owner_id"], value["agent_id"]
+    for identity in (owner, agent):
+        if not isinstance(identity, str) or str(UUID(identity, version=4)) != identity:
+            raise ValueError("portable identity")
+    fingerprint, encoded = value["issuer_sha256"], value["certificate_der"]
+    if (
+        owner == agent
+        or not isinstance(fingerprint, str)
+        or re.fullmatch(r"[0-9a-f]{64}", fingerprint) is None
+    ):
+        raise ValueError("portable issuer fingerprint")
+    if not isinstance(encoded, str) or len(encoded) > 5464:
+        raise ValueError("portable certificate bound")
+    der = base64.b64decode(encoded, validate=True)
+    if not 0 < len(der) <= 4096 or base64.b64encode(der).decode() != encoded:
+        raise ValueError("portable certificate encoding")
+    certificate = x509.load_der_x509_certificate(der)
+    if (
+        certificate.public_bytes(serialization.Encoding.DER) != der
+        or certificate.public_key().public_bytes(
+            serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+        != portable_spki
+    ):
+        raise ValueError("portable certificate key")
+    # Anonymous decoding supplies no issuer trust, profile or possession proof.
+    return PortableIdentityClaim(owner, agent, fingerprint, der)
+
+
+@dataclass(frozen=True)
 class Advertisement:
     selector: str
     name: str
@@ -67,9 +118,10 @@ class Advertisement:
     portable_spki: bytes
     recipient_spki: bytes
     digest: str
+    portable_identity: PortableIdentityClaim | None = None
 
 
-def decode_advertisement(raw: bytes | bytearray) -> Advertisement:
+def decode_advertisement(raw: bytes | bytearray, *, version: int = 1) -> Advertisement:
     try:
         if not raw or len(raw) > MAX_ADVERTISEMENT_BYTES:
             raise ValueError("advertisement size")
@@ -85,11 +137,14 @@ def decode_advertisement(raw: bytes | bytearray) -> Advertisement:
             "portable_spki",
             "recipient_spki",
         }
+        if version == 2:
+            fields.add("portable_identity")
         if (
-            not isinstance(value, dict)
+            version not in (1, 2)
+            or not isinstance(value, dict)
             or set(value) != fields
             or type(value["version"]) is not int
-            or value["version"] != 1
+            or value["version"] != version
         ):
             raise ValueError("advertisement shape")
         selector, name = value["selector"], value["name"]
@@ -130,7 +185,12 @@ def decode_advertisement(raw: bytes | bytearray) -> Advertisement:
         # Bind the exact accepted wire bytes. Both peers can compute this
         # without relying on language-specific JSON canonicalization.
         digest = hashlib.sha256(raw).hexdigest()
-        return Advertisement(selector, name, keys[0], keys[1], keys[2], digest)
+        claim = (
+            _portable_claim(value["portable_identity"], keys[1])
+            if version == 2
+            else None
+        )
+        return Advertisement(selector, name, keys[0], keys[1], keys[2], digest, claim)
     except (
         ValueError,
         TypeError,

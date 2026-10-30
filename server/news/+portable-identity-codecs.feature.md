@@ -1,0 +1,1 @@
+Add internal portable identity source validation and versioned enrollment codecs while preserving saved receipt recovery. Public enrollment continues to use the existing fresh identity flow until the portable enrollment switch is complete.

@@ -19,6 +19,7 @@ import (
 )
 
 const MaxProvisionalBytes = 8192
+const MaxPortableProvisionalBytes = 24 * 1024
 
 const privateWarning = "NEVER SHARE THIS: private client keys; possession permits impersonation."
 
@@ -73,6 +74,8 @@ type provisionalRecord struct {
 	AccessKey    string    `json:"access_key_pkcs8"`
 	PortableKey  string    `json:"portable_key_pkcs8"`
 	RecipientKey string    `json:"recipient_key_pkcs8"`
+
+	Source json.RawMessage `json:"source_identity,omitempty"`
 }
 
 // Provisional contains no approved agent ID, certificate, grant or server trust.
@@ -91,6 +94,8 @@ type ProvisionalPublic struct {
 	AccessKey    []byte `json:"access_spki"`
 	PortableKey  []byte `json:"portable_spki"`
 	RecipientKey []byte `json:"recipient_spki"`
+
+	PortableIdentity json.RawMessage `json:"portable_identity,omitempty"`
 }
 
 func (Provisional) String() string     { return "<provisional private keys redacted>" }
@@ -103,7 +108,7 @@ func validateProvisionalMetadata(r provisionalRecord) error {
 	u, err := url.Parse(r.ServerURL)
 	_, offset := r.CreatedAt.Zone()
 	if err != nil || len(r.ServerURL) > 2048 || !utf8.ValidString(r.ServerURL) || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" ||
-		r.Version != 1 || r.Warning != privateWarning || r.CreatedAt.IsZero() || offset != 0 ||
+		(r.Version != 1 && r.Version != 2) || r.Warning != privateWarning || r.CreatedAt.IsZero() || offset != 0 ||
 		len(r.Name) == 0 || len(r.Name) > 256 || strings.TrimSpace(r.Name) != r.Name || !utf8.ValidString(r.Name) || strings.IndexFunc(r.Name, unicode.IsControl) >= 0 {
 		return errProvisional
 	}
@@ -173,7 +178,21 @@ func (p *Provisional) Public() (ProvisionalPublic, error) {
 		return ProvisionalPublic{}, err
 	}
 	recipient, err := x509.MarshalPKIXPublicKey(p.recipient.PublicKey())
-	return ProvisionalPublic{1, p.record.Selector, p.record.Name, access, portable, recipient}, err
+	public := ProvisionalPublic{Version: p.record.Version, Selector: p.record.Selector, Name: p.record.Name, AccessKey: access, PortableKey: portable, RecipientKey: recipient}
+	if p.record.Version == 2 {
+		public.PortableIdentity = json.RawMessage("null")
+		if source, e := decodePortableSource(p.record.Source, p.portable, nil); e != nil {
+			return ProvisionalPublic{}, e
+		} else if source != nil {
+			public.PortableIdentity, err = json.Marshal(struct {
+				OwnerID     string `json:"owner_id"`
+				AgentID     string `json:"agent_id"`
+				Fingerprint string `json:"issuer_sha256"`
+				Certificate []byte `json:"certificate_der"`
+			}{source.OwnerID, source.AgentID, source.Fingerprint, source.Certificate})
+		}
+	}
+	return public, err
 }
 
 func decodeProvisionalKey(encoded string) (any, error) {
@@ -196,7 +215,7 @@ func decodeProvisionalKey(encoded string) (any, error) {
 }
 
 func DecodeProvisional(data []byte) (*Provisional, error) {
-	if len(data) == 0 || len(data) > MaxProvisionalBytes || !utf8.Valid(data) {
+	if len(data) == 0 || len(data) > MaxPortableProvisionalBytes || !utf8.Valid(data) {
 		return nil, errProvisional
 	}
 	// encoding/json alone accepts duplicate object keys. Reject them explicitly.
@@ -206,7 +225,7 @@ func DecodeProvisional(data []byte) (*Provisional, error) {
 		return nil, errProvisional
 	}
 	seen := make(map[string]bool)
-	allowed := map[string]bool{"warning": true, "version": true, "selector": true, "server_url": true, "name": true, "created_at": true, "access_key_pkcs8": true, "portable_key_pkcs8": true, "recipient_key_pkcs8": true}
+	allowed := map[string]bool{"warning": true, "version": true, "selector": true, "server_url": true, "name": true, "created_at": true, "access_key_pkcs8": true, "portable_key_pkcs8": true, "recipient_key_pkcs8": true, "source_identity": true}
 	for d.More() {
 		token, err = d.Token()
 		name, ok := token.(string)
@@ -228,7 +247,9 @@ func DecodeProvisional(data []byte) (*Provisional, error) {
 	var r provisionalRecord
 	d = json.NewDecoder(bytes.NewReader(data))
 	d.DisallowUnknownFields()
-	if d.Decode(&r) != nil || validateProvisionalMetadata(r) != nil {
+	if d.Decode(&r) != nil || validateProvisionalMetadata(r) != nil ||
+		r.Version == 1 && (len(data) > MaxProvisionalBytes || seen["source_identity"]) ||
+		r.Version == 2 && !seen["source_identity"] {
 		return nil, errProvisional
 	}
 	a, err := decodeProvisionalKey(r.AccessKey)
@@ -248,6 +269,11 @@ func DecodeProvisional(data []byte) (*Provisional, error) {
 	recipient, cok := c.(*ecdh.PrivateKey)
 	if !aok || !bok || !cok || access.Curve != elliptic.P256() || portable.Curve != elliptic.P256() || recipient.Curve() != ecdh.X25519() || samePublicKey(access.Public(), portable.Public()) {
 		return nil, errProvisional
+	}
+	if r.Version == 2 {
+		if _, err := decodePortableSource(r.Source, portable, nil); err != nil {
+			return nil, err
+		}
 	}
 	return &Provisional{r, access, portable, recipient}, nil
 }
