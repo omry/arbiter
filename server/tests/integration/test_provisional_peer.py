@@ -160,3 +160,83 @@ def test_fresh_go_public_request_reaches_python_server(tmp_path) -> None:
     assert app.state.enrollment_requests.pending() == ()
     with pytest.raises(OperationError, match="Enrollment is closed"):
         app.state.enrollment_requests.require_open()
+
+
+def test_go_portable_codec_is_strict_and_public_registration_stays_v1() -> None:
+    from arbiter_server.enrollment import decode_advertisement
+    from arbiter_server.credentials import Identity, Role, verify_certificate
+
+    if shutil.which("go") is None:
+        pytest.skip("go is not installed")
+    result = subprocess.run(
+        [
+            "go",
+            "test",
+            "-count=1",
+            "-run",
+            "^TestPythonPortableCodecPeer$",
+            "-v",
+            "./internal/identity",
+        ],
+        cwd=Path(__file__).resolve().parents[3] / "client" / "go-cli",
+        env={**os.environ, "ARBITER_TEST_PORTABLE_CODEC": "1"},
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    rows = [
+        json.loads(line.removeprefix("ARBITER_PORTABLE_CODEC="))
+        for line in result.stdout.splitlines()
+        if line.startswith("ARBITER_PORTABLE_CODEC=")
+    ]
+    assert len(rows) == 2
+    for row in rows:
+        public = row["public"]
+        raw = json.dumps(public, separators=(",", ":")).encode()
+        decoded = decode_advertisement(raw, version=2)
+        assert (
+            public["version"] == 2 and decoded.digest == hashlib.sha256(raw).hexdigest()
+        )
+        with pytest.raises(OperationError):
+            decode_advertisement(raw)
+        claim = decoded.portable_identity
+        if public["portable_identity"] is None:
+            assert claim is None
+        else:
+            assert claim is not None
+            root = base64.b64decode(row["owner_der"])
+            assert hashlib.sha256(root).hexdigest() == claim.issuer_sha256
+            from datetime import datetime, timezone
+
+            verify_certificate(
+                claim.certificate_der,
+                Identity(Role.PORTABLE, claim.agent_id),
+                issuer_der=root,
+                issuer_id=claim.owner_id,
+                now=datetime.now(timezone.utc),
+            )
+            # Decoding claims alone grants neither registration nor issuer trust.
+            for field, value in [
+                ("owner_id", "invalid"),
+                ("agent_id", claim.owner_id),
+                ("issuer_sha256", "F" * 64),
+                ("certificate_der", "eA=="),
+                ("extra", "x"),
+            ]:
+                changed = json.loads(raw)
+                changed["portable_identity"][field] = value
+                with pytest.raises(OperationError):
+                    decode_advertisement(json.dumps(changed).encode(), version=2)
+            duplicate = raw.replace(
+                b'"owner_id":', b'"owner_id":"duplicate","owner_id":'
+            )
+            with pytest.raises(OperationError):
+                decode_advertisement(duplicate, version=2)
+        for changed in [
+            raw + b"x",
+            raw.replace(b'"version":2', b'"version":true'),
+            raw.replace(b'"portable_identity":', b'"Portable_Identity":'),
+        ]:
+            with pytest.raises(OperationError):
+                decode_advertisement(changed, version=2)

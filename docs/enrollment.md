@@ -40,3 +40,10 @@ state, and binds each existing agent to its enrollment. Invalid or duplicate
 historical bindings stop startup and preserve the old database. Preserve the
 state and resolve the reported error; do not delete authority files to retry.
 New fresh enrollments maintain that binding in the same activation transaction.
+
+The portable identity codec groundwork validates a source only from complete
+`enrolled/` custody. It checks the owner and portable certificate at the current
+time without contacting the source server or requiring its access certificate
+to remain valid. Saved receipt recovery checks portable evidence at issuance;
+this does not permit an expired portable identity to start another enrollment.
+The public CLI continues to create fresh identities at this intermediate cut.

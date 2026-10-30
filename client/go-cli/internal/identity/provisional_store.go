@@ -193,7 +193,7 @@ func loadProvisional(directory, selector string, links uint32) (*Provisional, er
 	if err := checkBoundCustody(f, false, false, links); err != nil {
 		return nil, err
 	}
-	raw, err := io.ReadAll(io.LimitReader(f, MaxProvisionalBytes+1))
+	raw, err := io.ReadAll(io.LimitReader(f, MaxPortableProvisionalBytes+1))
 	if err != nil {
 		return nil, err
 	}
