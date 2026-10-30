@@ -4574,6 +4574,24 @@ def _build_parser() -> argparse.ArgumentParser:
                 help="reuse existing recovery keys and register this server's backup verifier",
             )
 
+    issuer = authority_commands.add_parser(
+        "owner-issuer", help="manage independently registered public owner issuers"
+    )
+    issuer_commands = issuer.add_subparsers(dest="owner_issuer_command", required=True)
+    for action in ("register", "list", "export", "remove"):
+        command = issuer_commands.add_parser(action)
+        command.add_argument("--state-dir", type=Path, required=True)
+        if action != "export":
+            command.add_argument("--json", action="store_true")
+        if action == "register":
+            command.add_argument("--certificate-file", type=Path, required=True)
+        elif action in {"export", "remove"}:
+            command.add_argument("--issuer-sha256", required=True)
+        else:
+            command.add_argument(
+                "--cursor", help="continue after this exact issuer fingerprint"
+            )
+
     enrollment = subcommands.add_parser(
         "enrollment",
         help="open or approve enrollment through authenticated local control",
@@ -4813,6 +4831,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             as_json=namespace.json,
         )
     if namespace.command == "authority":
+        if namespace.authority_command == "owner-issuer":
+            from .issuer_admin import issuer_cli
+
+            return issuer_cli(
+                namespace.owner_issuer_command,
+                namespace.state_dir,
+                certificate_file=getattr(namespace, "certificate_file", None),
+                issuer_sha256=getattr(namespace, "issuer_sha256", None),
+                cursor=getattr(namespace, "cursor", None),
+                as_json=getattr(namespace, "json", False),
+            )
         from .authority import authority_cli
 
         return authority_cli(

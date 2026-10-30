@@ -16,7 +16,7 @@ from uuid import UUID, uuid4
 DATABASE = "authority.sqlite3"
 _PENDING = ".authority.pending.sqlite3"
 _LOCK = ".authority.lock"
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 # Windows Modules Installer is part of the trusted host OS. This exception is
 # for ancestors only; authority-root and file ACL allowlists remain unchanged.
 _TRUSTED_INSTALLER = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
@@ -268,6 +268,9 @@ def _write_database(path: Path, record: AuthorityRecord) -> None:
             record.server_id,
             datetime.fromisoformat(record.created_at),
         )
+        from .owner_issuers import create_tables
+
+        create_tables(db, record)
         db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         db.commit()
     with path.open("r+b") as handle:
@@ -379,7 +382,13 @@ def _current_record(root: Path) -> AuthorityRecord | None:
                 raise AuthorityError(
                     "authority journal recovery failed; preserve state"
                 ) from exc
-    return _read_record(path) if path is not None else None
+    if path is None:
+        return None
+    record = _read_record(path, allow_previous=True)
+    from .owner_issuers import upgrade
+
+    upgrade(path, record)
+    return _read_record(path)
 
 
 @contextmanager
@@ -390,7 +399,7 @@ def running_instance(state_dir: Path) -> Iterator[AuthorityRecord | None]:
         yield _current_record(root)
 
 
-def _read_record(path: Path) -> AuthorityRecord:
+def _read_record(path: Path, *, allow_previous: bool = False) -> AuthorityRecord:
     from .credentials import verify_setup_credentials
     from .recovery import verify_registration
 
@@ -402,8 +411,15 @@ def _read_record(path: Path) -> AuthorityRecord:
             sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=0)
         ) as db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version != SCHEMA_VERSION:
+            if version != SCHEMA_VERSION and not (allow_previous and version == 3):
                 raise AuthorityError("unsupported authority database schema version")
+            if version == SCHEMA_VERSION:
+                db.execute(
+                    "SELECT issuer_sha256, owner_id, certificate_der, active, revision FROM owner_issuers LIMIT 0"
+                )
+                db.execute(
+                    "SELECT agent_id, enrollment_id FROM agent_enrollments LIMIT 0"
+                )
             rows = db.execute(
                 "SELECT singleton, owner_id, server_id, created_at FROM authority"
             ).fetchall()
