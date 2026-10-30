@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 from contextlib import closing
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import hashlib
 from pathlib import Path
@@ -16,6 +16,7 @@ from .enrollment import ApprovedRequest
 from .enrollment_receipt import result_fields
 from .generations import ACTIVE, _control, _database
 from .prepared import PREPARED_TAG
+from .owner_issuers import portable_issuer
 
 
 def activate(
@@ -48,8 +49,18 @@ def activate(
         raise ValueError("Enrollment activation unavailable")
     path = _database(root, active["active"])
     authority = _read_record(path)
-    if ids[:2] != [authority.server_id, authority.owner_id]:
+    claim = ad.portable_identity
+    if ids[0] != authority.server_id or (
+        claim is None and ids[1] != authority.owner_id
+    ):
         raise ValueError("Enrollment activation unavailable")
+    if claim is not None and (
+        ids[1:3] != [claim.owner_id, claim.agent_id]
+        or fields[3] != claim.certificate_der
+        or approval.portable_issuer is None
+        or fields[2] != approval.portable_issuer[0]
+    ):
+        raise ValueError("Portable identity differs from approval")
     for index, identity, issuer, issuer_id, public in (
         (3, Identity(Role.PORTABLE, ids[2]), fields[2], ids[1], ad.portable_spki),
         (
@@ -78,7 +89,8 @@ def activate(
             stored = dict(db.execute("SELECT role, certificate_der FROM credentials"))
             if (
                 fields[0] != stored[Role.SERVER_AUTHORITY.value]
-                or fields[2] != stored[Role.OWNER.value]
+                or claim is None
+                and fields[2] != stored[Role.OWNER.value]
             ):
                 raise ValueError("Enrollment activation unavailable")
             db.execute(
@@ -111,6 +123,15 @@ def activate(
                     (hashlib.sha256(fields[2]).hexdigest(), ids[1], fields[2]),
                 ).fetchone() != (1,):
                     raise ValueError("Enrollment issuer unavailable")
+                if (
+                    claim is not None
+                    and db.execute(
+                        "SELECT 1 FROM agent_enrollments WHERE agent_id=?", (ids[2],)
+                    ).fetchone()
+                ):
+                    raise ValueError(
+                        "Agent is already enrolled; use owner-approved repair"
+                    )
                 db.execute(
                     "INSERT INTO agent_enrollments VALUES (?, ?)", (ids[2], ids[3])
                 )
@@ -126,6 +147,13 @@ def activate(
                 )
             if not set(approval.grants) <= accounts():
                 raise ValueError("An approved account is no longer configured")
+            if (
+                claim is not None
+                and existing is None
+                and portable_issuer(db, ad, datetime.now(timezone.utc))
+                != approval.portable_issuer
+            ):
+                raise ValueError("Portable issuer approval is no longer current")
             # Account evaluation can invalidate or outlive the original request.
             # Consume its authorization only after that work, under the live
             # caller's attempt/approval locks. No such lock spans SQLite I/O.

@@ -8,11 +8,57 @@ from pathlib import Path
 import sqlite3
 
 from cryptography import x509
+from cryptography.hazmat.primitives import serialization
 
 from . import authority as a
 from .credentials import Identity, Role, parse_certificate, verify_certificate
 from .enrollment_receipt import MAX_RESULT, result_fields
 from .generations import ACTIVE, _control, _database
+from .enrollment import Advertisement
+
+
+def portable_issuer(
+    db: sqlite3.Connection, advertisement: Advertisement, now: datetime
+) -> tuple[bytes, int]:
+    """Verify a claim against independently registered trust, not supplied trust."""
+    claim = advertisement.portable_identity
+    if claim is None:
+        raise ValueError("Portable identity is missing")
+    row = db.execute(
+        "SELECT substr(certificate_der,1,4097), revision FROM owner_issuers "
+        "WHERE issuer_sha256=? AND owner_id=? AND active=1",
+        (claim.issuer_sha256, claim.owner_id),
+    ).fetchone()
+    if row is None or hashlib.sha256(row[0]).hexdigest() != claim.issuer_sha256:
+        raise ValueError("Portable issuer is not active and registered")
+    issuer, revision = row
+    verify_certificate(issuer, Identity(Role.OWNER, claim.owner_id), now=now)
+    certificate = verify_certificate(
+        claim.certificate_der,
+        Identity(Role.PORTABLE, claim.agent_id),
+        issuer_der=issuer,
+        issuer_id=claim.owner_id,
+        now=now,
+    )
+    if (
+        certificate.public_key().public_bytes(
+            serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+        != advertisement.portable_spki
+    ):
+        raise ValueError("Portable key differs from the request")
+    return issuer, revision
+
+
+def approve_portable(root: Path, advertisement: Advertisement) -> tuple[bytes, int]:
+    active = _control(root / ACTIVE)
+    if active is None:
+        raise ValueError("No live enrollment authority")
+    path = _database(root, active["active"])
+    with closing(
+        sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=0)
+    ) as db:
+        return portable_issuer(db, advertisement, datetime.now(timezone.utc))
 
 
 def create_tables(db: sqlite3.Connection, record: a.AuthorityRecord) -> None:

@@ -114,6 +114,12 @@ func verifyPreparedPurpose(raw []byte, material *Provisional, server *PairingSer
 	if len(data) != 0 || !bytes.Equal(fields[0], server.AuthorityDER) || !bytes.Equal(fields[1], server.CertificateDER) || !bytes.Equal(fields[5], public.RecipientKey) {
 		return nil, errPairing
 	}
+	if material.record.Version == 2 && !bytes.Equal(material.record.Source, []byte("null")) {
+		selected, err := decodePortableSource(material.record.Source, material.portable, nil)
+		if err != nil || selected == nil || ids[1] != selected.OwnerID || ids[2] != selected.AgentID || !bytes.Equal(fields[2], selected.OwnerDER) || !bytes.Equal(fields[3], selected.Certificate) {
+			return nil, errPairing
+		}
+	}
 	var serverErr error
 	if receipt || source {
 		serverErr = verifyHistoricalServerCredential(fields[1], Identity{Role: ServerTLS, SubjectID: ids[0]}, &Issuer{DER: fields[0], ID: ids[0]}, now)

@@ -665,3 +665,130 @@ with running_instance(Path(d['root'])):
                 )
                 == raw
             )
+
+
+@pytest.mark.parametrize(
+    "failure", [None, "removed", "re-added", "rollback", "active", "denied", "inactive"]
+)
+def test_portable_atomic_activation(tmp_path, private_windows_test_parent, failure):
+    from arbiter_server.owner_issuers import control
+    from server.tests.unit.test_prepared import portable_approval
+
+    source, root, requests, approval, keys, now, old, _ = portable_approval(tmp_path)
+    raw = prepare(root, approval, int(now.timestamp()) + 300)
+    claim = approval.request.advertisement.portable_identity
+    assert claim is not None and approval.portable_issuer is not None
+    # Both valid results are prepared before either transaction owns the binding.
+    from uuid import uuid4
+    from arbiter_server.enrollment import ApprovedRequest
+
+    other_ad = replace(
+        approval.request.advertisement,
+        selector=base64.urlsafe_b64encode(os.urandom(16)).decode().rstrip("="),
+        digest=hashlib.sha256(os.urandom(32)).hexdigest(),
+    )
+    other = ApprovedRequest(
+        replace(approval.request, advertisement=other_ad, revision=uuid4().hex),
+        (),
+        approval.secret,
+        approval.portable_issuer,
+    )
+    competing = prepare(root, other, int(now.timestamp()) + 300)
+    if failure in {"removed", "re-added"}:
+        control(root, "remove", {"issuer_sha256": claim.issuer_sha256})
+        if failure == "re-added":
+            control(
+                root,
+                "register",
+                {
+                    "certificate_der": base64.b64encode(
+                        approval.portable_issuer[0]
+                    ).decode()
+                },
+            )
+
+    def check():
+        if failure == "rollback":
+            raise ValueError("synthetic live commit failure")
+
+    if failure in {"removed", "re-added", "rollback"}:
+        with pytest.raises(ValueError):
+            activate(root, approval, raw, set, check, now)
+        with sqlite3.connect(database(root)) as db:
+            assert db.execute("SELECT COUNT(*) FROM agent_enrollments").fetchone() == (
+                0,
+            )
+        return
+    assert activate(root, approval, raw, set, check, now) == raw
+    assert activate(root, approval, raw, set, check, now) == raw
+    if failure in {"active", "denied", "inactive"}:
+        with sqlite3.connect(database(root)) as db:
+            if failure == "denied":
+                db.execute("UPDATE enrollments SET denied=1")
+            if failure == "inactive":
+                db.execute("UPDATE enrollments SET inactive_after=0")
+            db.commit()
+        with pytest.raises(ValueError):
+            prepare(root, approval, int(now.timestamp()) + 300)
+        with pytest.raises(ValueError):
+            activate(root, other, competing, set, check, now)
+    else:
+        requests.reset()
+        exporter = os.urandom(32)
+        assert (
+            retrieve(
+                root,
+                request_for(raw, exporter, keys[0]),
+                exporter,
+                now + timedelta(minutes=10),
+            )
+            == raw
+        )
+    with sqlite3.connect(database(root)) as db:
+        assert db.execute("SELECT COUNT(*) FROM enrollments").fetchone() == (1,)
+        assert db.execute("SELECT COUNT(*) FROM agent_enrollments").fetchone() == (1,)
+
+
+@pytest.mark.parametrize("expired", [False, True])
+def test_portable_expiry_during_accounts_rolls_back(
+    tmp_path, private_windows_test_parent, monkeypatch, expired
+):
+    from cryptography import x509
+    import arbiter_server.enrollment_activation as activation
+    from server.tests.unit.test_prepared import portable_approval
+
+    _, root, _, approval, _, now, _, _ = portable_approval(tmp_path)
+    raw = prepare(root, approval, int(now.timestamp()) + 300)
+    claim = approval.request.advertisement.portable_identity
+    assert claim is not None
+    expiry = x509.load_der_x509_certificate(claim.certificate_der).not_valid_after_utc
+    evaluated = False
+
+    class Clock:
+        @staticmethod
+        def now(zone):
+            assert evaluated and zone is timezone.utc
+            return (expiry if expired else now) + timedelta(seconds=1)
+
+    def accounts():
+        nonlocal evaluated
+        evaluated = True
+        return set()
+
+    monkeypatch.setattr(activation, "datetime", Clock)
+    if expired:
+        with pytest.raises(ValueError):
+            activate(root, approval, raw, accounts, lambda: None, now)
+    else:
+        assert activate(root, approval, raw, accounts, lambda: None, now) == raw
+    assert evaluated
+    with sqlite3.connect(database(root)) as db:
+        assert db.execute("SELECT COUNT(*) FROM agent_enrollments").fetchone() == (
+            0 if expired else 1,
+        )
+        if expired:
+            assert not db.execute(
+                "SELECT name FROM sqlite_master WHERE name='enrollments'"
+            ).fetchall()
+        else:
+            assert db.execute("SELECT prepared FROM enrollments").fetchall() == [(raw,)]
