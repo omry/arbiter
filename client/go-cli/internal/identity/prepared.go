@@ -19,7 +19,7 @@ import (
 
 const preparedTag = "arbiter-enrollment-prepared-v1\x00"
 const readyTag = "arbiter-enrollment-ready-v1\x00"
-const maxPreparedPrivateBytes = MaxProvisionalBytes + 2*MaxPairingFrame
+const maxPreparedPrivateBytes = MaxPortableProvisionalBytes + 2*MaxPairingFrame
 
 type preparedPrivateRecord struct {
 	Warning     string          `json:"warning"`
@@ -67,6 +67,10 @@ func verifyHistoricalServerCredential(der []byte, expected Identity, issuer *Iss
 }
 
 func verifyPreparedResult(raw []byte, material *Provisional, server *PairingServer, now time.Time, receipt bool) (*PreparedEnrollment, error) {
+	return verifyPreparedPurpose(raw, material, server, now, receipt, false)
+}
+
+func verifyPreparedPurpose(raw []byte, material *Provisional, server *PairingServer, now time.Time, receipt, source bool) (*PreparedEnrollment, error) {
 	const fixed = len(preparedTag) + 144 + 22 + 32 + 32 + 8
 	if len(raw) < fixed || len(raw) > MaxPairingFrame-16 || !bytes.HasPrefix(raw, []byte(preparedTag)) || material == nil || server == nil {
 		return nil, errPairing
@@ -111,7 +115,7 @@ func verifyPreparedResult(raw []byte, material *Provisional, server *PairingServ
 		return nil, errPairing
 	}
 	var serverErr error
-	if receipt {
+	if receipt || source {
 		serverErr = verifyHistoricalServerCredential(fields[1], Identity{Role: ServerTLS, SubjectID: ids[0]}, &Issuer{DER: fields[0], ID: ids[0]}, now)
 	} else {
 		_, serverErr = VerifyCredential(fields[1], Identity{Role: ServerTLS, SubjectID: ids[0]}, &Issuer{DER: fields[0], ID: ids[0]}, now)
@@ -119,7 +123,15 @@ func verifyPreparedResult(raw []byte, material *Provisional, server *PairingServ
 	if serverErr != nil {
 		return nil, serverErr
 	}
-	if _, err := VerifyCredential(fields[2], Identity{Role: Owner, SubjectID: ids[1]}, nil, now); err != nil {
+	portableTime := now
+	if receipt && !source {
+		leaf, e := x509.ParseCertificate(fields[3])
+		if e != nil || now.Before(leaf.NotBefore) {
+			return nil, errPairing
+		}
+		portableTime = leaf.NotBefore
+	}
+	if _, err := VerifyCredential(fields[2], Identity{Role: Owner, SubjectID: ids[1]}, nil, portableTime); err != nil {
 		return nil, err
 	}
 	for _, item := range []struct {
@@ -131,7 +143,17 @@ func verifyPreparedResult(raw []byte, material *Provisional, server *PairingServ
 		{3, Identity{Role: Portable, SubjectID: ids[2]}, Issuer{DER: fields[2], ID: ids[1]}, &material.portable.PublicKey},
 		{4, Identity{Role: Access, SubjectID: ids[2], ServerID: ids[0], EnrollmentID: ids[3]}, Issuer{DER: fields[0], ID: ids[0]}, &material.access.PublicKey},
 	} {
-		cert, err := VerifyCredential(fields[item.index], item.identity, &item.issuer, now)
+		at := now
+		if item.index == 3 {
+			at = portableTime
+		} else if source {
+			leaf, e := x509.ParseCertificate(fields[item.index])
+			if e != nil || now.Before(leaf.NotBefore) {
+				return nil, errPairing
+			}
+			at = leaf.NotBefore
+		}
+		cert, err := VerifyCredential(fields[item.index], item.identity, &item.issuer, at)
 		if err != nil || !samePublicKey(cert.PublicKey, item.key) {
 			return nil, errPairing
 		}
@@ -229,61 +251,69 @@ func loadPrepared(directory, selector string, now time.Time, receipt bool) (*Pro
 }
 
 func loadPreparedLinked(directory, selector string, now time.Time, receipt bool, links uint32) (*Provisional, *PreparedEnrollment, error) {
-	root, dir, err := custodyRoot(directory, false)
+	material, raw, server, err := loadStoredEnrollment(directory, selector, links)
 	if err != nil {
 		return nil, nil, err
+	}
+	prepared, err := verifyPreparedResult(raw, material, server, now, receipt)
+	return material, prepared, err
+}
+
+func loadStoredEnrollment(directory, selector string, links uint32) (*Provisional, []byte, *PairingServer, error) {
+	root, dir, err := custodyRoot(directory, false)
+	if err != nil {
+		return nil, nil, nil, err
 	}
 	defer dir.Close()
 	final, _, err := custodyNames(root, selector)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	f, err := nativeOpenCustody(final, false, false)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	defer f.Close()
 	if err := checkBoundCustody(f, false, false, links); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	bundle, err := io.ReadAll(io.LimitReader(f, int64(maxPreparedPrivateBytes+1)))
 	if err != nil || len(bundle) > maxPreparedPrivateBytes || !utf8.Valid(bundle) {
-		return nil, nil, errCustody
+		return nil, nil, nil, errCustody
 	}
 	if err := checkBoundCustody(f, false, false, links); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	var record preparedPrivateRecord
 	if json.Unmarshal(bundle, &record) != nil || record.Warning != privateWarning || record.Version != 1 {
-		return nil, nil, errCustody
+		return nil, nil, nil, errCustody
 	}
 	// Only this writer's canonical representation is accepted. Duplicate,
 	// unknown, differently cased and trailing fields cannot survive readback.
 	canonical, err := json.Marshal(record)
 	if err != nil || !bytes.Equal(canonical, bundle) {
-		return nil, nil, errCustody
+		return nil, nil, nil, errCustody
 	}
 	material, err := DecodeProvisional(record.Provisional)
-	if err != nil || material.record.Selector != selector {
-		return nil, nil, errCustody
+	if err != nil || material.record.Selector != selector || material.record.Version == 1 && len(bundle) > MaxProvisionalBytes+2*MaxPairingFrame {
+		return nil, nil, nil, errCustody
 	}
 	raw := record.Result
 	const fixed = len(preparedTag) + 144 + 22 + 32 + 32 + 8
 	if len(raw) < fixed {
-		return nil, nil, errCustody
+		return nil, nil, nil, errCustody
 	}
 	fields := raw[fixed:]
 	authority, err := preparedField(&fields)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	leaf, err := preparedField(&fields)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	server := &PairingServer{ServerID: string(raw[len(preparedTag) : len(preparedTag)+36]), AuthorityDER: authority, CertificateDER: leaf}
-	prepared, err := verifyPreparedResult(raw, material, server, now, receipt)
-	return material, prepared, err
+	return material, raw, server, nil
 }
 
 // CleanupPrepared uses the same bounded cleanup/ownership contract as provisional
