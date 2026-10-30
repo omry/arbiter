@@ -129,6 +129,7 @@ def test_transaction_and_exact_idempotence(
                 commit()
             with closing(sqlite3.connect(path)) as db:
                 assert enrollment_table(db) is None
+                assert db.execute("SELECT * FROM agent_enrollments").fetchall() == []
         else:
             assert commit() == raw
             before = path.read_bytes()
@@ -138,6 +139,9 @@ def test_transaction_and_exact_idempotence(
             with closing(sqlite3.connect(path)) as db:
                 row = db.execute("SELECT * FROM enrollments").fetchall()
                 assert len(row) == 1 and bytes(row[0][1]) == raw
+                assert db.execute("SELECT * FROM agent_enrollments").fetchall() == [
+                    (ids[2], ids[3])
+                ]
                 assert row[0][3] == int(now.timestamp()) + 180 * 86400
                 assert json.loads(fields[8]) == [["imap", "personal"]]
                 db.execute("UPDATE enrollments SET denied=1")

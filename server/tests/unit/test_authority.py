@@ -54,7 +54,7 @@ def test_initialize_reopen_and_independent_roots(tmp_path: Path) -> None:
     )
     with closing(sqlite3.connect(dbpath(root))) as db:
         assert db.execute("PRAGMA integrity_check").fetchone() == ("ok",)
-        assert db.execute("PRAGMA user_version").fetchone() == (3,)
+        assert db.execute("PRAGMA user_version").fetchone() == (4,)
     if os.name != "nt":
         assert root.stat().st_mode & 0o777 == 0o700
         assert (dbpath(root)).stat().st_mode & 0o777 == 0o600
@@ -119,7 +119,7 @@ def test_cli_is_offline_and_reports_errors(tmp_path: Path, capsys, monkeypatch) 
     )
     output = json.loads(capsys.readouterr().out)
     assert output["initialized"] is True
-    assert output["schema_version"] == 3
+    assert output["schema_version"] == 4
     assert main([*args, "status", *state]) == 0
     assert json.loads(capsys.readouterr().out) == output
     assert (

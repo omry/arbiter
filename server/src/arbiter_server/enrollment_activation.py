@@ -4,6 +4,7 @@ from collections.abc import Callable
 from contextlib import closing
 from datetime import datetime
 import json
+import hashlib
 from pathlib import Path
 import sqlite3
 
@@ -99,7 +100,20 @@ def activate(
                     or existing[2] <= now.timestamp()
                 ):
                     raise ValueError("Enrollment activation unavailable")
+                if db.execute(
+                    "SELECT enrollment_id FROM agent_enrollments WHERE agent_id=?",
+                    (ids[2],),
+                ).fetchone() != (ids[3],):
+                    raise ValueError("Enrollment binding unavailable")
             else:
+                if db.execute(
+                    "SELECT active FROM owner_issuers WHERE issuer_sha256=? AND owner_id=? AND certificate_der=?",
+                    (hashlib.sha256(fields[2]).hexdigest(), ids[1], fields[2]),
+                ).fetchone() != (1,):
+                    raise ValueError("Enrollment issuer unavailable")
+                db.execute(
+                    "INSERT INTO agent_enrollments VALUES (?, ?)", (ids[2], ids[3])
+                )
                 db.execute(
                     "INSERT INTO enrollments VALUES (?, ?, 0, ?, ?, ?)",
                     (
