@@ -28,6 +28,10 @@ def prepare(root: Path, approval: ApprovedRequest, expires_at: int) -> bytes:
         raise ValueError("No live enrollment authority")
     path = _database(root, active["active"])
     record = _read_record(path)
+    ad = approval.request.advertisement
+    claim = ad.portable_identity
+    now = datetime.now(timezone.utc)
+    source_issuer = None
     with closing(
         sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=0)
     ) as db:
@@ -40,18 +44,40 @@ def prepare(root: Path, approval: ApprovedRequest, expires_at: int) -> bytes:
         recovery, origin = db.execute(
             "SELECT verifier, origin_verifier FROM recovery_trust WHERE singleton=1"
         ).fetchone()
-    now = datetime.now(timezone.utc)
+        if claim is not None:
+            from .owner_issuers import portable_issuer
+
+            source_issuer = portable_issuer(db, ad, now)
+            if (
+                source_issuer != approval.portable_issuer
+                or db.execute(
+                    "SELECT 1 FROM agent_enrollments WHERE agent_id=?",
+                    (claim.agent_id,),
+                ).fetchone()
+            ):
+                raise ValueError("Portable identity already enrolled or issuer changed")
     agent, enrollment = str(uuid4()), str(uuid4())
     certificates = []
-    ad = approval.request.advertisement
-    for role, identity, spki in (
-        (Role.OWNER, Identity(Role.PORTABLE, agent), ad.portable_spki),
+    owner_id, owner_der = record.owner_id, rows[Role.OWNER.value][0]
+    if claim is not None:
+        assert source_issuer is not None
+        owner_id, agent = claim.owner_id, claim.agent_id
+        owner_der = source_issuer[0]
+        certificates.append(claim.certificate_der)
+    if len({record.server_id, owner_id, agent, enrollment}) != 4:
+        raise ValueError("Enrollment identity collision")
+    issuance = [
         (
             Role.SERVER_AUTHORITY,
             Identity(Role.ACCESS, agent, record.server_id, enrollment),
             ad.access_spki,
         ),
-    ):
+    ]
+    if claim is None:
+        issuance.insert(
+            0, (Role.OWNER, Identity(Role.PORTABLE, agent), ad.portable_spki)
+        )
+    for role, identity, spki in issuance:
         certificate, private = rows[role.value]
         key = serialization.load_der_private_key(private, password=None)
         public = serialization.load_der_public_key(spki)
@@ -70,7 +96,7 @@ def prepare(root: Path, approval: ApprovedRequest, expires_at: int) -> bytes:
     # JSON arrays of strings, never an extensible object or executable content.
     result = (
         PREPARED_TAG
-        + (record.server_id + record.owner_id + agent + enrollment).encode("ascii")
+        + (record.server_id + owner_id + agent + enrollment).encode("ascii")
         + ad.selector.encode("ascii")
         + bytes.fromhex(ad.digest)
         + approval.request.revision.encode("ascii")
@@ -79,7 +105,7 @@ def prepare(root: Path, approval: ApprovedRequest, expires_at: int) -> bytes:
     for value in (
         rows[Role.SERVER_AUTHORITY.value][0],
         rows[Role.SERVER_TLS.value][0],
-        rows[Role.OWNER.value][0],
+        owner_der,
         *certificates,
         ad.recipient_spki,
         recovery,
