@@ -210,6 +210,17 @@ class AuthorityControl:
 
     def dispatch(self, value: dict[str, Any]) -> dict[str, Any]:
         action = value.get("action")
+        if action == "owner-issuer":
+            from .owner_issuers import control
+
+            if (
+                set(value) != {"root", "action", "command", "arguments"}
+                or value["root"] != str(self.root)
+                or not isinstance(value["command"], str)
+                or not isinstance(value["arguments"], dict)
+            ):
+                raise a.AuthorityError("invalid owner-issuer control request")
+            return control(self.root, value["command"], value["arguments"])
         if action == "enrollment":
             if (
                 set(value) != {"root", "action", "command", "arguments"}

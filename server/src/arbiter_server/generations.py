@@ -181,7 +181,7 @@ def reconcile(root: Path) -> Path | None:
                 raise a.AuthorityError("pending generation digest mismatch")
         # An already durable selector is authoritative. Its live DB can change
         # after activation; a stale intent must never roll those changes back.
-        a._read_record(database)
+        a._read_record(database, allow_previous=True)
         if source == staged:
             a._publish(staged, final)
         if active is None:
