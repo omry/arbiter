@@ -1,0 +1,1 @@
+Add internal portable-identity preparation and atomic activation with exact issuer-revision approval, unique target bindings and unchanged receipt recovery. Public enrollment remains on the fresh flow pending the final client/server cutover.
