@@ -336,3 +336,218 @@ def test_fresh_python_go_enrollment_cli(
                 assert row[0] == 1 and bytes(row[1]) == saved_result[-1]
                 assert db.execute("SELECT COUNT(*) FROM enrollments").fetchone() == (1,)
             assert not requests.pending() and not responder._attempts
+
+
+@pytest.mark.parametrize("mode", ["ok", "lost-reply", "changed-portable"])
+def test_portable_python_go_enrollment(
+    tmp_path, private_windows_test_parent, mode, monkeypatch
+):
+    from contextlib import ExitStack, closing
+    from functools import partial
+    import sqlite3
+    from arbiter_server.owner_issuers import control
+    from arbiter_server.enrollment_receipt import result_fields
+    from server.tests.unit.test_enrollment_activation import database
+
+    if shutil.which("go") is None:
+        pytest.skip("go is not installed")
+    apps, roots = [], []
+    for name in ("a", "b"):
+        base = tmp_path / name
+        base.mkdir(mode=0o700)
+        root = base / "server" / "authority"
+        initialize_authority(
+            root,
+            recovery_file=tmp_path / "operator.json",
+            reuse_recovery_file=name == "b",
+        )
+        apps.append(cast(Starlette, _client(base)._app))
+        roots.append(root)
+    # Exercise the internal v2 prefix deliberately. The product public parser
+    # remains v1 until the next cut; all other carrier/approval code is real.
+    requests = apps[1].state.enrollment_requests
+    monkeypatch.setattr(requests, "register", partial(requests.register, version=2))
+    saved = []
+    original_prepare = apps[1].state.pairing_responder.prepare
+
+    async def prepare(session, root):
+        raw = await original_prepare(session, root)
+        saved.append(raw)
+        if mode == "changed-portable":
+            from cryptography.hazmat.primitives import serialization
+            from cryptography.hazmat.primitives.asymmetric import ec
+            from arbiter_server.credentials import (
+                Identity,
+                Role,
+                SigningCredential,
+                issue_certificate,
+            )
+
+            ids, fields = result_fields(raw)
+            with closing(sqlite3.connect(database(roots[0]))) as db:
+                der, key = db.execute(
+                    "SELECT certificate_der, private_key_der FROM credentials WHERE role='owner'"
+                ).fetchone()
+            private = serialization.load_der_private_key(key, None)
+            public = serialization.load_der_public_key(
+                session.approval.request.advertisement.portable_spki
+            )
+            assert isinstance(private, ec.EllipticCurvePrivateKey)
+            assert isinstance(public, ec.EllipticCurvePublicKey)
+            issuer = SigningCredential(Identity(Role.OWNER, ids[1]), der, private)
+            fields[3] = issue_certificate(
+                Identity(Role.PORTABLE, ids[2]),
+                public,
+                issuer,
+            )
+            assert fields[3] != result_fields(raw)[1][3]
+            fixed = len(PREPARED_TAG) + 144 + 22 + 32 + 32 + 8
+            raw = raw[:fixed] + b"".join(len(f).to_bytes(2, "big") + f for f in fields)
+        return raw
+
+    monkeypatch.setattr(apps[1].state.pairing_responder, "prepare", prepare)
+    original = apps[1].state.pairing_responder.activate
+
+    async def activate(*args):
+        raw = await original(*args)
+        if mode == "lost-reply":
+            raise ValueError("synthetic dropped committed reply")
+        return raw
+
+    monkeypatch.setattr(apps[1].state.pairing_responder, "activate", activate)
+    cert, key = tmp_path / "outer.crt", tmp_path / "outer.key"
+    _generate_self_signed_tls_certificate(
+        cert_path=cert, key_path=key, names=("127.0.0.1",)
+    )
+
+    def serve(stack, app, **kwargs):
+        return stack.enter_context(
+            live_server(
+                app,
+                ws=app.state.native_websocket_protocol,
+                http=app.state.native_http_protocol,
+                ssl_certfile=str(cert),
+                ssl_keyfile=str(key),
+                **kwargs,
+            )
+        )
+
+    with (
+        ExitStack() as a_stack,
+        ExitStack() as b_stack,
+        socket.socket() as reserved,
+        socket.socket() as listener,
+    ):
+        reserved.bind(("127.0.0.1", 0))
+        ports = [serve(a_stack, apps[0]), reserved.getsockname()[1]]
+        apps[0].state.enrollment_requests.open_window()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        listener.settimeout(30)
+
+        def operator():
+            connection, _ = listener.accept()
+            with connection, connection.makefile("rwb") as stream:
+                connection.settimeout(30)
+
+                def send(value):
+                    stream.write(json.dumps(value).encode() + b"\n")
+                    stream.flush()
+
+                send(
+                    dict(
+                        A=f"https://127.0.0.1:{ports[0]}",
+                        B=f"https://127.0.0.1:{ports[1]}",
+                        Mode=mode,
+                    )
+                )
+                for phase in (0, 1):
+                    handoff = json.loads(stream.readline(2049))
+                    assert handoff["phase"] == phase
+                    requests = apps[phase].state.enrollment_requests
+                    pending = next(
+                        r
+                        for r in requests.pending()
+                        if r.advertisement.selector == handoff["selector"]
+                    )
+                    requests.control(
+                        "approve",
+                        dict(
+                            selector=pending.advertisement.selector,
+                            revision=pending.revision,
+                            request_digest=pending.advertisement.digest,
+                            psk=handoff["secret"],
+                            grants=[],
+                        ),
+                        set(),
+                        root=roots[phase],
+                    )
+                    send(True)
+                    signal = json.loads(stream.readline(65))
+                    if phase == 0:
+                        assert signal == "source-ready"
+                        with closing(sqlite3.connect(database(roots[0]))) as db:
+                            source = db.execute(
+                                "SELECT prepared FROM enrollments"
+                            ).fetchone()[0]
+                        _, fields = result_fields(source)
+                        # Sequence lifetimes: shared harness logger patches must
+                        # unwind in order. B starts only after A is fully offline.
+                        a_stack.close()
+                        reserved.close()
+                        assert serve(b_stack, apps[1], bind_port=ports[1]) == ports[1]
+                        apps[1].state.enrollment_requests.open_window()
+                        control(
+                            roots[1],
+                            "register",
+                            dict(certificate_der=base64.b64encode(fields[2]).decode()),
+                        )
+                    else:
+                        if mode == "changed-portable":
+                            assert signal == "rejected"
+                            send(True)
+                            return
+                        assert signal == "prepared"
+                        b_stack.close()
+                        restarted = cast(Starlette, _client(tmp_path / "b")._app)
+                        assert serve(b_stack, restarted, bind_port=ports[1]) == ports[1]
+                        assert restarted.state.enrollment_requests.pending() == ()
+                    send(True)
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            task = pool.submit(operator)
+            result = subprocess.run(
+                [
+                    "go",
+                    "test",
+                    "-count=1",
+                    "-run",
+                    "^TestPythonPortableEnrollmentPeer$",
+                    "-v",
+                    "./internal/identity",
+                ],
+                cwd=Path(__file__).parents[3] / "client" / "go-cli",
+                env={
+                    **os.environ,
+                    "ARBITER_TEST_PORTABLE_ENROLLMENT_CONTROL": f"127.0.0.1:{listener.getsockname()[1]}",
+                },
+                capture_output=True,
+                text=True,
+                timeout=90,
+            )
+            assert result.returncode == 0, result.stdout + result.stderr
+            task.result(timeout=5)
+            assert "ARBITER_PORTABLE_ENROLLMENT=pass" in result.stdout
+        assert len(saved) == 1
+        with closing(sqlite3.connect(database(roots[1]))) as db:
+            if mode == "changed-portable":
+                assert db.execute(
+                    "SELECT COUNT(*) FROM agent_enrollments"
+                ).fetchone() == (0,)
+                return
+            assert db.execute("SELECT prepared FROM enrollments").fetchall() == [
+                (saved[0],)
+            ]
+            assert db.execute("SELECT COUNT(*) FROM agent_enrollments").fetchone() == (
+                1,
+            )
