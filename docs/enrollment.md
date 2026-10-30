@@ -47,3 +47,10 @@ time without contacting the source server or requiring its access certificate
 to remain valid. Saved receipt recovery checks portable evidence at issuance;
 this does not permit an expired portable identity to start another enrollment.
 The public CLI continues to create fresh identities at this intermediate cut.
+
+The internal portable enrollment path now keeps a locally selected agent identity
+through target preparation and atomic activation. Target approval binds the exact
+registered issuer revision; removal and re-registration require a new approval.
+Existing target bindings, including denied or inactive enrollments, require
+owner-approved repair. Public registration and CLI source selection remain on the
+fresh enrollment path until the final portable-enrollment cutover.

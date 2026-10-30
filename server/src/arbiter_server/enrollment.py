@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 import hashlib
 import hmac
 import json
+from pathlib import Path
 import re
 import threading
 import time
@@ -214,6 +215,7 @@ class ApprovedRequest:
     request: PendingRequest
     grants: tuple[tuple[str, str], ...]
     secret: bytes = field(repr=False)
+    portable_issuer: tuple[bytes, int] | None = None
 
 
 class EnrollmentRequests:
@@ -333,7 +335,7 @@ class EnrollmentRequests:
     def _summary(self, request: PendingRequest, now: float) -> dict[str, object]:
         advertisement = request.advertisement
         approved = self._approved.get(advertisement.selector)
-        return {
+        result: dict[str, object] = {
             "selector": advertisement.selector,
             "name": advertisement.name,
             "revision": request.revision,
@@ -350,12 +352,24 @@ class EnrollmentRequests:
             "remaining_seconds": max(0, int(request.deadline - now)),
             "grant_count": len(approved.grants) if approved else 0,
         }
+        if advertisement.portable_identity is not None:
+            claim = advertisement.portable_identity
+            result["portable_identity"] = {
+                "owner_id": claim.owner_id,
+                "agent_id": claim.agent_id,
+                "issuer_sha256": claim.issuer_sha256,
+                "certificate_validated": approved is not None,
+                "possession_proved": False,
+            }
+        return result
 
     def control(
         self,
         command: str,
         arguments: dict[str, object],
         accounts: set[tuple[str, str]],
+        *,
+        root: Path | None = None,
     ) -> dict[str, object]:
         """Called only through the OS-authenticated local control dispatcher."""
         if command == "open":
@@ -449,12 +463,28 @@ class EnrollmentRequests:
         selector = arguments["selector"]
         if not isinstance(selector, str):
             raise ValueError("Invalid enrollment selector.")
+        issuer = None
+        selected = None
+        if command == "approve":
+            with self._lock:
+                selected = self._requests.get(selector)
+            if selected is not None and selected.advertisement.portable_identity:
+                from .owner_issuers import approve_portable
+
+                if root is None:
+                    raise ValueError(
+                        "Portable enrollment requires target issuer validation"
+                    )
+                # No request lock spans bounded database or certificate work.
+                issuer = approve_portable(root, selected.advertisement)
         with self._lock:
             now = self._clock()
             self._prune(now)
             request = self._requests.get(selector)
             if request is None:
                 raise ValueError("Enrollment request is missing or expired.")
+            if command == "approve" and request is not selected:
+                raise ValueError("Enrollment selection changed; list requests again.")
             if (
                 request.revision != arguments["revision"]
                 or request.advertisement.digest != arguments["request_digest"]
@@ -471,12 +501,16 @@ class EnrollmentRequests:
                 return {"initialized": True, "rejected": selector}
             existing = self._approved.get(selector)
             if existing is not None:
-                if existing.grants != grants or not hmac.compare_digest(
-                    existing.secret, secret
+                if (
+                    existing.portable_issuer != issuer
+                    or existing.grants != grants
+                    or not hmac.compare_digest(existing.secret, secret)
                 ):
                     raise ValueError("Enrollment approval is immutable; reject first.")
             else:
-                self._approved[selector] = ApprovedRequest(request, grants, secret)
+                self._approved[selector] = ApprovedRequest(
+                    request, grants, secret, issuer
+                )
             return {"initialized": True, "request": self._summary(request, now)}
 
     def open_window(self) -> None:
@@ -502,9 +536,13 @@ class EnrollmentRequests:
             self._prune(self._clock())
             return tuple(self._requests.values())
 
-    def register(self, raw: bytes | bytearray) -> PendingRequest:
+    def register(self, raw: bytes | bytearray, *, version: int = 1) -> PendingRequest:
         epoch, window_deadline = self.require_open()
-        advertisement = decode_advertisement(raw)
+        advertisement = (
+            decode_advertisement(raw)
+            if version == 1
+            else decode_advertisement(raw, version=version)
+        )
         with self._lock:
             if advertisement.selector in self._committing:
                 raise _invalid()
