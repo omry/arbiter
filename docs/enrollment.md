@@ -3,7 +3,8 @@
 Fresh client enrollment uses the existing `arbiter enrol` command and local
 operator approval. Registering an owner issuer establishes public trust only;
 it does not enroll a client or grant account access. Selecting an existing
-portable identity for another server remains unavailable in this revision.
+portable identity for another server requires the target's separate issuer trust
+and enrollment approval.
 
 Use `arbiter-server authority owner-issuer` through the same authenticated local
 OS account as server administration. Commands work while the instance is stopped
@@ -46,11 +47,39 @@ The portable identity codec groundwork validates a source only from complete
 time without contacting the source server or requiring its access certificate
 to remain valid. Saved receipt recovery checks portable evidence at issuance;
 this does not permit an expired portable identity to start another enrollment.
-The public CLI continues to create fresh identities at this intermediate cut.
+The CLI creates fresh portable material unless an enrolled source is selected.
 
 The internal portable enrollment path now keeps a locally selected agent identity
 through target preparation and atomic activation. Target approval binds the exact
 registered issuer revision; removal and re-registration require a new approval.
 Existing target bindings, including denied or inactive enrollments, require
-owner-approved repair. Public registration and CLI source selection remain on the
-fresh enrollment path until the final portable-enrollment cutover.
+owner-approved repair.
+
+To enroll a saved portable identity on another server, use the same local config
+directory and select its enrolled record:
+
+```sh
+arbiter --config-dir STATE enrol url=https://SERVER-B name=NAME identity=SELECTOR
+```
+
+The source must be a complete record under `STATE/enrolled/`. Its portable
+certificate must still be valid and its private key must match. Source validation
+runs under the enrollment lock before cleanup or registration. Missing or invalid
+sources leave saved state intact. The source server can be offline. B receives
+fresh access and recipient keys and a separate enrollment ID; the portable key,
+certificate and agent ID stay the same. The server-local enrollment IDs may differ.
+
+Before approving on B, register the exact public owner issuer from A using the
+commands above. Then open B's enrollment window and use the existing local
+enrollment list/approve commands and deliberate terminal secret handoff. Issuer
+registration alone grants no access. A denial on B cannot be bypassed by selecting
+the identity again, and A's access certificate does not authenticate to B.
+
+Do not combine `identity=...` with `resume=...`. After a lost reply or failed local
+promotion, keep saved state and run `arbiter enrol resume=TARGET_SELECTOR` using
+the same config directory. This retrieves the exact committed target result; it
+does not start another enrollment. Existing committed v1 records remain recoverable.
+
+New public enrollment requires v2 on both client and server. Update older clients
+instead of deleting identities or retrying the old wire format. Ordinary
+authenticated API access remains future milestone 3 work.

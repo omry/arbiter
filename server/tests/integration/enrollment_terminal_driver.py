@@ -89,6 +89,8 @@ def run():
         "url=" + config["url"],
         "name=Installed CLI",
     ]
+    if config.get("identity"):
+        command.append("identity=" + config["identity"])
     process: subprocess.Popen[bytes] | None = None
     try:
         process = subprocess.Popen(
