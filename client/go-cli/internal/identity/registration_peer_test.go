@@ -32,7 +32,10 @@ func TestPythonRegistrationPeer(t *testing.T) {
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	defer client.CloseIdleConnections()
 	root := filepath.Join(custodyTestDir(t), "state")
-	err = RunProvisional(context.Background(), root, "https://localhost", "Agent Smith",
+	if err := os.Mkdir(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	err = RunEnrollment(context.Background(), root, "https://localhost", "Agent Smith", "",
 		func(ctx context.Context, p *Provisional, _ PairingSecret) error {
 			advertisement, err := p.Public()
 			if err != nil {
@@ -71,7 +74,7 @@ func TestPythonRegistrationPeer(t *testing.T) {
 	if err != nil {
 		t.Fatal("Go registration peer failed", err)
 	}
-	assertOnlyProvisionalLock(t, root)
+	assertOnlyProvisionalLock(t, filepath.Join(root, "provisional"))
 }
 
 // Real A/B servers supply the production HTTP/Noise/TLS exchange. Only local
@@ -99,7 +102,7 @@ func TestPythonPortableEnrollmentPeer(t *testing.T) {
 	ctx := context.Background()
 	root := filepath.Join(custodyTestDir(t), "state")
 	err = WithEnrollmentOwner(ctx, root, func() error {
-		original, secret, e := NewProvisional(config.A, "source", time.Now())
+		original, secret, e := NewProvisionalFromIdentity(config.A, "source", time.Now(), nil)
 		if e != nil {
 			return e
 		}

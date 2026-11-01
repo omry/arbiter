@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing, contextmanager
 import json
 from pathlib import Path
+import os
 import select
 import socket
 import socketserver
@@ -20,6 +21,9 @@ import pytest
 from starlette.applications import Starlette
 
 from arbiter_server.authority import initialize_authority
+from arbiter_server.enrollment_receipt import result_fields
+from arbiter_server.local_control import enrollment_request
+from arbiter_server.owner_issuers import control as issuer_control
 from arbiter_server.main import _generate_self_signed_tls_certificate
 from server.tests.integration.test_cli_entrypoint import (
     ClientCommand,
@@ -72,7 +76,7 @@ def fragmented_passthrough(port):
             assert not thread.is_alive()
 
 
-@pytest.mark.parametrize("mode", ["ok", "lost-reply", "promotion-failure"])
+@pytest.mark.parametrize("mode", ["ok", "lost-reply", "promotion-failure", "reuse"])
 def test_installed_enrollment_and_resume(
     tmp_path,
     private_windows_test_parent,
@@ -80,8 +84,38 @@ def test_installed_enrollment_and_resume(
     monkeypatch,
     mode,
 ):
+    source = None
+    if mode == "reuse":
+        source_root = tmp_path / "source"
+        source_root.mkdir(mode=0o777 if os.name == "nt" else 0o700)
+        source = installed_journey(
+            source_root, packaged_arbiter_client_command, monkeypatch, "ok"
+        )
+        # The first journey has closed A and its proxy before B is started.
+        with pytest.raises(OSError):
+            socket.create_connection(("127.0.0.1", source["port"]), timeout=0.5)
+        tmp_path = tmp_path / "target"
+        tmp_path.mkdir(mode=0o777 if os.name == "nt" else 0o700)
+        mode = "lost-reply"
+    installed_journey(
+        tmp_path, packaged_arbiter_client_command, monkeypatch, mode, source
+    )
+
+
+def installed_journey(tmp_path, command, monkeypatch, mode, source=None):
     root = tmp_path / "server" / "authority"
-    initialize_authority(root, recovery_file=tmp_path / "operator.json")
+    initialize_authority(
+        root,
+        recovery_file=(source["base"] if source else tmp_path) / "operator.json",
+        reuse_recovery_file=source is not None,
+    )
+    if source:
+        _, fields = result_fields(
+            base64.b64decode(source["saved"]["result"], validate=True)
+        )
+        issuer_control(
+            root, "register", dict(certificate_der=base64.b64encode(fields[2]).decode())
+        )
     app = cast(Starlette, _client(tmp_path)._app)
     responder, requests = app.state.pairing_responder, app.state.enrollment_requests
     original_activate = responder.activate
@@ -101,8 +135,9 @@ def test_installed_enrollment_and_resume(
         key_path=key,
         names=("127.0.0.1",),
     )
-    directory = tmp_path / "installed-custody"
-    directory.mkdir(mode=0o700)
+    directory = source["directory"] if source else tmp_path / "installed-custody"
+    if not source:
+        directory.mkdir(mode=0o700)
     marker = directory / "enrolled"
     if mode == "promotion-failure":
         marker.write_text("preserve unrelated existing file")
@@ -132,7 +167,8 @@ def test_installed_enrollment_and_resume(
                         for p in requests.pending()
                         if p.advertisement.selector == handoff["selector"]
                     )
-                    requests.control(
+                    enrollment_request(
+                        root,
                         "approve",
                         dict(
                             selector=pending.advertisement.selector,
@@ -141,17 +177,17 @@ def test_installed_enrollment_and_resume(
                             psk=handoff["secret"],
                             grants=[],
                         ),
-                        set(),
                     )
                     stream.write(b"true\n")
                     stream.flush()
 
             config = dict(
-                command=str(packaged_arbiter_client_command.command),
+                command=str(command.command),
                 directory=str(directory),
                 url=f"https://127.0.0.1:{proxy_port}",
                 control=listener.getsockname()[1],
                 recover=mode == "promotion-failure",
+                identity=source["selector"] if source else "",
             )
             with ThreadPoolExecutor(max_workers=1) as pool:
                 owner = pool.submit(approve)
@@ -202,14 +238,36 @@ def test_installed_enrollment_and_resume(
             assert "Enrollment activated and saved" in resumed.stdout
         enrolled = directory / "enrolled" / (selector + ".json")
         assert enrolled.read_bytes() == before
-        assert list((directory / "enrolled").glob("*.json")) == [enrolled]
+        expected = [enrolled]
+        if source:
+            expected.append(directory / "enrolled" / (source["selector"] + ".json"))
+        assert set((directory / "enrolled").glob("*.json")) == set(expected)
         assert not list((directory / "prepared").glob("*.json"))
         saved = json.loads(before)
+        assert saved["provisional"]["version"] == 2
         assert set(saved["provisional"]) >= {
             "access_key_pkcs8",
             "portable_key_pkcs8",
             "recipient_key_pkcs8",
         }
+        if source:
+            original = directory / "enrolled" / (source["selector"] + ".json")
+            assert original.read_bytes() == source["raw"]
+            for key in ("access_key_pkcs8", "recipient_key_pkcs8"):
+                assert saved["provisional"][key] != source["saved"]["provisional"][key]
+            assert (
+                saved["provisional"]["portable_key_pkcs8"]
+                == source["saved"]["provisional"]["portable_key_pkcs8"]
+            )
+            a_ids, a_fields = result_fields(
+                base64.b64decode(source["saved"]["result"], validate=True)
+            )
+            b_ids, b_fields = result_fields(
+                base64.b64decode(saved["result"], validate=True)
+            )
+            assert a_ids[1:3] == b_ids[1:3]  # Owner and portable agent identity.
+            assert a_ids[0] != b_ids[0] and a_ids[3] != b_ids[3]
+            assert a_fields[2:4] == b_fields[2:4]
         with closing(sqlite3.connect(database(root))) as db:
             rows = db.execute("SELECT prepared FROM enrollments").fetchall()
             assert len(rows) == 1
@@ -223,3 +281,11 @@ def test_installed_enrollment_and_resume(
             timeout=5,
         ) as health:
             assert health.status == 200 and json.load(health) == {"status": "ok"}
+    return dict(
+        directory=directory,
+        selector=selector,
+        saved=saved,
+        raw=before,
+        base=tmp_path,
+        port=proxy_port,
+    )

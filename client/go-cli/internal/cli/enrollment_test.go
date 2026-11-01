@@ -206,6 +206,27 @@ func TestEnrollmentRequiresTerminalAndRejectsSecretArguments(t *testing.T) {
 	}
 }
 
+func TestEnrollmentIdentityArgumentsAreExclusive(t *testing.T) {
+	previous := openEnrollmentTerminal
+	defer func() { openEnrollmentTerminal = previous }()
+	openEnrollmentTerminal = func() (*os.File, *os.File, error) {
+		t.Fatal("invalid arguments reached terminal")
+		return nil, nil, nil
+	}
+	for _, args := range [][]string{
+		{"identity=private-input", "resume=private-input"},
+		{"url=https://localhost", "name=target", "identity=private-input", "resume=private-input"},
+		{"url=https://localhost", "name=target", "identity="},
+		{"url=https://localhost", "name=target", "identity=a", "identity=b"},
+	} {
+		var out, diagnostics bytes.Buffer
+		code := Main(append([]string{"enrol"}, args...), &out, &diagnostics, func(string) (string, bool) { return "", false }, func() (string, error) { t.Fatal("invalid arguments read config"); return "", nil })
+		if code != 2 || strings.Contains(out.String()+diagnostics.String(), "private-input") {
+			t.Fatal("unsafe argument handling", code)
+		}
+	}
+}
+
 func TestEnrollmentInvalidCustodyDoesNotAdvertise(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {

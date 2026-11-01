@@ -13,6 +13,7 @@ import (
 var ErrProvisionalBusy = errors.New("another enrollment owns this provisional directory")
 var ErrProvisionalCleanupIncomplete = errors.New("provisional cleanup batch completed; retry cleanup before enrollment")
 var ErrProvisionalUnexpectedContents = errors.New("provisional cleanup made no progress; move unrelated files out of the provisional directory before retrying")
+var ErrEnrollmentSource = errors.New("identity must select a valid saved enrolled identity from a different server; keep saved state and choose another source or target")
 
 const provisionalLockName = ".enrollment.lock"
 const provisionalCleanupBatch = 64
@@ -153,7 +154,9 @@ func CleanupProvisional(ctx context.Context, directory string) (result error) {
 	return cleanupProvisional(ctx, root)
 }
 
-// RunProvisional saves fresh keys before exposing anything to exchange. It
+// RunProvisional retains the v1 custody/receipt fixture entry point. The product
+// enrollment command uses RunEnrollment for fresh and reused v2 registrations.
+// It saves fresh keys before exposing anything to exchange. It
 // cleans abandoned files first and removes this request when exchange returns.
 // Exchange must observe cancellation; ownership remains until it actually ends.
 // Any prepared/activated state must be persisted separately before returning.
@@ -166,6 +169,21 @@ func RunProvisional(ctx context.Context, directory, serverURL, name string,
 func runProvisional(ctx context.Context, directory, serverURL, name string, lifetime time.Duration,
 	exchange func(context.Context, *Provisional, PairingSecret) error,
 ) (result error) {
+	return runProvisionalSource(ctx, directory, serverURL, name, lifetime, nil, exchange)
+}
+
+// RunEnrollment uses the same owner for source validation, cleanup and the
+// entire exchange. An empty selector generates fresh v2 portable material.
+func RunEnrollment(ctx context.Context, stateRoot, serverURL, name, sourceSelector string,
+	exchange func(context.Context, *Provisional, PairingSecret) error,
+) error {
+	return runProvisionalSource(ctx, filepath.Join(stateRoot, "provisional"), serverURL, name,
+		10*time.Minute, &sourceSelector, exchange)
+}
+
+func runProvisionalSource(ctx context.Context, directory, serverURL, name string, lifetime time.Duration,
+	sourceSelector *string, exchange func(context.Context, *Provisional, PairingSecret) error,
+) (result error) {
 	if exchange == nil {
 		return errCustody
 	}
@@ -174,11 +192,29 @@ func runProvisional(ctx context.Context, directory, serverURL, name string, life
 		return err
 	}
 	defer func() { result = errors.Join(result, lock.Close()) }()
+	var source *PortableIdentity
+	if sourceSelector != nil && *sourceSelector != "" {
+		source, err = LoadPortableIdentity(filepath.Dir(root), *sourceSelector, time.Now().UTC())
+		if err != nil {
+			return ErrEnrollmentSource
+		}
+		sourceEndpoint, sourceEndpointErr := enrollmentURL(source.serverURL, "/api/v1/enrollment/requests")
+		targetEndpoint, targetEndpointErr := enrollmentURL(serverURL, "/api/v1/enrollment/requests")
+		if sourceEndpointErr == nil && targetEndpointErr == nil && sourceEndpoint.String() == targetEndpoint.String() {
+			return ErrEnrollmentSource
+		}
+	}
 	if err := cleanupProvisional(ctx, root); err != nil {
 		return err
 	}
 	now := time.Now().UTC()
-	p, secret, err := NewProvisional(serverURL, name, now)
+	var p *Provisional
+	var secret PairingSecret
+	if sourceSelector == nil {
+		p, secret, err = NewProvisional(serverURL, name, now)
+	} else {
+		p, secret, err = NewProvisionalFromIdentity(serverURL, name, now, source)
+	}
 	if err != nil {
 		return err
 	}

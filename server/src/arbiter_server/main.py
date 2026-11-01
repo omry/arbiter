@@ -2317,7 +2317,12 @@ def _create_native_http_app(
     def enrollment_control(
         command: str, arguments: dict[str, object]
     ) -> dict[str, object]:
-        return enrollment_requests.control(command, arguments, enrollment_accounts())
+        return enrollment_requests.control(
+            command,
+            arguments,
+            enrollment_accounts(),
+            root=_server_data_root(_storage_config(cfg)) / "authority",
+        )
 
     @asynccontextmanager
     async def lifespan(_app: object) -> AsyncGenerator[None, None]:
@@ -2358,7 +2363,18 @@ def _create_native_http_app(
                     REGISTRATION_TIMEOUT,
                 )
             )
-            pending = enrollment_requests.register(body)
+            try:
+                pending = enrollment_requests.register(body, version=2)
+            except OperationError as exc:
+                if exc.code != "validation_error":
+                    raise
+                raise OperationError(
+                    "validation_error",
+                    "Invalid enrollment format. Update the client for v2 enrollment; "
+                    "keep saved identities and use resume for a previously committed enrollment.",
+                    transient="no",
+                    replay="safe",
+                ) from exc
             return _native_response(
                 {
                     "selector": pending.advertisement.selector,
