@@ -281,7 +281,9 @@ def test_open_http_bounds_and_failure_capacity_recovery(tmp_path):
                 extra_headers=[(b"content-length", b"1")],
             )
             assert response.status_code == status
-        raw = json.dumps(advertisement()).encode()
+        raw = json.dumps(
+            dict(advertisement(), version=2, portable_identity=None)
+        ).encode()
         response = await _asgi_request(
             app, "POST", ROUTE, body_chunks=[raw[:10], raw[10:]]
         )
@@ -289,6 +291,22 @@ def test_open_http_bounds_and_failure_capacity_recovery(tmp_path):
         assert set(response.json()) == {"selector", "request_digest", "status"}
         assert len(requests.pending()) == 1
         await available(app)
+
+    asyncio.run(exercise())
+
+
+def test_public_registration_rejects_old_wire_without_allocating(tmp_path):
+    app, requests = registration_app(tmp_path)
+    requests.open_window()
+
+    async def exercise():
+        response = await _asgi_request(
+            app, "POST", ROUTE, body_chunks=[json.dumps(advertisement()).encode()]
+        )
+        assert response.status_code == 422
+        message = response.json()["error"]["message"]
+        assert "Update the client" in message and "keep saved identities" in message
+        assert requests.pending() == ()
 
     asyncio.run(exercise())
 
