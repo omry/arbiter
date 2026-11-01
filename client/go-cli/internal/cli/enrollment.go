@@ -18,14 +18,15 @@ func runEnrol(args []string, options globalOptions, stdout, stderr io.Writer,
 	lookupEnv EnvLookup, homeDir HomeDirFunc,
 ) int {
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
-		fmt.Fprintln(stdout, "usage: arbiter enrol url=https://HOST name=NAME | arbiter enrol resume=SELECTOR")
+		fmt.Fprintln(stdout, "usage: arbiter enrol url=https://HOST name=NAME [identity=ENROLLED_SELECTOR] | arbiter enrol resume=SELECTOR")
+		fmt.Fprintln(stdout, "identity reuses a saved portable identity on a different server, which must independently trust its issuer and approve enrollment. Do not combine identity with resume.")
 		fmt.Fprintln(stdout, "New enrollment requires an interactive terminal. Resume uses saved keys and remembered server trust, without a pairing secret.")
 		return 0
 	}
 	values := map[string]string{}
 	for _, arg := range args {
 		key, value, ok := strings.Cut(arg, "=")
-		if !ok || (key != "url" && key != "name" && key != "resume") || value == "" || values[key] != "" {
+		if !ok || (key != "url" && key != "name" && key != "resume" && key != "identity") || value == "" || values[key] != "" {
 			printClientError(stderr, safeClientError("expected: arbiter enrol url=https://HOST name=NAME"), "usage")
 			return 2
 		}
@@ -39,8 +40,8 @@ func runEnrol(args []string, options globalOptions, stdout, stderr io.Writer,
 			return 2
 		}
 	}
-	if !resume && (len(values) != 2 || values["url"] == "" || values["name"] == "") {
-		printClientError(stderr, safeClientError("expected: arbiter enrol url=https://HOST name=NAME"), "usage")
+	if !resume && (values["resume"] != "" || values["url"] == "" || values["name"] == "" || len(values) != 2 && (len(values) != 3 || values["identity"] == "")) {
+		printClientError(stderr, safeClientError("expected: arbiter enrol url=https://HOST name=NAME [identity=ENROLLED_SELECTOR]; identity cannot combine with resume"), "usage")
 		return 2
 	}
 	config, err := ResolveClientConfig(options.Overrides, lookupEnv, homeDir, options)
@@ -102,9 +103,9 @@ func runEnrol(args []string, options globalOptions, stdout, stderr io.Writer,
 		printClientError(stderr, err, "enrollment")
 		return 1
 	}
-	err = identity.RunProvisional(ctx, filepath.Join(filepath.Dir(configPath), "provisional"), values["url"], values["name"],
+	err = identity.RunEnrollment(ctx, filepath.Dir(configPath), values["url"], values["name"], values["identity"],
 		func(ctx context.Context, p *identity.Provisional, secret identity.PairingSecret) error {
-			// RunProvisional holds the one live enrollment owner. A second
+			// RunEnrollment holds the one live enrollment owner. A second
 			// invocation cannot remove a result while the first sends ready.
 			if err := identity.CleanupPrepared(ctx, preparedDirectory); err != nil {
 				return err
@@ -130,6 +131,8 @@ func runEnrol(args []string, options globalOptions, stdout, stderr io.Writer,
 			err = safeClientError(identity.ErrEnrollmentClosed.Error())
 		} else if errors.Is(err, identity.ErrEnrollmentUnavailable) {
 			err = safeClientError(identity.ErrEnrollmentUnavailable.Error())
+		} else if errors.Is(err, identity.ErrEnrollmentSource) {
+			err = safeClientError(identity.ErrEnrollmentSource.Error())
 		}
 		printClientError(stderr, err, "enrollment")
 		return 1

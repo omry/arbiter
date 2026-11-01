@@ -1,0 +1,1 @@
+Enroll an existing saved portable identity on another server with `arbiter enrol url=... name=... identity=SELECTOR`. The target server must register the exact owner issuer and independently approve the request. New public enrollment uses v2; update older clients and keep saved identity state. Existing committed enrollment remains recoverable with `arbiter enrol resume=SELECTOR`.

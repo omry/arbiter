@@ -354,7 +354,7 @@ def test_installed_local_cli_and_protected_approval_on_native_transport(
                 await _asgi_request(app, "POST", ROUTE, body_chunks=[b"{}"])
             ).status_code == 403
             assert (await command("open"))["open"] is True
-            advertised = advertisement()
+            advertised = dict(advertisement(), version=2, portable_identity=None)
             advertised["selector"] = "-" + "A" * 21
             raw = json.dumps(advertised).encode()
             response = await _asgi_request(app, "POST", ROUTE, body_chunks=[raw])

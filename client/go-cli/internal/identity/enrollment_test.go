@@ -1,21 +1,138 @@
 package identity
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
+
+func TestEnrollmentSourceValidationSharesOwnerAndPrecedesCleanup(t *testing.T) {
+	for _, mode := range []string{"fresh", "reuse", "reuse-other-host", "reuse-other-port", "reuse-other-prefix", "reuse-other-ipv6", "reuse-other-ipv6-zone", "missing", "prepared-only", "expired", "same-server", "same-server-trailing-slash", "same-server-prefix", "same-server-host-case", "same-server-default-port", "same-server-source-default-port", "same-server-padded-default-port", "same-server-padded-source-port", "same-server-padded-nondefault-port", "same-server-ipv6", "same-server-mapped-ipv4"} {
+		t.Run(mode, func(t *testing.T) {
+			state := custodyTestDir(t)
+			age := time.Duration(0)
+			if mode == "expired" {
+				age = 366 * 24 * time.Hour
+			}
+			original, raw, _ := portableFixture(t, age, 2*365*24*time.Hour)
+			sourceURL, target := "https://source.invalid", "https://target.invalid"
+			sameServer := false
+			switch mode {
+			case "same-server":
+				target, sameServer = sourceURL, true
+			case "same-server-trailing-slash":
+				target, sameServer = sourceURL+"/", true
+			case "same-server-prefix":
+				sourceURL, target, sameServer = sourceURL+"/tenant/", sourceURL+"/tenant", true
+			case "same-server-host-case":
+				target, sameServer = "https://SOURCE.invalid", true
+			case "same-server-default-port":
+				target, sameServer = sourceURL+":443", true
+			case "same-server-source-default-port":
+				sourceURL, target, sameServer = sourceURL+":443", sourceURL, true
+			case "same-server-padded-default-port":
+				target, sameServer = sourceURL+":0443", true
+			case "same-server-padded-source-port":
+				sourceURL, target, sameServer = sourceURL+":00443", sourceURL, true
+			case "same-server-padded-nondefault-port":
+				sourceURL, target, sameServer = sourceURL+":444", sourceURL+":00444", true
+			case "same-server-ipv6":
+				sourceURL, target, sameServer = "https://[2001:db8::1]", "https://[2001:0db8:0:0:0:0:0:1]", true
+			case "same-server-mapped-ipv4":
+				sourceURL, target, sameServer = "https://127.0.0.1", "https://[::ffff:127.0.0.1]", true
+			case "reuse-other-host":
+				target = "https://other.invalid"
+			case "reuse-other-port":
+				target = sourceURL + ":444"
+			case "reuse-other-prefix":
+				target = sourceURL + "/tenant"
+			case "reuse-other-ipv6":
+				sourceURL, target = "https://[2001:db8::1]", "https://[2001:db8::2]"
+			case "reuse-other-ipv6-zone":
+				sourceURL, target = "https://[fe80::1%25zoneA]", "https://[fe80::1%25zonea]"
+			}
+			original.record.ServerURL = sourceURL
+			domain := "enrolled"
+			if mode == "prepared-only" {
+				domain = "prepared"
+			}
+			before := savePortableFixture(t, original, raw, state, domain)
+			directory := filepath.Join(state, "provisional")
+			orphan, _, err := NewProvisional("https://abandoned.invalid", "abandoned", time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = SaveProvisional(context.Background(), directory, orphan); err != nil {
+				t.Fatal(err)
+			}
+			orphanPath := filepath.Join(directory, orphan.record.Selector+".json")
+			orphanBefore, err := os.ReadFile(orphanPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			selector := original.record.Selector
+			if mode == "fresh" {
+				selector = ""
+			}
+			if mode == "missing" {
+				selector = orphan.record.Selector
+			}
+			called := false
+			err = RunEnrollment(context.Background(), state, target, "target", selector,
+				func(ctx context.Context, p *Provisional, _ PairingSecret) error {
+					called = true
+					if p.record.Version != 2 {
+						t.Fatal("new public enrollment is not v2")
+					}
+					if _, e := os.Stat(orphanPath); !errors.Is(e, os.ErrNotExist) {
+						t.Fatal("abandoned request was not cleaned", e)
+					}
+					if e := CleanupProvisional(ctx, directory); !errors.Is(e, ErrProvisionalBusy) {
+						t.Fatal("source/exchange lost shared owner", e)
+					}
+					if strings.HasPrefix(mode, "reuse") && (!samePublicKey(p.portable.Public(), original.portable.Public()) || samePublicKey(p.access.Public(), original.access.Public()) || bytes.Equal(p.recipient.Bytes(), original.recipient.Bytes())) {
+						t.Fatal("incorrect source or target keys")
+					}
+					if _, e := LoadProvisional(directory, p.record.Selector); e != nil {
+						t.Fatal("new material not saved before exchange", e)
+					}
+					return nil
+				})
+			valid := mode == "fresh" || strings.HasPrefix(mode, "reuse")
+			if sameServer {
+				valid = false
+			}
+			if called != valid || valid && err != nil || !valid && !errors.Is(err, ErrEnrollmentSource) {
+				t.Fatal("source validation outcome", err)
+			}
+			if !valid {
+				after, e := os.ReadFile(orphanPath)
+				if e != nil || !bytes.Equal(after, orphanBefore) {
+					t.Fatal("invalid source cleaned existing state", e)
+				}
+			}
+			after, e := os.ReadFile(filepath.Join(state, domain, original.record.Selector+".json"))
+			if e != nil || !bytes.Equal(after, before) {
+				t.Fatal("source state changed", e)
+			}
+		})
+	}
+}
 
 func TestEnrollmentRegistrationAndCarrierBounds(t *testing.T) {
 	for _, mode := range []string{"closed", "redirect", "digest", "oversize", "header", "text", "fragment", "controls", "deadline", "cancel"} {
