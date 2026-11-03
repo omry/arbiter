@@ -1,0 +1,3068 @@
+{
+  "schema_version": 2,
+  "slices": [
+    {
+      "id": "arbiter-authentication/2",
+      "parent": null,
+      "state": "replaced",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/2] Pairing and durable enrollment",
+        "responsibility": "Retain the original milestone-2 aggregate acceptance and immutable merged 2.1-2.9 delivery history; only its unimplemented 2.10 correction is admitted here.",
+        "paths": [
+          ".github/workflows/ci.yml",
+          "client/go-cli/internal/cli/enrollment.go",
+          "client/go-cli/internal/cli/enrollment_test.go",
+          "client/go-cli/internal/identity/enrollment.go",
+          "client/go-cli/internal/identity/enrollment_receipt.go",
+          "client/go-cli/internal/identity/enrollment_receipt_test.go",
+          "client/go-cli/internal/identity/enrollment_test.go",
+          "client/go-cli/internal/identity/pairing_peer_test.go",
+          "client/go-cli/internal/identity/portable.go",
+          "client/go-cli/internal/identity/portable_test.go",
+          "client/go-cli/internal/identity/prepared.go",
+          "client/go-cli/internal/identity/prepared_test.go",
+          "client/go-cli/internal/identity/provisional.go",
+          "client/go-cli/internal/identity/provisional_store.go",
+          "client/go-cli/internal/identity/provisional_test.go",
+          "client/go-cli/internal/identity/registration_peer_test.go",
+          "docs/enrollment.md",
+          "server/news/+portable-enrollment-activation.feature.md",
+          "server/news/+portable-enrollment.feature.md",
+          "server/news/+portable-identity-codecs.feature.md",
+          "server/news/+portable-issuer-controls.feature.md",
+          "server/src/arbiter_server/authority.py",
+          "server/src/arbiter_server/enrollment.py",
+          "server/src/arbiter_server/enrollment_activation.py",
+          "server/src/arbiter_server/generations.py",
+          "server/src/arbiter_server/issuer_admin.py",
+          "server/src/arbiter_server/local_control.py",
+          "server/src/arbiter_server/main.py",
+          "server/src/arbiter_server/owner_issuers.py",
+          "server/src/arbiter_server/prepared.py",
+          "server/tests/integration/enrollment_terminal_driver.py",
+          "server/tests/integration/test_enrollment_cli_peer.py",
+          "server/tests/integration/test_enrollment_receipt_peer.py",
+          "server/tests/integration/test_installed_enrollment.py",
+          "server/tests/integration/test_provisional_peer.py",
+          "server/tests/unit/test_authority.py",
+          "server/tests/unit/test_enrollment_activation.py",
+          "server/tests/unit/test_enrollment_requests.py",
+          "server/tests/unit/test_local_control.py",
+          "server/tests/unit/test_main.py",
+          "server/tests/unit/test_owner_issuers.py",
+          "server/tests/unit/test_prepared.py",
+          "server/tests/unit/test_windows_control.py"
+        ],
+        "dependencies": [],
+        "acceptance": [
+          "Preserve merged fresh pairing and receipt behavior; ordinary milestone-3 API remains unchanged."
+        ]
+      },
+      "display": {
+        "summary": "Already merged: Pairing and durable enrollment",
+        "production": [
+          0,
+          0
+        ],
+        "tests": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/2.10",
+      "parent": "arbiter-authentication/2",
+      "state": "replaced",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/2.10] Existing portable identity enrollment",
+        "responsibility": "Close only portable LLD P01-P10 through the four already reviewed cuts; preserve original 22 spent attempts and all historical delivery identities.",
+        "paths": [
+          ".github/workflows/ci.yml",
+          "client/go-cli/internal/cli/enrollment.go",
+          "client/go-cli/internal/cli/enrollment_test.go",
+          "client/go-cli/internal/identity/enrollment.go",
+          "client/go-cli/internal/identity/enrollment_receipt.go",
+          "client/go-cli/internal/identity/enrollment_receipt_test.go",
+          "client/go-cli/internal/identity/enrollment_test.go",
+          "client/go-cli/internal/identity/pairing_peer_test.go",
+          "client/go-cli/internal/identity/portable.go",
+          "client/go-cli/internal/identity/portable_test.go",
+          "client/go-cli/internal/identity/prepared.go",
+          "client/go-cli/internal/identity/prepared_test.go",
+          "client/go-cli/internal/identity/provisional.go",
+          "client/go-cli/internal/identity/provisional_store.go",
+          "client/go-cli/internal/identity/provisional_test.go",
+          "client/go-cli/internal/identity/registration_peer_test.go",
+          "docs/enrollment.md",
+          "server/news/+portable-enrollment-activation.feature.md",
+          "server/news/+portable-enrollment.feature.md",
+          "server/news/+portable-identity-codecs.feature.md",
+          "server/news/+portable-issuer-controls.feature.md",
+          "server/src/arbiter_server/authority.py",
+          "server/src/arbiter_server/enrollment.py",
+          "server/src/arbiter_server/enrollment_activation.py",
+          "server/src/arbiter_server/generations.py",
+          "server/src/arbiter_server/issuer_admin.py",
+          "server/src/arbiter_server/local_control.py",
+          "server/src/arbiter_server/main.py",
+          "server/src/arbiter_server/owner_issuers.py",
+          "server/src/arbiter_server/prepared.py",
+          "server/tests/integration/enrollment_terminal_driver.py",
+          "server/tests/integration/test_enrollment_cli_peer.py",
+          "server/tests/integration/test_enrollment_receipt_peer.py",
+          "server/tests/integration/test_installed_enrollment.py",
+          "server/tests/integration/test_provisional_peer.py",
+          "server/tests/unit/test_authority.py",
+          "server/tests/unit/test_enrollment_activation.py",
+          "server/tests/unit/test_enrollment_requests.py",
+          "server/tests/unit/test_local_control.py",
+          "server/tests/unit/test_main.py",
+          "server/tests/unit/test_owner_issuers.py",
+          "server/tests/unit/test_prepared.py",
+          "server/tests/unit/test_windows_control.py"
+        ],
+        "dependencies": [],
+        "acceptance": [
+          "Real A/B/Go journey preserves agent ID/portable key/certificate and fresh independent B access/grants."
+        ]
+      },
+      "display": {
+        "summary": "Already merged: Existing portable identity enrollment",
+        "production": [
+          0,
+          0
+        ],
+        "tests": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/2.10.1",
+      "parent": "arbiter-authentication/2.10",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/2.10.1] Local issuer trust and unique agent bindings",
+        "responsibility": "Implement the portable LLD first cut: OS-local issuer controls, exact certificate fingerprint trust, atomic schema/backfill and binding maintenance in every fresh-v1 activation/replay. Requires the merged 25a8cf2 fresh-enrollment baseline. No public reuse or milestone-3 work.",
+        "paths": [
+          "server/src/arbiter_server/authority.py",
+          "server/src/arbiter_server/generations.py",
+          "server/src/arbiter_server/owner_issuers.py",
+          "server/src/arbiter_server/issuer_admin.py",
+          "server/src/arbiter_server/local_control.py",
+          "server/src/arbiter_server/main.py",
+          "server/src/arbiter_server/enrollment_activation.py",
+          "server/tests/unit/test_owner_issuers.py",
+          "server/tests/unit/test_authority.py",
+          "server/tests/unit/test_local_control.py",
+          "server/tests/unit/test_windows_control.py",
+          "server/tests/unit/test_main.py",
+          "server/tests/unit/test_enrollment_activation.py",
+          "server/news/+portable-issuer-controls.feature.md",
+          "docs/enrollment.md"
+        ],
+        "dependencies": [],
+        "acceptance": [
+          "P02/P06/P09: exact issuer registration, removal/reactivation and revision; invalid profile rejected and local control remains OS authenticated.",
+          "Atomic migration preserves real old results/denial and rejects duplicate or malformed bindings.",
+          "Real post-upgrade fresh-v1 activation/replay/rollback maintains one agent/enrollment mapping, including later denied or inactive enrollments.",
+          "Retain 610-865 changed handwritten code/test/CI estimate and <=1000 hard cap."
+        ]
+      },
+      "display": {
+        "summary": "Already merged: Local issuer trust and unique agent bindings",
+        "production": [
+          0,
+          0
+        ],
+        "tests": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/2.10.2",
+      "parent": "arbiter-authentication/2.10",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/2.10.2] Portable source custody and versioned codecs",
+        "responsibility": "Implement the portable LLD second cut: strict enrolled-source loading and v2 private/public codecs consumed by executable Python/Go peers; reuse the native publisher and shared decoder with purpose-specific checks. Public reuse remains unreachable.",
+        "paths": [
+          "client/go-cli/internal/identity/provisional.go",
+          "client/go-cli/internal/identity/provisional_store.go",
+          "client/go-cli/internal/identity/prepared.go",
+          "client/go-cli/internal/identity/portable.go",
+          "client/go-cli/internal/identity/provisional_test.go",
+          "client/go-cli/internal/identity/prepared_test.go",
+          "client/go-cli/internal/identity/portable_test.go",
+          "client/go-cli/internal/identity/enrollment_receipt.go",
+          "client/go-cli/internal/identity/enrollment_receipt_test.go",
+          "server/src/arbiter_server/enrollment.py",
+          "server/tests/unit/test_enrollment_requests.py",
+          "server/tests/integration/test_provisional_peer.py",
+          "server/news/+portable-identity-codecs.feature.md",
+          "docs/enrollment.md",
+          "client/go-cli/internal/identity/pairing_peer_test.go",
+          "client/go-cli/internal/identity/registration_peer_test.go"
+        ],
+        "dependencies": [
+          "arbiter-authentication/2.10.1"
+        ],
+        "acceptance": [
+          "P03/P08: reject altered source ID/key/certificate/hash, unsafe custody and prepared-only source; source bytes stay unchanged.",
+          "Source loading accepts a currently valid portable identity without A online or an A access-lifetime requirement.",
+          "Preserve old v1 stored-record/result receipt decoding and its historical portable validation; never relax ordinary TLS or new-enrollment validity.",
+          "Retain 490-695 changed handwritten code/test/CI estimate and <=1000 hard cap."
+        ]
+      },
+      "display": {
+        "summary": "Already merged: Portable source custody and versioned codecs",
+        "production": [
+          0,
+          0
+        ],
+        "tests": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/2.10.3",
+      "parent": "arbiter-authentication/2.10",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/2.10.3] Prepared reuse and single activation",
+        "responsibility": "Implement the portable LLD third cut through existing preparation/proofs and atomic activation, extending the same binding writer. Exercise real A/B/Go peers with fresh B access, explicit issuer trust/approval and exact receipt recovery. Public v2 remains closed.",
+        "paths": [
+          "server/src/arbiter_server/prepared.py",
+          "server/src/arbiter_server/enrollment_activation.py",
+          "server/src/arbiter_server/enrollment.py",
+          "server/src/arbiter_server/owner_issuers.py",
+          "server/tests/unit/test_prepared.py",
+          "server/tests/unit/test_enrollment_activation.py",
+          "server/tests/integration/test_enrollment_cli_peer.py",
+          "server/tests/integration/test_enrollment_receipt_peer.py",
+          "client/go-cli/internal/identity/prepared.go",
+          "client/go-cli/internal/identity/prepared_test.go",
+          "client/go-cli/internal/identity/enrollment.go",
+          "client/go-cli/internal/identity/enrollment_test.go",
+          "client/go-cli/internal/identity/enrollment_receipt.go",
+          "client/go-cli/internal/identity/enrollment_receipt_test.go",
+          "server/news/+portable-enrollment-activation.feature.md",
+          "docs/enrollment.md",
+          "client/go-cli/internal/identity/pairing_peer_test.go",
+          "client/go-cli/internal/identity/registration_peer_test.go"
+        ],
+        "dependencies": [
+          "arbiter-authentication/2.10.2"
+        ],
+        "acceptance": [
+          "P01/P03/P05/P06/P07: preserve original agent/portable identity, generate independent B access/enrollment/recipient state; A may be offline.",
+          "Existing active/denied/inactive B binding rejects reuse, including real fresh-v1 enrollments created on both earlier upgraded prefixes.",
+          "Trust-revision removal/ready/commit races fail or reconcile once; lost final reply/restart/expiry returns the exact committed result.",
+          "Retain 550-745 changed handwritten code/test/CI estimate and <=1000 hard cap."
+        ]
+      },
+      "display": {
+        "summary": "Already merged: Prepared reuse and single activation",
+        "production": [
+          0,
+          0
+        ],
+        "tests": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/2.10.4",
+      "parent": "arbiter-authentication/2.10",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/2.10.4] Public CLI reuse and installed acceptance",
+        "responsibility": "Implement the portable LLD fourth cut: explicit identity source selection, atomic v2-only public registration switch, installed A/B and fresh regression journeys, final migration/help/news and complete P01-P10 acceptance. Preserve all platforms and existing test harnesses.",
+        "paths": [
+          "client/go-cli/internal/cli/enrollment.go",
+          "client/go-cli/internal/cli/enrollment_test.go",
+          "client/go-cli/internal/identity/provisional_session.go",
+          "client/go-cli/internal/identity/registration_peer_test.go",
+          "client/go-cli/internal/identity/enrollment.go",
+          "client/go-cli/internal/identity/enrollment_test.go",
+          "server/src/arbiter_server/main.py",
+          "server/src/arbiter_server/enrollment.py",
+          "server/tests/unit/test_enrollment_requests.py",
+          "server/tests/unit/test_enrollment_admin.py",
+          "server/tests/unit/test_main.py",
+          "server/tests/integration/enrollment_terminal_driver.py",
+          "server/tests/integration/test_installed_enrollment.py",
+          ".github/workflows/ci.yml",
+          "server/news/+portable-enrollment.feature.md",
+          "docs/enrollment.md"
+        ],
+        "dependencies": [
+          "arbiter-authentication/2.10.3"
+        ],
+        "acceptance": [
+          "P04/P08/P10 and all P01-P10: installed CLI completes fresh/reused enrollment and recovery on native CI; existing admission/time/attempt limits remain.",
+          "Reject identity plus resume, same-server reuse, unknown/invalid source and old public wire with actionable diagnostics and no saved identity deletion.",
+          "Confirm public server/client switch together, v1 saved receipt recovery survives, no live accounts and no milestone-3 API changes.",
+          "Retain 500-710 changed handwritten code/test/CI estimate and <=1000 hard cap."
+        ]
+      },
+      "display": {
+        "summary": "Already merged: Public CLI reuse and installed acceptance",
+        "production": [
+          0,
+          0
+        ],
+        "tests": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/3",
+      "parent": null,
+      "state": "replaced",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/3] Milestone 3 aggregate acceptance",
+        "responsibility": "Retain this existing parent identity and the complete aggregate approved behavior; execution responsibility belongs to its ordered children, not another implementation reservation.",
+        "paths": [
+          ".github/workflows/ci.yml",
+          "client/go-cli/go.mod",
+          "client/go-cli/go.sum",
+          "client/go-cli/internal/arbiterhttp/client.go",
+          "client/go-cli/internal/arbiterhttp/client_test.go",
+          "client/go-cli/internal/arbiterhttp/timeouts.go",
+          "client/go-cli/internal/arbiterhttp/timeouts_test.go",
+          "client/go-cli/internal/cli/cli.go",
+          "client/go-cli/internal/cli/cli_test.go",
+          "client/go-cli/internal/cli/enrollment.go",
+          "client/go-cli/internal/cli/enrollment_test.go",
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "client/go-cli/internal/identity/native_transport.go",
+          "client/go-cli/internal/identity/native_transport_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-3-1-1.feature.md",
+          "server/news/+auth-3-1-2.feature.md",
+          "server/news/+auth-3-1-3.feature.md",
+          "server/news/+auth-3-1-4.feature.md",
+          "server/news/+auth-3-2-1.feature.md",
+          "server/news/+auth-3-2-2.feature.md",
+          "server/news/+auth-3-3.feature.md",
+          "server/news/+auth-3-4.feature.md",
+          "server/news/+auth-3-5-1.feature.md",
+          "server/news/+auth-3-5-2.feature.md",
+          "server/news/+auth-3-6-1.feature.md",
+          "server/news/+auth-3-6-2.feature.md",
+          "server/news/+auth-3-7.feature.md",
+          "server/pyproject.toml",
+          "server/src/arbiter_server/artifacts.py",
+          "server/src/arbiter_server/control_tls.py",
+          "server/src/arbiter_server/credentials.py",
+          "server/src/arbiter_server/enrollment_activation.py",
+          "server/src/arbiter_server/enrollment_live.py",
+          "server/src/arbiter_server/enrollment_receipt.py",
+          "server/src/arbiter_server/http_work.py",
+          "server/src/arbiter_server/live_authority.py",
+          "server/src/arbiter_server/local_control.py",
+          "server/src/arbiter_server/main.py",
+          "server/src/arbiter_server/native_http.py",
+          "server/src/arbiter_server/native_stream.py",
+          "server/src/arbiter_server/pairing_carrier.py",
+          "server/tests/integration/authentication_terminal_driver.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/integration/test_installed_authentication.py",
+          "server/tests/unit/test_artifact_http_admission.py",
+          "server/tests/unit/test_artifacts.py",
+          "server/tests/unit/test_control_tls.py",
+          "server/tests/unit/test_credentials.py",
+          "server/tests/unit/test_enrollment_live.py",
+          "server/tests/unit/test_enrollment_receipt.py",
+          "server/tests/unit/test_live_authority.py",
+          "server/tests/unit/test_local_control.py",
+          "server/tests/unit/test_main.py",
+          "server/tests/unit/test_native_http_protocol.py",
+          "server/tests/unit/test_native_stream.py",
+          "server/tests/unit/test_pairing_carrier.py",
+          "skill/SKILL.md"
+        ],
+        "dependencies": [],
+        "acceptance": [
+          "All descendant behavior, parent prose and integrated acceptance in implementation-plan.md pass on current final child heads."
+        ]
+      },
+      "display": {
+        "summary": "Aggregate 3; execute its children",
+        "production": [
+          2020,
+          2990
+        ],
+        "tests": [
+          3730,
+          5210
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/3.1",
+      "parent": "arbiter-authentication/3",
+      "state": "replaced",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/3.1] Milestone 3.1 aggregate acceptance",
+        "responsibility": "Retain this existing parent identity and the complete aggregate approved behavior; execution responsibility belongs to its ordered children, not another implementation reservation.",
+        "paths": [
+          ".github/workflows/ci.yml",
+          "client/go-cli/go.mod",
+          "client/go-cli/go.sum",
+          "client/go-cli/internal/arbiterhttp/client.go",
+          "client/go-cli/internal/arbiterhttp/client_test.go",
+          "client/go-cli/internal/arbiterhttp/timeouts.go",
+          "client/go-cli/internal/arbiterhttp/timeouts_test.go",
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "client/go-cli/internal/identity/native_transport.go",
+          "client/go-cli/internal/identity/native_transport_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-3-1-1.feature.md",
+          "server/news/+auth-3-1-2.feature.md",
+          "server/news/+auth-3-1-3.feature.md",
+          "server/news/+auth-3-1-4.feature.md",
+          "server/pyproject.toml",
+          "server/src/arbiter_server/control_tls.py",
+          "server/src/arbiter_server/credentials.py",
+          "server/src/arbiter_server/http_work.py",
+          "server/src/arbiter_server/main.py",
+          "server/src/arbiter_server/native_http.py",
+          "server/src/arbiter_server/native_stream.py",
+          "server/src/arbiter_server/pairing_carrier.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_artifact_http_admission.py",
+          "server/tests/unit/test_control_tls.py",
+          "server/tests/unit/test_credentials.py",
+          "server/tests/unit/test_native_http_protocol.py",
+          "server/tests/unit/test_native_stream.py",
+          "server/tests/unit/test_pairing_carrier.py"
+        ],
+        "dependencies": [],
+        "acceptance": [
+          "All descendant behavior, parent prose and integrated acceptance in implementation-plan.md pass on current final child heads."
+        ]
+      },
+      "display": {
+        "summary": "Aggregate 3.1; execute its children",
+        "production": [
+          750,
+          1060
+        ],
+        "tests": [
+          1060,
+          1500
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/3.2",
+      "parent": "arbiter-authentication/3",
+      "state": "replaced",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/3.2] Milestone 3.2 aggregate acceptance",
+        "responsibility": "Retain this existing parent identity and the complete aggregate approved behavior; execution responsibility belongs to its ordered children, not another implementation reservation.",
+        "paths": [
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-3-2-1.feature.md",
+          "server/news/+auth-3-2-2.feature.md",
+          "server/src/arbiter_server/enrollment_activation.py",
+          "server/src/arbiter_server/enrollment_live.py",
+          "server/src/arbiter_server/enrollment_receipt.py",
+          "server/src/arbiter_server/live_authority.py",
+          "server/src/arbiter_server/local_control.py",
+          "server/src/arbiter_server/main.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_enrollment_live.py",
+          "server/tests/unit/test_enrollment_receipt.py",
+          "server/tests/unit/test_local_control.py"
+        ],
+        "dependencies": [],
+        "acceptance": [
+          "All descendant behavior, parent prose and integrated acceptance in implementation-plan.md pass on current final child heads."
+        ]
+      },
+      "display": {
+        "summary": "Aggregate 3.2; execute its children",
+        "production": [
+          410,
+          590
+        ],
+        "tests": [
+          650,
+          900
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/3.5",
+      "parent": "arbiter-authentication/3",
+      "state": "replaced",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/3.5] Milestone 3.5 aggregate acceptance",
+        "responsibility": "Retain this existing parent identity and the complete aggregate approved behavior; execution responsibility belongs to its ordered children, not another implementation reservation.",
+        "paths": [
+          "client/go-cli/internal/arbiterhttp/client.go",
+          "client/go-cli/internal/arbiterhttp/client_test.go",
+          "client/go-cli/internal/cli/cli.go",
+          "client/go-cli/internal/cli/cli_test.go",
+          "client/go-cli/internal/cli/enrollment.go",
+          "client/go-cli/internal/cli/enrollment_test.go",
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-3-5-1.feature.md",
+          "server/news/+auth-3-5-2.feature.md",
+          "server/src/arbiter_server/main.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_main.py",
+          "server/tests/unit/test_native_http_protocol.py",
+          "skill/SKILL.md"
+        ],
+        "dependencies": [],
+        "acceptance": [
+          "All descendant behavior, parent prose and integrated acceptance in implementation-plan.md pass on current final child heads."
+        ]
+      },
+      "display": {
+        "summary": "Aggregate 3.5; execute its children",
+        "production": [
+          210,
+          340
+        ],
+        "tests": [
+          570,
+          790
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/3.6",
+      "parent": "arbiter-authentication/3",
+      "state": "replaced",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/3.6] Milestone 3.6 aggregate acceptance",
+        "responsibility": "Retain this existing parent identity and the complete aggregate approved behavior; execution responsibility belongs to its ordered children, not another implementation reservation.",
+        "paths": [
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-3-6-1.feature.md",
+          "server/news/+auth-3-6-2.feature.md",
+          "server/src/arbiter_server/http_work.py",
+          "server/src/arbiter_server/live_authority.py",
+          "server/src/arbiter_server/native_http.py",
+          "server/src/arbiter_server/native_stream.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_live_authority.py",
+          "server/tests/unit/test_native_http_protocol.py",
+          "server/tests/unit/test_native_stream.py"
+        ],
+        "dependencies": [],
+        "acceptance": [
+          "All descendant behavior, parent prose and integrated acceptance in implementation-plan.md pass on current final child heads."
+        ]
+      },
+      "display": {
+        "summary": "Aggregate 3.6; execute its children",
+        "production": [
+          290,
+          440
+        ],
+        "tests": [
+          580,
+          810
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/4",
+      "parent": null,
+      "state": "replaced",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/4] Milestone 4 aggregate acceptance",
+        "responsibility": "Retain this existing parent identity and the complete aggregate approved behavior; execution responsibility belongs to its ordered children, not another implementation reservation.",
+        "paths": [
+          "client/go-cli/internal/arbiterhttp/client.go",
+          "client/go-cli/internal/arbiterhttp/client_test.go",
+          "client/go-cli/internal/arbiterhttp/timeouts.go",
+          "client/go-cli/internal/arbiterhttp/timeouts_test.go",
+          "client/go-cli/internal/cli/cli.go",
+          "client/go-cli/internal/cli/cli_test.go",
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "client/go-cli/internal/identity/enrollment_receipt.go",
+          "client/go-cli/internal/identity/enrollment_receipt_test.go",
+          "client/go-cli/internal/identity/lifecycle.go",
+          "client/go-cli/internal/identity/lifecycle_test.go",
+          "client/go-cli/internal/identity/native_transport.go",
+          "client/go-cli/internal/identity/native_transport_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-4-1.feature.md",
+          "server/news/+auth-4-2.feature.md",
+          "server/news/+auth-4-3.feature.md",
+          "server/news/+auth-4-4.feature.md",
+          "server/news/+auth-4-5.feature.md",
+          "server/src/arbiter_server/enrollment_live.py",
+          "server/src/arbiter_server/lifecycle.py",
+          "server/src/arbiter_server/lifecycle_control.py",
+          "server/src/arbiter_server/main.py",
+          "server/src/arbiter_server/native_http.py",
+          "server/tests/integration/authentication_terminal_driver.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/integration/test_installed_authentication.py",
+          "server/tests/unit/test_lifecycle.py",
+          "server/tests/unit/test_lifecycle_control.py",
+          "server/tests/unit/test_native_http_protocol.py"
+        ],
+        "dependencies": [],
+        "acceptance": [
+          "All descendant behavior, parent prose and integrated acceptance in implementation-plan.md pass on current final child heads."
+        ]
+      },
+      "display": {
+        "summary": "Aggregate 4; execute its children",
+        "production": [
+          930,
+          1430
+        ],
+        "tests": [
+          1360,
+          1990
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/5",
+      "parent": null,
+      "state": "replaced",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/5] Milestone 5 aggregate acceptance",
+        "responsibility": "Retain this existing parent identity and the complete aggregate approved behavior; execution responsibility belongs to its ordered children, not another implementation reservation.",
+        "paths": [
+          "client/go-cli/internal/cli/enrollment.go",
+          "client/go-cli/internal/cli/enrollment_test.go",
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "client/go-cli/internal/identity/credentials.go",
+          "client/go-cli/internal/identity/credentials_test.go",
+          "client/go-cli/internal/identity/enrollment.go",
+          "client/go-cli/internal/identity/enrollment_test.go",
+          "client/go-cli/internal/identity/lifecycle.go",
+          "client/go-cli/internal/identity/lifecycle_test.go",
+          "client/go-cli/internal/identity/portable.go",
+          "client/go-cli/internal/identity/portable_test.go",
+          "client/go-cli/internal/identity/recovery.go",
+          "client/go-cli/internal/identity/recovery_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-5-1.feature.md",
+          "server/news/+auth-5-2.feature.md",
+          "server/news/+auth-5-3.feature.md",
+          "server/news/+auth-5-4.feature.md",
+          "server/news/+auth-5-5.feature.md",
+          "server/src/arbiter_server/credentials.py",
+          "server/src/arbiter_server/enrollment.py",
+          "server/src/arbiter_server/enrollment_activation.py",
+          "server/src/arbiter_server/enrollment_live.py",
+          "server/src/arbiter_server/lifecycle.py",
+          "server/src/arbiter_server/lifecycle_control.py",
+          "server/src/arbiter_server/local_control.py",
+          "server/src/arbiter_server/main.py",
+          "server/src/arbiter_server/owner_issuers.py",
+          "server/src/arbiter_server/owner_recovery.py",
+          "server/src/arbiter_server/prepared.py",
+          "server/src/arbiter_server/recovery.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_credentials.py",
+          "server/tests/unit/test_enrollment_activation.py",
+          "server/tests/unit/test_owner_issuers.py",
+          "server/tests/unit/test_owner_recovery.py",
+          "server/tests/unit/test_recovery.py",
+          "skill/SKILL.md"
+        ],
+        "dependencies": [],
+        "acceptance": [
+          "All descendant behavior, parent prose and integrated acceptance in implementation-plan.md pass on current final child heads."
+        ]
+      },
+      "display": {
+        "summary": "Aggregate 5; execute its children",
+        "production": [
+          1150,
+          1730
+        ],
+        "tests": [
+          1440,
+          2120
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/6",
+      "parent": null,
+      "state": "replaced",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/6] Milestone 6 aggregate acceptance",
+        "responsibility": "Retain this existing parent identity and the complete aggregate approved behavior; execution responsibility belongs to its ordered children, not another implementation reservation.",
+        "paths": [
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "client/go-cli/internal/identity/native_transport.go",
+          "client/go-cli/internal/identity/native_transport_test.go",
+          "client/go-cli/internal/identity/server_transition.go",
+          "client/go-cli/internal/identity/server_transition_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-6-1.feature.md",
+          "server/news/+auth-6-2.feature.md",
+          "server/news/+auth-6-3.feature.md",
+          "server/news/+auth-6-4.feature.md",
+          "server/src/arbiter_server/credentials.py",
+          "server/src/arbiter_server/generations.py",
+          "server/src/arbiter_server/lifecycle_control.py",
+          "server/src/arbiter_server/local_control.py",
+          "server/src/arbiter_server/main.py",
+          "server/src/arbiter_server/owner_recovery.py",
+          "server/src/arbiter_server/recovery.py",
+          "server/src/arbiter_server/server_transition.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_credentials.py",
+          "server/tests/unit/test_generations.py",
+          "server/tests/unit/test_owner_recovery.py",
+          "server/tests/unit/test_server_transition.py",
+          "skill/SKILL.md"
+        ],
+        "dependencies": [],
+        "acceptance": [
+          "All descendant behavior, parent prose and integrated acceptance in implementation-plan.md pass on current final child heads."
+        ]
+      },
+      "display": {
+        "summary": "Aggregate 6; execute its children",
+        "production": [
+          730,
+          1170
+        ],
+        "tests": [
+          970,
+          1430
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/7",
+      "parent": null,
+      "state": "replaced",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/7] Milestone 7 aggregate acceptance",
+        "responsibility": "Retain this existing parent identity and the complete aggregate approved behavior; execution responsibility belongs to its ordered children, not another implementation reservation.",
+        "paths": [
+          ".github/workflows/ci.yml",
+          "client/go-cli/go.mod",
+          "client/go-cli/go.sum",
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "client/go-cli/internal/identity/recipient.go",
+          "client/go-cli/internal/identity/recipient_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-7-1.feature.md",
+          "server/news/+auth-7-2.feature.md",
+          "server/news/+auth-7-3.feature.md",
+          "server/news/+auth-7-4.feature.md",
+          "server/news/+auth-7-5.feature.md",
+          "server/news/+auth-7-6.feature.md",
+          "server/pyproject.toml",
+          "server/src/arbiter_server/artifact_crypto.py",
+          "server/src/arbiter_server/artifacts.py",
+          "server/src/arbiter_server/enrollment_live.py",
+          "server/src/arbiter_server/http_work.py",
+          "server/src/arbiter_server/lifecycle_control.py",
+          "server/src/arbiter_server/live_authority.py",
+          "server/src/arbiter_server/main.py",
+          "server/tests/integration/authentication_terminal_driver.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/integration/test_installed_authentication.py",
+          "server/tests/unit/test_artifact_crypto.py",
+          "server/tests/unit/test_artifact_http_admission.py",
+          "server/tests/unit/test_artifacts.py",
+          "server/tests/unit/test_native_http_protocol.py"
+        ],
+        "dependencies": [],
+        "acceptance": [
+          "All descendant behavior, parent prose and integrated acceptance in implementation-plan.md pass on current final child heads."
+        ]
+      },
+      "display": {
+        "summary": "Aggregate 7; execute its children",
+        "production": [
+          960,
+          1540
+        ],
+        "tests": [
+          1470,
+          2200
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/8",
+      "parent": null,
+      "state": "replaced",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/8] Milestone 8 aggregate acceptance",
+        "responsibility": "Retain this existing parent identity and the complete aggregate approved behavior; execution responsibility belongs to its ordered children, not another implementation reservation.",
+        "paths": [
+          ".github/workflows/ci.yml",
+          "client/go-cli/go.mod",
+          "client/go-cli/go.sum",
+          "client/go-cli/internal/cli/artifact_crypto.go",
+          "client/go-cli/internal/cli/artifact_crypto_test.go",
+          "client/go-cli/internal/cli/artifact_temp.go",
+          "client/go-cli/internal/cli/artifact_temp_test.go",
+          "client/go-cli/internal/cli/cli.go",
+          "client/go-cli/internal/cli/cli_test.go",
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-8-1.feature.md",
+          "server/news/+auth-8-2.feature.md",
+          "server/news/+auth-8-3.feature.md",
+          "server/news/+auth-8-4.feature.md",
+          "server/news/+auth-8-5.feature.md",
+          "server/pyproject.toml",
+          "server/tests/integration/authentication_terminal_driver.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/integration/test_installed_authentication.py",
+          "skill/SKILL.md"
+        ],
+        "dependencies": [],
+        "acceptance": [
+          "All descendant behavior, parent prose and integrated acceptance in implementation-plan.md pass on current final child heads."
+        ]
+      },
+      "display": {
+        "summary": "Aggregate 8; execute its children",
+        "production": [
+          670,
+          1130
+        ],
+        "tests": [
+          1140,
+          1740
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/9",
+      "parent": null,
+      "state": "replaced",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/9] Milestone 9 aggregate acceptance",
+        "responsibility": "Retain this existing parent identity and the complete aggregate approved behavior; execution responsibility belongs to its ordered children, not another implementation reservation.",
+        "paths": [
+          ".github/workflows/ci.yml",
+          "client/go-cli/go.mod",
+          "client/go-cli/go.sum",
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-9-1.feature.md",
+          "server/news/+auth-9-2.feature.md",
+          "server/news/+auth-9-3.feature.md",
+          "server/news/+auth-9-4.feature.md",
+          "server/news/+auth-9-5.feature.md",
+          "server/pyproject.toml",
+          "server/src/arbiter_server/backup_format.py",
+          "server/src/arbiter_server/backups.py",
+          "server/src/arbiter_server/config.py",
+          "server/src/arbiter_server/generations.py",
+          "server/src/arbiter_server/live_authority.py",
+          "server/src/arbiter_server/local_control.py",
+          "server/src/arbiter_server/main.py",
+          "server/tests/integration/authentication_terminal_driver.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/integration/test_installed_authentication.py",
+          "server/tests/unit/test_backup_format.py",
+          "server/tests/unit/test_backups.py",
+          "server/tests/unit/test_config.py",
+          "server/tests/unit/test_generations.py",
+          "server/tests/unit/test_local_control.py",
+          "skill/SKILL.md"
+        ],
+        "dependencies": [],
+        "acceptance": [
+          "All descendant behavior, parent prose and integrated acceptance in implementation-plan.md pass on current final child heads."
+        ]
+      },
+      "display": {
+        "summary": "Aggregate 9; execute its children",
+        "production": [
+          860,
+          1370
+        ],
+        "tests": [
+          1240,
+          1870
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/10",
+      "parent": null,
+      "state": "replaced",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/10] Milestone 10 aggregate acceptance",
+        "responsibility": "Retain this existing parent identity and the complete aggregate approved behavior; execution responsibility belongs to its ordered children, not another implementation reservation.",
+        "paths": [
+          ".github/workflows/ci.yml",
+          "client/go-cli/go.mod",
+          "client/go-cli/go.sum",
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-10-1.feature.md",
+          "server/news/+auth-10-2.feature.md",
+          "server/news/+auth-10-3.feature.md",
+          "server/news/+auth-10-4.feature.md",
+          "server/news/+auth-10-5.feature.md",
+          "server/pyproject.toml",
+          "server/src/arbiter_server/authority.py",
+          "server/src/arbiter_server/backup_format.py",
+          "server/src/arbiter_server/generations.py",
+          "server/src/arbiter_server/main.py",
+          "server/src/arbiter_server/recovery.py",
+          "server/src/arbiter_server/restore.py",
+          "server/tests/integration/authentication_terminal_driver.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/integration/test_installed_authentication.py",
+          "server/tests/unit/test_backup_format.py",
+          "server/tests/unit/test_generations.py",
+          "server/tests/unit/test_restore.py",
+          "skill/SKILL.md"
+        ],
+        "dependencies": [],
+        "acceptance": [
+          "All descendant behavior, parent prose and integrated acceptance in implementation-plan.md pass on current final child heads."
+        ]
+      },
+      "display": {
+        "summary": "Aggregate 10; execute its children",
+        "production": [
+          760,
+          1250
+        ],
+        "tests": [
+          1260,
+          1900
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/11",
+      "parent": null,
+      "state": "replaced",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/11] Milestone 11 aggregate acceptance",
+        "responsibility": "Retain this existing parent identity and the complete aggregate approved behavior; execution responsibility belongs to its ordered children, not another implementation reservation.",
+        "paths": [
+          ".github/workflows/ci.yml",
+          "client/go-cli/go.mod",
+          "client/go-cli/go.sum",
+          "client/go-cli/internal/cli/cli.go",
+          "client/go-cli/internal/cli/cli_test.go",
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "client/go-cli/internal/identity/native_transport.go",
+          "client/go-cli/internal/identity/native_transport_test.go",
+          "client/go-cli/internal/identity/server_transition.go",
+          "client/go-cli/internal/identity/server_transition_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-11-1.feature.md",
+          "server/news/+auth-11-2.feature.md",
+          "server/news/+auth-11-3.feature.md",
+          "server/pyproject.toml",
+          "server/src/arbiter_server/live_authority.py",
+          "server/src/arbiter_server/local_control.py",
+          "server/src/arbiter_server/main.py",
+          "server/src/arbiter_server/maintenance.py",
+          "server/src/arbiter_server/server_transition.py",
+          "server/tests/integration/authentication_terminal_driver.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/integration/test_installed_authentication.py",
+          "server/tests/unit/test_local_control.py",
+          "server/tests/unit/test_maintenance.py",
+          "server/tests/unit/test_server_transition.py",
+          "skill/SKILL.md"
+        ],
+        "dependencies": [],
+        "acceptance": [
+          "All descendant behavior, parent prose and integrated acceptance in implementation-plan.md pass on current final child heads."
+        ]
+      },
+      "display": {
+        "summary": "Aggregate 11; execute its children",
+        "production": [
+          380,
+          670
+        ],
+        "tests": [
+          780,
+          1170
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/3.1.1",
+      "parent": "arbiter-authentication/3.1",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/3.1.1] Shared bounded carrier and streaming peer",
+        "responsibility": "Extract the existing carrier lease, credit ledger and serialized BIO pump once, consumed by unchanged pairing/control and a private real streaming peer. Own the shared streaming harness. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          ".github/workflows/ci.yml",
+          "client/go-cli/go.mod",
+          "client/go-cli/go.sum",
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-3-1-1.feature.md",
+          "server/pyproject.toml",
+          "server/src/arbiter_server/control_tls.py",
+          "server/src/arbiter_server/native_stream.py",
+          "server/src/arbiter_server/pairing_carrier.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_control_tls.py",
+          "server/tests/unit/test_native_stream.py",
+          "server/tests/unit/test_pairing_carrier.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/2.10.4"
+        ],
+        "acceptance": [
+          "Fragment/coalesce WS/TLS in both directions, force WantRead/WantWrite and cancellation; actual crypto owners retain credits and leases; no public ordinary route."
+        ]
+      },
+      "display": {
+        "summary": "Shared bounded carrier and streaming peer",
+        "production": [
+          220,
+          310
+        ],
+        "tests": [
+          250,
+          360
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/3.1.2",
+      "parent": "arbiter-authentication/3.1",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/3.1.2] Strict ordinary server TLS peer",
+        "responsibility": "Add strict ordinary mutual TLS and immutable candidate identity on the shared pump, still private until live admission and public cutover. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "client/go-cli/internal/identity/native_transport.go",
+          "client/go-cli/internal/identity/native_transport_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-3-1-2.feature.md",
+          "server/src/arbiter_server/credentials.py",
+          "server/src/arbiter_server/native_stream.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_credentials.py",
+          "server/tests/unit/test_native_stream.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/3.1.1"
+        ],
+        "acceptance": [
+          "Reject wrong role/server/issuer/key/time/ALPN, portable and prepared-only identity; execute a real Go/Python peer and bounded handshake failures."
+        ]
+      },
+      "display": {
+        "summary": "Strict ordinary server TLS peer",
+        "production": [
+          150,
+          220
+        ],
+        "tests": [
+          260,
+          370
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/3.1.3",
+      "parent": "arbiter-authentication/3.1",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/3.1.3] Verified Go native HTTP connection",
+        "responsibility": "Reuse the Go WebSocket adapter and http.Transport/TimeoutTransport with selected expected-server identity and strict access credentials. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/arbiterhttp/client.go",
+          "client/go-cli/internal/arbiterhttp/client_test.go",
+          "client/go-cli/internal/arbiterhttp/timeouts.go",
+          "client/go-cli/internal/arbiterhttp/timeouts_test.go",
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "client/go-cli/internal/identity/native_transport.go",
+          "client/go-cli/internal/identity/native_transport_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-3-1-3.feature.md",
+          "server/tests/integration/test_authentication_peer.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/3.1.2"
+        ],
+        "acceptance": [
+          "Untrusted outer relay sees no native credentials or plaintext; wrong server fails before client certificate; redirects and uncertain operation replay are absent."
+        ]
+      },
+      "display": {
+        "summary": "Verified Go native HTTP connection",
+        "production": [
+          170,
+          240
+        ],
+        "tests": [
+          250,
+          350
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/3.1.4",
+      "parent": "arbiter-authentication/3.1",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/3.1.4] One-request HTTP to ASGI stream",
+        "responsibility": "Consume the strict stream through h11 into the real ASGI application with immutable candidate scope, header/body limits and existing worker/body admission. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-3-1-4.feature.md",
+          "server/src/arbiter_server/http_work.py",
+          "server/src/arbiter_server/main.py",
+          "server/src/arbiter_server/native_http.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_artifact_http_admission.py",
+          "server/tests/unit/test_native_http_protocol.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/3.1.3"
+        ],
+        "acceptance": [
+          "Real chunked/coalesced bodies, Expect, ambiguous framing, second request, drip/silent body and response backpressure stay bounded without public cutover."
+        ]
+      },
+      "display": {
+        "summary": "One-request HTTP to ASGI stream",
+        "production": [
+          210,
+          290
+        ],
+        "tests": [
+          300,
+          420
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/3.2.1",
+      "parent": "arbiter-authentication/3.2",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/3.2.1] Live enrollment and receipt denial",
+        "responsibility": "Upgrade live enrollment rows and grants atomically, retain sole agent_enrollments mapping and exact prepared history; introduce one coordinator consumed by local deny and fixed receipt output. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-3-2-1.feature.md",
+          "server/src/arbiter_server/enrollment_activation.py",
+          "server/src/arbiter_server/enrollment_live.py",
+          "server/src/arbiter_server/enrollment_receipt.py",
+          "server/src/arbiter_server/live_authority.py",
+          "server/src/arbiter_server/local_control.py",
+          "server/src/arbiter_server/main.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_enrollment_live.py",
+          "server/tests/unit/test_enrollment_receipt.py",
+          "server/tests/unit/test_local_control.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/3.1.4"
+        ],
+        "acceptance": [
+          "Old/fresh/replay/corrupt rows, deny-versus-receipt snapshot/token/final-write races, rollback and actual cleanup use the same denial/cutoff authority."
+        ]
+      },
+      "display": {
+        "summary": "Live enrollment and receipt denial",
+        "production": [
+          210,
+          310
+        ],
+        "tests": [
+          370,
+          510
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/3.2.2",
+      "parent": "arbiter-authentication/3.2",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/3.2.2] Grant controls and dispatch coordinator",
+        "responsibility": "Extend that coordinator to ordinary body/dispatch tokens and OS-local grant add/remove, reusing existing admin and plugin workers. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-3-2-2.feature.md",
+          "server/src/arbiter_server/enrollment_activation.py",
+          "server/src/arbiter_server/enrollment_live.py",
+          "server/src/arbiter_server/enrollment_receipt.py",
+          "server/src/arbiter_server/live_authority.py",
+          "server/src/arbiter_server/local_control.py",
+          "server/src/arbiter_server/main.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_enrollment_live.py",
+          "server/tests/unit/test_enrollment_receipt.py",
+          "server/tests/unit/test_local_control.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/3.2.1"
+        ],
+        "acceptance": [
+          "Wrong/removed accounts never dispatch; writer busy/rollback/unrelated changes and final plugin-entry handoff preserve live authority and worker ownership."
+        ]
+      },
+      "display": {
+        "summary": "Grant controls and dispatch coordinator",
+        "production": [
+          200,
+          280
+        ],
+        "tests": [
+          280,
+          390
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/3.3",
+      "parent": "arbiter-authentication/3",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/3.3] Grant-filtered discovery and direct lookup",
+        "responsibility": "Apply one grant projection to overview/catalog/schema/policy/preview/direct-account paths without a new policy engine. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-3-3.feature.md",
+          "server/src/arbiter_server/live_authority.py",
+          "server/src/arbiter_server/main.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_main.py",
+          "server/tests/unit/test_native_http_protocol.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/3.2.2"
+        ],
+        "acceptance": [
+          "Names, counts, guidance and errors leak no hidden accounts; password change and deliberate name repoint preserve grants; policy behavior remains existing."
+        ]
+      },
+      "display": {
+        "summary": "Grant-filtered discovery and direct lookup",
+        "production": [
+          150,
+          220
+        ],
+        "tests": [
+          270,
+          380
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/3.4",
+      "parent": "arbiter-authentication/3",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/3.4] Authorized plugins with closed artifacts",
+        "responsibility": "Set immutable caller/account context in actual plugin workers; install the closed concrete artifact adapter and close descriptor/inline paths before legacy access. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-3-4.feature.md",
+          "server/src/arbiter_server/artifacts.py",
+          "server/src/arbiter_server/http_work.py",
+          "server/src/arbiter_server/main.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_artifacts.py",
+          "server/tests/unit/test_native_http_protocol.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/3.3"
+        ],
+        "acceptance": [
+          "Spy plus actual managed files show no legacy create/open/nonce/descriptor publication; startup cleanup is confined, repeatable and fail-closed."
+        ]
+      },
+      "display": {
+        "summary": "Authorized plugins with closed artifacts",
+        "production": [
+          190,
+          280
+        ],
+        "tests": [
+          300,
+          410
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/3.6.1",
+      "parent": "arbiter-authentication/3.6",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/3.6.1] Cross-connection denial and worker ownership",
+        "responsibility": "Complete body and dispatch cancellation on all affected sockets while real blocking upstream owners retain their worker/carrier slots. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-3-6-1.feature.md",
+          "server/src/arbiter_server/http_work.py",
+          "server/src/arbiter_server/live_authority.py",
+          "server/src/arbiter_server/native_http.py",
+          "server/src/arbiter_server/native_stream.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_live_authority.py",
+          "server/tests/unit/test_native_http_protocol.py",
+          "server/tests/unit/test_native_stream.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/3.4"
+        ],
+        "acceptance": [
+          "Barrier races before/after plugin handoff, all-eight blocked workers, rollback, shutdown and unrelated grants preserve admin/health responsiveness and honest prior effects."
+        ]
+      },
+      "display": {
+        "summary": "Cross-connection denial and worker ownership",
+        "production": [
+          160,
+          240
+        ],
+        "tests": [
+          300,
+          420
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/3.6.2",
+      "parent": "arbiter-authentication/3.6",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/3.6.2] Final-write revocation barrier",
+        "responsibility": "Check permissions after every output wait and immediately before final synchronous ciphertext write; discard unsent revoked bytes without flushing. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-3-6-2.feature.md",
+          "server/src/arbiter_server/http_work.py",
+          "server/src/arbiter_server/live_authority.py",
+          "server/src/arbiter_server/native_http.py",
+          "server/src/arbiter_server/native_stream.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_live_authority.py",
+          "server/tests/unit/test_native_http_protocol.py",
+          "server/tests/unit/test_native_stream.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/3.6.1"
+        ],
+        "acceptance": [
+          "Slow readers, queued TLS/WS output, late worker results and denial on another connection cannot release ownership early or send post-barrier unsent data."
+        ]
+      },
+      "display": {
+        "summary": "Final-write revocation barrier",
+        "production": [
+          130,
+          200
+        ],
+        "tests": [
+          280,
+          390
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/3.5.1",
+      "parent": "arbiter-authentication/3.5",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/3.5.1] Explicit enrollment selection across CLI",
+        "responsibility": "Add config/override selection and exercise every discovery/schema/error/op/tool/artifact constructor against private complete native peers; retain working production route until cutover. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/cli/cli.go",
+          "client/go-cli/internal/cli/cli_test.go",
+          "client/go-cli/internal/cli/enrollment.go",
+          "client/go-cli/internal/cli/enrollment_test.go",
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-3-5-1.feature.md",
+          "server/tests/integration/test_authentication_peer.py",
+          "skill/SKILL.md"
+        ],
+        "dependencies": [
+          "arbiter-authentication/3.6.2"
+        ],
+        "acceptance": [
+          "No first-record/URL identity inference; override wins for one invocation; every constructor uses the selected factory; no general outer trust bypass."
+        ]
+      },
+      "display": {
+        "summary": "Explicit enrollment selection across CLI",
+        "production": [
+          110,
+          170
+        ],
+        "tests": [
+          260,
+          360
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/3.5.2",
+      "parent": "arbiter-authentication/3.5",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/3.5.2] Atomic authenticated API cutover",
+        "responsibility": "Switch production CLI factory, enable complete ordinary native route and close anonymous API/legacy artifacts in one cut; keep minimal bootstrap/health. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/arbiterhttp/client.go",
+          "client/go-cli/internal/arbiterhttp/client_test.go",
+          "client/go-cli/internal/cli/cli.go",
+          "client/go-cli/internal/cli/cli_test.go",
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-3-5-2.feature.md",
+          "server/src/arbiter_server/main.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_main.py",
+          "server/tests/unit/test_native_http_protocol.py",
+          "skill/SKILL.md"
+        ],
+        "dependencies": [
+          "arbiter-authentication/3.5.1"
+        ],
+        "acceptance": [
+          "First installed authenticated prefix runs grants, live denial, body deadlines and closed-artifact cases; missing authority fails closed with no anonymous fallback."
+        ]
+      },
+      "display": {
+        "summary": "Atomic authenticated API cutover",
+        "production": [
+          100,
+          170
+        ],
+        "tests": [
+          310,
+          430
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/3.7",
+      "parent": "arbiter-authentication/3",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/3.7] Installed native transport integration",
+        "responsibility": "Extend the same installed driver for relay/certificate/passthrough/timeouts/native packaging and parent N01\u2013N12 composition. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          ".github/workflows/ci.yml",
+          "client/go-cli/go.mod",
+          "client/go-cli/go.sum",
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-3-7.feature.md",
+          "server/pyproject.toml",
+          "server/tests/integration/authentication_terminal_driver.py",
+          "server/tests/integration/test_installed_authentication.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/3.5.2"
+        ],
+        "acceptance": [
+          "Required native jobs actually execute, not skip; active long calls and progressing downloads keep original budgets; no deferred transport mechanism is introduced."
+        ]
+      },
+      "display": {
+        "summary": "Installed native transport integration",
+        "production": [
+          20,
+          60
+        ],
+        "tests": [
+          300,
+          420
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/4.1",
+      "parent": "arbiter-authentication/4",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/4.1] Due rotation with a fixed deadline",
+        "responsibility": "Implement bounded strict ordinary prepare/bind/confirm/result rotation handlers, stable pending state and unchanged grace with real private peers before client activation. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-4-1.feature.md",
+          "server/src/arbiter_server/enrollment_live.py",
+          "server/src/arbiter_server/lifecycle.py",
+          "server/src/arbiter_server/main.py",
+          "server/src/arbiter_server/native_http.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_lifecycle.py",
+          "server/tests/unit/test_native_http_protocol.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/3.7"
+        ],
+        "acceptance": [
+          "Separate one-request connections, not-due/due/resumed prepare, one candidate and stale grant snapshot preserve exact pending ID/deadline; denial and lost replies never slide grace."
+        ]
+      },
+      "display": {
+        "summary": "Due rotation with a fixed deadline",
+        "production": [
+          250,
+          370
+        ],
+        "tests": [
+          280,
+          410
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/4.2",
+      "parent": "arbiter-authentication/4",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/4.2] Durable candidate activation and reconciliation",
+        "responsibility": "Integrate one shared pre-operation lifecycle preflight into every CLI constructor, private candidate save/bind/confirm/result and atomic current/predecessor promotion with one unchanged logical budget. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/arbiterhttp/client.go",
+          "client/go-cli/internal/arbiterhttp/client_test.go",
+          "client/go-cli/internal/arbiterhttp/timeouts.go",
+          "client/go-cli/internal/arbiterhttp/timeouts_test.go",
+          "client/go-cli/internal/cli/cli.go",
+          "client/go-cli/internal/cli/cli_test.go",
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "client/go-cli/internal/identity/enrollment_receipt.go",
+          "client/go-cli/internal/identity/enrollment_receipt_test.go",
+          "client/go-cli/internal/identity/lifecycle.go",
+          "client/go-cli/internal/identity/lifecycle_test.go",
+          "client/go-cli/internal/identity/native_transport.go",
+          "client/go-cli/internal/identity/native_transport_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-4-2.feature.md",
+          "server/src/arbiter_server/lifecycle.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_lifecycle.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/4.1"
+        ],
+        "acceptance": [
+          "No user body or consuming nonce precedes preflight; lost confirm reconciles candidate first; save failure, concurrent clients, busy/stale writer and budget exhaustion never replay work or reset a deadline."
+        ]
+      },
+      "display": {
+        "summary": "Durable candidate activation and reconciliation",
+        "production": [
+          280,
+          390
+        ],
+        "tests": [
+          320,
+          450
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/4.3",
+      "parent": "arbiter-authentication/4",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/4.3] Purpose-bound late completion",
+        "responsibility": "Extend fixed server-authenticated controls for exact pending old-plus-candidate exporter proofs and same-key certificate reissue after expiry. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "client/go-cli/internal/identity/lifecycle.go",
+          "client/go-cli/internal/identity/lifecycle_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-4-3.feature.md",
+          "server/src/arbiter_server/lifecycle.py",
+          "server/src/arbiter_server/lifecycle_control.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_lifecycle_control.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/4.2"
+        ],
+        "acceptance": [
+          "Cross-channel/purpose/revision replay, wrong stored certificate, inactivity and denial fail; ordinary TLS stays strict and incomplete controls never refresh contact."
+        ]
+      },
+      "display": {
+        "summary": "Purpose-bound late completion",
+        "production": [
+          230,
+          350
+        ],
+        "tests": [
+          280,
+          410
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/4.4",
+      "parent": "arbiter-authentication/4",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/4.4] One authenticated predecessor attempt",
+        "responsibility": "Add authenticated credential status and one auth-only predecessor attempt before any operation submission, preserving existing strict deadlines and trust. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/cli/cli.go",
+          "client/go-cli/internal/cli/cli_test.go",
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "client/go-cli/internal/identity/enrollment_receipt.go",
+          "client/go-cli/internal/identity/enrollment_receipt_test.go",
+          "client/go-cli/internal/identity/lifecycle.go",
+          "client/go-cli/internal/identity/lifecycle_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-4-4.feature.md",
+          "server/src/arbiter_server/lifecycle.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_lifecycle.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/4.3"
+        ],
+        "acceptance": [
+          "No fallback after timeout/denial/unverified peer or submitted request; expiry/recovery/unenrollment discards predecessor; stale restore either works safely or gives repair guidance."
+        ]
+      },
+      "display": {
+        "summary": "One authenticated predecessor attempt",
+        "production": [
+          140,
+          230
+        ],
+        "tests": [
+          210,
+          320
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/4.5",
+      "parent": "arbiter-authentication/4",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/4.5] Lifecycle process and clock integration",
+        "responsibility": "Extend shared restart/clock peers through due contact, late completion and retained result cleanup with current help and errors. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-4-5.feature.md",
+          "server/tests/integration/authentication_terminal_driver.py",
+          "server/tests/integration/test_installed_authentication.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/4.4"
+        ],
+        "acceptance": [
+          "Full pending/current/predecessor chain survives lost results and actual restarts; denial and incomplete exchanges preserve inactivity semantics."
+        ]
+      },
+      "display": {
+        "summary": "Lifecycle process and clock integration",
+        "production": [
+          30,
+          90
+        ],
+        "tests": [
+          270,
+          400
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/5.1",
+      "parent": "arbiter-authentication/5",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/5.1] Pairing repair of an existing enrollment",
+        "responsibility": "Reuse exact approved pairing for an explicit existing enrollment; replace access credentials without assigning a new durable agent or regranting. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/cli/enrollment.go",
+          "client/go-cli/internal/cli/enrollment_test.go",
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "client/go-cli/internal/identity/enrollment.go",
+          "client/go-cli/internal/identity/enrollment_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-5-1.feature.md",
+          "server/src/arbiter_server/enrollment.py",
+          "server/src/arbiter_server/enrollment_activation.py",
+          "server/src/arbiter_server/local_control.py",
+          "server/src/arbiter_server/main.py",
+          "server/src/arbiter_server/owner_recovery.py",
+          "server/src/arbiter_server/prepared.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_enrollment_activation.py",
+          "server/tests/unit/test_owner_recovery.py",
+          "skill/SKILL.md"
+        ],
+        "dependencies": [
+          "arbiter-authentication/4.5"
+        ],
+        "acceptance": [
+          "Fresh enrollment cannot select existing identity; existing deny and grants survive; old pending/current sessions lose authority atomically."
+        ]
+      },
+      "display": {
+        "summary": "Pairing repair of an existing enrollment",
+        "production": [
+          170,
+          270
+        ],
+        "tests": [
+          230,
+          350
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/5.2",
+      "parent": "arbiter-authentication/5",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/5.2] Offline owner authorization files",
+        "responsibility": "Issue bounded stateless purpose-separated origin-signed recovery cookies and offline owner JWS through existing public commands; no unauthenticated per-enrollment reservation. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/cli/enrollment.go",
+          "client/go-cli/internal/cli/enrollment_test.go",
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "client/go-cli/internal/identity/recovery.go",
+          "client/go-cli/internal/identity/recovery_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-5-2.feature.md",
+          "server/src/arbiter_server/lifecycle_control.py",
+          "server/src/arbiter_server/local_control.py",
+          "server/src/arbiter_server/main.py",
+          "server/src/arbiter_server/owner_recovery.py",
+          "server/src/arbiter_server/recovery.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_owner_recovery.py",
+          "server/tests/unit/test_recovery.py",
+          "skill/SKILL.md"
+        ],
+        "dependencies": [
+          "arbiter-authentication/5.1"
+        ],
+        "acceptance": [
+          "Continuously submitted attacker new-key proofs cannot occupy a legitimate recovery slot; unknown/expired/stale/wrong signer/algorithm/purpose/server/revision/duplicate fields fail generically, and private owner material stays offline."
+        ]
+      },
+      "display": {
+        "summary": "Offline owner authorization files",
+        "production": [
+          240,
+          360
+        ],
+        "tests": [
+          300,
+          420
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/5.3",
+      "parent": "arbiter-authentication/5",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/5.3] Atomic access recovery and exact receipt",
+        "responsibility": "Verify stateless cookie, independent owner JWS and new-key exporter proof before one guarded durable access replacement/consumed operation/result; first valid owner completion wins. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/cli/enrollment.go",
+          "client/go-cli/internal/cli/enrollment_test.go",
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "client/go-cli/internal/identity/recovery.go",
+          "client/go-cli/internal/identity/recovery_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-5-3.feature.md",
+          "server/src/arbiter_server/lifecycle_control.py",
+          "server/src/arbiter_server/local_control.py",
+          "server/src/arbiter_server/main.py",
+          "server/src/arbiter_server/owner_recovery.py",
+          "server/src/arbiter_server/recovery.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_owner_recovery.py",
+          "server/tests/unit/test_recovery.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/5.2"
+        ],
+        "acceptance": [
+          "Competing valid cookies, rotation/denial/recovery races and lost replies consume once, preserve suspension/grants and return exact receipt without another approval."
+        ]
+      },
+      "display": {
+        "summary": "Atomic access recovery and exact receipt",
+        "production": [
+          220,
+          330
+        ],
+        "tests": [
+          260,
+          390
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/5.4",
+      "parent": "arbiter-authentication/5",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/5.4] Portable replacement across enrolled servers",
+        "responsibility": "Use the existing request/authorize/complete journey for owner-authorized original-local-issuer portable signing plus atomic access/result commit and crash-safe shared portable publication across separately recovered servers. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/cli/enrollment.go",
+          "client/go-cli/internal/cli/enrollment_test.go",
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "client/go-cli/internal/identity/lifecycle.go",
+          "client/go-cli/internal/identity/lifecycle_test.go",
+          "client/go-cli/internal/identity/portable.go",
+          "client/go-cli/internal/identity/portable_test.go",
+          "client/go-cli/internal/identity/recovery.go",
+          "client/go-cli/internal/identity/recovery_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-5-4.feature.md",
+          "server/src/arbiter_server/credentials.py",
+          "server/src/arbiter_server/lifecycle_control.py",
+          "server/src/arbiter_server/owner_issuers.py",
+          "server/src/arbiter_server/owner_recovery.py",
+          "server/src/arbiter_server/recovery.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_owner_issuers.py",
+          "server/tests/unit/test_owner_recovery.py",
+          "skill/SKILL.md"
+        ],
+        "dependencies": [
+          "arbiter-authentication/5.3"
+        ],
+        "acceptance": [
+          "Two actual servers preserve independent grants/denial; remote public trust/access alone cannot sign; wrong owner/key/issuer, denied issue, commit/save/lost-result races and missing issuer leave honest portable-pending state without another enrollment approval."
+        ]
+      },
+      "display": {
+        "summary": "Portable replacement across enrolled servers",
+        "production": [
+          280,
+          410
+        ],
+        "tests": [
+          340,
+          490
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/5.5",
+      "parent": "arbiter-authentication/5",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/5.5] Owner issuer and portable certificate renewal",
+        "responsibility": "Renew the same local owner key/certificate, retain signed old-to-new root continuity and exact-fingerprint aliases only through still-valid active registered trust, then renew the same portable leaf with both live access and portable possession. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "client/go-cli/internal/identity/credentials.go",
+          "client/go-cli/internal/identity/credentials_test.go",
+          "client/go-cli/internal/identity/lifecycle.go",
+          "client/go-cli/internal/identity/lifecycle_test.go",
+          "client/go-cli/internal/identity/portable.go",
+          "client/go-cli/internal/identity/portable_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-5-5.feature.md",
+          "server/src/arbiter_server/credentials.py",
+          "server/src/arbiter_server/enrollment_live.py",
+          "server/src/arbiter_server/lifecycle.py",
+          "server/src/arbiter_server/lifecycle_control.py",
+          "server/src/arbiter_server/main.py",
+          "server/src/arbiter_server/owner_issuers.py",
+          "server/src/arbiter_server/owner_recovery.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_credentials.py",
+          "server/tests/unit/test_owner_issuers.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/5.4"
+        ],
+        "acceptance": [
+          "Two-server old-to-new root forwarding, removal/expiry/races, wrong owner/key/profile, leaf renewal and every lost-result/save boundary preserve trust and grants; inactive/expired or unknown old roots cannot self-register."
+        ]
+      },
+      "display": {
+        "summary": "Owner issuer and portable certificate renewal",
+        "production": [
+          240,
+          360
+        ],
+        "tests": [
+          310,
+          470
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/6.1",
+      "parent": "arbiter-authentication/6",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/6.1] Planned server-key transition publication",
+        "responsibility": "Use the stopped/live exclusive owner to stage a successor, bind old endorsement plus new possession and publish one stable-ID transition and active key atomically. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-6-1.feature.md",
+          "server/src/arbiter_server/credentials.py",
+          "server/src/arbiter_server/generations.py",
+          "server/src/arbiter_server/local_control.py",
+          "server/src/arbiter_server/main.py",
+          "server/src/arbiter_server/server_transition.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_credentials.py",
+          "server/tests/unit/test_generations.py",
+          "server/tests/unit/test_server_transition.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/5.5"
+        ],
+        "acceptance": [
+          "Wrong ID/key, incomplete staging, repeated operation and restart retain only complete authoritative history without losing current enrollment/grants/denial."
+        ]
+      },
+      "display": {
+        "summary": "Planned server-key transition publication",
+        "production": [
+          190,
+          300
+        ],
+        "tests": [
+          230,
+          340
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/6.2",
+      "parent": "arbiter-authentication/6",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/6.2] Verified server transition adoption",
+        "responsibility": "Retrieve bounded transition records before credentials, verify continuity to the current channel key and atomically store client trust. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "client/go-cli/internal/identity/native_transport.go",
+          "client/go-cli/internal/identity/native_transport_test.go",
+          "client/go-cli/internal/identity/server_transition.go",
+          "client/go-cli/internal/identity/server_transition_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-6-2.feature.md",
+          "server/src/arbiter_server/lifecycle_control.py",
+          "server/src/arbiter_server/server_transition.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_server_transition.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/6.1"
+        ],
+        "acceptance": [
+          "Offline clients, missing/forked/interleaved history, failed save and replay never silently accept another identity or send credentials before verified adoption."
+        ]
+      },
+      "display": {
+        "summary": "Verified server transition adoption",
+        "production": [
+          170,
+          280
+        ],
+        "tests": [
+          240,
+          350
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/6.3",
+      "parent": "arbiter-authentication/6",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/6.3] Independent compromise recovery",
+        "responsibility": "Bind owner recovery signer, fresh challenge and new authority possession for compromise replacement; invalidate superseded transition authority and sessions. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "client/go-cli/internal/identity/server_transition.go",
+          "client/go-cli/internal/identity/server_transition_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-6-3.feature.md",
+          "server/src/arbiter_server/owner_recovery.py",
+          "server/src/arbiter_server/recovery.py",
+          "server/src/arbiter_server/server_transition.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_owner_recovery.py",
+          "server/tests/unit/test_server_transition.py",
+          "skill/SKILL.md"
+        ],
+        "dependencies": [
+          "arbiter-authentication/6.2"
+        ],
+        "acceptance": [
+          "Old compromised key alone cannot complete this recovery; retained owner proof reaches enrolled clients and never clears denial, changes durable server ID or replays operations."
+        ]
+      },
+      "display": {
+        "summary": "Independent compromise recovery",
+        "production": [
+          190,
+          300
+        ],
+        "tests": [
+          260,
+          380
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/6.4",
+      "parent": "arbiter-authentication/6",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/6.4] Server authority and leaf certificate renewal",
+        "responsibility": "Renew same-key authority/leaf before selected validity windows; missed trust validity requires independent owner recovery or explicit pairing. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-6-4.feature.md",
+          "server/src/arbiter_server/credentials.py",
+          "server/src/arbiter_server/generations.py",
+          "server/src/arbiter_server/local_control.py",
+          "server/src/arbiter_server/main.py",
+          "server/src/arbiter_server/server_transition.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_credentials.py",
+          "server/tests/unit/test_generations.py",
+          "server/tests/unit/test_server_transition.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/6.3"
+        ],
+        "acceptance": [
+          "Strict time/role/ID verification, failed publication and restart preserve trust; HTTPS/URL change triggers no native identity-key replacement."
+        ]
+      },
+      "display": {
+        "summary": "Server authority and leaf certificate renewal",
+        "production": [
+          180,
+          290
+        ],
+        "tests": [
+          240,
+          360
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/7.1",
+      "parent": "arbiter-authentication/7",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/7.1] Recipient possession and bounded retention",
+        "responsibility": "Register recipient version through live access and a decrypt/possession challenge; retain client/server keys required by unexpired artifacts separately from access rotation. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "client/go-cli/internal/identity/recipient.go",
+          "client/go-cli/internal/identity/recipient_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-7-1.feature.md",
+          "server/src/arbiter_server/artifact_crypto.py",
+          "server/src/arbiter_server/enrollment_live.py",
+          "server/src/arbiter_server/lifecycle_control.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_artifact_crypto.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/6.4"
+        ],
+        "acceptance": [
+          "Proxy replacement, wrong creator/version/challenge fails; revocation blocks registration and access rotation cannot delete an active artifact key."
+        ]
+      },
+      "display": {
+        "summary": "Recipient possession and bounded retention",
+        "production": [
+          180,
+          280
+        ],
+        "tests": [
+          220,
+          330
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/7.2",
+      "parent": "arbiter-authentication/7",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/7.2] Dual-recipient encrypted artifact writing",
+        "responsibility": "Install bounded binary age streaming and encrypted metadata behind the still-closed public adapter; retain server inspection with caller-owned sticky I/O failure checks. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          ".github/workflows/ci.yml",
+          "client/go-cli/go.mod",
+          "client/go-cli/go.sum",
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-7-2.feature.md",
+          "server/pyproject.toml",
+          "server/src/arbiter_server/artifact_crypto.py",
+          "server/src/arbiter_server/artifacts.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_artifact_crypto.py",
+          "server/tests/unit/test_artifacts.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/7.1"
+        ],
+        "acceptance": [
+          "Both recipients decrypt; wrong key/tamper/truncation and swallowed final-writer failure prevent publication; no persistent plaintext payload staging or custom cipher format."
+        ]
+      },
+      "display": {
+        "summary": "Dual-recipient encrypted artifact writing",
+        "production": [
+          220,
+          330
+        ],
+        "tests": [
+          260,
+          390
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/7.3",
+      "parent": "arbiter-authentication/7",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/7.3] Physical quotas and encrypted-store restart",
+        "responsibility": "Reserve plaintext limit plus exact bounded crypto/metadata overhead, count staging and actual owners, and reconcile private encrypted files on restart. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-7-3.feature.md",
+          "server/src/arbiter_server/artifacts.py",
+          "server/src/arbiter_server/http_work.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_artifact_http_admission.py",
+          "server/tests/unit/test_artifacts.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/7.2"
+        ],
+        "acceptance": [
+          "Near-1GiB/full disk/2000 slots/concurrent writers/slow readers preserve 50MiB cap and reservations until actual deletion; no stale orphan becomes accessible."
+        ]
+      },
+      "display": {
+        "summary": "Physical quotas and encrypted-store restart",
+        "production": [
+          200,
+          300
+        ],
+        "tests": [
+          240,
+          360
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/7.4",
+      "parent": "arbiter-authentication/7",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/7.4] Creator-bound descriptor HEAD and one GET",
+        "responsibility": "Authorize metadata/HEAD/GET by creator, originating account grant and nonce, with durable consume-before-open and native authenticated origin descriptor. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-7-4.feature.md",
+          "server/src/arbiter_server/artifacts.py",
+          "server/src/arbiter_server/live_authority.py",
+          "server/src/arbiter_server/main.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_artifact_http_admission.py",
+          "server/tests/unit/test_artifacts.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/7.3"
+        ],
+        "acceptance": [
+          "Shared account/copied nonce/wrong creator/revocation fails; HEAD is non-consuming and failed GET stays consumed across restart and snapshot policy."
+        ]
+      },
+      "display": {
+        "summary": "Creator-bound descriptor HEAD and one GET",
+        "production": [
+          190,
+          290
+        ],
+        "tests": [
+          260,
+          380
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/7.5",
+      "parent": "arbiter-authentication/7",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/7.5] Encrypted plugin adapter activation",
+        "responsibility": "Replace the closed adapter through the same trusted caller context for all plugin/inline paths; keep legacy routes permanently closed. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-7-5.feature.md",
+          "server/src/arbiter_server/artifacts.py",
+          "server/src/arbiter_server/main.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_artifacts.py",
+          "server/tests/unit/test_native_http_protocol.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/7.4"
+        ],
+        "acceptance": [
+          "Mock SMTP/IMAP actual dispatch cannot choose creator or return legacy plaintext descriptors; live denial terminates further encrypted delivery."
+        ]
+      },
+      "display": {
+        "summary": "Encrypted plugin adapter activation",
+        "production": [
+          140,
+          240
+        ],
+        "tests": [
+          230,
+          340
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/7.6",
+      "parent": "arbiter-authentication/7",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/7.6] Encrypted-store contention and packaging",
+        "responsibility": "Extend installed driver for age backend/platform packaging and real consume/quota/revoke/cleanup composition; charge no duplicate encryption foundation. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          ".github/workflows/ci.yml",
+          "client/go-cli/go.mod",
+          "client/go-cli/go.sum",
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-7-6.feature.md",
+          "server/pyproject.toml",
+          "server/tests/integration/authentication_terminal_driver.py",
+          "server/tests/integration/test_installed_authentication.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/7.5"
+        ],
+        "acceptance": [
+          "Health remains responsive, actual file/crypto owners survive waiter cancellation, near-limit artifacts complete and no GET replay is introduced."
+        ]
+      },
+      "display": {
+        "summary": "Encrypted-store contention and packaging",
+        "production": [
+          30,
+          100
+        ],
+        "tests": [
+          260,
+          400
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/8.1",
+      "parent": "arbiter-authentication/8",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/8.1] Immediate decrypted stdin with explicit stream flag",
+        "responsibility": "Parse required --stream true|false without default and add true mode to existing bounded child stdin pipeline using the authenticated descriptor. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/cli/artifact_crypto.go",
+          "client/go-cli/internal/cli/artifact_crypto_test.go",
+          "client/go-cli/internal/cli/cli.go",
+          "client/go-cli/internal/cli/cli_test.go",
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-8-1.feature.md",
+          "server/tests/integration/test_authentication_peer.py",
+          "skill/SKILL.md"
+        ],
+        "dependencies": [
+          "arbiter-authentication/7.6"
+        ],
+        "acceptance": [
+          "Valid partial input and irreversible child effects remain possible; wrong final digest/EOF reports failure, no automatic retry or plaintext input file."
+        ]
+      },
+      "display": {
+        "summary": "Immediate decrypted stdin with explicit stream flag",
+        "production": [
+          170,
+          270
+        ],
+        "tests": [
+          220,
+          340
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/8.2",
+      "parent": "arbiter-authentication/8",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/8.2] Verified ciphertext staging then stdin",
+        "responsibility": "Implement false mode: consume one GET into reserved private ciphertext, verify to discard, freeze exact bytes, then decrypt into the child. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/cli/artifact_crypto.go",
+          "client/go-cli/internal/cli/artifact_crypto_test.go",
+          "client/go-cli/internal/cli/artifact_temp.go",
+          "client/go-cli/internal/cli/artifact_temp_test.go",
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-8-2.feature.md",
+          "server/tests/integration/test_authentication_peer.py",
+          "skill/SKILL.md"
+        ],
+        "dependencies": [
+          "arbiter-authentication/8.1"
+        ],
+        "acceptance": [
+          "Native POSIX/Windows immutable handles or bounded snapshot resist writable aliases/path replacement; failed preverification starts no child and four transfers bound memory/disk."
+        ]
+      },
+      "display": {
+        "summary": "Verified ciphertext staging then stdin",
+        "production": [
+          220,
+          340
+        ],
+        "tests": [
+          260,
+          390
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/8.3",
+      "parent": "arbiter-authentication/8",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/8.3] Explicit verified plaintext temporary path",
+        "responsibility": "Require --allow-plaintext-temp and fully verify private plaintext before handing the existing argv placeholder path to a child. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/cli/artifact_crypto.go",
+          "client/go-cli/internal/cli/artifact_crypto_test.go",
+          "client/go-cli/internal/cli/artifact_temp.go",
+          "client/go-cli/internal/cli/artifact_temp_test.go",
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-8-3.feature.md",
+          "server/tests/integration/test_authentication_peer.py",
+          "skill/SKILL.md"
+        ],
+        "dependencies": [
+          "arbiter-authentication/8.2"
+        ],
+        "acceptance": [
+          "Origin/finalization failure exposes no path; signals/full disk/child failure exercise actual cleanup with honest crash and same-user limits."
+        ]
+      },
+      "display": {
+        "summary": "Explicit verified plaintext temporary path",
+        "production": [
+          130,
+          220
+        ],
+        "tests": [
+          200,
+          310
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/8.4",
+      "parent": "arbiter-authentication/8",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/8.4] Verified persistent plaintext export",
+        "responsibility": "Replace ambiguous save with save-decrypted, stage privately, verify and atomically publish without overwriting an existing destination. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/cli/artifact_crypto.go",
+          "client/go-cli/internal/cli/artifact_crypto_test.go",
+          "client/go-cli/internal/cli/cli.go",
+          "client/go-cli/internal/cli/cli_test.go",
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-8-4.feature.md",
+          "server/tests/integration/test_authentication_peer.py",
+          "skill/SKILL.md"
+        ],
+        "dependencies": [
+          "arbiter-authentication/8.3"
+        ],
+        "acceptance": [
+          "Tamper/full disk/cancellation/no-clobber races cannot leave partial final plaintext or follow attacker-controlled links; old alias is absent."
+        ]
+      },
+      "display": {
+        "summary": "Verified persistent plaintext export",
+        "production": [
+          120,
+          210
+        ],
+        "tests": [
+          200,
+          310
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/8.5",
+      "parent": "arbiter-authentication/8",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/8.5] Four-path installed process integration",
+        "responsibility": "Extend existing installed real-child driver for all four paths, lifecycle/revocation, cleanup and guidance; reconcile help/skill examples. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          ".github/workflows/ci.yml",
+          "client/go-cli/go.mod",
+          "client/go-cli/go.sum",
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-8-5.feature.md",
+          "server/pyproject.toml",
+          "server/tests/integration/authentication_terminal_driver.py",
+          "server/tests/integration/test_installed_authentication.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/8.4"
+        ],
+        "acceptance": [
+          "Both stream values, explicit plaintext paths, all platform process/custody limits and orphan non-resumption execute without a hidden default."
+        ]
+      },
+      "display": {
+        "summary": "Four-path installed process integration",
+        "production": [
+          30,
+          90
+        ],
+        "tests": [
+          260,
+          390
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/9.1",
+      "parent": "arbiter-authentication/9",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/9.1] Coherent saved configuration and actual secrets",
+        "responsibility": "Extend current generation capture/reload to canonical selected configuration/policies and actual configured resolver values/private files; fail before publication on changed sources. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-9-1.feature.md",
+          "server/src/arbiter_server/config.py",
+          "server/src/arbiter_server/generations.py",
+          "server/src/arbiter_server/main.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_config.py",
+          "server/tests/unit/test_generations.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/8.5"
+        ],
+        "acceptance": [
+          "Environment/file secret resolution is bounded and repeatable; arbitrary environment/host files stay absent; failed reload retains old complete saved generation."
+        ]
+      },
+      "display": {
+        "summary": "Coherent saved configuration and actual secrets",
+        "production": [
+          240,
+          360
+        ],
+        "tests": [
+          260,
+          390
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/9.2",
+      "parent": "arbiter-authentication/9",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/9.2] Fenced SQLite and saved-state snapshot",
+        "responsibility": "Use the existing writer barrier to pair SQLite backup with immutable saved configuration/key references, then release before signed encrypted streaming. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-9-2.feature.md",
+          "server/src/arbiter_server/backups.py",
+          "server/src/arbiter_server/generations.py",
+          "server/src/arbiter_server/live_authority.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_backups.py",
+          "server/tests/unit/test_generations.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/9.1"
+        ],
+        "acceptance": [
+          "Concurrent enrollment/grant/rotation/reload yields one coherent snapshot; busy writer, cancellation and shutdown retain/release the actual admin owner correctly."
+        ]
+      },
+      "display": {
+        "summary": "Fenced SQLite and saved-state snapshot",
+        "production": [
+          180,
+          280
+        ],
+        "tests": [
+          230,
+          350
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/9.3",
+      "parent": "arbiter-authentication/9",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/9.3] Strict signed recovery stream format",
+        "responsibility": "Implement one bounded length-prefixed uncompressed record grammar and exact-byte ES256 manifest, shared by exporter self-validation and offline restore. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-9-3.feature.md",
+          "server/src/arbiter_server/backup_format.py",
+          "server/src/arbiter_server/backups.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_backup_format.py",
+          "server/tests/unit/test_backups.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/9.2"
+        ],
+        "acceptance": [
+          "Duplicate/traversing/link/device paths, unsupported fields, oversize counts/records and incoming nominated verifier fail; finalization binds every file hash."
+        ]
+      },
+      "display": {
+        "summary": "Strict signed recovery stream format",
+        "production": [
+          220,
+          340
+        ],
+        "tests": [
+          260,
+          390
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/9.4",
+      "parent": "arbiter-authentication/9",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/9.4] Encrypted atomic local export",
+        "responsibility": "Expose backup export through OS-local/verified SSH control, one actual job, public recipient only, bounded age writer and atomic designated output replacement. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-9-4.feature.md",
+          "server/src/arbiter_server/backups.py",
+          "server/src/arbiter_server/local_control.py",
+          "server/src/arbiter_server/main.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_backups.py",
+          "server/tests/unit/test_local_control.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/9.3"
+        ],
+        "acceptance": [
+          "Full-disk/final-write/cancellation/disconnect preserve the last complete bundle; private owner signer/decryptor never enters server/job/bundle."
+        ]
+      },
+      "display": {
+        "summary": "Encrypted atomic local export",
+        "production": [
+          200,
+          310
+        ],
+        "tests": [
+          240,
+          360
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/9.5",
+      "parent": "arbiter-authentication/9",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/9.5] External backup job and snapshot integration",
+        "responsibility": "Provide external startup/periodic job guidance and extend installed driver through verification/restore-reader round trip and snapshot contention. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          ".github/workflows/ci.yml",
+          "client/go-cli/go.mod",
+          "client/go-cli/go.sum",
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-9-5.feature.md",
+          "server/pyproject.toml",
+          "server/tests/integration/authentication_terminal_driver.py",
+          "server/tests/integration/test_installed_authentication.py",
+          "skill/SKILL.md"
+        ],
+        "dependencies": [
+          "arbiter-authentication/9.4"
+        ],
+        "acceptance": [
+          "Jobs report failure and retain off-host data; bundle omissions are explicit and all durable credentials/configured secrets are restorable; no internal scheduler or live accounts."
+        ]
+      },
+      "display": {
+        "summary": "External backup job and snapshot integration",
+        "production": [
+          20,
+          80
+        ],
+        "tests": [
+          250,
+          380
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/10.1",
+      "parent": "arbiter-authentication/10",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/10.1] Strict offline decrypt and validation",
+        "responsibility": "Consume backup grammar under external recovery trust with target stopped; verify age EOF, exact origin/signature, hashes, certificates, keys and configuration. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-10-1.feature.md",
+          "server/src/arbiter_server/backup_format.py",
+          "server/src/arbiter_server/main.py",
+          "server/src/arbiter_server/recovery.py",
+          "server/src/arbiter_server/restore.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_backup_format.py",
+          "server/tests/unit/test_restore.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/9.5"
+        ],
+        "acceptance": [
+          "Wrong verifier/malformed/truncated/oversized streams never expose active state; private staged output is bounded and discarded on failure."
+        ]
+      },
+      "display": {
+        "summary": "Strict offline decrypt and validation",
+        "production": [
+          200,
+          310
+        ],
+        "tests": [
+          260,
+          390
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/10.2",
+      "parent": "arbiter-authentication/10",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/10.2] Exclusive restore staging and cleanup",
+        "responsibility": "Extend the existing instance lock and private generation primitives for stopped same-filesystem staging, disk reservation and startup cleanup. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-10-2.feature.md",
+          "server/src/arbiter_server/authority.py",
+          "server/src/arbiter_server/generations.py",
+          "server/src/arbiter_server/restore.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_generations.py",
+          "server/tests/unit/test_restore.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/10.1"
+        ],
+        "acceptance": [
+          "Concurrent server start/restore, process kill, symlink/ACL error and disk exhaustion leave active generation and prior undo intact."
+        ]
+      },
+      "display": {
+        "summary": "Exclusive restore staging and cleanup",
+        "production": [
+          180,
+          280
+        ],
+        "tests": [
+          230,
+          350
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/10.3",
+      "parent": "arbiter-authentication/10",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/10.3] Atomic active and immutable undo publication",
+        "responsibility": "Replace the active-only selector with one durable active/undo control record, reusing platform publication; preserve old generation as immutable undo. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-10-3.feature.md",
+          "server/src/arbiter_server/authority.py",
+          "server/src/arbiter_server/generations.py",
+          "server/src/arbiter_server/restore.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_generations.py",
+          "server/tests/unit/test_restore.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/10.2"
+        ],
+        "acceptance": [
+          "Faults before/after each flush and selector publication choose complete old/new state, never a mixed active/undo pair, silent settings merge or reset deadline."
+        ]
+      },
+      "display": {
+        "summary": "Atomic active and immutable undo publication",
+        "production": [
+          190,
+          300
+        ],
+        "tests": [
+          260,
+          390
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/10.4",
+      "parent": "arbiter-authentication/10",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/10.4] Repeatable latest undo and explicit discard",
+        "responsibility": "Undo clones the retained immutable pre-restore point into a fresh active generation, keeps that undo point after use, and supports explicit offline discard. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-10-4.feature.md",
+          "server/src/arbiter_server/generations.py",
+          "server/src/arbiter_server/main.py",
+          "server/src/arbiter_server/restore.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_generations.py",
+          "server/tests/unit/test_restore.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/10.3"
+        ],
+        "acceptance": [
+          "Repeated undo after further writes restores the same point; failed restore preserves it; next successful restore replaces it; no redo or upstream rollback claim."
+        ]
+      },
+      "display": {
+        "summary": "Repeatable latest undo and explicit discard",
+        "production": [
+          160,
+          260
+        ],
+        "tests": [
+          230,
+          350
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/10.5",
+      "parent": "arbiter-authentication/10",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/10.5] Native restore crash and client integration",
+        "responsibility": "Extend process/native durability driver with empty/existing host restore, stale client/current/predecessor repair and warning/runbook checks. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          ".github/workflows/ci.yml",
+          "client/go-cli/go.mod",
+          "client/go-cli/go.sum",
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-10-5.feature.md",
+          "server/pyproject.toml",
+          "server/tests/integration/authentication_terminal_driver.py",
+          "server/tests/integration/test_installed_authentication.py",
+          "skill/SKILL.md"
+        ],
+        "dependencies": [
+          "arbiter-authentication/10.4"
+        ],
+        "acceptance": [
+          "Actual platform termination boundaries, post-use undo and snapshot denial/deadlines are tested; unseen client history is never guessed."
+        ]
+      },
+      "display": {
+        "summary": "Native restore crash and client integration",
+        "production": [
+          30,
+          100
+        ],
+        "tests": [
+          280,
+          420
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/11.1",
+      "parent": "arbiter-authentication/11",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/11.1] Maintenance drain and cooperative migration",
+        "responsibility": "Commit local maintenance inhibition, drain/cancel real work, capture final bundle and guide stopped destination restore while source remains disabled. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-11-1.feature.md",
+          "server/src/arbiter_server/live_authority.py",
+          "server/src/arbiter_server/local_control.py",
+          "server/src/arbiter_server/main.py",
+          "server/src/arbiter_server/maintenance.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_local_control.py",
+          "server/tests/unit/test_maintenance.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/10.5"
+        ],
+        "acceptance": [
+          "Failure/shutdown cannot re-enable source; read-only export remains possible; no hidden epoch/fencing/takeover or automatic old-host restart."
+        ]
+      },
+      "display": {
+        "summary": "Maintenance drain and cooperative migration",
+        "production": [
+          170,
+          280
+        ],
+        "tests": [
+          240,
+          360
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/11.2",
+      "parent": "arbiter-authentication/11",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/11.2] Authenticated fixed URL handoff",
+        "responsibility": "Serve fixed destination URL only from disabled source, verify remembered source and destination identity/transition, then durably adopt client URL before submission. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          "client/go-cli/internal/cli/cli.go",
+          "client/go-cli/internal/cli/cli_test.go",
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "client/go-cli/internal/identity/native_transport.go",
+          "client/go-cli/internal/identity/native_transport_test.go",
+          "client/go-cli/internal/identity/server_transition.go",
+          "client/go-cli/internal/identity/server_transition_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-11-2.feature.md",
+          "server/src/arbiter_server/main.py",
+          "server/src/arbiter_server/maintenance.py",
+          "server/src/arbiter_server/server_transition.py",
+          "server/tests/integration/test_authentication_peer.py",
+          "server/tests/unit/test_maintenance.py",
+          "server/tests/unit/test_server_transition.py"
+        ],
+        "dependencies": [
+          "arbiter-authentication/11.1"
+        ],
+        "acceptance": [
+          "Wrong destination, later key rotation, stale old URL and lost reply cannot expose credentials/capabilities or replay operations; handoff has no mutation handlers."
+        ]
+      },
+      "display": {
+        "summary": "Authenticated fixed URL handoff",
+        "production": [
+          180,
+          290
+        ],
+        "tests": [
+          240,
+          370
+        ]
+      }
+    },
+    {
+      "id": "arbiter-authentication/11.3",
+      "parent": "arbiter-authentication/11",
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[arbiter-authentication/11.3] Multi-client migration and whole-auth integration",
+        "responsibility": "Extend shared installed/migration harness and isolated staging runbook across complete R01\u2013R25 journey, package/help/skill and native matrices. Scope excludes later behavior and all product authority beyond the approved HLD. Each cut owns its relevant negative/platform/failure tests, help and package fragment.",
+        "paths": [
+          ".github/workflows/ci.yml",
+          "client/go-cli/go.mod",
+          "client/go-cli/go.sum",
+          "client/go-cli/internal/identity/authentication_peer_test.go",
+          "docs/authentication-cli.md",
+          "server/news/+auth-11-3.feature.md",
+          "server/pyproject.toml",
+          "server/tests/integration/authentication_terminal_driver.py",
+          "server/tests/integration/test_installed_authentication.py",
+          "skill/SKILL.md"
+        ],
+        "dependencies": [
+          "arbiter-authentication/11.2"
+        ],
+        "acceptance": [
+          "Multiple clients/grants/pending rotations, backup/restore/undo and handoff compose; every required check executes or stays explicitly unverified and blocks release."
+        ]
+      },
+      "display": {
+        "summary": "Multi-client migration and whole-auth integration",
+        "production": [
+          30,
+          100
+        ],
+        "tests": [
+          300,
+          440
+        ]
+      }
+    }
+  ]
+}
