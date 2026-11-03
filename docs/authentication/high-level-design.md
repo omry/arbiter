@@ -1,6 +1,7 @@
 # Authentication and mutual enrollment: high-level design
 
-Stage: HLD candidate, 2026-10-20. The [stamped requirements](requirements.md)
+Stage: existing approved architecture under revision for milestones 3–11,
+2026-11-03. The [stamped requirements](requirements.md)
 are normative; their SHA-256 is
 `d56e92a7cb01f131ba499650c4a5d7b2c8d17adf2cdc7d612eee7c5f53d07929`.
 This document selects components, responsibilities, state transitions and failure
@@ -8,7 +9,255 @@ boundaries. It is not a wire specification, sliced implementation plan, implemen
 security fix or release approval. Actual DBB must approve these exact bytes before
 a durable design stamp. Review verdicts live in separate evidence, not in this
 document's mutable status text. The earlier synthesis and H1–H5 contracts are
-context; choices retained below become this HLD's design decisions.
+context; choices retained below become this HLD's design decisions. The new
+public command contract below is a proposal until affected review and explicit
+owner acceptance. Earlier approval does not approve previously unspecified
+interfaces. Product implementation is not authorized by this revision.
+
+## Current source and remaining scope
+
+Source baseline is merged main `d52f8bc0acadc1de0dcb53fb1a96eb3e822e174a`.
+Authority setup, OS-authenticated administration, fresh enrollment and portable
+identity reuse are implemented and merged. Preserve their IDs, custody, bounded
+pairing, activation and receipt behavior. This revision designs all of milestones
+3–11; it does not reopen the requirements interview or reimplement milestones 1–2.
+
+| Existing primitive | Remaining architectural responsibility |
+| --- | --- |
+| `authority.py`, enrollment transactions and OS local control | Extend the same authority with live grants, denial and lifecycle state. Do not add another policy engine or an independently authoritative cache. |
+| `generations.py` | Reuse its private selector, instance lock and crash reconciliation. It currently publishes the initial authority DB; complete configuration/secret generations and restore/undo are still work. |
+| `recovery.py` | Preserve the existing external signer/decryptor file and public-origin registration. Their existence does not implement recovery commands, backup or restore. |
+| Pairing carrier, fixed `ControlTLS`, native limits and actual-worker pools | Reuse bounded ownership and exporter-capable controls. Ordinary streaming TLS/HTTP and live denial are not implemented yet. |
+| Existing Go HTTP API, timeout wrappers, WebSocket adapter and artifact process helpers | Keep operation schemas and established timeout/process behavior. Add the selected native transport rather than a second HTTP stack or client daemon. |
+| Existing artifact store and consuming GET | Reuse quota, publication and process ownership. Creator/account binding, encryption and verified processing remain milestones 7–8. |
+
+Keep the existing Go WebSocket dependency and adapter unless source evidence
+requires an affected design change. The old feasibility probe's use of a different
+WebSocket library does not select another production dependency. Python already
+uses `pyOpenSSL==26.2.0` with `cryptography>=42,<49`; old probe versions below are
+historical evidence, not a request to downgrade or a current dependency audit.
+
+The simpler alternatives remain deliberate: outer HTTPS alone cannot satisfy
+proxy-independent native confidentiality; one shared carrier owner and ordinary
+Go HTTP transport avoid a second transport stack; standard age avoids a new
+cipher format; the existing generation selector avoids a second restore registry;
+the approved cooperative migration procedure avoids distributed fencing.
+
+## Public contract for milestones 3–11
+
+This section makes the interface proposal reviewable. It preserves accepted
+behavior and the working command families. Command names and new arguments in
+this section are not claims that those commands already exist. Detailed internal
+message fields, database migrations and platform publication adapters belong to
+the implementation plan. The public contract must be accepted before that detail
+is called ready.
+
+### Selection and authenticated operations — milestone 3
+
+Keep existing `info`, `plugins`, `op` and artifact request/response shapes.
+Add `arbiter.enrollment: SELECTOR` to client configuration and the explicit
+`enrollment=SELECTOR` override. The override wins over configuration; there is no
+environment-derived, first-record or URL-derived identity selection. Empty or
+malformed selection fails before dialing with enrollment/configuration guidance.
+An override applies to that invocation; it does not rewrite the saved selection.
+
+```text
+arbiter info enrollment=SELECTOR
+arbiter op OPERATION existing-arguments enrollment=SELECTOR
+arbiter-server enrollment list --state-dir STATE --enrolled
+arbiter-server enrollment grant add --state-dir STATE --enrollment-id ID --grant PLUGIN/ACCOUNT
+arbiter-server enrollment grant remove --state-dir STATE --enrollment-id ID --grant PLUGIN/ACCOUNT
+arbiter-server enrollment deny --state-dir STATE --enrollment-id ID
+```
+
+`SELECTOR` is the existing canonical client enrollment selector; `ID` is the
+server's durable enrollment UUID. They are not interchangeable. Existing
+`enrollment list` continues to list pending requests; `--enrolled` explicitly
+selects enrolled records. Grant add/remove operates on one exact configured
+account and is set-like on retry. Denial is idempotent and affects every account
+and connection for that enrollment. These commands use the existing local
+OS-authenticated control boundary, not a new public administrator API. They never
+repair credentials, erase denials or create an operation allowlist.
+
+The ordinary carrier is `/api/v1/native/api`, with TLS 1.3,
+`arbiter-native-v1` ALPN and one HTTP/1.1 request per connection. Existing inner
+HTTP methods, paths and operation schemas remain. Dedicated pairing and fixed
+control endpoints retain their existing roles. At the milestone-3 cutover,
+ordinary anonymous API and legacy artifact routes close together; only minimal
+health and bounded enrollment bootstrap remain anonymous. Artifact-producing
+operations fail through the closed adapter until milestone 7 supplies the real
+encrypted dependency; there is no plaintext/ownerless substitute.
+
+Changing `url` changes location, never selected identity or remembered trust.
+Verify the selected durable server before sending credentials or capabilities.
+Grant removal stops affected admission and further delivery across connections;
+already delivered bytes and committed upstream effects cannot be undone. Retain
+existing structured error envelopes and safe human diagnostics. A transport
+failure alone does not establish revocation, and no failure replays an uncertain
+operation or consuming GET.
+
+### Credential lifecycle and owner repair — milestones 4–6
+
+Routine access-key rotation is automatic on authenticated contact; it adds no
+required daemon, periodic job or operator approval. The existing 30-day age,
+24-hour fixed grace and 180-day inactivity defaults remain. Reconnect, retry,
+candidate withholding and incomplete controls reset none of them. The fixed
+control carrier completes only the recorded transition after grace/expiry;
+ordinary mTLS remains strict. No user-facing `force`, validity bypass or
+automatic recovery flag is introduced.
+
+Owner-authorized repair uses public request/authorization files, while new
+private keys remain in protected client state and the operator file stays on the
+operator's machine:
+
+```text
+arbiter enrol repair --enrollment SELECTOR
+arbiter enrol recover-request --enrollment SELECTOR --output REQUEST
+arbiter-server recovery authorize --recovery-file OPERATOR --request REQUEST --output AUTHORIZATION
+arbiter enrol recover --enrollment SELECTOR --authorization AUTHORIZATION
+arbiter identity replace-request --identity SELECTOR --output PORTABLE_REQUEST
+arbiter enrol recover-request --enrollment SELECTOR --portable-request PORTABLE_REQUEST --output REQUEST
+```
+
+`repair` uses the existing owner-approved pairing journey for the existing
+enrollment. It does not silently create a new agent or enrollment. The independent
+recovery path obtains a fresh server-specific challenge and prepares replacement
+keys without activation. The offline owner command signs only that exact
+server/identity/key/revision/purpose/expiry request. Completing it consumes the
+authorization once and reconciles a lost result without a second operator
+approval or resetting grants/denials. Wrong, expired or stale requests fail;
+the caller obtains a fresh request rather than retrying an uncertain mutation.
+
+An explicit portable replacement prepares one shared replacement key in private
+client custody; its public request can be bound into separate authorizations for
+each existing enrollment. It does not confer ordinary access or register a new
+issuer at other servers. Issuing a normal portable certificate still requires an
+authorized issuer with its private key available. Missing issuer authority gives
+restore/issuer-registration guidance, not a forged old-issuer certificate or an
+automatic trust-store change. Existing-enrollment owner recovery and fresh
+enrollment's independent issuer-registration rule remain distinct. LLD must
+resolve the exact issuing and multi-server reconciliation sequence before this
+cut is ready.
+
+Server replacement also prepares before applying:
+
+```text
+arbiter-server authority replace-request --state-dir STATE --reason planned --output REQUEST
+arbiter-server authority replace-request --state-dir STATE --reason compromised --output REQUEST
+arbiter-server recovery authorize --recovery-file OPERATOR --request REQUEST --output AUTHORIZATION
+arbiter-server authority replace --state-dir STATE --request REQUEST [--authorization AUTHORIZATION]
+```
+
+Planned replacement requires old endorsement and new-key possession.
+Compromise replacement requires the independently registered owner authorization;
+the compromised key alone cannot bless a successor. The optional authorization
+argument is mandatory for the compromised reason and never switches that reason
+silently. Keep server ID, enrollments, grants and denials. Clients durably adopt
+verified transitions before credentials; unavailable history or independent
+trust gives explicit repair guidance. Stopped-instance repair and live local
+administration use their existing exclusive owners; no direct concurrent DB
+writer is added. Certificate renewal retains identity/key roles and does not
+turn URL/outer HTTPS renewal into scheduled identity-key replacement.
+
+### Artifact processing — milestones 7–8
+
+Keep explicit process selection and existing child-output bounds, argument-vector
+execution and `{}` path substitution. There is no universal processing default:
+
+```text
+arbiter artifact with-stdin URL --stream true -- ARGV...
+arbiter artifact with-stdin URL --stream false -- ARGV...
+arbiter artifact with-temp URL --allow-plaintext-temp -- ARGV...
+arbiter artifact save-decrypted URL PATH
+```
+
+Each command uses the configured enrollment or its explicit override.
+`with-stdin` requires an explicit `--stream true` or `--stream false`; omission,
+an invalid value or combining stream/path options fails before consuming GET.
+No default is selected. With `true`, the client decrypts incoming data directly
+into the tool while downloading. A valid partial prefix and tool effects can
+precede a final origin/digest/EOF failure. With `false`, the client downloads an
+encrypted temporary file, decrypts and checks it while discarding plaintext,
+then decrypts the same immutable ciphertext again into the tool. The tool starts
+only after the complete-file checks pass. Neither path writes a plaintext input
+file to disk. The tool can still create its own output or fail during execution;
+checking the download does not make the tool's work atomic.
+`with-temp` requires the explicit plaintext flag, fully verifies before exposing
+the path, and performs best-effort cleanup. `save-decrypted` verifies private
+staging before publishing a persistent plaintext file; an existing output path
+fails without overwrite. The old ambiguous `artifact save` has no compatibility
+alias, as already required by the approved design.
+
+Retain bounded textual `artifact get URL --stdout` as an explicitly selected
+immediate output sink, with final-verification failure reported honestly; it is
+not a verified-before-output mode. No raw private key, descriptor/capability or
+artifact content enters routine diagnostics. A failed consuming GET remains
+consumed; no mode resumes it from an orphan file. Choosing storage/latency versus
+partial delivery is explicit at invocation time, not an agent-chosen default.
+
+### Backup, restore, undo and migration — milestones 9–11
+
+```text
+arbiter-server backup export --state-dir STATE --output BUNDLE
+arbiter-server backup restore --state-dir STATE --recovery-file OPERATOR --input BUNDLE
+arbiter-server backup undo --state-dir STATE
+arbiter-server backup undo-discard --state-dir STATE
+arbiter-server maintenance begin --state-dir STATE
+arbiter-server maintenance end --state-dir STATE
+arbiter-server handoff --state-dir STATE --url DESTINATION
+```
+
+Export uses the running server's authenticated local boundary. One job captures
+a coherent saved generation and publishes only a complete signed/encrypted bundle
+to the explicitly selected output; replacing that designated bundle is atomic
+and failure preserves the last good file. An external job supplies startup and
+periodic scheduling, storage/retention and alerting. It receives no private
+operator file. No scheduler/cloud integration or first-enrollment backup gate is
+added. The registered public recipient/verifier come from existing trusted setup.
+
+Restore, undo and undo-discard run locally with the instance stopped, including
+when the application cannot start. Restore verifies the entire bundle against
+external trust before one coherent activation, preserving the prior state as
+the latest undo point. Failed restore changes neither active state nor that
+point. Undo remains available after use, without expiry; there is no redo or
+mandatory acceptance phase. Before activation/discard, print prominent snapshot,
+lost-change, restored-authorization and irreversible-upstream-effect warnings.
+Explicit invocation selects the action; do not add a separate required approval
+ceremony. Configured paths are not merged, and saved deadlines are not reset.
+Different-host adjustments use ordinary configuration edits before startup.
+
+Maintenance begin commits source dispatch/admin-write inhibition, drains or
+cancels real owners, and returns completion only after their actual cleanup.
+Read-only export remains available. Failures retain the disabled source until
+the operator deliberately ends maintenance or completes migration. The operator
+exports the final state, restores the stopped destination, adjusts host settings,
+then starts only that destination. `maintenance end` is an explicit local action,
+not automatic rollback after destination use.
+
+Optional `handoff` serves only remembered source identity and a fixed authenticated
+destination URL while ordinary source service remains disabled. It has no
+enrollment, grant, rotation or authority-mutation handler. The client obtains
+handoff before operation submission, verifies destination identity/authorized
+transition, then durably adopts the URL. Destination key rotation does not require
+rewriting the URL. No HTTP redirect sends credentials or replays an operation.
+If the old URL is unavailable, the operator sets the client URL explicitly; the
+same durable identity checks still apply. The operator prevents two writable
+copies; no epoch, fencing service or permanent retirement is introduced.
+
+### Acceptance and remaining decisions
+
+Already settled: product outcomes R01–R25, trust roles, fixed grace/inactivity,
+four artifact choices, rollback warnings and cooperative migration. The command
+spellings and grouping above incorporate the focused interface decisions. The
+complete architecture and its visible behavior still require affected review
+and HLD acceptance. No requirement has been removed
+to obtain a cleaner design or a smaller LOC estimate.
+
+The LLD must resolve exact message/certificate schemas, shared coordinator and
+worker ownership, portable recertification, renewal schedules, physical quota
+accounting, saved-config capture and native durable publication. It must assign
+each obligation and integration check once to a concrete slice. These are pending
+engineering tasks, not a new requirements interview or implementation readiness.
 
 ## Shared architecture and trust
 
@@ -481,7 +730,7 @@ timestamps; stale snapshots can require owner repair and never reset deadlines.
 No extra permissions review, paused mode or acceptance ceremony is imposed.
 
 Undo is only of the latest successful restore, with no automatic expiry. It is
-allowed offline after the service has run, with very prominent confirmation of
+allowed offline after the service has run, with very prominent warnings about
 lost post-restore local configuration/identity/grant changes and unchanged upstream
 effects. Switch coherently to the saved pre-restore generation, not a merge.
 There is no redo history or mandatory acceptance step. The next successful
@@ -526,22 +775,11 @@ recorded separately under `temp/authentication-hld/probes/`; durable review
 evidence must record their results and limits. No claim of product integration,
 real mail/account testing, production throughput or release security follows.
 
-Local evidence, 2026-10-20: fourteen synthetic checks passed on Linux amd64,
-CPython 3.13.12 and Go 1.26.8, using pyOpenSSL 25.3.0, cryptography 46.0.7,
-pyrage 1.3.0, websockets 15.0.1, Go age 1.2.1 and coder/websocket 1.8.14.
-Results JSON SHA-256:
-`34071a913ba400e79242ebe0b4481214a953f14fb78815e0f62ab82b180e789b`.
-Checks covered TLS-over-WebSocket/exporter agreement, ordinary expired-certificate
-rejection, separate expired-key control proofs and cross-channel replay rejection;
-age both directions, second recipient, wrong key, tamper/truncation, immutable
-snapshot/path replacement and 50 MiB plaintext; ES256 fixed-width JWS signing-byte
-compatibility and changed-byte rejection. `go vet` passed and the peer compiled
-with Go 1.24.13 (execution used 1.26.8). These fixtures are not complete profile,
-JWS schema, recovery, overload or crash implementations. pyOpenSSL 26.3.0 was
-rejected for this design's compatibility assessment because it requires
-cryptography 49 outside Arbiter's current `<49` range. The compatible probe pair
-is a tested candidate, not permission to freeze old versions indefinitely; resolve
-production versions/advisories and platform builds in the implementation plan.
+The [historical feasibility record](supporting/high-level-design/historical-feasibility.md)
+retains the exact old probe versions, fourteen-check result, source digest and
+limitations. This revision does not rerun or relabel those checks as current
+implementation evidence. Current source reuse is identified above; new package
+adoption and native-platform evidence remain implementation-plan obligations.
 
 Compared with current code, this preserves native operation schemas, existing
 policies, plugin isolation and error/timeout behavior. The significant work is
@@ -567,13 +805,29 @@ be represented as completing these requirements.
 | R21–R22 | B5 coherent snapshot, actual configured secrets, authenticated encrypted export and external job. |
 | R23–R25 | B5 offline activation/undo, warning-based stale restore and cooperative migration/handoff. |
 
+### Finite engineering investigations before slice readiness
+
+These investigations refine the retained architecture. They do not authorize
+dropping a requirement or marking an incomplete slice ready.
+
+| Investigation | Owner and evidence required | Decision affected if it fails |
+| --- | --- | --- |
+| Streaming and live authority composition | Milestone 3: trace one shared carrier owner, crypto admission, body/dispatch reservation, committed denial and final output through actual worker cleanup. Execute real Python/Go and native-platform failure peers. | Ordinary native cutover remains closed until the coordinator and resource ownership are demonstrated. A second permission cache is not a fallback. |
+| Exact lifecycle and recovery states | Milestones 4–6: bind keys, purposes, revisions, challenges, renewal times and exact retained results. Resolve portable recertification under available registered issuer authority and per-server owner authorization. Test lost results, expiry, denial and concurrent recovery. | Missing issuer/private authority or legitimate transition history yields explicit repair guidance; it cannot justify an automatic new root or a credential-validity bypass. |
+| Encrypted file backend and immutable input | Milestones 7–8: prove bounded age streaming in the selected Python/Go implementations; account for headers/metadata/staging and actual readers; verify POSIX and Windows stable-byte handling or the bounded memory fallback. | No streaming or checked-before-start claim may rely on a whole-file unbounded API, mutable staging path or untested platform assumption. Compare maintained existing bindings before adding a custom crypto format. |
+| Complete saved configuration and secrets | Milestone 9: extend existing generation capture to actual configured policies/secrets and a SQLite-consistent snapshot. Detect concurrent source changes; prove exclusions and bounded signed/encrypted publication. | The current initial-authority generation is not sufficient proof of a useful complete backup. Export must remain unavailable rather than produce a misleading partial recovery bundle. |
+| Native durable activation and latest undo | Milestone 10: resolve active/undo control publication, flush ownership, available-disk checks and restart reconciliation on POSIX and Windows with process termination at each boundary. | A single rename without native evidence does not establish coherent restore/undo. No silent settings merge or loss of the prior undo point is allowed. |
+| Cooperative migration and read-only handoff | Milestone 11: prove maintenance inhibition/draining, final capture, stopped destination restore and fixed URL handoff across later key rotation with real paired clients. | No automated takeover, hidden epoch/fencing service or replaying redirect may be added to conceal a failed cooperative journey. |
+| Complete slice and estimate accounting | Implementation plan: map every parent outcome and cross-area check to an owner, count shared foundations once, and provide production/test final-content ranges plus original-forecast comparison. | A smaller count produced by omitted integration, platform or failure work is not an acceptable plan. Preserve historical IDs and completed milestones. |
+
 The next stage, only after DBB approval and a validated HLD stamp, is a separately
 reviewed implementation plan. It must assign independently reviewable slices,
 wire/certificate/configuration schemas and fixtures, supported-platform dependency
 checks, overload/cancellation/crash fault injection and combined end-to-end tests.
 Full Python/Go checks and applicable release fragments belong to implementation.
 Future browser UI gets its own compatibility/security evidence before delivery.
-No implementation plan or product change is authorized by this HLD run.
+HLD acceptance does not approve the later detailed plan or authorize product
+implementation, merging, publication or deployment.
 
 Primary mechanism references:
 [X.509 validation](https://www.rfc-editor.org/rfc/rfc5280.html),

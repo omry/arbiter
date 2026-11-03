@@ -1,0 +1,1188 @@
+{
+  "schema_version": 1,
+  "source_head": "d52f8bc0acadc1de0dcb53fb1a96eb3e822e174a",
+  "scope": "milestones3\u201311",
+  "unit": "added-plus-deleted edit churn, excluding unquantified work as noted",
+  "counting_note": "Original estimates are added-plus-deleted handwritten edit churn. They do not establish final nonblank code size. Historical CI unknown is not zero.",
+  "source_documents": [
+    {
+      "path": "docs/authentication/implementation-plan.md",
+      "sha256": "3c0fada6a105777ecd5546b3f3898b0b2dea71f1032176e6ccd7c3fd51386a6a",
+      "executable": false
+    },
+    {
+      "path": "docs/authentication/milestone-3-lld.md",
+      "sha256": "566601529e5dabfa25cb575a9fc890ab625f358115ab0b836a53174a025bd25f",
+      "executable": false
+    }
+  ],
+  "slices": [
+    {
+      "slice_id": "arbiter-authentication/4.1",
+      "title": "Server pending rotation and fixed grace",
+      "production": [
+        220,
+        360
+      ],
+      "tests": [
+        260,
+        450
+      ],
+      "combined": [
+        480,
+        810
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/4.2",
+      "title": "Durable candidate confirmation",
+      "production": [
+        240,
+        400
+      ],
+      "tests": [
+        300,
+        500
+      ],
+      "combined": [
+        540,
+        900
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/4.3",
+      "title": "Expired-key restricted completion",
+      "production": [
+        260,
+        420
+      ],
+      "tests": [
+        300,
+        520
+      ],
+      "combined": [
+        560,
+        940
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/4.4",
+      "title": "Authenticated predecessor assistance",
+      "production": [
+        160,
+        280
+      ],
+      "tests": [
+        240,
+        420
+      ],
+      "combined": [
+        400,
+        700
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/4.5",
+      "title": "Lifecycle race and clock closure",
+      "production": [
+        80,
+        180
+      ],
+      "tests": [
+        320,
+        550
+      ],
+      "combined": [
+        400,
+        730
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/5.1",
+      "title": "Owner-approved pairing repair",
+      "production": [
+        180,
+        300
+      ],
+      "tests": [
+        240,
+        420
+      ],
+      "combined": [
+        420,
+        720
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/5.2",
+      "title": "External owner challenge proofs",
+      "production": [
+        220,
+        370
+      ],
+      "tests": [
+        280,
+        480
+      ],
+      "combined": [
+        500,
+        850
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/5.3",
+      "title": "Atomic access-key recovery",
+      "production": [
+        200,
+        330
+      ],
+      "tests": [
+        260,
+        450
+      ],
+      "combined": [
+        460,
+        780
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/5.4",
+      "title": "Portable identity repair across servers",
+      "production": [
+        180,
+        320
+      ],
+      "tests": [
+        280,
+        480
+      ],
+      "combined": [
+        460,
+        800
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/5.5",
+      "title": "Owner and portable certificate renewal",
+      "production": [
+        180,
+        330
+      ],
+      "tests": [
+        260,
+        450
+      ],
+      "combined": [
+        440,
+        780
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/6.1",
+      "title": "Planned server transition publication",
+      "production": [
+        200,
+        340
+      ],
+      "tests": [
+        260,
+        450
+      ],
+      "combined": [
+        460,
+        790
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/6.2",
+      "title": "Client transition adoption",
+      "production": [
+        200,
+        340
+      ],
+      "tests": [
+        260,
+        450
+      ],
+      "combined": [
+        460,
+        790
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/6.3",
+      "title": "Independent compromise recovery",
+      "production": [
+        220,
+        370
+      ],
+      "tests": [
+        280,
+        480
+      ],
+      "combined": [
+        500,
+        850
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/6.4",
+      "title": "Server authority and leaf renewal",
+      "production": [
+        220,
+        380
+      ],
+      "tests": [
+        280,
+        500
+      ],
+      "combined": [
+        500,
+        880
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/7.1",
+      "title": "Artifact recipient registration and retention",
+      "production": [
+        220,
+        370
+      ],
+      "tests": [
+        260,
+        450
+      ],
+      "combined": [
+        480,
+        820
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/7.2",
+      "title": "Encrypted payload and metadata writing",
+      "production": [
+        240,
+        400
+      ],
+      "tests": [
+        280,
+        480
+      ],
+      "combined": [
+        520,
+        880
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/7.3",
+      "title": "Physical quota and encrypted-store recovery",
+      "production": [
+        220,
+        360
+      ],
+      "tests": [
+        280,
+        480
+      ],
+      "combined": [
+        500,
+        840
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/7.4",
+      "title": "Creator-bound HEAD and consuming GET",
+      "production": [
+        220,
+        370
+      ],
+      "tests": [
+        300,
+        500
+      ],
+      "combined": [
+        520,
+        870
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/7.5",
+      "title": "Plugin adapter and descriptor activation",
+      "production": [
+        180,
+        320
+      ],
+      "tests": [
+        260,
+        460
+      ],
+      "combined": [
+        440,
+        780
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/7.6",
+      "title": "Artifact contention and packaging closure",
+      "production": [
+        80,
+        180
+      ],
+      "tests": [
+        300,
+        550
+      ],
+      "combined": [
+        380,
+        730
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/8.1",
+      "title": "Immediate authenticated plaintext stdin",
+      "production": [
+        180,
+        320
+      ],
+      "tests": [
+        260,
+        450
+      ],
+      "combined": [
+        440,
+        770
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/8.2",
+      "title": "Verified encrypted-temp stdin",
+      "production": [
+        260,
+        420
+      ],
+      "tests": [
+        300,
+        520
+      ],
+      "combined": [
+        560,
+        940
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/8.3",
+      "title": "Explicit plaintext-temp path",
+      "production": [
+        150,
+        260
+      ],
+      "tests": [
+        220,
+        400
+      ],
+      "combined": [
+        370,
+        660
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/8.4",
+      "title": "Deliberate save-decrypted export",
+      "production": [
+        140,
+        250
+      ],
+      "tests": [
+        220,
+        400
+      ],
+      "combined": [
+        360,
+        650
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/8.5",
+      "title": "Four-mode process and platform closure",
+      "production": [
+        80,
+        180
+      ],
+      "tests": [
+        300,
+        520
+      ],
+      "combined": [
+        380,
+        700
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/9.1",
+      "title": "Saved configuration and real secret capture",
+      "production": [
+        240,
+        400
+      ],
+      "tests": [
+        280,
+        480
+      ],
+      "combined": [
+        520,
+        880
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/9.2",
+      "title": "Coherent authority snapshot",
+      "production": [
+        200,
+        340
+      ],
+      "tests": [
+        280,
+        470
+      ],
+      "combined": [
+        480,
+        810
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/9.3",
+      "title": "Signed bounded recovery records",
+      "production": [
+        250,
+        420
+      ],
+      "tests": [
+        300,
+        520
+      ],
+      "combined": [
+        550,
+        940
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/9.4",
+      "title": "Encrypted local and SSH export",
+      "production": [
+        220,
+        360
+      ],
+      "tests": [
+        280,
+        480
+      ],
+      "combined": [
+        500,
+        840
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/9.5",
+      "title": "External job and concurrent-export closure",
+      "production": [
+        80,
+        180
+      ],
+      "tests": [
+        280,
+        500
+      ],
+      "combined": [
+        360,
+        680
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/10.1",
+      "title": "Strict offline bundle validation",
+      "production": [
+        240,
+        400
+      ],
+      "tests": [
+        300,
+        520
+      ],
+      "combined": [
+        540,
+        920
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/10.2",
+      "title": "Stopped-instance private restore staging",
+      "production": [
+        200,
+        340
+      ],
+      "tests": [
+        280,
+        480
+      ],
+      "combined": [
+        480,
+        820
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/10.3",
+      "title": "Atomic full restore activation",
+      "production": [
+        220,
+        360
+      ],
+      "tests": [
+        300,
+        520
+      ],
+      "combined": [
+        520,
+        880
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/10.4",
+      "title": "Latest undo and explicit discard",
+      "production": [
+        180,
+        300
+      ],
+      "tests": [
+        260,
+        450
+      ],
+      "combined": [
+        440,
+        750
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/10.5",
+      "title": "Restore-client and native crash closure",
+      "production": [
+        80,
+        180
+      ],
+      "tests": [
+        320,
+        550
+      ],
+      "combined": [
+        400,
+        730
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/11.1",
+      "title": "Cooperative maintenance and migration",
+      "production": [
+        180,
+        300
+      ],
+      "tests": [
+        260,
+        450
+      ],
+      "combined": [
+        440,
+        750
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/11.2",
+      "title": "Verified source URL handoff",
+      "production": [
+        220,
+        380
+      ],
+      "tests": [
+        280,
+        500
+      ],
+      "combined": [
+        500,
+        880
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/11.3",
+      "title": "Migration and combined release evidence",
+      "production": [
+        80,
+        180
+      ],
+      "tests": [
+        320,
+        550
+      ],
+      "combined": [
+        400,
+        730
+      ],
+      "ci": null,
+      "unit": "historical handwritten added-plus-deleted edit churn",
+      "basis": "implementation-plan.md historical child tables; CI not separately quantified"
+    },
+    {
+      "slice_id": "arbiter-authentication/3.1.1",
+      "title": "Shared bounded carrier/lease/TLS pump extracted and consumed by existing pairing/control and real streaming Python/Go peers. Own shared streaming harness. N03/N04; no ordinary public route.",
+      "production": [
+        320,
+        440
+      ],
+      "tests": [
+        300,
+        420
+      ],
+      "ci": [
+        0,
+        5
+      ],
+      "combined": [
+        620,
+        865
+      ],
+      "unit": "handwritten added-plus-deleted edit churn",
+      "basis": "milestone-3-lld.md newly sized 13-cut table"
+    },
+    {
+      "slice_id": "arbiter-authentication/3.1.2",
+      "title": "Strict Python ordinary mTLS and immutable candidate identity consumed by real peer; live admission still private. N01 and handshake limits.",
+      "production": [
+        170,
+        240
+      ],
+      "tests": [
+        310,
+        420
+      ],
+      "ci": [
+        0,
+        5
+      ],
+      "combined": [
+        480,
+        665
+      ],
+      "unit": "handwritten added-plus-deleted edit churn",
+      "basis": "milestone-3-lld.md newly sized 13-cut table"
+    },
+    {
+      "slice_id": "arbiter-authentication/3.1.3",
+      "title": "Go strict native identity/dial plus standard HTTP transport, exercised against real Python; reuse stored decoder and existing timeout wrapper. N01/N02/N11.",
+      "production": [
+        190,
+        260
+      ],
+      "tests": [
+        300,
+        410
+      ],
+      "ci": [
+        0,
+        5
+      ],
+      "combined": [
+        490,
+        675
+      ],
+      "unit": "handwritten added-plus-deleted edit churn",
+      "basis": "milestone-3-lld.md newly sized 13-cut table"
+    },
+    {
+      "slice_id": "arbiter-authentication/3.1.4",
+      "title": "One-request bounded HTTP/ASGI stream with immutable scope, real body/response peers and no public cutover. N03/N04, parser/body admission.",
+      "production": [
+        230,
+        320
+      ],
+      "tests": [
+        350,
+        470
+      ],
+      "ci": [
+        0,
+        5
+      ],
+      "combined": [
+        580,
+        795
+      ],
+      "unit": "handwritten added-plus-deleted edit churn",
+      "basis": "milestone-3-lld.md newly sized 13-cut table"
+    },
+    {
+      "slice_id": "arbiter-authentication/3.2.1",
+      "title": "Live row extension/atomic backfill and OS enrollment-deny control with minimal shared coordinator consumed by the real fixed receipt. Guard receipt admission and final output, retain actual owners and test N07 receipt races/rollback/cleanup. Use the existing agent binding without a row copy; validate old/fresh/replay and corrupt relations. Extend activation once; preserve original receipt. N05.",
+      "production": [
+        230,
+        330
+      ],
+      "tests": [
+        420,
+        610
+      ],
+      "ci": [
+        0,
+        5
+      ],
+      "combined": [
+        650,
+        945
+      ],
+      "unit": "handwritten added-plus-deleted edit churn",
+      "basis": "milestone-3-lld.md newly sized 13-cut table"
+    },
+    {
+      "slice_id": "arbiter-authentication/3.2.2",
+      "title": "Extend the same coordinator/writer reservation to ordinary authority and actual-worker callbacks, consumed by private real ASGI peer. Own OS grant add/remove controls. N04/N05/N06/N07 dispatch, busy/rollback and no stale snapshot authorization.",
+      "production": [
+        220,
+        300
+      ],
+      "tests": [
+        330,
+        430
+      ],
+      "ci": [
+        0,
+        5
+      ],
+      "combined": [
+        550,
+        735
+      ],
+      "unit": "handwritten added-plus-deleted edit churn",
+      "basis": "milestone-3-lld.md newly sized 13-cut table"
+    },
+    {
+      "slice_id": "arbiter-authentication/3.3",
+      "title": "All discovery/direct-account/policy projections use exact live grants with current schemas and private peer. N06 including negative information leaks.",
+      "production": [
+        160,
+        230
+      ],
+      "tests": [
+        320,
+        440
+      ],
+      "ci": [
+        0,
+        5
+      ],
+      "combined": [
+        480,
+        675
+      ],
+      "unit": "handwritten added-plus-deleted edit churn",
+      "basis": "milestone-3-lld.md newly sized 13-cut table"
+    },
+    {
+      "slice_id": "arbiter-authentication/3.4",
+      "title": "Real authorized plugin dispatch with caller context, closed concrete artifact dependency, descriptor/inline closure and confined startup invalidation. N09 with spy plus filesystem; reuse shared harness.",
+      "production": [
+        230,
+        320
+      ],
+      "tests": [
+        350,
+        460
+      ],
+      "ci": [
+        0,
+        5
+      ],
+      "combined": [
+        580,
+        785
+      ],
+      "unit": "handwritten added-plus-deleted edit churn",
+      "basis": "milestone-3-lld.md newly sized 13-cut table"
+    },
+    {
+      "slice_id": "arbiter-authentication/3.6.1",
+      "title": "Denial closes all affected body/dispatch paths across actual sockets; actual blocked work retains slots/carriers. N07/N08, cutoff/rollback and admin responsiveness.",
+      "production": [
+        190,
+        270
+      ],
+      "tests": [
+        350,
+        470
+      ],
+      "ci": [
+        0,
+        5
+      ],
+      "combined": [
+        540,
+        745
+      ],
+      "unit": "handwritten added-plus-deleted edit churn",
+      "basis": "milestone-3-lld.md newly sized 13-cut table"
+    },
+    {
+      "slice_id": "arbiter-authentication/3.6.2",
+      "title": "Permission after backpressure and final ciphertext-write boundary, abort without flushing revoked output. N03/N07/N08 streaming/late-worker cases.",
+      "production": [
+        150,
+        220
+      ],
+      "tests": [
+        330,
+        450
+      ],
+      "ci": [
+        0,
+        5
+      ],
+      "combined": [
+        480,
+        675
+      ],
+      "unit": "handwritten added-plus-deleted edit churn",
+      "basis": "milestone-3-lld.md newly sized 13-cut table"
+    },
+    {
+      "slice_id": "arbiter-authentication/3.5.1",
+      "title": "Explicit selector/config/help and every CLI constructor exercises the verified native factory through complete private real peers; production selection stays on the existing working route. N10/N11.",
+      "production": [
+        130,
+        180
+      ],
+      "tests": [
+        320,
+        410
+      ],
+      "ci": [
+        0,
+        5
+      ],
+      "combined": [
+        450,
+        595
+      ],
+      "unit": "handwritten added-plus-deleted edit churn",
+      "basis": "milestone-3-lld.md newly sized 13-cut table"
+    },
+    {
+      "slice_id": "arbiter-authentication/3.5.2",
+      "title": "Atomic production CLI constructor switch, public ordinary enablement and anonymous API/artifact closure, with no fallback; first installed authenticated prefix executes denial and closed-artifact journey. N01/N04/N07/N09/N10/N12.",
+      "production": [
+        110,
+        190
+      ],
+      "tests": [
+        380,
+        510
+      ],
+      "ci": [
+        0,
+        5
+      ],
+      "combined": [
+        490,
+        705
+      ],
+      "unit": "handwritten added-plus-deleted edit churn",
+      "basis": "milestone-3-lld.md newly sized 13-cut table"
+    },
+    {
+      "slice_id": "arbiter-authentication/3.7",
+      "title": "Focused installed relay/outer-cert/passthrough and timeout composition, native prefix/packaging closure; add no deferred core mechanism. N02/N11/N12 and all parent N01\u2013N12.",
+      "production": [
+        20,
+        60
+      ],
+      "tests": [
+        380,
+        480
+      ],
+      "ci": [
+        0,
+        10
+      ],
+      "combined": [
+        400,
+        550
+      ],
+      "unit": "handwritten added-plus-deleted edit churn",
+      "basis": "milestone-3-lld.md newly sized 13-cut table"
+    }
+  ],
+  "milestone_rollups": {
+    "4": {
+      "cuts": 5,
+      "production": [
+        960,
+        1640
+      ],
+      "tests": [
+        1420,
+        2440
+      ],
+      "combined": [
+        2380,
+        4080
+      ],
+      "ci": null,
+      "ci_quantified": false
+    },
+    "5": {
+      "cuts": 5,
+      "production": [
+        960,
+        1650
+      ],
+      "tests": [
+        1320,
+        2280
+      ],
+      "combined": [
+        2280,
+        3930
+      ],
+      "ci": null,
+      "ci_quantified": false
+    },
+    "6": {
+      "cuts": 4,
+      "production": [
+        840,
+        1430
+      ],
+      "tests": [
+        1080,
+        1880
+      ],
+      "combined": [
+        1920,
+        3310
+      ],
+      "ci": null,
+      "ci_quantified": false
+    },
+    "7": {
+      "cuts": 6,
+      "production": [
+        1160,
+        2000
+      ],
+      "tests": [
+        1680,
+        2920
+      ],
+      "combined": [
+        2840,
+        4920
+      ],
+      "ci": null,
+      "ci_quantified": false
+    },
+    "8": {
+      "cuts": 5,
+      "production": [
+        810,
+        1430
+      ],
+      "tests": [
+        1300,
+        2290
+      ],
+      "combined": [
+        2110,
+        3720
+      ],
+      "ci": null,
+      "ci_quantified": false
+    },
+    "9": {
+      "cuts": 5,
+      "production": [
+        990,
+        1700
+      ],
+      "tests": [
+        1420,
+        2450
+      ],
+      "combined": [
+        2410,
+        4150
+      ],
+      "ci": null,
+      "ci_quantified": false
+    },
+    "10": {
+      "cuts": 5,
+      "production": [
+        920,
+        1580
+      ],
+      "tests": [
+        1460,
+        2520
+      ],
+      "combined": [
+        2380,
+        4100
+      ],
+      "ci": null,
+      "ci_quantified": false
+    },
+    "11": {
+      "cuts": 3,
+      "production": [
+        480,
+        860
+      ],
+      "tests": [
+        860,
+        1500
+      ],
+      "combined": [
+        1340,
+        2360
+      ],
+      "ci": null,
+      "ci_quantified": false
+    },
+    "3": {
+      "cuts": 13,
+      "production": [
+        2350,
+        3360
+      ],
+      "tests": [
+        4440,
+        5980
+      ],
+      "combined": [
+        6790,
+        9410
+      ],
+      "ci": [
+        0,
+        70
+      ],
+      "ci_quantified": true
+    }
+  },
+  "comparison_rule": "Retain original units. Raw before/after numbers are not a like-for-like savings claim. Preserve parent rollups when cuts change; historical CI unknown is not zero."
+}
