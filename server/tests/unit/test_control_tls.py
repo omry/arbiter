@@ -135,6 +135,72 @@ def test_cancelled_tls_loader_retains_slot_until_worker_exits(monkeypatch):
     asyncio.run(run())
 
 
+def test_cancelled_control_payload_retains_export_until_worker_exits():
+    from cffi import FFI
+
+    entered, release = threading.Event(), threading.Event()
+    ffi = FFI()
+
+    class Connection:
+        calls = 0
+
+        def send(self, data):
+            self.calls += 1
+            if self.calls == 1:
+                return len(data)
+            exported = ffi.from_buffer(data)
+            entered.set()
+            try:
+                assert release.wait(5)
+                return len(data)
+            finally:
+                del exported
+
+        def bio_read(self, size):
+            raise control_tls.SSL.WantReadError()
+
+        def pending(self):
+            return 0
+
+    async def run():
+        async def waiting(_carrier):
+            await asyncio.Event().wait()
+
+        async def wait_for_entered():
+            for _ in range(2000):
+                if entered.is_set():
+                    return
+                await asyncio.sleep(0.001)
+            raise AssertionError("worker did not enter")
+
+        owner, carrier, _, _ = setup(waiting, max_connections=1)
+        stream = control_tls.ControlTLS(
+            carrier, cast(control_tls.SSL.Connection, Connection())
+        )
+        task = asyncio.create_task(stream.send(b"payload"))
+        try:
+            await wait_for_entered()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            carrier.connection_lost(None)
+            assert len(owner._leases) == 1
+            release.set()
+
+            async def settled():
+                while owner._leases:
+                    await asyncio.sleep(0.001)
+
+            await asyncio.wait_for(settled(), 2)
+        finally:
+            release.set()
+            carrier.connection_lost(None)
+            owner.close()
+            await asyncio.sleep(0)
+
+    asyncio.run(run())
+
+
 def test_real_tls_disconnect_retains_capacity_and_health(
     tmp_path, private_windows_test_parent, monkeypatch
 ):
@@ -322,7 +388,7 @@ def test_real_tls_rejects_partial_record_before_native_budget_overrun(
             with pytest.raises(ValueError, match="Control TLS input|Pairing carrier"):
                 await stream.receive()
             assert carrier.closed
-            assert carrier._control_tls_fed <= carrier.limits.max_buffered_bytes // 2
+            assert carrier.credits.fed <= carrier.limits.max_buffered_bytes // 2
         finally:
             carrier.connection_lost(None)
             owner.close()
@@ -365,10 +431,24 @@ def test_real_tls_default_boundary_record_fragmentation(
             root, 262144, input_chunk_limit=16406, coalesce_input=coalesce_input
         )
         try:
+            snapshots = []
+            original_feed = stream._feed
+
+            async def observed_feed():
+                await original_feed()
+                snapshots.append(
+                    (len(stream._input), stream._offset, carrier.credits.adapter)
+                )
+
+            stream._feed = observed_feed
             payload = b"r" * 65536
             _client_send(client, len(payload).to_bytes(4, "big") + payload)
             assert await asyncio.wait_for(stream.receive(), 3) == payload
-            assert carrier._control_tls_fed <= carrier.limits.max_buffered_bytes // 2
+            assert any(
+                remaining > offset > 0 and adapter == remaining
+                for remaining, offset, adapter in snapshots
+            )
+            assert carrier.credits.fed <= carrier.limits.max_buffered_bytes // 2
         finally:
             carrier.connection_lost(None)
             owner.close()
@@ -385,8 +465,13 @@ def _live_tls_bytes() -> int:
     while frame is not None:
         name = frame.f_code.co_name
         filename = frame.f_code.co_filename.replace("\\", "/")
-        if (filename.endswith("/control_tls.py") and name in {"send", "_call"}) or (
-            filename.endswith("/pairing_carrier.py") and name in {"send", "_write"}
+        if (
+            (filename.endswith("/control_tls.py") and name == "send")
+            or (
+                filename.endswith("/native_stream.py")
+                and name in {"_call", "_pump", "_feed"}
+            )
+            or (filename.endswith("/pairing_carrier.py") and name in {"send", "_write"})
         ):
             for value in frame.f_locals.values():
                 if isinstance(value, (bytes, bytearray)) and value:
@@ -414,6 +499,8 @@ def _compiled_live_tls_bytes(filename: str, function_name: str) -> int:
     [
         (str(Path("arbiter_server") / "control_tls.py"), "send"),
         (str(PureWindowsPath("arbiter_server") / "control_tls.py"), "send"),
+        (str(Path("arbiter_server") / "native_stream.py"), "_pump"),
+        (str(PureWindowsPath("arbiter_server") / "native_stream.py"), "_pump"),
         (str(Path("arbiter_server") / "pairing_carrier.py"), "_write"),
         (str(PureWindowsPath("arbiter_server") / "pairing_carrier.py"), "_write"),
     ],
@@ -498,7 +585,7 @@ def test_real_tls_handshake_input_respects_small_budget(
             assert carrier.closed
             assert not carrier.control_started_once
             assert offset <= carrier.limits.max_buffered_bytes
-            assert carrier._control_tls_fed <= carrier.limits.max_buffered_bytes // 2
+            assert carrier.credits.fed <= carrier.limits.max_buffered_bytes // 2
         finally:
             carrier.connection_lost(None)
             owner.close()
@@ -514,8 +601,8 @@ def test_control_input_preflight_includes_pending_tls_owner():
 
         owner, carrier, transport, ws = setup(waiting, max_buffered_bytes=8192)
         try:
-            carrier._control_tls_fed = 2048
-            carrier._control_tls_pending = 1024
+            carrier.credits.fed = 2048
+            carrier.credits.pending = 1024
             carrier.data_received(ws.send(events.BytesMessage(data=b"x" * 1710)))
             assert carrier.closed
             assert transport.closed
