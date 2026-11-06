@@ -1,0 +1,1489 @@
+{
+  "schema_version": 1,
+  "source_head": "d52f8bc0acadc1de0dcb53fb1a96eb3e822e174a",
+  "unit": "Incremental final delivered nonblank physical production/test/CI lines; exclude comment-only lines, count docstrings physically",
+  "slices": [
+    {
+      "slice_id": "arbiter-authentication/3.1.1",
+      "title": "Shared bounded carrier and streaming peer",
+      "production": [
+        220,
+        310
+      ],
+      "tests": [
+        250,
+        360
+      ],
+      "ci": [
+        0,
+        5
+      ],
+      "combined": [
+        470,
+        675
+      ],
+      "predicted_authored_churn_upper": 855,
+      "churn_headroom": 180,
+      "basis": "pump",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/3.1.2",
+      "title": "Strict ordinary server TLS peer",
+      "production": [
+        150,
+        220
+      ],
+      "tests": [
+        260,
+        370
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        410,
+        590
+      ],
+      "predicted_authored_churn_upper": 670,
+      "churn_headroom": 80,
+      "basis": "tls",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/3.1.3",
+      "title": "Verified Go native HTTP connection",
+      "production": [
+        170,
+        240
+      ],
+      "tests": [
+        250,
+        350
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        420,
+        590
+      ],
+      "predicted_authored_churn_upper": 670,
+      "churn_headroom": 80,
+      "basis": "dial",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/3.1.4",
+      "title": "One-request HTTP to ASGI stream",
+      "production": [
+        210,
+        290
+      ],
+      "tests": [
+        300,
+        420
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        510,
+        710
+      ],
+      "predicted_authored_churn_upper": 790,
+      "churn_headroom": 80,
+      "basis": "http",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/3.2.1",
+      "title": "Live enrollment and receipt denial",
+      "production": [
+        210,
+        310
+      ],
+      "tests": [
+        370,
+        510
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        580,
+        820
+      ],
+      "predicted_authored_churn_upper": 920,
+      "churn_headroom": 100,
+      "basis": "live",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/3.2.2",
+      "title": "Grant controls and dispatch coordinator",
+      "production": [
+        200,
+        280
+      ],
+      "tests": [
+        280,
+        390
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        480,
+        670
+      ],
+      "predicted_authored_churn_upper": 750,
+      "churn_headroom": 80,
+      "basis": "live",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/3.3",
+      "title": "Grant-filtered discovery and direct lookup",
+      "production": [
+        150,
+        220
+      ],
+      "tests": [
+        270,
+        380
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        420,
+        600
+      ],
+      "predicted_authored_churn_upper": 680,
+      "churn_headroom": 80,
+      "basis": "projection",
+      "confidence": "medium",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/3.4",
+      "title": "Authorized plugins with closed artifacts",
+      "production": [
+        190,
+        280
+      ],
+      "tests": [
+        300,
+        410
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        490,
+        690
+      ],
+      "predicted_authored_churn_upper": 770,
+      "churn_headroom": 80,
+      "basis": "dispatch",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/3.6.1",
+      "title": "Cross-connection denial and worker ownership",
+      "production": [
+        160,
+        240
+      ],
+      "tests": [
+        300,
+        420
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        460,
+        660
+      ],
+      "predicted_authored_churn_upper": 740,
+      "churn_headroom": 80,
+      "basis": "denial",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/3.6.2",
+      "title": "Final-write revocation barrier",
+      "production": [
+        130,
+        200
+      ],
+      "tests": [
+        280,
+        390
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        410,
+        590
+      ],
+      "predicted_authored_churn_upper": 670,
+      "churn_headroom": 80,
+      "basis": "denial",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/3.5.1",
+      "title": "Explicit enrollment selection across CLI",
+      "production": [
+        110,
+        170
+      ],
+      "tests": [
+        260,
+        360
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        370,
+        530
+      ],
+      "predicted_authored_churn_upper": 610,
+      "churn_headroom": 80,
+      "basis": "cli",
+      "confidence": "medium",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/3.5.2",
+      "title": "Atomic authenticated API cutover",
+      "production": [
+        100,
+        170
+      ],
+      "tests": [
+        310,
+        430
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        410,
+        600
+      ],
+      "predicted_authored_churn_upper": 680,
+      "churn_headroom": 80,
+      "basis": "cutover",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/3.7",
+      "title": "Installed native transport integration",
+      "production": [
+        20,
+        60
+      ],
+      "tests": [
+        300,
+        420
+      ],
+      "ci": [
+        0,
+        10
+      ],
+      "combined": [
+        320,
+        490
+      ],
+      "predicted_authored_churn_upper": 570,
+      "churn_headroom": 80,
+      "basis": "installed",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/4.1",
+      "title": "Due rotation with a fixed deadline",
+      "production": [
+        250,
+        370
+      ],
+      "tests": [
+        280,
+        410
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        530,
+        780
+      ],
+      "predicted_authored_churn_upper": 860,
+      "churn_headroom": 80,
+      "basis": "rotation",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md",
+      "review_correction_basis": "R4-1: actual server wire and bounded route ownership"
+    },
+    {
+      "slice_id": "arbiter-authentication/4.2",
+      "title": "Durable candidate activation and reconciliation",
+      "production": [
+        280,
+        390
+      ],
+      "tests": [
+        320,
+        450
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        600,
+        840
+      ],
+      "predicted_authored_churn_upper": 920,
+      "churn_headroom": 80,
+      "basis": "rotationclient",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md",
+      "review_correction_basis": "R4-1: shared CLI/HTTP lifecycle preflight, every loss/save/deadline path"
+    },
+    {
+      "slice_id": "arbiter-authentication/4.3",
+      "title": "Purpose-bound late completion",
+      "production": [
+        230,
+        350
+      ],
+      "tests": [
+        280,
+        410
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        510,
+        760
+      ],
+      "predicted_authored_churn_upper": 840,
+      "churn_headroom": 80,
+      "basis": "rotationcontrol",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/4.4",
+      "title": "One authenticated predecessor attempt",
+      "production": [
+        140,
+        230
+      ],
+      "tests": [
+        210,
+        320
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        350,
+        550
+      ],
+      "predicted_authored_churn_upper": 630,
+      "churn_headroom": 80,
+      "basis": "rotationclient",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/4.5",
+      "title": "Lifecycle process and clock integration",
+      "production": [
+        30,
+        90
+      ],
+      "tests": [
+        270,
+        400
+      ],
+      "ci": [
+        0,
+        10
+      ],
+      "combined": [
+        300,
+        500
+      ],
+      "predicted_authored_churn_upper": 580,
+      "churn_headroom": 80,
+      "basis": "lifecycleinstalled",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/5.1",
+      "title": "Pairing repair of an existing enrollment",
+      "production": [
+        170,
+        270
+      ],
+      "tests": [
+        230,
+        350
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        400,
+        620
+      ],
+      "predicted_authored_churn_upper": 700,
+      "churn_headroom": 80,
+      "basis": "repair",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/5.2",
+      "title": "Offline owner authorization files",
+      "production": [
+        240,
+        360
+      ],
+      "tests": [
+        300,
+        420
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        540,
+        780
+      ],
+      "predicted_authored_churn_upper": 860,
+      "churn_headroom": 80,
+      "basis": "recovery",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md",
+      "review_correction_basis": "R4-3: stateless origin cookie and request-flood availability tests"
+    },
+    {
+      "slice_id": "arbiter-authentication/5.3",
+      "title": "Atomic access recovery and exact receipt",
+      "production": [
+        220,
+        330
+      ],
+      "tests": [
+        260,
+        390
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        480,
+        720
+      ],
+      "predicted_authored_churn_upper": 800,
+      "churn_headroom": 80,
+      "basis": "recovery",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md",
+      "review_correction_basis": "R4-3: authorized first-wins compare-and-swap and consumed operation"
+    },
+    {
+      "slice_id": "arbiter-authentication/5.4",
+      "title": "Portable replacement across enrolled servers",
+      "production": [
+        280,
+        410
+      ],
+      "tests": [
+        340,
+        490
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        620,
+        900
+      ],
+      "predicted_authored_churn_upper": 980,
+      "churn_headroom": 80,
+      "basis": "portable",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md",
+      "review_correction_basis": "R4-2: actual original issuer signing handler and atomic two-server custody"
+    },
+    {
+      "slice_id": "arbiter-authentication/5.5",
+      "title": "Owner issuer and portable certificate renewal",
+      "production": [
+        240,
+        360
+      ],
+      "tests": [
+        310,
+        470
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        550,
+        830
+      ],
+      "predicted_authored_churn_upper": 910,
+      "churn_headroom": 80,
+      "basis": "renewowner",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md",
+      "review_correction_basis": "R4-2: exact same-key root continuity/registry forwarding plus leaf renewal"
+    },
+    {
+      "slice_id": "arbiter-authentication/6.1",
+      "title": "Planned server-key transition publication",
+      "production": [
+        190,
+        300
+      ],
+      "tests": [
+        230,
+        340
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        420,
+        640
+      ],
+      "predicted_authored_churn_upper": 720,
+      "churn_headroom": 80,
+      "basis": "transition",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/6.2",
+      "title": "Verified server transition adoption",
+      "production": [
+        170,
+        280
+      ],
+      "tests": [
+        240,
+        350
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        410,
+        630
+      ],
+      "predicted_authored_churn_upper": 710,
+      "churn_headroom": 80,
+      "basis": "transitionclient",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/6.3",
+      "title": "Independent compromise recovery",
+      "production": [
+        190,
+        300
+      ],
+      "tests": [
+        260,
+        380
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        450,
+        680
+      ],
+      "predicted_authored_churn_upper": 760,
+      "churn_headroom": 80,
+      "basis": "compromise",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/6.4",
+      "title": "Server authority and leaf certificate renewal",
+      "production": [
+        180,
+        290
+      ],
+      "tests": [
+        240,
+        360
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        420,
+        650
+      ],
+      "predicted_authored_churn_upper": 730,
+      "churn_headroom": 80,
+      "basis": "transition",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/7.1",
+      "title": "Recipient possession and bounded retention",
+      "production": [
+        180,
+        280
+      ],
+      "tests": [
+        220,
+        330
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        400,
+        610
+      ],
+      "predicted_authored_churn_upper": 690,
+      "churn_headroom": 80,
+      "basis": "recipient",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/7.2",
+      "title": "Dual-recipient encrypted artifact writing",
+      "production": [
+        220,
+        330
+      ],
+      "tests": [
+        260,
+        390
+      ],
+      "ci": [
+        0,
+        5
+      ],
+      "combined": [
+        480,
+        725
+      ],
+      "predicted_authored_churn_upper": 805,
+      "churn_headroom": 80,
+      "basis": "artifactcrypto",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/7.3",
+      "title": "Physical quotas and encrypted-store restart",
+      "production": [
+        200,
+        300
+      ],
+      "tests": [
+        240,
+        360
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        440,
+        660
+      ],
+      "predicted_authored_churn_upper": 740,
+      "churn_headroom": 80,
+      "basis": "artifactquota",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/7.4",
+      "title": "Creator-bound descriptor HEAD and one GET",
+      "production": [
+        190,
+        290
+      ],
+      "tests": [
+        260,
+        380
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        450,
+        670
+      ],
+      "predicted_authored_churn_upper": 750,
+      "churn_headroom": 80,
+      "basis": "artifactaccess",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/7.5",
+      "title": "Encrypted plugin adapter activation",
+      "production": [
+        140,
+        240
+      ],
+      "tests": [
+        230,
+        340
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        370,
+        580
+      ],
+      "predicted_authored_churn_upper": 660,
+      "churn_headroom": 80,
+      "basis": "artifactplugin",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/7.6",
+      "title": "Encrypted-store contention and packaging",
+      "production": [
+        30,
+        100
+      ],
+      "tests": [
+        260,
+        400
+      ],
+      "ci": [
+        0,
+        10
+      ],
+      "combined": [
+        290,
+        510
+      ],
+      "predicted_authored_churn_upper": 590,
+      "churn_headroom": 80,
+      "basis": "artifactinstalled",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/8.1",
+      "title": "Immediate decrypted stdin with explicit stream flag",
+      "production": [
+        170,
+        270
+      ],
+      "tests": [
+        220,
+        340
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        390,
+        610
+      ],
+      "predicted_authored_churn_upper": 690,
+      "churn_headroom": 80,
+      "basis": "artifactcli",
+      "confidence": "medium",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/8.2",
+      "title": "Verified ciphertext staging then stdin",
+      "production": [
+        220,
+        340
+      ],
+      "tests": [
+        260,
+        390
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        480,
+        730
+      ],
+      "predicted_authored_churn_upper": 810,
+      "churn_headroom": 80,
+      "basis": "artifacttemp",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/8.3",
+      "title": "Explicit verified plaintext temporary path",
+      "production": [
+        130,
+        220
+      ],
+      "tests": [
+        200,
+        310
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        330,
+        530
+      ],
+      "predicted_authored_churn_upper": 610,
+      "churn_headroom": 80,
+      "basis": "artifacttemp",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/8.4",
+      "title": "Verified persistent plaintext export",
+      "production": [
+        120,
+        210
+      ],
+      "tests": [
+        200,
+        310
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        320,
+        520
+      ],
+      "predicted_authored_churn_upper": 600,
+      "churn_headroom": 80,
+      "basis": "artifactcli",
+      "confidence": "medium",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/8.5",
+      "title": "Four-path installed process integration",
+      "production": [
+        30,
+        90
+      ],
+      "tests": [
+        260,
+        390
+      ],
+      "ci": [
+        0,
+        10
+      ],
+      "combined": [
+        290,
+        490
+      ],
+      "predicted_authored_churn_upper": 570,
+      "churn_headroom": 80,
+      "basis": "artifactinstalled",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/9.1",
+      "title": "Coherent saved configuration and actual secrets",
+      "production": [
+        240,
+        360
+      ],
+      "tests": [
+        260,
+        390
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        500,
+        750
+      ],
+      "predicted_authored_churn_upper": 850,
+      "churn_headroom": 100,
+      "basis": "savedconfig",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/9.2",
+      "title": "Fenced SQLite and saved-state snapshot",
+      "production": [
+        180,
+        280
+      ],
+      "tests": [
+        230,
+        350
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        410,
+        630
+      ],
+      "predicted_authored_churn_upper": 710,
+      "churn_headroom": 80,
+      "basis": "snapshot",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/9.3",
+      "title": "Strict signed recovery stream format",
+      "production": [
+        220,
+        340
+      ],
+      "tests": [
+        260,
+        390
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        480,
+        730
+      ],
+      "predicted_authored_churn_upper": 810,
+      "churn_headroom": 80,
+      "basis": "backupformat",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/9.4",
+      "title": "Encrypted atomic local export",
+      "production": [
+        200,
+        310
+      ],
+      "tests": [
+        240,
+        360
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        440,
+        670
+      ],
+      "predicted_authored_churn_upper": 750,
+      "churn_headroom": 80,
+      "basis": "export",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/9.5",
+      "title": "External backup job and snapshot integration",
+      "production": [
+        20,
+        80
+      ],
+      "tests": [
+        250,
+        380
+      ],
+      "ci": [
+        0,
+        10
+      ],
+      "combined": [
+        270,
+        470
+      ],
+      "predicted_authored_churn_upper": 550,
+      "churn_headroom": 80,
+      "basis": "backupinstalled",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/10.1",
+      "title": "Strict offline decrypt and validation",
+      "production": [
+        200,
+        310
+      ],
+      "tests": [
+        260,
+        390
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        460,
+        700
+      ],
+      "predicted_authored_churn_upper": 780,
+      "churn_headroom": 80,
+      "basis": "restore",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/10.2",
+      "title": "Exclusive restore staging and cleanup",
+      "production": [
+        180,
+        280
+      ],
+      "tests": [
+        230,
+        350
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        410,
+        630
+      ],
+      "predicted_authored_churn_upper": 710,
+      "churn_headroom": 80,
+      "basis": "restorestage",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/10.3",
+      "title": "Atomic active and immutable undo publication",
+      "production": [
+        190,
+        300
+      ],
+      "tests": [
+        260,
+        390
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        450,
+        690
+      ],
+      "predicted_authored_churn_upper": 770,
+      "churn_headroom": 80,
+      "basis": "activate",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/10.4",
+      "title": "Repeatable latest undo and explicit discard",
+      "production": [
+        160,
+        260
+      ],
+      "tests": [
+        230,
+        350
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        390,
+        610
+      ],
+      "predicted_authored_churn_upper": 690,
+      "churn_headroom": 80,
+      "basis": "undo",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/10.5",
+      "title": "Native restore crash and client integration",
+      "production": [
+        30,
+        100
+      ],
+      "tests": [
+        280,
+        420
+      ],
+      "ci": [
+        0,
+        10
+      ],
+      "combined": [
+        310,
+        530
+      ],
+      "predicted_authored_churn_upper": 610,
+      "churn_headroom": 80,
+      "basis": "restoreinstalled",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/11.1",
+      "title": "Maintenance drain and cooperative migration",
+      "production": [
+        170,
+        280
+      ],
+      "tests": [
+        240,
+        360
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        410,
+        640
+      ],
+      "predicted_authored_churn_upper": 720,
+      "churn_headroom": 80,
+      "basis": "maintenance",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/11.2",
+      "title": "Authenticated fixed URL handoff",
+      "production": [
+        180,
+        290
+      ],
+      "tests": [
+        240,
+        370
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        420,
+        660
+      ],
+      "predicted_authored_churn_upper": 740,
+      "churn_headroom": 80,
+      "basis": "handoff",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    },
+    {
+      "slice_id": "arbiter-authentication/11.3",
+      "title": "Multi-client migration and whole-auth integration",
+      "production": [
+        30,
+        100
+      ],
+      "tests": [
+        300,
+        440
+      ],
+      "ci": [
+        0,
+        10
+      ],
+      "combined": [
+        330,
+        550
+      ],
+      "predicted_authored_churn_upper": 630,
+      "churn_headroom": 80,
+      "basis": "combined",
+      "confidence": "low",
+      "source_inspection": "estimate-basis.md"
+    }
+  ],
+  "range_basis": "Bottom-up complete consumed boundary, current source/harness reuse, concrete state/schema/negative/failure/platform obligations. No mechanical scaling of old estimates. Separate conservative authored-churn envelope includes bounded replacement/code-motion/comment headroom and must be rechecked before delivery.",
+  "milestone_rollups": [
+    {
+      "milestone": "3",
+      "cuts": 13,
+      "production": [
+        2020,
+        2990
+      ],
+      "tests": [
+        3730,
+        5210
+      ],
+      "ci": [
+        0,
+        15
+      ],
+      "combined": [
+        5750,
+        8215
+      ]
+    },
+    {
+      "milestone": "4",
+      "cuts": 5,
+      "production": [
+        930,
+        1430
+      ],
+      "tests": [
+        1360,
+        1990
+      ],
+      "ci": [
+        0,
+        10
+      ],
+      "combined": [
+        2290,
+        3430
+      ]
+    },
+    {
+      "milestone": "5",
+      "cuts": 5,
+      "production": [
+        1150,
+        1730
+      ],
+      "tests": [
+        1440,
+        2120
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        2590,
+        3850
+      ]
+    },
+    {
+      "milestone": "6",
+      "cuts": 4,
+      "production": [
+        730,
+        1170
+      ],
+      "tests": [
+        970,
+        1430
+      ],
+      "ci": [
+        0,
+        0
+      ],
+      "combined": [
+        1700,
+        2600
+      ]
+    },
+    {
+      "milestone": "7",
+      "cuts": 6,
+      "production": [
+        960,
+        1540
+      ],
+      "tests": [
+        1470,
+        2200
+      ],
+      "ci": [
+        0,
+        15
+      ],
+      "combined": [
+        2430,
+        3755
+      ]
+    },
+    {
+      "milestone": "8",
+      "cuts": 5,
+      "production": [
+        670,
+        1130
+      ],
+      "tests": [
+        1140,
+        1740
+      ],
+      "ci": [
+        0,
+        10
+      ],
+      "combined": [
+        1810,
+        2880
+      ]
+    },
+    {
+      "milestone": "9",
+      "cuts": 5,
+      "production": [
+        860,
+        1370
+      ],
+      "tests": [
+        1240,
+        1870
+      ],
+      "ci": [
+        0,
+        10
+      ],
+      "combined": [
+        2100,
+        3250
+      ]
+    },
+    {
+      "milestone": "10",
+      "cuts": 5,
+      "production": [
+        760,
+        1250
+      ],
+      "tests": [
+        1260,
+        1900
+      ],
+      "ci": [
+        0,
+        10
+      ],
+      "combined": [
+        2020,
+        3160
+      ]
+    },
+    {
+      "milestone": "11",
+      "cuts": 3,
+      "production": [
+        380,
+        670
+      ],
+      "tests": [
+        780,
+        1170
+      ],
+      "ci": [
+        0,
+        10
+      ],
+      "combined": [
+        1160,
+        1850
+      ]
+    }
+  ],
+  "project_totals": {
+    "production": [
+      8460,
+      13280
+    ],
+    "tests": [
+      13390,
+      19630
+    ],
+    "ci": [
+      0,
+      80
+    ],
+    "combined": [
+      21850,
+      32990
+    ]
+  }
+}
