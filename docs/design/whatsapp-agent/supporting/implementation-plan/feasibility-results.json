@@ -1,0 +1,10 @@
+{
+  "platform": "linux",
+  "results": {
+    "nested_schema": "structured validation works; schema generator branch is absent",
+    "sqlite": "uncommitted cursor/source rollback together; replay source does not advance cursor; committed reservation survives restart",
+    "process_lock": "second process excluded while held; released after close",
+    "atomic_record": "reader observed only complete versions; 50 same-directory replacements preserved mode 0600; not a power-loss test",
+    "artifact": "standalone bounded in-memory consumption succeeds; competing in-memory read and existing open_once admit exactly one consumer; synthetic 1 MiB; not implemented adapter"
+  }
+}
