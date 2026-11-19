@@ -11,11 +11,15 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 def _approved_reusable_workflow(reference: str, filename: str) -> bool:
-    if filename == "dependency-audit.yml" and reference in {
-        "hydra-ecosystem/github-actions/.github/workflows/node-audit.yml@v1",
-        "hydra-ecosystem/github-actions/.github/workflows/node-publish.yml@v1",
-        "hydra-ecosystem/github-actions/.github/workflows/node-maintenance.yml@v1",
-    }:
+    approved_callers = {
+        "dependency-audit.yml": (
+            "hydra-ecosystem/github-actions/.github/workflows/node-maintenance.yml@v2"
+        ),
+        "dependency-repair.yml": (
+            "hydra-ecosystem/github-actions/.github/workflows/node-repair.yml@v2"
+        ),
+    }
+    if reference == approved_callers.get(filename):
         return True
     return (
         re.fullmatch(
@@ -78,11 +82,46 @@ def test_actions_dependency_updates_are_configured() -> None:
         (
             "dependency-audit.yml",
             "hydra-ecosystem/github-actions/.github/workflows/node-maintenance.yml@v1",
-            True,
+            False,
         ),
         (
             "dependency-audit.yml",
             "hydra-ecosystem/github-actions/.github/workflows/node-maintenance.yml@v2",
+            True,
+        ),
+        (
+            "dependency-repair.yml",
+            "hydra-ecosystem/github-actions/.github/workflows/node-repair.yml@v2",
+            True,
+        ),
+        (
+            "dependency-audit.yml",
+            "hydra-ecosystem/github-actions/.github/workflows/node-repair.yml@v2",
+            False,
+        ),
+        (
+            "dependency-repair.yml",
+            "hydra-ecosystem/github-actions/.github/workflows/node-maintenance.yml@v2",
+            False,
+        ),
+        (
+            "publish.yml",
+            "hydra-ecosystem/github-actions/.github/workflows/node-maintenance.yml@v2",
+            False,
+        ),
+        (
+            "dependency-repair.yml",
+            "hydra-ecosystem/github-actions/.github/workflows/node-repair.yml@v1",
+            False,
+        ),
+        (
+            "dependency-repair.yml",
+            "hydra-ecosystem/github-actions/.github/workflows/node-repair.yml@main",
+            False,
+        ),
+        (
+            "dependency-repair.yml",
+            "other/actions/.github/workflows/node-repair.yml@v2",
             False,
         ),
         (
@@ -98,12 +137,12 @@ def test_actions_dependency_updates_are_configured() -> None:
         (
             "dependency-audit.yml",
             "hydra-ecosystem/github-actions/.github/workflows/node-audit.yml@v1",
-            True,
+            False,
         ),
         (
             "dependency-audit.yml",
             "hydra-ecosystem/github-actions/.github/workflows/node-publish.yml@v1",
-            True,
+            False,
         ),
         (
             "publish.yml",

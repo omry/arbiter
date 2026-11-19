@@ -1,0 +1,296 @@
+{
+  "schema_version": 2,
+  "slices": [
+    {
+      "id": "whatsapp-account-plugin/1",
+      "parent": null,
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[whatsapp-account-plugin/1] Enroll accounts and replace credentials safely",
+        "responsibility": "An operator can create/reopen a configured account, prove its creator chat, activate one complete private binding, inspect readiness and replace the credential for the same provider identity. Own plugin packaging/config/policy validation, protected root/store initialization, polling/binding locks, bounded read-only transport, optional local administration dispatch and setup/recovery documentation. Do not expose administrative operations in the agent catalog or implement message/media operations here.",
+        "paths": [
+          "plugins/whatsapp/pyproject.toml",
+          "plugins/whatsapp/src/arbiter_whatsapp/__init__.py",
+          "plugins/whatsapp/src/arbiter_whatsapp/config.py",
+          "plugins/whatsapp/src/arbiter_whatsapp/credentials.py",
+          "plugins/whatsapp/src/arbiter_whatsapp/state.py",
+          "plugins/whatsapp/src/arbiter_whatsapp/transport.py",
+          "server/src/arbiter_server/main.py",
+          "server/src/arbiter_server/services.py",
+          "server/tests/unit/test_main.py",
+          "plugins/whatsapp/tests/unit/test_enrollment.py",
+          "plugins/whatsapp/tests/unit/test_credentials.py",
+          "plugins/whatsapp/tests/unit/test_transport.py",
+          "website/docs/plugins/whatsapp/configure.md"
+        ],
+        "dependencies": [],
+        "acceptance": [
+          "Real server CLI bootstrap/activation/enrollment/replacement with fake provider verifies same resolved root, wrong-chat/old-challenge rejection, blank chat, cancel/reopen, concurrent aliases and uncertain publication.",
+          "Independent processes observe complete protected bindings; missing/inconsistent state and unsafe paths fail closed. Verify Linux/macOS/Windows permission, lock and publication behavior through the declared acceptance matrix.",
+          "An existing plugin without the optional hook retains activation behavior. Explicit deny/malformed policies make no provider call."
+        ]
+      },
+      "display": {
+        "summary": "Enroll accounts and replace credentials safely",
+        "production": [
+          850,
+          1250
+        ],
+        "tests": [
+          1100,
+          1600
+        ]
+      }
+    },
+    {
+      "id": "whatsapp-account-plugin/2",
+      "parent": null,
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[whatsapp-account-plugin/2] Receive updates with isolated replay",
+        "responsibility": "Expose receive_updates through the real catalog with exact signed-64-bit cursors, validated projected envelopes, policy-based media withholding and atomic source/cursor transactions. Own normal/replay polling behavior and replay examples; reuse enrollment transport/store and locks.",
+        "paths": [
+          "plugins/whatsapp/src/arbiter_whatsapp/__init__.py",
+          "plugins/whatsapp/src/arbiter_whatsapp/updates.py",
+          "plugins/whatsapp/src/arbiter_whatsapp/state.py",
+          "plugins/whatsapp/tests/unit/test_updates.py",
+          "plugins/whatsapp/tests/integration/test_polling.py",
+          "website/docs/plugins/whatsapp/behavior.md"
+        ],
+        "dependencies": [
+          "whatsapp-account-plugin/1"
+        ],
+        "acceptance": [
+          "Catalog entry tests cover explicit first offset, zero, saved continuation, mismatch, replay isolation, empty/status-only batches, replaced polls, malformed envelopes and identity mismatch.",
+          "Kill a process before/after commit and drop the response; confirm transaction rollback or retained exact continuation and explicit replay recovery.",
+          "Denied ingress exposes no usable media handle, caption, digest or URL while preserving message identity."
+        ]
+      },
+      "display": {
+        "summary": "Receive updates with isolated replay",
+        "production": [
+          350,
+          500
+        ],
+        "tests": [
+          450,
+          650
+        ]
+      }
+    },
+    {
+      "id": "whatsapp-account-plugin/3",
+      "parent": null,
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[whatsapp-account-plugin/3] Send text replies without duplicate submission",
+        "responsibility": "Expose typed text sends and source-keyed reservation/result recovery; proactive sends remain available. Own recursive nested-dataclass catalog schemas and scalar/list regressions, payload canonicalization, send lock, accepted/refused/unknown results and truthful retry guidance. Document automation source keys and ambiguity; media sends arrive in slice 6.",
+        "paths": [
+          "plugins/whatsapp/src/arbiter_whatsapp/__init__.py",
+          "plugins/whatsapp/src/arbiter_whatsapp/messages.py",
+          "plugins/whatsapp/src/arbiter_whatsapp/state.py",
+          "server/src/arbiter_server/services.py",
+          "server/tests/unit/test_services.py",
+          "plugins/whatsapp/tests/unit/test_messages.py",
+          "plugins/whatsapp/tests/integration/test_reply_recovery.py",
+          "website/docs/plugins/whatsapp/reference.md",
+          "website/docs/plugins/whatsapp/behavior.md"
+        ],
+        "dependencies": [
+          "whatsapp-account-plugin/2"
+        ],
+        "acceptance": [
+          "Through HTTP/catalog, identical concurrent source calls cause at most one provider submission, changed payload conflicts and unknown/mismatched sources never submit.",
+          "Kill before reservation commit, after commit, during transport and before result commit; retained pending becomes unknown only under send-lock ownership and never resubmits.",
+          "Acceptance plus recording failure returns partial_failure with known result and unsafe retry guidance; nested schemas reject unknown fields while existing scalar/list operations regress cleanly."
+        ]
+      },
+      "display": {
+        "summary": "Send text replies without duplicate submission",
+        "production": [
+          450,
+          650
+        ],
+        "tests": [
+          600,
+          850
+        ]
+      }
+    },
+    {
+      "id": "whatsapp-account-plugin/4",
+      "parent": null,
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[whatsapp-account-plugin/4] Apply independent read and typing policies",
+        "responsibility": "Expose mark_read and typing without requiring send_messages. Enforce combined typing/read permission, return unsupported cancellation before transport, bound acknowledgements/errors and document actual provider effects.",
+        "paths": [
+          "plugins/whatsapp/src/arbiter_whatsapp/__init__.py",
+          "plugins/whatsapp/src/arbiter_whatsapp/statuses.py",
+          "plugins/whatsapp/tests/unit/test_statuses.py",
+          "website/docs/plugins/whatsapp/reference.md",
+          "website/docs/plugins/whatsapp/behavior.md"
+        ],
+        "dependencies": [
+          "whatsapp-account-plugin/2",
+          "whatsapp-account-plugin/3"
+        ],
+        "acceptance": [
+          "Exercise every typing/read permission combination through real operations, proving denied effects do not submit.",
+          "mark_read emits only read; active typing emits the combined documented request; false sends nothing and returns the selected nontransient unsupported error."
+        ]
+      },
+      "display": {
+        "summary": "Apply independent read and typing policies",
+        "production": [
+          100,
+          180
+        ],
+        "tests": [
+          160,
+          260
+        ]
+      }
+    },
+    {
+      "id": "whatsapp-account-plugin/5",
+      "parent": null,
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[whatsapp-account-plugin/5] Upload existing artifacts exactly once",
+        "responsibility": "Expose upload_media with a narrow same-store immutable-byte read adapter. Own exact capability URL parsing, pre-consumption type/size checks, shared root locking and consumption, bounded multipart upload and image/sticker validation. Reuse existing artifact ownership/capacity/expiry and preserve HTTP consumption behavior.",
+        "paths": [
+          "server/src/arbiter_server/artifacts.py",
+          "server/tests/unit/test_artifacts.py",
+          "plugins/whatsapp/src/arbiter_whatsapp/__init__.py",
+          "plugins/whatsapp/src/arbiter_whatsapp/media.py",
+          "plugins/whatsapp/tests/unit/test_upload.py",
+          "plugins/whatsapp/pyproject.toml",
+          "website/docs/plugins/whatsapp/reference.md",
+          "website/docs/plugins/whatsapp/behavior.md"
+        ],
+        "dependencies": [
+          "whatsapp-account-plugin/1",
+          "whatsapp-account-plugin/3"
+        ],
+        "acceptance": [
+          "Race HTTP open_once, plugin read and cleanup in separate processes; exactly one consumer obtains bytes and no unsafe payload path escapes.",
+          "Reject bad nonce, foreign URL/ID, expiry, policy denial, metadata oversize and unsupported MIME before consumption/provider I/O. Fault pre-claim and access-record publication; no bytes escape a failed claim.",
+          "After consumption, transport or payload-validation failure requires a fresh artifact. Probe maximum admitted bytes and image/WebP boundaries without unbounded decode."
+        ]
+      },
+      "display": {
+        "summary": "Upload existing artifacts exactly once",
+        "production": [
+          260,
+          400
+        ],
+        "tests": [
+          400,
+          600
+        ]
+      }
+    },
+    {
+      "id": "whatsapp-account-plugin/6",
+      "parent": null,
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[whatsapp-account-plugin/6] Download, send and delete media safely",
+        "responsibility": "Complete typed image/audio/video/document/sticker sends plus get_media, download_media and delete_media. Own exact destination/path validation, fresh signed URLs, metadata/digest/length checks, bounded artifact publication and confirmed deletion. Apply composed effect permissions without duplicating reservation or artifact-reader mechanisms.",
+        "paths": [
+          "plugins/whatsapp/src/arbiter_whatsapp/__init__.py",
+          "plugins/whatsapp/src/arbiter_whatsapp/media.py",
+          "plugins/whatsapp/src/arbiter_whatsapp/messages.py",
+          "plugins/whatsapp/tests/unit/test_media.py",
+          "plugins/whatsapp/tests/integration/test_media.py",
+          "website/docs/plugins/whatsapp/reference.md",
+          "website/docs/plugins/whatsapp/behavior.md"
+        ],
+        "dependencies": [
+          "whatsapp-account-plugin/3",
+          "whatsapp-account-plugin/5"
+        ],
+        "acceptance": [
+          "Wrong host/port/userinfo/fragment/path, redirect, oversized/slow response, digest mismatch and identity/media mismatch never forward secrets or publish a valid artifact.",
+          "Metadata omits signed URLs; only provider-confirmed deletion returns deleted. Other-account/unknown/expired errors remain indistinguishable bounded failures.",
+          "All six message payload types and relevant captions/filenames are validated through the actual catalog; reactions stay receive-only."
+        ]
+      },
+      "display": {
+        "summary": "Download, send and delete media safely",
+        "production": [
+          350,
+          500
+        ],
+        "tests": [
+          450,
+          700
+        ]
+      }
+    },
+    {
+      "id": "whatsapp-account-plugin/7",
+      "parent": null,
+      "state": "planned",
+      "role": "implementation",
+      "intent": {
+        "title": "[whatsapp-account-plugin/7] Verify installation and publish complete operator documentation",
+        "responsibility": "Exercise the complete configured workflow from installed packages with deterministic provider fixtures, existing plugins and the supported platform matrix. Own final optional-package/suite integration, package-specific news, cross-slice fault/redaction tests, complete documentation/navigation and release evidence. This slice verifies integrated behavior; it is not permission to deploy or operate a live account.",
+        "paths": [
+          "plugins/whatsapp/pyproject.toml",
+          "plugins/whatsapp/news/+initial-plugin.feature.md",
+          "server/news/+whatsapp-plugin-adapters.feature.md",
+          "meta/arbiter-suite/pyproject.toml",
+          "meta/arbiter-suite/news/+whatsapp-plugin.feature.md",
+          ".github/workflows/ci.yml",
+          "plugins/whatsapp/tests/integration/test_workflow.py",
+          "website/docs/plugins/whatsapp/index.md",
+          "website/docs/plugins/whatsapp/configure.md",
+          "website/docs/plugins/whatsapp/behavior.md",
+          "website/docs/plugins/whatsapp/reference.md",
+          "website/docs/plugins/index.md",
+          "website/docs/operate/security.md",
+          "website/docs/operate/credentials.md",
+          "website/sidebars.js",
+          "noxfile.py",
+          "tools/sl_precommit_lint",
+          "tools/release_packages.py",
+          "tools/upgrade_release_line",
+          "tools/extract_release_notes",
+          "tools/smoke_release_install"
+        ],
+        "dependencies": [
+          "whatsapp-account-plugin/1",
+          "whatsapp-account-plugin/2",
+          "whatsapp-account-plugin/3",
+          "whatsapp-account-plugin/4",
+          "whatsapp-account-plugin/5",
+          "whatsapp-account-plugin/6"
+        ],
+        "acceptance": [
+          "Installed package discovers all eight operations and completes enrollment -> poll -> source-keyed reply -> replay -> artifact upload/download/delete -> verified replacement without exposing secrets.",
+          "Docs follow the same installed CLI/catalog: complete setup, policy combinations/reset, readiness, recovery, unknown sends, media lifetime/consumption, local trust and migration; build the website and check links.",
+          "Run full server/plugin regression suites, platform acceptance and independent integrated security review before rollout; external live checks require their separate authorized account and disposable-data scope."
+        ]
+      },
+      "display": {
+        "summary": "Verify installation and publish complete operator documentation",
+        "production": [
+          300,
+          450
+        ],
+        "tests": [
+          400,
+          600
+        ]
+      }
+    }
+  ]
+}
