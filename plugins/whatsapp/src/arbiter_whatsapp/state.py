@@ -60,6 +60,61 @@ class StateStore:
     def __init__(self, storage: PluginStorage):
         self.path = storage.path().absolute()
 
+    def poll_offset(self, provider_id: str, supplied: int | None, replay: bool) -> int:
+        with self.database() as db:
+            row = db.execute(
+                "SELECT normal_offset FROM agents WHERE provider_id=?", (provider_id,)
+            ).fetchone()
+        if row is None:
+            raise failure("plugin_error", "private_state_unavailable")
+        saved = row[0]
+        if saved is not None and (type(saved) is not int or not 0 <= saved < 2**63):
+            raise failure("plugin_error", "private_state_unavailable")
+        if replay or saved is None:
+            if supplied is None:
+                raise failure("validation_error", "cursor_required")
+            return supplied
+        if supplied is not None and supplied != saved:
+            raise failure("conflict", "cursor_conflict")
+        return saved
+
+    def commit_poll(
+        self, provider_id, expected_offset, next_offset, observed_sources, replay
+    ) -> None:
+        with self.database() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT normal_offset FROM agents WHERE provider_id=?", (provider_id,)
+            ).fetchone()
+            if row is None:
+                raise failure("plugin_error", "private_state_unavailable")
+            if not replay and row[0] is not None and row[0] != expected_offset:
+                raise failure("conflict", "cursor_conflict")
+            count = db.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
+            for message_id, participant, timestamp, kind in observed_sources:
+                previous = db.execute(
+                    "SELECT participant,timestamp,message_type FROM sources "
+                    "WHERE provider_id=? AND message_id=?",
+                    (provider_id, message_id),
+                ).fetchone()
+                if previous is not None:
+                    if previous != (participant, timestamp, kind):
+                        raise failure("upstream_protocol_error", "source_conflict")
+                    continue
+                if count >= 250_000:
+                    raise failure("resource_exhausted", "source_capacity")
+                db.execute(
+                    "INSERT INTO sources VALUES(?,?,?,?,?)",
+                    (provider_id, message_id, participant, timestamp, kind),
+                )
+                count += 1
+            if not replay:
+                db.execute(
+                    "UPDATE agents SET normal_offset=? WHERE provider_id=?",
+                    (next_offset, provider_id),
+                )
+            db.commit()
+
     def root(self, *, create: bool = False) -> Path:
         try:
             root = _root(self.path, create=create)
@@ -178,7 +233,13 @@ class StateStore:
             if len(rows) != 1 or not isinstance(rows[0][0], str) or not rows[0][0]:
                 raise ValueError("invalid store identity")
             yield db
-        except (OSError, ValueError, sqlite3.Error):
+        except sqlite3.Error as error:
+            if getattr(error, "sqlite_errorcode", None) == 13 or error.args == (
+                "database or disk is full",
+            ):
+                raise failure("resource_exhausted", "state_capacity") from None
+            raise failure("plugin_error", "private_state_unavailable") from None
+        except (OSError, ValueError):
             raise failure("plugin_error", "private_state_unavailable") from None
         finally:
             if db is not None:
