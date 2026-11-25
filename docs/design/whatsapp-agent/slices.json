@@ -22,7 +22,8 @@
           "plugins/whatsapp/tests/unit/test_enrollment.py",
           "plugins/whatsapp/tests/unit/test_credentials.py",
           "plugins/whatsapp/tests/unit/test_transport.py",
-          "website/docs/plugins/whatsapp/configure.md"
+          "website/docs/plugins/whatsapp/configure.md",
+          ".github/workflows/ci.yml"
         ],
         "dependencies": [],
         "acceptance": [
