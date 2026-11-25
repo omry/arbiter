@@ -28,7 +28,7 @@ from contextlib import ExitStack, asynccontextmanager
 from ipaddress import ip_address
 from pathlib import Path, PurePath
 from tempfile import mkstemp
-from typing import Any, Literal, cast
+from typing import Any, Literal, TextIO, cast
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from hydra import compose, initialize_config_dir
@@ -75,6 +75,7 @@ from .services import (
     ServicePluginContext,
     ServicePluginFactory,
     ServiceRuntimeContext,
+    administer_service_account,
     check_service_plugin_config,
     service_plugin_runtime_info,
     validate_service_plugin_compatibility,
@@ -829,7 +830,6 @@ def build_app(
     )
     active_service_plugins = _configured_service_plugins(cfg, available_plugins)
     shared_runtime_dependencies = runtime_dependencies or {}
-    plugin_data_root = _plugin_data_root(_storage_config(cfg))
     runtimes: dict[str, object] = {}
     for service_plugin in active_service_plugins:
         accounts = service_accounts_for(cfg, service_plugin.name)
@@ -838,20 +838,8 @@ def build_app(
                 f"service config is not configured: {service_plugin.name}"
             )
         policies = service_policies_for(cfg, service_plugin.name)
-        plugin_dependencies = {
-            **shared_runtime_dependencies,
-            "plugin_storage": PluginStorage(
-                plugin_name=service_plugin.name,
-                root=plugin_data_root,
-            ),
-        }
-        artifact_store = shared_runtime_dependencies.get("artifact_store")
-        if isinstance(artifact_store, ArtifactStore):
-            plugin_dependencies["artifact_store"] = artifact_store.for_plugin(
-                service_plugin.name
-            )
-        runtime_context = ServiceRuntimeContext(
-            dependencies=plugin_dependencies,
+        runtime_context = _service_runtime_context(
+            cfg, service_plugin, shared_runtime_dependencies
         )
         runtimes[service_plugin.name] = service_plugin.build_runtime(
             accounts=accounts,
@@ -860,6 +848,27 @@ def build_app(
         )
     _configure_sent_message_appender(cfg, runtimes)
     return ArbiterApp(RuntimeRegistry(runtimes))
+
+
+def _service_runtime_context(
+    cfg: HydraConfig,
+    service_plugin: ServicePlugin,
+    dependencies: Mapping[str, object] | None = None,
+) -> ServiceRuntimeContext:
+    shared = dict(dependencies or {})
+    plugin_dependencies = {
+        **shared,
+        "plugin_storage": PluginStorage(
+            plugin_name=service_plugin.name,
+            root=_plugin_data_root(_storage_config(cfg)).expanduser().absolute(),
+        ),
+    }
+    artifact_store = shared.get("artifact_store")
+    if isinstance(artifact_store, ArtifactStore):
+        plugin_dependencies["artifact_store"] = artifact_store.for_plugin(
+            service_plugin.name
+        )
+    return ServiceRuntimeContext(dependencies=plugin_dependencies)
 
 
 @dataclass(frozen=True)
@@ -4273,7 +4282,35 @@ def _run_config_account_activation(
     config_name: str,
     option_plugin: str | None,
     option_account: str | None,
+    enroll: bool = False,
+    replace_credential: bool = False,
+    token_stdin: bool = False,
 ) -> int:
+    administration = enroll or replace_credential
+    if (administration or token_stdin) and (
+        action != "activate"
+        or not administration
+        or (enroll and replace_credential)
+        or option_plugin is None
+        or option_account is None
+        or len(option_plugin.split(",")) != 1
+        or "," in option_account
+    ):
+        print_cli_error(
+            "credential administration requires one explicit plugin/account activation",
+            area="config",
+        )
+        return 2
+    if administration:
+        assert option_plugin is not None and option_account is not None
+        return _run_plugin_account_administration(
+            config_dir=config_dir,
+            config_name=config_name,
+            plugin_name=option_plugin,
+            account_name=option_account,
+            action="replace" if replace_credential else "enroll",
+            token_stdin=token_stdin,
+        )
     if option_plugin is None and option_account is None:
         return _run_config_activation_summary(
             config_dir=config_dir,
@@ -4303,6 +4340,117 @@ def _run_config_account_activation(
             name=option_account,
         )
     raise AssertionError(f"unknown activation action: {action}")
+
+
+def _open_operator_terminal():
+    return open("CONOUT$" if os.name == "nt" else "/dev/tty", "w", encoding="utf-8")
+
+
+def _read_account_secret(*, token_stdin: bool) -> str:
+    if token_stdin:
+        stream = getattr(sys.stdin, "buffer", sys.stdin)
+        raw = stream.read(8195)
+        value = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+        if value.endswith("\r\n"):
+            value = value[:-2]
+        elif value.endswith("\n"):
+            value = value[:-1]
+    else:
+        if not sys.stdin.isatty():
+            raise ValueError("redirected credential input requires --token-stdin")
+        import getpass
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", getpass.GetPassWarning)
+            value = getpass.getpass("Provider token: ")
+    if (
+        not value
+        or len(value.encode("utf-8")) > 8192
+        or any(c in value for c in "\x00\r\n")
+    ):
+        raise ValueError("invalid credential input")
+    return value
+
+
+def _run_plugin_account_administration(
+    *,
+    config_dir: str,
+    config_name: str,
+    plugin_name: str,
+    account_name: str,
+    action: str,
+    token_stdin: bool,
+) -> int:
+    try:
+        if not _validate_bootstrap_object_args(plugin_name, account_name):
+            return 2
+        plugins = _service_plugin_map(discover_service_plugins(names=[plugin_name]))
+        service_plugin = plugins[plugin_name]
+        if not callable(getattr(service_plugin, "administer_account", None)):
+            print_cli_error(
+                "selected plugin does not support account administration", area="config"
+            )
+            return 2
+        with ExitStack() as stack:
+            terminal: TextIO | None = None
+            status = _run_config_activate_account(
+                config_dir=config_dir,
+                config_name=config_name,
+                plugins=[plugin_name],
+                name=account_name,
+            )
+            if status:
+                return status
+            cfg = compose_config(
+                config_dir=config_dir,
+                config_name=config_name,
+                enforce_runtime_permissions=True,
+            )
+            accounts = service_accounts_for(cfg, plugin_name) or {}
+            policies = service_policies_for(cfg, plugin_name)
+
+            def read_secret() -> str:
+                nonlocal terminal
+                # The plugin first checks for an already committed binding.
+                # New enrollment proves terminal availability before provider I/O.
+                if action == "enroll":
+                    terminal = stack.enter_context(_open_operator_terminal())
+                return _read_account_secret(token_stdin=token_stdin)
+
+            def show_challenge(value: str) -> None:
+                if terminal is None:
+                    raise ValueError("no terminal for enrollment")
+                terminal.write(value + "\n")
+                terminal.flush()
+
+            result = administer_service_account(
+                service_plugin,
+                action=action,
+                account=account_name,
+                resolved_accounts=accounts,
+                resolved_policies=policies,
+                runtime_context=_service_runtime_context(cfg, service_plugin),
+                secret_input=read_secret,
+                challenge_output=show_challenge,
+            )
+            if not isinstance(result, Mapping) or result.get("status") != "ready":
+                raise ValueError("administration did not report readiness")
+        print(f"account ready: {plugin_name}/{account_name}")
+        return 0
+    except (KeyboardInterrupt, EOFError):
+        print_cli_error(
+            "account administration cancelled; inspect readiness before retrying",
+            area="config",
+        )
+        return 1
+    except Exception:
+        # Provider bodies, exception diagnostics and secrets never reach CLI output.
+        print_cli_error(
+            "account administration failed; configuration is preserved; inspect account readiness before retrying",
+            area="config",
+        )
+        return 1
 
 
 def _display_command_prefix(*, config_dir: Path) -> str:
@@ -4712,6 +4860,22 @@ def _build_parser() -> argparse.ArgumentParser:
             metavar="NAME",
             help="account name to activate or deactivate for selected plugins",
         )
+        administration_group = activation.add_mutually_exclusive_group()
+        administration_group.add_argument(
+            "--enroll",
+            action="store_true",
+            help="prove and enroll one account using the plugin's local operator hook",
+        )
+        administration_group.add_argument(
+            "--replace-credential",
+            action="store_true",
+            help="verify a replacement credential for one enrolled account",
+        )
+        activation.add_argument(
+            "--token-stdin",
+            action="store_true",
+            help="read the provider token from bounded standard input",
+        )
 
     bootstrap = subcommands.add_parser(
         "bootstrap",
@@ -4902,6 +5066,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             config_name=namespace.config_name,
             option_plugin=namespace.option_plugin,
             option_account=namespace.option_account,
+            enroll=namespace.enroll,
+            replace_credential=namespace.replace_credential,
+            token_stdin=namespace.token_stdin,
         )
     if namespace.command == "env" and namespace.env_command == "check":
         return _run_env_check(

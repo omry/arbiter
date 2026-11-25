@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "arbiter-whatsapp"
+version = "0.9.3.dev1"
+description = "WhatsApp Agent Platform service plugin for Arbiter (under development)"
+readme = { text = "Optional WhatsApp plugin. Under development until integrated acceptance.", content-type = "text/markdown" }
+requires-python = ">=3.10,<3.15"
+license = { text = "MIT" }
+dependencies = ["arbiter-server>=0.9.3,<0.10.0"]
+
+[project.entry-points."arbiter.services"]
+whatsapp = "arbiter_whatsapp:plugin"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.towncrier]
+name = "Arbiter WhatsApp"
+package = "arbiter_whatsapp"
+package_dir = "src"
+filename = "NEWS.md"
+directory = "news"
+issue_format = "#{issue}"
