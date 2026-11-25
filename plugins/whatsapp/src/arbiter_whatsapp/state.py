@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import hashlib
+import json
 import os
 from pathlib import Path
 import sqlite3
@@ -59,6 +60,63 @@ def reference_key(reference: str) -> str:
 class StateStore:
     def __init__(self, storage: PluginStorage):
         self.path = storage.path().absolute()
+
+    def reserve_reply(self, provider_id, message_id, participant, payload_sha256):
+        with self.database() as db:
+            db.execute("BEGIN IMMEDIATE")
+            source = db.execute(
+                "SELECT participant FROM sources WHERE provider_id=? AND message_id=?",
+                (provider_id, message_id),
+            ).fetchone()
+            if source != (participant,):
+                raise failure("validation_error", "unknown_reply_source")
+            previous = db.execute(
+                "SELECT participant,payload_sha256,state,result FROM replies "
+                "WHERE provider_id=? AND message_id=?",
+                (provider_id, message_id),
+            ).fetchone()
+            if previous is None:
+                db.execute(
+                    "INSERT INTO replies VALUES(?,?,?,?,?,NULL)",
+                    (provider_id, message_id, participant, payload_sha256, "pending"),
+                )
+                db.commit()
+                return None
+            if previous[:2] != (participant, payload_sha256):
+                raise failure("conflict", "reply_payload_conflict")
+            state, result = previous[2:]
+            if state == "pending":
+                # The caller owns the send lock: no submitter can still be live.
+                db.execute(
+                    "UPDATE replies SET state='unknown' WHERE provider_id=? AND message_id=?",
+                    (provider_id, message_id),
+                )
+                db.commit()
+                state = "unknown"
+            return state, json.loads(result) if result is not None else None
+
+    def finish_reply(self, provider_id, message_id, state, result):
+        with self.database() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if state is None:
+                db.execute(
+                    "DELETE FROM replies WHERE provider_id=? AND message_id=? AND state='pending'",
+                    (provider_id, message_id),
+                )
+            else:
+                changed = db.execute(
+                    "UPDATE replies SET state=?,result=? "
+                    "WHERE provider_id=? AND message_id=? AND state='pending'",
+                    (
+                        state,
+                        json.dumps(result, sort_keys=True),
+                        provider_id,
+                        message_id,
+                    ),
+                )
+                if changed.rowcount != 1:
+                    raise failure("plugin_error", "private_state_unavailable")
+            db.commit()
 
     def poll_offset(self, provider_id: str, supplied: int | None, replay: bool) -> int:
         with self.database() as db:
