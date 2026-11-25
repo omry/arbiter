@@ -7,18 +7,24 @@ import ssl
 from time import monotonic
 from urllib.parse import urlencode
 
-from arbiter_server.errors import OperationError, Transient
+from arbiter_server.errors import OperationError, Replay, Transient
 
 
-def failure(code: str, domain: str, *, transient: Transient = "no") -> OperationError:
+def failure(
+    code: str, domain: str, *, transient: Transient = "no", replay: Replay = "safe"
+) -> OperationError:
     return OperationError(
         code,
         "WhatsApp operation could not complete safely.",
         plugin="whatsapp",
         domain_code=domain,
         transient=transient,
-        replay="safe",
+        replay=replay,
     )
+
+
+class WriteNotSubmitted(OperationError):
+    """Transport proved that no HTTP request submission began."""
 
 
 def token_text(value: object) -> str:
@@ -89,18 +95,29 @@ class ProviderClient:
         deadline: float | None = None,
         response_limit: int = 4 * 1024 * 1024,
     ) -> ProviderResponse:
-        # This first slice implements only administrative reads.
+        write = method == "POST" and path == "/agent/v1/messages"
         if (
-            method != "GET"
-            or path != "/agent/v1/updates"
-            or json_body is not None
+            not (write or (method == "GET" and path == "/agent/v1/updates"))
+            or (not write and json_body is not None)
+            or (write and (query or not isinstance(json_body, dict)))
             or multipart is not None
         ):
             raise failure("validation_error", "unsupported_request")
         token_text(credential)
+        body = None
+        if write:
+            try:
+                body = json.dumps(
+                    json_body, sort_keys=True, separators=(",", ":"), allow_nan=False
+                ).encode("utf-8")
+                if len(body) > 4 * 1024 * 1024:
+                    raise ValueError
+            except (TypeError, ValueError, UnicodeError, RecursionError):
+                raise failure("validation_error", "invalid_message") from None
         end = min(deadline if deadline is not None else float("inf"), self.clock() + 30)
         connection = None
         response = None
+        submitted = False
         try:
 
             def remaining() -> float:
@@ -121,13 +138,19 @@ class ProviderClient:
             sock = connection.sock
             if sock is not None:
                 sock.settimeout(min(20.0, left))
+            headers = {
+                "Authorization": "Bearer " + credential,
+                "Accept": "application/json",
+            }
+            if write:
+                headers["Content-Type"] = "application/json"
+            # request() may partially send before raising. Mark before entering it.
+            submitted = True
             connection.request(
                 method,
-                path + "?" + urlencode(query),
-                headers={
-                    "Authorization": "Bearer " + credential,
-                    "Accept": "application/json",
-                },
+                path + ("?" + urlencode(query) if query else ""),
+                body=body,
+                headers=headers,
             )
             remaining()
             response = connection.getresponse()
@@ -149,16 +172,29 @@ class ProviderClient:
                 chunks.append(chunk)
             remaining()
             return ProviderResponse(response.status, b"".join(chunks))
-        except OperationError:
+        except OperationError as error:
+            if write and submitted:
+                error.replay = "unsafe"
             raise
-        except TimeoutError:
-            raise failure(
-                "upstream_timeout", "transport_timeout", transient="yes"
-            ) from None
-        except (OSError, http.client.HTTPException, ValueError):
-            raise failure(
-                "upstream_unavailable", "transport_failed", transient="yes"
-            ) from None
+        except (OSError, http.client.HTTPException, ValueError) as cause:
+            code, domain = (
+                ("upstream_timeout", "transport_timeout")
+                if isinstance(cause, TimeoutError)
+                else ("upstream_unavailable", "transport_failed")
+            )
+            error = failure(code, domain, transient="yes")
+            if write and not submitted:
+                error = WriteNotSubmitted(
+                    code,
+                    error.message,
+                    plugin="whatsapp",
+                    domain_code=domain,
+                    transient="yes",
+                    replay="safe",
+                )
+            elif write:
+                error.replay = "unsafe"
+            raise error from None
         finally:
             if response is not None:
                 response.close()
