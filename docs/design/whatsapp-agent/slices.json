@@ -99,7 +99,9 @@
           "plugins/whatsapp/tests/unit/test_messages.py",
           "plugins/whatsapp/tests/integration/test_reply_recovery.py",
           "website/docs/plugins/whatsapp/reference.md",
-          "website/docs/plugins/whatsapp/behavior.md"
+          "website/docs/plugins/whatsapp/behavior.md",
+          "plugins/whatsapp/src/arbiter_whatsapp/transport.py",
+          "plugins/whatsapp/tests/unit/test_transport.py"
         ],
         "dependencies": [
           "whatsapp-account-plugin/2"
@@ -135,7 +137,9 @@
           "plugins/whatsapp/src/arbiter_whatsapp/statuses.py",
           "plugins/whatsapp/tests/unit/test_statuses.py",
           "website/docs/plugins/whatsapp/reference.md",
-          "website/docs/plugins/whatsapp/behavior.md"
+          "website/docs/plugins/whatsapp/behavior.md",
+          "plugins/whatsapp/src/arbiter_whatsapp/transport.py",
+          "plugins/whatsapp/tests/unit/test_transport.py"
         ],
         "dependencies": [
           "whatsapp-account-plugin/2",
@@ -174,7 +178,9 @@
           "plugins/whatsapp/tests/unit/test_upload.py",
           "plugins/whatsapp/pyproject.toml",
           "website/docs/plugins/whatsapp/reference.md",
-          "website/docs/plugins/whatsapp/behavior.md"
+          "website/docs/plugins/whatsapp/behavior.md",
+          "plugins/whatsapp/src/arbiter_whatsapp/transport.py",
+          "plugins/whatsapp/tests/unit/test_transport.py"
         ],
         "dependencies": [
           "whatsapp-account-plugin/1",
@@ -213,7 +219,9 @@
           "plugins/whatsapp/tests/unit/test_media.py",
           "plugins/whatsapp/tests/integration/test_media.py",
           "website/docs/plugins/whatsapp/reference.md",
-          "website/docs/plugins/whatsapp/behavior.md"
+          "website/docs/plugins/whatsapp/behavior.md",
+          "plugins/whatsapp/src/arbiter_whatsapp/transport.py",
+          "plugins/whatsapp/tests/unit/test_transport.py"
         ],
         "dependencies": [
           "whatsapp-account-plugin/3",
