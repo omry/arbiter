@@ -163,3 +163,72 @@ def test_operation_catalog_rejects_invalid_dataclass_input() -> None:
 
     with pytest.raises(ValueError, match="example:run invalid argument"):
         catalog.invoke_operation("example:run", {"name": "demo", "limit": "many"})
+
+
+@dataclass(frozen=True)
+class NestedPayload:
+    body: str = field(metadata={"description": "Payload text."})
+    preview: bool = False
+
+
+@dataclass(frozen=True)
+class NestedInput:
+    payload: NestedPayload
+    quote: NestedPayload | None = None
+    items: list[NestedPayload] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class RecursiveInput:
+    child: RecursiveInput | None = None
+
+
+def test_nested_catalog_schema_preserves_fields_requiredness_and_null():
+    schema: Any = operation_input_schema(NestedInput)
+    nested = schema["properties"]["payload"]
+    assert nested == {
+        "type": "object",
+        "properties": {
+            "body": {"type": "string", "description": "Payload text."},
+            "preview": {"type": "boolean", "default": False},
+        },
+        "required": ["body"],
+        "additionalProperties": False,
+    }
+    assert schema["required"] == ["payload"]
+    assert schema["properties"]["quote"] == {"anyOf": [nested, {"type": "null"}]}
+    assert schema["properties"]["items"]["items"] == nested
+
+
+def test_recursive_and_excessively_deep_schemas_reject_before_publication():
+    from dataclasses import make_dataclass
+
+    with pytest.raises(TypeError, match="acyclic"):
+        operation_input_schema(RecursiveInput)
+    schema = NestedPayload
+    for index in range(7):
+        schema = make_dataclass(f"Level{index}", [("child", schema)])
+    operation_input_schema(schema)
+    schema = make_dataclass("TooDeep", [("child", schema)])
+    with pytest.raises(TypeError, match="8 objects"):
+        operation_input_schema(schema)
+
+
+def test_existing_validator_accepts_nested_dataclasses_and_rejects_unknown_fields():
+    from arbiter_server.services import _validate_operation_arguments
+    from arbiter_server.errors import OperationValidationError
+
+    assert _validate_operation_arguments(
+        "example:nested", NestedInput, {"payload": {"body": "ok"}}
+    ) == {
+        "payload": {"body": "ok", "preview": False},
+        "quote": None,
+        "items": [],
+    }
+    for arguments in [
+        {"payload": {"body": "ok", "unexpected": True}},
+        {"payload": {"body": "ok"}, "quote": {"unexpected": "bad"}},
+        {"payload": {"body": "ok"}, "items": [{"body": "ok", "unexpected": True}]},
+    ]:
+        with pytest.raises(OperationValidationError):
+            _validate_operation_arguments("example:nested", NestedInput, arguments)
