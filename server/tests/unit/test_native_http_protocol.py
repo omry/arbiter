@@ -468,7 +468,8 @@ def test_cancelled_request_keeps_capacity_until_its_underlying_work_finishes(tmp
                 )
                 if response.status_code != 503:
                     return response
-                await asyncio.sleep(0)
+                # Let the worker thread finish and return its capacity slot.
+                await asyncio.sleep(0.001)
 
         response = await asyncio.wait_for(retry_until_available(), timeout=2)
         assert response.status_code == 200
