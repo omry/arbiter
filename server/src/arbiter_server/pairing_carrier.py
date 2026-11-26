@@ -15,6 +15,7 @@ from wsproto import ConnectionType, WSConnection, events
 from wsproto.utilities import LocalProtocolError, RemoteProtocolError
 
 from .limits import NativeTransportLimitsConfig
+from .native_stream import CarrierCredits, RECORD_RESERVE
 from .pairing import PairingLease, PairingResponder, PairingSession, ReplayedHandshake
 
 PAIRING_PATH = "/api/v1/enrollment/requests/"
@@ -98,9 +99,7 @@ class PairingProtocol(asyncio.Protocol):
         # TLS keeps a copy of accepted ciphertext while it may also retain
         # decoded plaintext.  Keep a conservative half-budget owner for that
         # input so both native sides fit inside the inclusive carrier budget.
-        self._control_tls_fed = 0
-        self._control_tls_pending = 0
-        self._control_queued = 0
+        self.credits = CarrierCredits(limits.max_buffered_bytes, responder._lock)
         self.frame_limit = min(
             limits.max_noise_frame_bytes,
             limits.max_websocket_message_bytes,
@@ -173,20 +172,25 @@ class PairingProtocol(asyncio.Protocol):
         if len(data) > self.limits.max_buffered_bytes:
             self.abort()
             return
-        if self.received > self.limits.max_handshake_bytes or (
-            not self.accepted and self.received > self.limits.max_headers_bytes
-        ):
+        if (
+            not self.credits.streaming
+            and self.received > self.limits.max_handshake_bytes
+        ) or (not self.accepted and self.received > self.limits.max_headers_bytes):
             self.abort()
             return
         try:
             for offset in range(0, len(data), chunk):
                 if self.closed:
                     break
-                self.conn.receive_data(data[offset : offset + chunk])
-                for event in self.conn.events():
-                    if self.closed:
-                        break
-                    self._event(event)
+                with self.credits.lock:
+                    if self.credits.streaming:
+                        incoming = min(chunk, len(data) - offset)
+                        self.credits.check(3 * (len(self.buffer) + incoming))
+                    self.conn.receive_data(data[offset : offset + chunk])
+                    for event in self.conn.events():
+                        if self.closed:
+                            break
+                        self._event(event)
         except (RemoteProtocolError, LocalProtocolError, ValueError):
             self.abort()
 
@@ -223,15 +227,7 @@ class PairingProtocol(asyncio.Protocol):
                 return
             frame_size = len(self.buffer) + len(event.data)
             if self.control:
-                if (
-                    self._control_tls_fed
-                    + self._control_tls_pending
-                    + 2 * self._control_queued
-                    + 3 * frame_size
-                    > self.limits.max_buffered_bytes
-                ):
-                    self.abort()
-                    return
+                self.credits.check(3 * frame_size)
             self.buffer.extend(event.data)
             if event.message_finished:
                 pending = self.queue.get_nowait() if not self.queue.empty() else b""
@@ -239,7 +235,12 @@ class PairingProtocol(asyncio.Protocol):
                 frame_size = len(self.buffer)
                 projected_live = 2 * pending_size + 3 * frame_size
                 if (
-                    projected_live + self._control_tls_fed + self._control_tls_pending
+                    projected_live
+                    + self.credits.fed
+                    + self.credits.pending
+                    + self.credits.output
+                    + self.credits.application
+                    + self.credits.adapter
                     > self.limits.max_buffered_bytes
                 ):
                     # pending + buffer + bytes(buffer) + pending+buffer remain
@@ -249,7 +250,7 @@ class PairingProtocol(asyncio.Protocol):
                     return
                 combined = pending + bytes(self.buffer)
                 if self.control:
-                    self._control_queued = len(combined)
+                    self.credits.queued = len(combined)
                 self.queue.put_nowait(combined)
                 self.buffer.clear()
                 assert self.transport is not None
@@ -273,12 +274,18 @@ class PairingProtocol(asyncio.Protocol):
     def _write(self, event: events.Event) -> None:
         if self.closed or self.transport is None:
             raise ValueError("Pairing carrier is closed")
+        if self.credits.streaming:
+            payload = getattr(event, "data", getattr(event, "payload", b""))
+            self.credits.check(
+                self.transport.get_write_buffer_size() + len(payload) + 14
+            )
         wire = self.conn.send(event)
         if (
-            self.sent + len(wire) > self.limits.max_handshake_bytes
-            or self.transport.get_write_buffer_size() + len(wire)
-            > self.limits.max_buffered_bytes
-        ):
+            not self.credits.streaming
+            and self.sent + len(wire) > self.limits.max_handshake_bytes
+        ) or self.transport.get_write_buffer_size() + len(
+            wire
+        ) > self.limits.max_buffered_bytes:
             raise ValueError("Pairing carrier byte limit exceeded")
         self.sent += len(wire)
         self.transport.write(wire)
@@ -306,7 +313,7 @@ class PairingProtocol(asyncio.Protocol):
         else:
             result = await self.queue.get()
         if self.control:
-            self._control_queued -= len(result)
+            self.credits.queued -= len(result)
         if not self.control:
             self.transport.resume_reading()
         return result
@@ -323,7 +330,7 @@ class PairingProtocol(asyncio.Protocol):
         if not self.control or self.control_started_once or self.closed:
             raise ValueError("Control is unavailable")
         assert self.lease is not None and self.timer is not None
-        if self._control_queued > self._control_tls_budget:
+        if self.credits.queued > self._control_tls_budget:
             raise ValueError("Control TLS input exceeded limit")
         with self.responder._lock:
             self.responder._check(self.lease)
@@ -333,23 +340,24 @@ class PairingProtocol(asyncio.Protocol):
         self.timer.cancel()
         self.timer = self.loop.call_later(10.0, cast(Callable[..., object], self.abort))
 
+    def begin_stream(self) -> None:
+        """Private stream consumer; no public route is registered here."""
+        self.begin_control()
+        self.credits.streaming = True
+        self.credits.fed = max(self.credits.fed, RECORD_RESERVE)
+        self.credits.check()
+
     @property
     def _control_tls_budget(self) -> int:
         return max(1, self.limits.max_buffered_bytes // 2)
 
     def reserve_control_tls_input(self, size: int) -> None:
-        if (
-            not self.control
-            or size < 0
-            or self._control_tls_fed + size > self._control_tls_budget
-        ):
+        if not self.control:
             raise ValueError("Control TLS input exceeded limit")
-        self._control_tls_fed += size
+        self.credits.reserve_input(size)
 
     def update_control_tls_pending(self, size: int) -> None:
-        if size < 0 or self._control_tls_fed + size > self.limits.max_buffered_bytes:
-            raise ValueError("Control TLS pending data exceeded limit")
-        self._control_tls_pending = size
+        self.credits.update_pending(size)
 
     async def _exchange(self, selector: str | None) -> None:
         assert self.lease is not None
