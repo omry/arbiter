@@ -30,7 +30,8 @@ async def available(app):
             if response.status_code != 503:
                 assert response.status_code == 200
                 return
-            await asyncio.sleep(0)
+            # Let worker threads finish and return their capacity slots.
+            await asyncio.sleep(0.001)
 
     await asyncio.wait_for(retry(), 3)
 
