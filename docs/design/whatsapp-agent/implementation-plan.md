@@ -1,7 +1,7 @@
 ---
 plan_key: whatsapp-account-plugin
 slice_convention: hierarchical-v1
-slice_inventory: {"executable": false, "path": "slices.json", "sha256": "33d2e8d07e2790b6dbc90ee0dd19b0b75ceff4e5cd3b8d6f8af20e9030c6b739"}
+slice_inventory: {"executable": false, "path": "slices.json", "sha256": "8b5985ad5c0b94250cfd4a69e97cd930c6f01410bab4db28e64f69d93ef03fd7"}
 ---
 
 # WhatsApp plugin engineering and delivery plan
