@@ -156,6 +156,11 @@ jobs:
           GOCACHE: ${{ runner.temp }}/go-build
         run: nox -s ${{ matrix.nox_session }}
 
+      - name: Run WhatsApp account acceptance
+        env:
+          PYTHONPATH: plugins/whatsapp/src
+        run: nox -s ${{ matrix.nox_session }} -- plugins/whatsapp/tests/unit server/tests/unit/test_main.py
+
       - name: Verify fresh Python-Go credential interoperability
         if: ${{ matrix.go_tests == true }}
         env:

@@ -4527,6 +4527,105 @@ def _test_service_plugins() -> list[ServicePlugin]:
     ]
 
 
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["config", "activate", "--enroll"],
+        ["config", "activate", "--token-stdin"],
+        [
+            "config",
+            "activate",
+            "--plugins",
+            "smtp,imap",
+            "--account",
+            "first",
+            "--enroll",
+        ],
+        [
+            "config",
+            "deactivate",
+            "--plugin",
+            "smtp",
+            "--account",
+            "first",
+            "--replace-credential",
+        ],
+    ],
+)
+def test_credential_admin_rejects_ambiguous_or_wrong_action_before_edits(
+    tmp_path, args
+):
+    config_dir = tmp_path / "conf"
+    assert main(["--config-dir", str(config_dir), *args]) == 2
+    assert not config_dir.exists()
+
+
+def test_optional_account_administration_keeps_existing_plugins_valid(tmp_path):
+    from arbiter_server.services import (
+        administer_service_account,
+        ServiceRuntimeContext,
+    )
+    from arbiter_server.errors import OperationError
+
+    with pytest.raises(OperationError) as error:
+        administer_service_account(
+            SMTPServicePlugin(),
+            action="enroll",
+            account="first",
+            resolved_accounts={"first": SMTPConfig()},
+            resolved_policies={},
+            runtime_context=ServiceRuntimeContext(),
+            secret_input=lambda: pytest.fail("secret input for unsupported hook"),
+            challenge_output=lambda _: pytest.fail("challenge for unsupported hook"),
+        )
+    assert error.value.domain_code == "administration_unsupported"
+
+
+@pytest.mark.parametrize(
+    "value", ["", "one\ntwo", "one\rtwo", "one\x00two", "x" * 8193]
+)
+def test_account_admin_rejects_invalid_bounded_stdin(monkeypatch, value):
+    import io
+    from arbiter_server.main import _read_account_secret
+
+    monkeypatch.setattr(sys, "stdin", io.StringIO(value))
+    with pytest.raises(ValueError):
+        _read_account_secret(token_stdin=True)
+
+
+@pytest.mark.parametrize("ending", ["", "\n", "\r\n"])
+def test_account_admin_reads_one_bounded_token_without_echo(
+    monkeypatch, capsys, ending
+):
+    import io
+    from arbiter_server.main import _read_account_secret
+
+    monkeypatch.setattr(sys, "stdin", io.StringIO("synthetic-secret" + ending))
+    assert _read_account_secret(token_stdin=True) == "synthetic-secret"
+    captured = capsys.readouterr()
+    assert not captured.out and not captured.err
+
+
+def test_account_admin_never_reads_a_token_through_echo_fallback(monkeypatch, capsys):
+    import getpass
+    import io
+    from arbiter_server.main import _read_account_secret
+
+    class Terminal(io.StringIO):
+        def isatty(self):
+            return True
+
+        def readline(self, *args):
+            pytest.fail("credential consumed after echo control failed")
+
+    monkeypatch.setattr(sys, "stdin", Terminal("synthetic-secret\n"))
+    monkeypatch.setattr(getpass, "getpass", getattr(getpass, "fallback_getpass"))
+    with pytest.raises(getpass.GetPassWarning):
+        _read_account_secret(token_stdin=False)
+    captured = capsys.readouterr()
+    assert not captured.out and not captured.err
+
+
 def _app_config_with_smtp() -> AppConfig:
     return AppConfig(
         arbiter=ArbiterConfig(
