@@ -13,7 +13,6 @@ from omegaconf.errors import OmegaConfBaseException
 from .version import arbiter_server_version, compatibility_line, server_api_version
 from .errors import OperationError, OperationValidationError, log_unexpected
 
-
 RuntimeT = TypeVar("RuntimeT")
 SERVER_VERSION = arbiter_server_version()
 SERVER_API_VERSION = server_api_version()
@@ -177,6 +176,41 @@ class ServicePluginConfigChecker(Protocol):
         accounts: Mapping[str, object],
         policies: Mapping[str, object],
     ) -> Sequence[ConfigCheckWarning] | None: ...
+
+
+def administer_service_account(
+    service_plugin: ServicePlugin,
+    *,
+    action: str,
+    account: str,
+    resolved_accounts: Mapping[str, object],
+    resolved_policies: Mapping[str, object],
+    runtime_context: ServiceRuntimeContext,
+    secret_input: Callable[[], str],
+    challenge_output: Callable[[str], None],
+) -> object:
+    """Optional local operator hook; deliberately outside ServicePlugin's contract."""
+    hook = getattr(service_plugin, "administer_account", None)
+    if not callable(hook):
+        raise OperationError(
+            "plugin_error",
+            "This plugin does not support local account administration.",
+            plugin=service_plugin.name,
+            domain_code="administration_unsupported",
+            transient="no",
+            replay="safe",
+        )
+    if action not in {"enroll", "replace"} or account not in resolved_accounts:
+        raise ValueError("invalid local account administration selection")
+    return hook(
+        action=action,
+        account=account,
+        resolved_accounts=resolved_accounts,
+        resolved_policies=resolved_policies,
+        runtime_context=runtime_context,
+        secret_input=secret_input,
+        challenge_output=challenge_output,
+    )
 
 
 @dataclass(frozen=True)
