@@ -19,6 +19,7 @@ from .config import EFFECTS, WhatsAppPolicy, plain, register_configs, validate_c
 from .credentials import AccountAdministrator, BindingStore, update_page
 from .state import StateStore, reference_key
 from .transport import ProviderClient, failure
+from .updates import RECEIVE_UPDATES, check_receive, receive_updates
 
 
 class WhatsAppRuntime:
@@ -135,15 +136,26 @@ class WhatsAppServicePlugin:
         )
 
     def describe_operations(self, context: ServicePluginContext):
-        # Subsequent slices register operations only after their implementation.
-        return ()
+        if self.name not in context.runtimes.keys():
+            return ()
+        return (RECEIVE_UPDATES,)
 
     def invoke_operation(self, operation, arguments, context):
-        raise failure("validation_error", "unknown_operation")
+        if operation != "receive_updates":
+            raise failure("validation_error", "unknown_operation")
+        runtime = context.runtimes.require(self.name, WhatsAppRuntime)
+        return receive_updates(runtime, **arguments)
 
     def check_operation(self, operation, arguments, context):
-        # Only implemented descriptors can be admitted, even for preflight.
-        raise failure("validation_error", "unknown_operation")
+        if operation != "receive_updates":
+            raise failure("validation_error", "unknown_operation")
+        runtime = context.runtimes.require(self.name, WhatsAppRuntime)
+        return check_receive(
+            runtime,
+            arguments["account"],
+            arguments.get("offset"),
+            arguments.get("replay", False),
+        )
 
     def administer_account(
         self,
