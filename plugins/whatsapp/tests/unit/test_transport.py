@@ -173,3 +173,68 @@ def test_invalid_token_is_rejected_without_diagnostics(value):
     with pytest.raises(OperationError) as error:
         token_text(value)
     assert error.value.domain_code == "invalid_credential"
+
+
+@pytest.mark.parametrize("phase", ["connect", "request", "response", "read"])
+@pytest.mark.parametrize("timeout", [False, True])
+def test_write_transport_phase_proves_non_submission_only_before_request(
+    phase, timeout
+):
+    from arbiter_whatsapp.transport import WriteNotSubmitted
+
+    calls = []
+
+    class Response:
+        status = 200
+
+        def read1(self, size):
+            calls.append("read")
+            if phase == "read":
+                raise TimeoutError("secret") if timeout else OSError("secret")
+            return b""
+
+        def close(self):
+            calls.append("response-close")
+
+    class Connection:
+        sock = None
+
+        def connect(self):
+            calls.append("connect")
+            if phase == "connect":
+                raise TimeoutError("secret") if timeout else OSError("secret")
+
+        def request(self, *args, **kwargs):
+            calls.append("request")
+            assert args == ("POST", "/agent/v1/messages")
+            assert kwargs["headers"]["Content-Type"] == "application/json"
+            assert json.loads(kwargs["body"]) == {"type": "text"}
+            if phase == "request":
+                raise TimeoutError("secret") if timeout else OSError("secret")
+
+        def getresponse(self):
+            calls.append("response")
+            if phase == "response":
+                raise TimeoutError("secret") if timeout else OSError("secret")
+            return Response()
+
+        def close(self):
+            calls.append("close")
+
+    with pytest.raises(OperationError) as error:
+        ProviderClient(connection_factory=lambda *a, **k: Connection()).request(
+            "POST",
+            "/agent/v1/messages",
+            "credential-canary",
+            query={},
+            json_body={"type": "text"},
+        )
+    assert isinstance(error.value, WriteNotSubmitted) == (phase == "connect")
+    assert error.value.replay == ("safe" if phase == "connect" else "unsafe")
+    assert error.value.code == (
+        "upstream_timeout" if timeout else "upstream_unavailable"
+    )
+    assert calls.count("request") == (0 if phase == "connect" else 1)
+    assert calls[-1] == "close"
+    assert "secret" not in json.dumps(error.value.to_dict())
+    assert "credential-canary" not in str(error.value)

@@ -786,7 +786,14 @@ def _is_dataclass_schema_type(value: object) -> bool:
     return isinstance(value, type) and is_dataclass(value)
 
 
-def _dataclass_input_schema(schema_type: type[object]) -> dict[str, object]:
+def _dataclass_input_schema(
+    schema_type: type[object], ancestors: tuple[type[object], ...] = ()
+) -> dict[str, object]:
+    if schema_type in ancestors or len(ancestors) >= 8:
+        raise TypeError(
+            "operation input schemas must be acyclic and at most 8 objects deep"
+        )
+    ancestors = (*ancestors, schema_type)
     type_hints = get_type_hints(schema_type)
     properties: dict[str, object] = {}
     required: list[str] = []
@@ -795,6 +802,7 @@ def _dataclass_input_schema(schema_type: type[object]) -> dict[str, object]:
         field_schema = _field_input_schema(
             type_hints.get(field_name, object),
             schema_field,
+            ancestors,
         )
         properties[field_name] = field_schema
         if _field_is_required(schema_field):
@@ -810,8 +818,9 @@ def _dataclass_input_schema(schema_type: type[object]) -> dict[str, object]:
 def _field_input_schema(
     annotation: object,
     schema_field: Field[object],
+    ancestors: tuple[type[object], ...] = (),
 ) -> dict[str, object]:
-    field_schema = _type_input_schema(annotation)
+    field_schema = _type_input_schema(annotation, ancestors)
     description = schema_field.metadata.get("description")
     if isinstance(description, str):
         field_schema["description"] = description
@@ -825,10 +834,18 @@ def _field_input_schema(
     return field_schema
 
 
-def _type_input_schema(annotation: object) -> dict[str, object]:
+def _type_input_schema(
+    annotation: object, ancestors: tuple[type[object], ...] = ()
+) -> dict[str, object]:
     optional_type = _optional_inner_type(annotation)
     if optional_type is not None:
-        return _type_input_schema(optional_type)
+        nested = _type_input_schema(optional_type, ancestors)
+        if _is_dataclass_schema_type(optional_type):
+            return {"anyOf": [nested, {"type": "null"}]}
+        return nested
+
+    if _is_dataclass_schema_type(annotation):
+        return _dataclass_input_schema(cast(type[object], annotation), ancestors)
 
     origin = get_origin(annotation)
     args = get_args(annotation)
@@ -836,7 +853,7 @@ def _type_input_schema(annotation: object) -> dict[str, object]:
         item_type = args[0] if args else object
         return {
             "type": "array",
-            "items": _type_input_schema(item_type),
+            "items": _type_input_schema(item_type, ancestors),
         }
     if annotation is str:
         return {"type": "string"}
@@ -884,11 +901,11 @@ def _validate_operation_arguments(
     raise TypeError(f"operation input schema must be a dataclass: {schema}")
 
 
-def _validate_dataclass_operation_arguments(
+def _construct_operation_input(
     operation_ref: str,
     schema_type: type[object],
     arguments: Mapping[str, Any],
-) -> dict[str, Any]:
+) -> object:
     schema_fields = {
         schema_field.name: schema_field
         for schema_field in fields(cast(Any, schema_type))
@@ -913,7 +930,48 @@ def _validate_dataclass_operation_arguments(
 
     try:
         argument_values = {key: value for key, value in arguments.items()}
-        merged = OmegaConf.merge(OmegaConf.structured(schema_type), argument_values)
+        structured = OmegaConf.structured(schema_type)
+        OmegaConf.set_readonly(structured, False)
+        hints = get_type_hints(schema_type)
+
+        def has_nested(annotation: object) -> bool:
+            annotation = _optional_inner_type(annotation) or annotation
+            if _is_dataclass_schema_type(annotation):
+                return True
+            return get_origin(annotation) is list and any(
+                has_nested(item) for item in get_args(annotation)
+            )
+
+        def construct_nested(annotation: object, value: Any) -> Any:
+            optional = _optional_inner_type(annotation)
+            if optional is not None:
+                return None if value is None else construct_nested(optional, value)
+            if _is_dataclass_schema_type(annotation):
+                if not isinstance(value, Mapping):
+                    raise ValueError("nested operation input must be an object")
+                return _construct_operation_input(
+                    operation_ref, cast(type[object], annotation), value
+                )
+            if get_origin(annotation) is list:
+                if not isinstance(value, list):
+                    raise ValueError("nested operation input must be a list")
+                return [
+                    construct_nested(get_args(annotation)[0], item) for item in value
+                ]
+            return value
+
+        scalar_values = {}
+        for key, value in argument_values.items():
+            annotation = hints.get(key, object)
+            if has_nested(annotation):
+                # Replace a complete validated value, rather than merging into
+                # a frozen optional child's readonly default schema.
+                OmegaConf.update(
+                    structured, key, construct_nested(annotation, value), merge=False
+                )
+            else:
+                scalar_values[key] = value
+        merged = OmegaConf.merge(structured, scalar_values)
         operation_input = OmegaConf.to_object(merged)
     except (OmegaConfBaseException, ValueError) as exc:
         full_key = exc.full_key if isinstance(exc, OmegaConfBaseException) else None
@@ -928,7 +986,18 @@ def _validate_dataclass_operation_arguments(
         ) from None
     if not is_dataclass(operation_input):
         raise RuntimeError(f"{operation_ref} input schema did not produce a dataclass")
-    return asdict(operation_input)
+    return operation_input
+
+
+def _validate_dataclass_operation_arguments(
+    operation_ref: str,
+    schema_type: type[object],
+    arguments: Mapping[str, Any],
+) -> dict[str, Any]:
+    _dataclass_input_schema(schema_type)
+    return asdict(
+        cast(Any, _construct_operation_input(operation_ref, schema_type, arguments))
+    )
 
 
 ServicePluginFactory = Callable[[], ServicePlugin]
