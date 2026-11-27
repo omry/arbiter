@@ -95,7 +95,10 @@ class ProviderClient:
         deadline: float | None = None,
         response_limit: int = 4 * 1024 * 1024,
     ) -> ProviderResponse:
-        write = method == "POST" and path == "/agent/v1/messages"
+        write = method == "POST" and path in {
+            "/agent/v1/messages",
+            "/agent/v1/statuses",
+        }
         if (
             not (write or (method == "GET" and path == "/agent/v1/updates"))
             or (not write and json_body is not None)

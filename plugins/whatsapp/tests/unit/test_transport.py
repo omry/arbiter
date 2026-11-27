@@ -16,6 +16,17 @@ def endpoint():
     responses = []
 
     class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers["Content-Length"]))
+            observed.append((self.path, self.headers.get("Authorization"), body))
+            status, data, headers = responses.pop(0)
+            self.send_response(status)
+            for key, value in headers.items():
+                self.send_header(key, value)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
         def do_GET(self):
             observed.append((self.path, self.headers.get("Authorization")))
             status, body, headers = responses.pop(0)
@@ -177,8 +188,9 @@ def test_invalid_token_is_rejected_without_diagnostics(value):
 
 @pytest.mark.parametrize("phase", ["connect", "request", "response", "read"])
 @pytest.mark.parametrize("timeout", [False, True])
+@pytest.mark.parametrize("path", ["/agent/v1/messages", "/agent/v1/statuses"])
 def test_write_transport_phase_proves_non_submission_only_before_request(
-    phase, timeout
+    phase, timeout, path
 ):
     from arbiter_whatsapp.transport import WriteNotSubmitted
 
@@ -206,7 +218,7 @@ def test_write_transport_phase_proves_non_submission_only_before_request(
 
         def request(self, *args, **kwargs):
             calls.append("request")
-            assert args == ("POST", "/agent/v1/messages")
+            assert args == ("POST", path)
             assert kwargs["headers"]["Content-Type"] == "application/json"
             assert json.loads(kwargs["body"]) == {"type": "text"}
             if phase == "request":
@@ -224,7 +236,7 @@ def test_write_transport_phase_proves_non_submission_only_before_request(
     with pytest.raises(OperationError) as error:
         ProviderClient(connection_factory=lambda *a, **k: Connection()).request(
             "POST",
-            "/agent/v1/messages",
+            path,
             "credential-canary",
             query={},
             json_body={"type": "text"},

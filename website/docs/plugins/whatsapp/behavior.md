@@ -153,3 +153,17 @@ and reply safety records. No local exactly-once delivery guarantee is made.
 Omitting `reply_to_message_id` permits a proactive send without a durable source
 reservation. Each call can submit again. An unknown proactive result is unsafe
 to retry. Do not use proactive sends to bypass an uncertain keyed reply.
+
+## Read receipts and typing
+
+Read receipts require `read_receipts`. Starting typing requires both `typing`
+and `read_receipts` because the provider combines those effects. Message-send
+permission does not control these operations. Denied operations and explicit
+typing cancellation submit nothing. Preflight checks permissions and readiness
+without contacting the provider.
+
+Each status call makes at most one provider request. A timeout or malformed
+acknowledgement after possible submission has unsafe replay guidance: the
+provider may already have applied the effect. The plugin never retries it
+automatically and does not retain status outcomes as keyed message replies.
+These operations do not change the update cursor or reply reservations.
