@@ -1,8 +1,8 @@
 # Receive updates and replay
 
 The optional WhatsApp plugin currently supports account enrollment, credential
-replacement and `whatsapp:receive_updates`. Message sending and media operations
-are added in later implementation slices. See [configuration](configure.md) for
+replacement, `whatsapp:receive_updates` and typed text `whatsapp:send_message`.
+Media operations arrive in later implementation slices. See [configuration](configure.md) for
 setup, private storage and credential recovery.
 
 All trusted local callers share the configured account policy and its normal
@@ -115,3 +115,41 @@ new source returns `resource_exhausted` without publishing its cursor. Storage
 failure preserves prior safety records. Never delete source history or reset the
 database while retaining an active binding; follow offline recovery and migration
 instructions in [configuration](configure.md).
+
+
+## Reply without duplicate submission
+
+Automation must pass the observed inbound message ID as `reply_to_message_id`
+and its exact sender as `participant_id`. The plugin records sources while
+polling, including explicit replay. An unknown source, another participant or
+an unobserved status receipt fails before submission. The optional quote
+context does not establish a source. See the [text operation](reference.md).
+
+A keyed reply binds that source to the complete normalized outbound payload,
+including text, URL preview and quote context. Identical calls return the
+retained result without submitting again. Changed payloads return
+`conflict/reply_payload_conflict`; changing the key is not safe recovery.
+
+An account send lock excludes simultaneous submissions across processes sharing
+the root. A busy lock returns `conflict/reply_in_progress`; retry the same source
+and payload after the current call finishes. The plugin commits a pending
+reservation before starting HTTP submission. If the process dies after that
+commit, the next holder of the send lock changes pending to unknown. It never
+uses elapsed time or PID liveness as permission to resend.
+
+If transport proves that no HTTP request submission began, the plugin can
+remove the new reservation and return a safe-to-retry error. After possible
+submission, a connection loss, malformed success or ambiguous provider failure
+returns unknown and remains unknown on identical calls. A documented definitive
+refusal is retained and replayed as the same bounded error. Neither a timeout
+nor replaying the inbound page clears a reply reservation.
+
+Acceptance followed by a storage failure returns `partial_failure` with known
+delivery information and `retry.replay: unsafe`. Preserve that information and
+do not submit again. The remaining pending record conservatively recovers to
+unknown. Restart, credential replacement and policy changes preserve sources
+and reply safety records. No local exactly-once delivery guarantee is made.
+
+Omitting `reply_to_message_id` permits a proactive send without a durable source
+reservation. Each call can submit again. An unknown proactive result is unsafe
+to retry. Do not use proactive sends to bypass an uncertain keyed reply.
