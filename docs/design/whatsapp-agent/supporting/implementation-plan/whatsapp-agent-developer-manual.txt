@@ -1,0 +1,2300 @@
+​WhatsApp​
+​Agent Platform​
+​Developer manual​
+
+
+
+
+​Version 1 Originally published August 25, 2026​
+​AUGUST 25, 2026​
+
+
+
+​Contents​
+
+                    ​Quick​​start​....................................................................................................................​3​
+                           ​Step​​1:​​Set​​up​​your​​agent​​and​​get​​your​​API​​token​.............................................​​3​
+                           ​Step​​2:​​Receive​​messages​..................................................................................​​3​
+                           ​Step​​3:​​Send​​a​​reply​.............................................................................................​​3​
+                           ​Quick​​reference​....................................................................................................​​4​
+                    ​Authentication​.............................................................................................................​​4​
+                    ​Participant​​identifiers​..................................................................................................​4​
+                           ​Stability​.................................................................................................................​5​
+                    ​1.​​Send​​a​​message​......................................................................................................​​5​
+                           ​POST​​/agent/v1/messages​................................................................................​​5​
+                    ​2.​​Receive​​messages​..................................................................................................​​9​
+                           ​GET​​/agent/v1/updates​.......................................................................................​9​
+                    ​3.​​Read​​receipts​​and​​typing​​indicator​......................................................................​​16​
+                           ​POST​​/agent/v1/statuses​.................................................................................​​16​
+                    ​4.​​Media​.....................................................................................................................​​18​
+                           ​POST​​/agent/v1/media​.....................................................................................​​18​
+                           ​GET​​/agent/v1/media/<MEDIA_ID>​.................................................................​​21​
+                           ​Download​​media​................................................................................................​​23​
+                           ​DELETE​​/agent/v1/media/<MEDIA_ID>​...........................................................​​23​
+                    ​5.​​Errors​......................................................................................................................​24​
+                           ​Send​​a​​message​​(POST​​/agent/v1/messages)​...............................................​25​
+                           ​Get​​updates​​(GET​​/agent/v1/updates)​............................................................​​26​
+                           ​Statuses​​(POST​​/agent/v1/statuses)​...............................................................​26​
+                           ​Media​..................................................................................................................​27​
+                           ​Error​​reference​...................................................................................................​​28​
+                    ​6.​​Rate​​limits​..............................................................................................................​28​
+
+
+
+
+​2​                                                                                 ​WhatsApp Agent Platform. Developer Manual​
+​AUGUST 25, 2026​
+
+​This document describes the API at​​                                .​
+                                    https://api.whatsapp.com/agent/v1​
+
+
+​Quick start​
+​Get your agent running and send your first message.​
+
+
+​Step 1: Set up your agent and get your API token​
+​Open WhatsApp, then​​Settings​​>​​Agents​​>​​Create an agent​.​
+       ​1.​      ​Set a display name and avatar​
+        ​2.​      ​Open the agent's chat, then​​Chat info​​>​​API key​
+         ​3.​      ​Copy the key — this is your API token, used to authenticate your requests​
+          ​4.​      ​Store your API token securely; if you lose it, you must regenerate it​
+
+
+
+
+      ​Note:​​If you uninstall the app, you must regenerate your API token.​
+
+
+
+​Step 2: Receive messages​
+​Receive messages by calling​​                    : you will receive a response when messages arrive or when​
+                             GET /agent/v1/updates​
+ ​the timeout elapses.​
+
+
+
+      curl 'https://api.whatsapp.com/agent/v1/updates?limit=50&timeout=15' \​
+      ​
+      ​
+      -H 'Authorization: Bearer <ACCESS_TOKEN>'​
+
+
+​If no messages arrive before the timeout elapses, you will receive an empty response.​
+
+
+​Step 3: Send a reply​
+
+
+      curl 'https://api.whatsapp.com/agent/v1/messages' \​
+      ​
+      -H 'Content-Type: application/json' \​
+      ​
+      -H 'Authorization: Bearer <ACCESS_TOKEN>' \​
+      ​
+      -d '​
+      ​
+      ​
+      {​
+         "messaging_product": "whatsapp",​
+         ​
+         "to": "<RECIPIENT_ID>",​
+         ​
+         "type": "text",​
+         ​
+         "text": { "body": "Hello from my agent!" }​
+         ​
+      }'​
+      ​
+
+
+
+
+​3​                                                                                    ​WhatsApp Agent Platform. Developer Manual​
+​AUGUST 25, 2026​
+
+​For​​<RECIPIENT_ID>​  , use the​​
+                                 messages[].from​​value of an inbound message — one sent to your agent — exactly​
+ ​as you received it.​
+
+
+​Quick reference​
+
+
+  ​Item​                                ​Value​
+
+  ​Base URL​                            ​
+                                        https://api.whatsapp.com/agent/v1​
+
+  ​Authentication​                      ​API token in the​​
+                                                          Authorization​​header​
+
+  ​Rate limit​                          ​12 requests/minute for​​
+                                                                POST /messages​  ,​​
+                                                                                   POST /statuses​​and each media​
+                                         ​method; 15 requests/minute for​​
+                                                                         GET /updates​ .​
+
+  ​Text message max length​             ​4096 characters​
+
+  ​Caption max length​                  ​1024 characters​
+
+  ​Media size limits​                   ​5 MB image; 500 KB sticker; 16 MB video, audio, document, generic binary​
+
+  ​Message types​                       ​Send:​​   ,​​
+                                               text​      ,​​
+                                                     image​      ,​​
+                                                            audio​      ,​​
+                                                                   video​         ,​​
+                                                                          document​        . Receive: those plus​
+                                                                                    sticker​
+                                         reaction​
+                                         ​
+
+  ​Update retention​                    ​30 days​
+
+
+
+​Authentication​
+
+  ​Attribute​                 ​Value​
+
+  ​Type​                      ​API token​
+
+  ​Header​                    Authorization: Bearer <ACCESS_TOKEN>​
+                              ​
+
+  ​Token format​              ​Opaque string. Treat it as a secret and do not parse it.​
+
+  ​Expiration​                ​Rotation invalidates the token.​
+
+​The API token identifies the agent.​
+
+​If the​​
+        Authorization​​header is absent or malformed, you will receive HTTP code​​ 401​​and​​
+                                                                                            error.code​​  . If the​
+                                                                                                       190​
+ ​token is present but not valid, you will receive HTTP code​​
+                                                             400​​and​​
+                                                                      error.code​​  .​
+                                                                                 100​
+
+
+​Participant identifiers​
+​A participant identifier is written as​​
+                                        <type>:<id>​​—​​user:<id>​​for a WhatsApp user and​​  agent:<id>​​for an​
+ ​agent. Treat the whole string as opaque: compare it in full, and never show it to a WhatsApp user.​
+
+
+
+
+​4​                                                                             ​WhatsApp Agent Platform. Developer Manual​
+​AUGUST 25, 2026​
+
+​Fields that identify a party use this form:​​              ,​​
+                                             messages[].from​ contacts[].wa_id​​and​
+ statuses[].recipient_id​​on​​
+ ​                                     GET /agent/v1/updates​  ;​​
+                                                                 to​​on​​                      ; and​
+                                                                        POST /agent/v1/messages​
+ contacts[].wa_id​​and​​
+ ​                            contacts[].input​​on the​​POST /agent/v1/messages​​response.​
+
+messages[].context.from​​can contain either form:​​
+​                                                    user:<id>​​when a WhatsApp user wrote the quoted​
+​message,​​
+          agent:<id>​​when your agent did. Read the prefix to tell them apart.​
+
+to​​accepts​​
+​           user:<id>​​only. An​​         , a bare number, or any other shape is rejected with​​
+                                agent:<id>​                                                    400​​(code​
+131009​
+​       ).​
+
+
+​Stability​
+​An identifier refers to an account rather than to a person, and may change.​
+
+​A WhatsApp user may receive a new identifier; changing phone number is a common case where this may occur. A​
+ ​user account that is deleted and later re-registered may also be assigned a new identifier.​
+
+​To design for this:​
+       ​●​    ​Treat an identifier as a conversation key, not as a primary key for a user record​
+        ​●​    ​An unrecognized identifier is a new conversation, and a returning WhatsApp user whose identifier changed​
+                ​cannot be matched to their earlier one​
+       ​●​       ​A WhatsApp user may no longer be reachable at an identifier you stored earlier. Use the​​
+                                                                                                          from​​value of a​
+                  ​recent inbound message rather than a long-lived stored one​
+
+
+​1. Send a message​
+​POST /agent/v1/messages​
+​Send an outbound message from your agent to a WhatsApp user.​
+
+
+​Request syntax​
+
+
+
+      curl 'https://api.whatsapp.com/agent/v1/messages' \​
+      ​
+      -H 'Content-Type: application/json' \​
+      ​
+      ​
+      -H 'Authorization: Bearer <ACCESS_TOKEN>' \​
+      -d '​
+      ​
+      {​
+      ​
+         "messaging_product": "whatsapp",​
+         ​
+         ​
+         "to": "<RECIPIENT_ID>",​
+         "type": "<MESSAGE_TYPE>",​
+         ​
+         "<MESSAGE_TYPE>": { <MESSAGE_CONTENTS> }​
+         ​
+      }'​
+      ​
+
+
+
+
+​5​                                                                               ​WhatsApp Agent Platform. Developer Manual​
+​AUGUST 25, 2026​
+
+
+
+  ​Header​                           ​Value​
+
+  Authorization​
+  ​                                  Bearer <ACCESS_TOKEN>​
+                                     ​
+
+  Content-Type​
+  ​                                  application/json​
+                                     ​
+
+
+​Request parameters​
+
+
+  ​Field​              ​Type​     ​Description​                              ​Example value​
+
+  messaging_product​
+  ​                    ​string​   ​Required.​​Always​​         .​
+                                                     "whatsapp"​             ​
+                                                                             whatsapp​
+
+  to​
+  ​                    ​string​   ​Required.​​Recipient, as​                 ​
+                                                                             user:50972923564215​
+                                   user:<id>​
+                                   ​                , and the agent's​
+                                   ​creator. Send the identifier from​
+                                    GET /agent/v1/updates​​back​
+                                    ​
+                                    ​unchanged. See​​Participant​
+                                     ​identifiers​​for the accepted form.​
+
+  type​
+  ​                    ​string​   ​Required.​​One of​​   ,​​
+                                                     text​      ,​
+                                                           image​            ​
+                                                                             text​
+                                   audio​
+                                   ​     ,​​
+                                           video​,​​
+                                                   document​ ,​
+                                   ​
+                                   sticker​  .​
+
+  context​
+  ​                    ​object​   ​Optional.​​Reply context.​                ​
+                                                                             {"message_id":​
+                                   context.message_id​i​s the​
+                                   ​                                         ​
+                                                                             "wamid.HBgONTA5NzI5MjM1​
+                                   ​WhatsApp message id (wamid) of​          NjQyMTUVEgASGBQzQTVGOUM​
+                                                                             ​
+                                    ​the message being quoted, and is​       yRTFCN0Q0MDY4QUYzMQA="}​
+                                                                             ​
+                                     ​required if you send the object at​
+                                      ​all.​
+
+  text​
+  ​                    ​object​   ​Conditional.​​Required when​​
+                                                               type​         ​
+                                                                             {"body": "Hello from​
+                                   ​
+                                   = "text"​ .​                              your agent"}​
+                                                                             ​
+
+  ​
+  image​               ​object​   ​Conditional.​​Required when​​
+                                                               type​         {"id":​
+                                                                             ​
+                                   = "image"​
+                                   ​           .​                            "6b1f2c4e-3a7d-4f19-9c0​
+                                                                             ​
+                                                                             2-8e5b7d0a1f34",​
+                                                                             ​
+                                                                             ​
+                                                                             "caption": "look at​
+                                                                             this"}​
+                                                                             ​
+
+  audio​
+  ​                    ​object​   ​Conditional.​​Required when​​
+                                                               type​         {"id":​
+                                                                             ​
+                                   = "audio"​
+                                   ​           .​                            "0d9c7a41-52b8-4e6f-b3a​
+                                                                             ​
+                                                                             1-7c94e2f6081d"}​
+                                                                             ​
+
+  video​
+  ​                    ​object​   ​Conditional.​​Required when​​
+                                                               type​         {"id":​
+                                                                             ​
+                                   = "video"​
+                                   ​           .​                            "c47e91a0-8f35-4d2b-a6e​
+                                                                             ​
+                                                                             9-1b03f5c8d724",​
+                                                                             ​
+                                                                             "caption": "a clip"}​
+                                                                             ​
+
+  ​
+  document​            ​object​   ​Conditional.​​Required when​​
+                                                               type​         ​
+                                                                             {"id":​
+                                   ​
+                                   = "document"​    .​                       "9a3d5f70-1c6b-42e8-8f4​
+                                                                             ​
+                                                                             a-0d27b91e5c36",​
+                                                                             ​
+                                                                             "filename":​
+                                                                             ​
+                                                                             "report.pdf"}​
+                                                                             ​
+
+
+
+
+​6​                                                                 ​WhatsApp Agent Platform. Developer Manual​
+​AUGUST 25, 2026​
+
+
+  ​Field​                                 ​Type​       ​Description​                            ​Example value​
+
+  sticker​
+  ​                                       ​object​     ​Conditional.​​Required when​​
+                                                                                    type​       ​
+                                                                                                {"id":​
+                                                        = "sticker"​
+                                                        ​               .​                      "24f80b6c-7e13-49a5-bd0​
+                                                                                                ​
+                                                                                                ​
+                                                                                                f-3c62a8194e7b"}​
+
+
+​Text message object​
+
+
+  ​Field​                                 ​Type​       ​Description​                            ​Example value​
+
+  text.body​
+  ​                                       ​string​     ​Required.​​Message content. Max​        ​
+                                                                                                Hello from your agent​
+                                                        ​4096 characters.​
+
+  ​
+  text.preview_url​                       ​boolean​    ​Optional.​​Render a preview for the​    ​
+                                                                                                true​
+                                                        ​first URL in the body. The URL​
+                                                         ​must begin with​​http://​​or​
+                                                          https://​
+                                                          ​          . Default​​
+                                                                               false​.​
+
+
+​Outbound media objects (image / audio / video / document / sticker)​
+
+
+  ​Field​                                 ​Type​       ​Description​                            ​Example value​
+
+  <type>.id​
+  ​                                       ​string​     ​Required.​​Opaque handle returned​      6b1f2c4e-3a7d-4f19-9c02​
+                                                                                                ​
+                                                        ​by​​
+                                                            POST /agent/v1/media​    .​         ​
+                                                                                                -8e5b7d0a1f34​
+
+  <type>.caption​
+  ​                                       ​string​     ​Optional.​​Caption text, max 1024​      look at this​
+                                                                                                ​
+                                                        ​characters. Available on​​     ,​
+                                                                                   image​
+                                                         video​​and​​
+                                                         ​           document​  .​
+
+  ​
+  <type>.filename​                        ​string​     ​Optional.​​Original filename​           report.pdf​
+                                                                                                ​
+                                                        ​(​document​​only).​
+
+
+
+
+      ​Note:​​Upload the file with​​
+                                   POST /agent/v1/media​​first and pass the returned​​ . You receive HTTP code​
+                                                                                     id​
+       400​i​f it is omitted.​
+       ​
+
+
+
+
+​These​​
+       400​​conditions are specific to sending a message:​
+       ​●​     ​The payload object matching​​    type​i​s missing —​​text is required when type=text​            , and likewise for​
+                ​each type (for example, if​​type=image​​then​​   image​i​s required)​
+       ​●​       ​A length cap is exceeded. If this is the case, you will receive code​​
+                                                                                       100​​with the field name as the message​
+        ​●​       ​The media id is missing, unknown, or expired​
+         ​●​       type​i​s​​
+                   ​        reaction​​— reactions are receive-only​
+
+
+
+
+​7​                                                                                     ​WhatsApp Agent Platform. Developer Manual​
+​AUGUST 25, 2026​
+
+​Only the payload object matching​​
+                                  type​i​s sent. Fields in the other payload objects can still be validated, so you​
+ ​receive HTTP code​​
+                    400​​when one of them exceeds a length limit or omits a required field.​
+
+
+​Response​
+
+
+  ​Field​                            ​Type​     ​Description​                          ​Example value​
+
+  ​
+  messaging_product​                 ​string​   ​Always​​         .​
+                                                        "whatsapp"​                    whatsapp​
+                                                                                       ​
+
+  contacts[].input​
+  ​                                  ​string​   ​The​​to​​value echoed back exactly​   ​
+                                                                                       user:50972923564215​
+                                                 ​as you supplied it.​
+
+  contacts[].wa_id​
+  ​                                  ​string​   ​The WhatsApp user the message​        ​
+                                                                                       user:50972923564215​
+                                                 ​was routed to, as​​
+                                                                    user:<id>​    .​
+                                                  ​Can be sent back as​​
+                                                                       to​​as-is.​
+
+  messages[].id​
+  ​                                  ​string​   ​Server-assigned message id​           ​
+                                                                                       wamid.HBgONTA5NzI5MjM1N​
+                                                 ​(wamid format).​                     jQyMTUVEgARGBI5QTJDNEU2​
+                                                                                       ​
+                                                                                       ​
+                                                                                       RjhCMEQxMzU3QUMA​
+
+​Each array contains one element.​
+
+
+​Example request​
+
+
+
+      curl 'https://api.whatsapp.com/agent/v1/messages' \​
+      ​
+      -H 'Content-Type: application/json' \​
+      ​
+      ​
+      -H 'Authorization: Bearer <ACCESS_TOKEN>' \​
+      -d '​
+      ​
+      {​
+      ​
+         "messaging_product": "whatsapp",​
+         ​
+         "to": "user:50972923564215",​
+         ​
+         "type": "text",​
+         ​
+         "text": { "body": "Hello! How can I help you?" }​
+         ​
+      }'​
+      ​
+
+
+
+​Example request: image message​
+
+
+
+      curl 'https://api.whatsapp.com/agent/v1/messages' \​
+      ​
+      -H 'Content-Type: application/json' \​
+      ​
+      ​
+      -H 'Authorization: Bearer <ACCESS_TOKEN>' \​
+      -d '​
+      ​
+      {​
+      ​
+         "messaging_product": "whatsapp",​
+         ​
+         "to": "user:50972923564215",​
+         ​
+
+
+
+
+​8​                                                                            ​WhatsApp Agent Platform. Developer Manual​
+​AUGUST 25, 2026​
+
+
+        "type": "image",​
+        ​
+        "image": {​
+        ​
+           "id": "<MEDIA_ID>",​
+           ​
+           "caption": "Check this out!"​
+           ​
+        }​
+        ​
+      }'​
+      ​
+
+
+
+​Example response​
+
+
+
+      ​
+      {​
+           "messaging_product": "whatsapp",​
+           ​
+           "contacts": [​
+           ​
+              { "input": "user:50972923564215", "wa_id": "user:50972923564215" }​
+              ​
+           ],​
+           ​
+           "messages": [​
+           ​
+              ​
+              { "id": "wamid.HBg..." }​
+           ]​
+           ​
+      ​
+      }​
+
+
+​Do not issue concurrent sends to the same recipient, as ordering between concurrent sends is not guaranteed.​
+
+
+​Retrying a send​
+
+​Whether to retry depends on the response to the first attempt:​
+       ​●​    ​A​​    2xx​​means the message was sent. Record​​     messages[].id​​and do not retry​
+        ​●​    ​A​​   4xx​​means it was not sent. Fix the request or the token — retrying it unchanged fails the same way. The​
+                ​exception is​​  429​, which you may retry after backing off​
+       ​●​       ​A​​ 503​​with​​
+                                error.code​​  131016​​means the message was not accepted for delivery, so it was not sent.​
+                  ​Send it again after backing off​
+       ​●​         ​A​​
+                      500​, a connection reset, or your own read timeout leaves it unknown whether the message was sent.​
+                    ​Decide in advance whether to retry, as a retry may send the message twice​
+
+​To prevent an ordinary delay from leading to an unresolved state, configure the client read timeout significantly higher​
+ ​than the standard duration required for sending.​
+
+
+​2. Receive messages​
+​GET /agent/v1/updates​
+​Long-poll endpoint for inbound messages and receipts. The connection stays open until an update arrives or the​
+ ​timeout elapses.​
+
+
+
+
+​9​                                                                                  ​WhatsApp Agent Platform. Developer Manual​
+​AUGUST 25, 2026​
+
+
+​Request syntax​
+
+
+
+   ​
+   curl​
+   'https://api.whatsapp.com/agent/v1/updates?offset=<OFFSET>&limit=<LIMIT>&timeout=<T​
+   ​
+   IMEOUT>' \​
+   ​
+   -H 'Authorization: Bearer <ACCESS_TOKEN>'​
+   ​
+
+
+
+​Request parameters​
+
+
+  ​Field​    ​Type​      ​Default​         ​Range​           ​Description​                                    ​Example value​
+
+  offset​
+  ​          i​nteger​   ​head at​         ​≥ 0, or​         ​Optional.​​Pointer to read updates​             ​
+                                                                                                              1287​
+                          ​request​         ​absent​          ​from. Use​​       next_offset​​from the​
+                           ​time​                              ​previous response. Omitting it starts​
+                                                                ​from the head at the moment the​
+                                                                 ​request arrives, so a first poll with no​
+                                                                  offset​​skips the backlog and returns​
+                                                                  ​
+                                                                  ​only what arrives while it is open;​
+                                                                   ​pass​​   offset=0​​to read from the​
+                                                                    ​beginning. A negative value behaves​
+                                                                     ​as​​
+                                                                         0​.​
+
+  limit​
+  ​          i​nteger​   ​50​              ​≤ 100​           ​Optional.​​Max entries to return.​              ​
+                                                                                                              50​
+                                                              ​Out-of-range values are adjusted:​​
+                                                                                                 0​​or​
+                                                               ​negative becomes​​  , above​​
+                                                                                  50​        100​
+                                                                ​becomes​​   .​
+                                                                          100​
+
+  ​
+  timeout​   i​nteger​   ​15​              ​0–25​            ​Optional.​​How long to hold the​                ​
+                                                                                                              15​
+              ​(sec)​                                         ​connection open. Out-of-range values​
+                                                               ​are adjusted: below​​
+                                                                                    0​​becomes​​
+                                                                                               0,​​
+                                                                ​above​​
+                                                                       25​​becomes​​
+                                                                                   25​ .​
+
+
+​Response​
+
+
+  ​Field​                       ​Type​       ​Description​                                ​Example value​
+
+  object​
+  ​                             ​string​     ​Always​                    whatsapp_agent_platform​
+                                                                         ​
+                                              "whatsapp_agent_platform"​
+                                              ​
+                                              ​.​
+
+  ​
+  entry[].id​                   ​string​     ​Your agent's numeric id. Exactly​           123456789​
+                                                                                          ​
+                                              ​one entry is returned.​
+
+  entry[].changes[].fie​
+  ​                             ​string​     ​Always​​"messages"​   . Exactly one​        messages​
+                                                                                          ​
+  ​
+  ld​                                         ​change is returned.​
+
+  entry[].changes[].val​
+  ​                             ​string​     ​Always​​         .​
+                                                     "whatsapp"​                          whatsapp​
+                                                                                          ​
+  ​
+  ue.messaging_product​
+
+
+
+
+​10​                                                                              ​WhatsApp Agent Platform. Developer Manual​
+​AUGUST 25, 2026​
+
+
+  ​Field​                  ​Type​      ​Description​                                  ​Example value​
+
+  entry[].changes[].val​
+  ​                        ​string​    ​The other party, as​​        .​
+                                                            user:<id>​                user:50972923564215​
+                                                                                      ​
+  ​
+  ue.contacts[].wa_id​                  ​Can be sent back as​​to​
+                                         ​unchanged.​
+
+  ​
+  entry[].changes[].val​   ​object​    ​Optional. One field,​​
+                                                             name​​— the​             {"name": "Alex"}​
+                                                                                      ​
+  ue.contacts[].profile​
+  ​                                     ​WhatsApp user's profile name.​
+
+                                       ​The​​        profile​​key appears only​
+                                        ​when the WhatsApp user has set​
+                                         ​a profile name, so check for the​
+                                          ​key rather than for an empty​
+                                           ​string.​
+                                            contacts[]​​contains at most​
+                                            ​
+                                            ​one entry per WhatsApp user, and​
+                                             ​that entry may not include​
+                                              profile​​— accumulate names​
+                                              ​
+                                              ​across polls rather than relying on​
+                                               ​a single response.​
+
+  entry[].changes[].val​
+  ​                        ​array​     ​Inbound messages (see​​Message​               ​—​
+  ue.messages[]​
+  ​                                     ​object​). Always present; may be​
+                                         ​empty.​
+
+  entry[].changes[].val​
+  ​                        ​array​     ​Delivery and read receipts for​               ​
+                                                                                      []​
+  ue.statuses[]​
+  ​                                     ​messages​​your​​agent sent (see​
+                                         ​Status object​). Always present;​
+                                          ​may be empty. A poll can return​
+                                           ​only statuses, only messages, or​
+                                            ​both.​
+
+  next_offset​
+  ​                        i​nteger​   ​Pointer to pass as​​
+                                                           offset​i​n the​            1288​
+                                                                                      ​
+                                        ​next poll.​
+
+
+​Message object​
+
+
+  ​Field​                  ​Type​      ​Description​                                  ​Example value​
+
+  from​
+  ​                        ​string​    ​The sender, as​​
+                                                       user:<id>​  . Can​             user:50972923564215​
+                                                                                      ​
+                                        ​be sent back as​​
+                                                         to​​unchanged.​
+
+  ​
+  id​                      ​string​    ​WhatsApp message id (wamid​                   wamid.HBgONTA5NzI5MjM1N​
+                                                                                      ​
+                                        ​format).​                                    jQyMTUVEgASGBQzQTVGOUMy​
+                                                                                      ​
+                                                                                      ​
+                                                                                      RTFCN0Q0MDY4QUYzMQA=​
+
+  timestamp​
+  ​                        ​string​    ​Unix timestamp in seconds, as a​              1736844652​
+                                                                                      ​
+                                        ​string.​
+
+
+
+
+​11​                                                                          ​WhatsApp Agent Platform. Developer Manual​
+​AUGUST 25, 2026​
+
+
+  ​Field​           ​Type​     ​Description​                                  ​Example value​
+
+  type​
+  ​                 ​string​   ​
+                               text​  ,​​
+                                        image​  ,​​    ,​​
+                                                  audio​      ,​
+                                                         video​               text​
+                                                                              ​
+                               ​
+                               document​     ,​​
+                                               reaction​​or​
+                               sticker​
+                               ​           . Exactly one​
+                               ​same-named payload object is​
+                                ​present.​
+
+  ​
+  context​          ​object​   ​Present only when the message​                {"id":​
+                                                                              ​
+                                ​quotes an earlier one. Two​                  ​
+                                                                              "wamid.HBgONTA5NzI5MjM1​
+                                 ​required strings:​​  id​, the wamid of​     ​
+                                                                              NjQyMTUVEgARGBIzQjdFMTR​
+                                  ​the quoted message, and​​      from​  ,​   ​
+                                                                              EMEMyOUE1Rjg2QjQA",​
+                                   i​ts author. The field is​​id​​here,​      "from":​
+                                                                              ​
+                                                                              "agent:123456789"}​
+                                                                              ​
+                                    ​while the send request uses​
+                                     ​
+                                     message_id​   . Independent of​
+                                     type​
+                                     ​    : both text and media​
+                                     ​messages can include it.​
+
+  ​
+  text.body​        ​string​   ​Text content (when​​        ).​
+                                                   type=text​                 Hello agent​
+                                                                              ​
+
+  image​
+  ​                 ​object​   ​Contains​​ ,​​
+                                         id​ mime_type​ ,​                    {"id":​
+                                                                              ​
+                                sha256​​(Base64), and​​
+                                ​                     caption​                ​
+                                                                              "998a7c17-60bf-4f40-a31​
+                                ​when one was sent.​                          3-85f3723e2104",​
+                                                                              ​
+                                                                              "mime_type":​
+                                                                              ​
+                                                                              "image/jpeg"}​
+                                                                              ​
+
+  audio​
+  ​                 ​object​   ​Contains​​   ,​​
+                                           id​ mime_type​  ,​                 {"id":​
+                                                                              ​
+                                sha256​​(Base64), and​​
+                                ​                       voice​ ,​             "5f637c19-4070-4385-ba8​
+                                                                              ​
+                                ​which is​​
+                                          true​​on a voice note.​             3-297373444771",​
+                                                                              ​
+                                                                              "mime_type":​
+                                                                              ​
+                                                                              "audio/ogg", "voice":​
+                                                                              ​
+                                                                              true}​
+                                                                              ​
+
+  video​
+  ​                 ​object​   ​Contains​​ ,​​
+                                         id​ mime_type​ ,​                    ​
+                                                                              {"id":​
+                                sha256​​(Base64), and​​
+                                ​                     caption​                "451bd2ad-a7c8-42f7-841​
+                                                                              ​
+                                ​when one was sent.​                          ​
+                                                                              1-7577cf10c34e",​
+                                                                              "mime_type":​
+                                                                              ​
+                                                                              "video/mp4"}​
+                                                                              ​
+
+  document​
+  ​                 ​object​   ​Contains​​  ,​​
+                                          id​ mime_type​ ,​                   ​
+                                                                              {"id":​
+                                sha256​​(Base64), and​​
+                                ​                      caption​               "14ef9fff-8519-41e3-bfc​
+                                                                              ​
+                                ​and​​filename​​when they were​               6-1771e92c984e",​
+                                                                              ​
+                                 ​sent.​                                      "mime_type":​
+                                                                              ​
+                                                                              "application/pdf"}​
+                                                                              ​
+
+  ​
+  sticker​          ​object​   ​Contains​​     ,​​
+                                             id​ mime_type​ ,​                ​
+                                                                              {"id":​
+                                sha256​​(Base64), and​​
+                                ​                         animated​ ,​        ​
+                                                                              "2c3dde1d-72ac-471b-b38​
+                                ​which is​​ false​​on stickers you​           ​
+                                                                              e-33a7e0f2678d",​
+                                 ​receive.​                                   "mime_type":​
+                                                                              ​
+                                                                              ​
+                                                                              "image/webp"}​
+
+  reaction​
+  ​                 ​object​   message_id​​— the wamid being​
+                               ​                                              {"message_id":​
+                                                                              ​
+                               ​reacted to — and​​
+                                                 emoji​ . An​                 ​
+                                                                              "wamid.HBgONTA5NzI5MjM1​
+                                ​empty​​emoji​​means the reaction​            NjQyMTUVEgARGBIzQzA4QTZ​
+                                                                              ​
+                                                                              GNTFEOUU3NDJCQzYA",​
+                                                                              ​
+                                 ​was removed. Receive-only.​
+                                                                                           👍
+                                                                              "emoji": " "}​
+                                                                              ​
+
+
+
+
+​12​                                                                  ​WhatsApp Agent Platform. Developer Manual​
+​AUGUST 25, 2026​
+
+
+​Inbound media objects (image / audio / video / document / sticker)​
+
+
+  ​Field​                    ​Type​      ​Description​                           ​Example value​
+
+  <type>.id​
+  ​                          ​string​    ​Media handle. Pass it to​​
+                                                                   GET​ 998a7c17-60bf-4f40-a313​
+                                                                        ​
+                                          /agent/v1/media/<MEDIA_ID​ ​
+                                          ​                             -85f3723e2104​
+                                          >​​to fetch the bytes.​
+                                          ​
+
+  <type>.mime_type​
+  ​                          ​string​    ​MIME type of the stored bytes.​        ​
+                                                                                 image/jpeg​
+
+  ​
+  <type>.sha256​             ​string​    ​SHA-256 digest of the stored​        qMVn+oGMEIV+My80Bie9mw1​
+                                                                               ​
+                                          ​bytes, Base64 encoded.​​ GET​       IYstCsS+jX78zoLErQak=​
+                                                                               ​
+                                           ​
+                                           /agent/v1/media/<MEDIA_ID​
+                                           >​​returns the same digest as hex.​
+                                           ​
+
+  <type>.caption​
+  ​                          ​string​    ​Caption the WhatsApp user sent.​       ​
+                                                                                 look at this​
+                                          ​Available on​​     ,​​
+                                                         image​ video​​and​
+                                           document​
+                                           ​          .​
+
+  document.filename​
+  ​                          ​string​    ​Filename the WhatsApp user sent.​      report.pdf​
+                                                                                 ​
+
+  ​
+  audio.voice​               ​boolean​   true​​when the WhatsApp user​
+                                         ​                                       ​
+                                                                                 true​
+                                         ​recorded the audio in the chat​
+                                          ​rather than attaching a file. The​
+                                           ​key appears only on a voice note,​
+                                            ​so check for the key.​
+
+  sticker.animated​
+  ​                          ​boolean​   false​​on stickers you receive.​
+                                         ​                                       false​
+                                                                                 ​
+
+
+​Example: image message​
+
+
+
+   {​
+   ​
+        ​
+        "from": "user:50972923564215",​
+        "id": "wamid.HBg...",​
+        ​
+        "timestamp": "1736844652",​
+        ​
+        "type": "image",​
+        ​
+        "image": {​
+        ​
+           "id": "998a7c17-60bf-4f40-a313-85f3723e2104",​
+           ​
+           "mime_type": "image/jpeg",​
+           ​
+           "sha256": "qMVn+oGMEIV+My80Bie9mw1IYstCsS+jX78zoLErQak=",​
+           ​
+           "caption": "look at this"​
+           ​
+        }​
+        ​
+   }​
+   ​
+
+
+
+
+​13​                                                                      ​WhatsApp Agent Platform. Developer Manual​
+​AUGUST 25, 2026​
+
+​Example: voice note​
+
+
+
+   ​
+   {​
+        "from": "user:50972923564215",​
+        ​
+        "id": "wamid.HBg...",​
+        ​
+        ​
+        "timestamp": "1736844652",​
+        "type": "audio",​
+        ​
+        "audio": {​
+        ​
+           "id": "5f637c19-4070-4385-ba83-297373444771",​
+           ​
+           "mime_type": "audio/ogg",​
+           ​
+           "sha256": "h2Es2hY3zgogBRD6H18H56MI1WEVYK73ScITHR/3wa4=",​
+           ​
+           "voice": true​
+           ​
+        }​
+        ​
+   }​
+   ​
+
+
+
+​Status object​
+
+
+  ​Field​                        ​Type​      ​Description​                          ​Example value​
+
+  id​
+  ​                              ​string​    ​The wamid of the outbound​            wamid.HBgONTA5NzI5MjM1N​
+                                                                                    ​
+                                              ​message this receipt is about.​      jQyMTUVEgARGBIzQzA4QTZG​
+                                                                                    ​
+                                                                                    NTFEOUU3NDJCQzYA​
+                                                                                    ​
+
+  status​
+  ​                              ​string​    delivered​​or​​
+                                             ​                 .​
+                                                           read​                    read​
+                                                                                    ​
+
+  ​
+  recipient_id​                  ​string​    ​The WhatsApp user the message​        user:50972923564215​
+                                                                                    ​
+                                              ​was sent to, as​​        .​
+                                                               user:<id>​
+
+  ​
+  timestamp​                     ​string​    ​Unix timestamp in seconds, as a​      1736844652​
+                                                                                    ​
+                                              ​string.​
+
+​Statuses and messages share one per-agent sequence, so a single poll can return both and one​​
+                                                                                              next_offset​
+ ​advances past them.​
+
+​Store​​next_offset​​as a 64-bit signed integer, and pass it back as​​
+                                                                     offset​​unchanged rather than computing a​
+ ​value of your own.​
+
+
+​Example request​
+
+
+
+   curl 'https://api.whatsapp.com/agent/v1/updates?offset=1286&limit=50&timeout=15' \​
+   ​
+   -H 'Authorization: Bearer <ACCESS_TOKEN>'​
+   ​
+
+
+
+
+​14​                                                                         ​WhatsApp Agent Platform. Developer Manual​
+​AUGUST 25, 2026​
+
+
+​Example response​
+
+
+
+   {​
+   ​
+        "object": "whatsapp_agent_platform",​
+        ​
+        "entry": [​
+        ​
+          {​
+          ​
+            "id": "123456789",​
+            ​
+            "changes": [​
+            ​
+               {​
+               ​
+                  ​field": "messages",​
+                  "
+                  "
+                  ​value": {​
+                    "messaging_product": "whatsapp",​
+                    ​
+                    "contacts": [​
+                    ​
+                      {​
+                      ​
+                        "wa_id": "user:50972923564215",​
+                        ​
+                        "profile": { "name": "Alex" }​
+                        ​
+                      }​
+                      ​
+                    ],​
+                    ​
+                    ​
+                    "messages": [​
+                      {​
+                      ​
+                        "from": "user:50972923564215",​
+                        ​
+                        ​
+                        "id": "wamid.HBg...",​
+                        "timestamp": "1736844652",​
+                        ​
+                        "type": "text",​
+                        ​
+                        "text": { "body": "Hello agent" }​
+                        ​
+                      }​
+                      ​
+                    ],​
+                    ​
+                    "statuses": []​
+                    ​
+                  }
+                  ​​
+               }​
+               ​
+            ]​
+            ​
+          }​
+          ​
+        ],​
+        ​
+        "next_offset": 1287​
+        ​
+   }​
+   ​
+
+
+
+​Starting a new agent​
+
+​Choose a starting point on the first poll, then use​​
+                                                     next_offset​​for later polls.​
+       ​●​   ​Only new traffic:​​omit​​ offset​​on the first request. It resolves to the head at the moment the request arrives.​
+              ​Do this​​once​: an offset-less poll re-resolves the head, so a loop built on them can miss anything written​
+               ​between one response and the next request​
+       ​●​      ​Everything retained:​​pass​​
+                                            offset=0​     . This replays up to 30 days of backlog, so an agent that replies​
+                 ​automatically will answer every message in it. Record which​​    messages[].id​​values you have handled, or​
+                  ​filter on​​
+                             messages[].timestamp​     , before you start replying​
+
+
+
+
+​15​                                                                                 ​WhatsApp Agent Platform. Developer Manual​
+​AUGUST 25, 2026​
+
+
+​Retention​
+
+​Buffered entries are kept for​​30 days​​from the moment they are stored, then expire. Polling does not consume them,​
+ ​so the same​​
+              offset​​can be re-read for as long as the entries remain available. A message you have marked as read​
+  ​with​​
+        POST /agent/v1/statuses​​may be deleted, and is then no longer returned by a poll at an earlier​​   offset​.​
+
+
+​Empty responses​
+
+​You receive HTTP code​​
+                       204​​when the timeout elapses with nothing to deliver. The body is empty — there is no​
+ next_offset​​on a​​
+ ​                     , so re-poll with the same​​
+                    204​                          offset​​value.​
+
+
+​3. Read receipts and typing indicator​
+​POST /agent/v1/statuses​
+​Mark a message the WhatsApp user sent to your agent as read, and optionally show a typing indicator in the same​
+ ​call.​
+
+
+​Request syntax​
+
+
+
+   curl 'https://api.whatsapp.com/agent/v1/statuses' \​
+   ​
+   -H 'Content-Type: application/json' \​
+   ​
+   -H 'Authorization: Bearer <ACCESS_TOKEN>' \​
+   ​
+   -d '​
+   ​
+   {​
+   ​
+      "messaging_product": "whatsapp",​
+      ​
+      "status": "read",​
+      ​
+      "message_id": "<WAMID>"​
+      ​
+   ​
+   }'​
+
+
+
+​Request parameters​
+
+
+  ​Field​                         ​Type​      ​Description​                           ​Example value​
+
+  messaging_product​
+  ​                               ​string​    ​Required.​​Always​​         .​
+                                                                 "whatsapp"​          ​
+                                                                                      whatsapp​
+
+  status​
+  ​                               ​string​    ​Required.​​Only​​
+                                                               "read"​i​s settable​   read​
+                                                                                      ​
+                                               ​by an agent.​
+
+  ​
+  message_id​                     ​string​    ​Required.​​The wamid returned by​      wamid.HBgONTA5NzI5MjM1N​
+                                                                                      ​
+                                               GET /agent/v1/updates​
+                                               ​                           .​         jQyMTUVEgASGBQzQTVGOUMy​
+                                                                                      ​
+                                               ​Must be a message the WhatsApp​       RTFCN0Q0MDY4QUYzMQA=​
+                                                                                      ​
+                                                ​user sent to this agent.​
+
+
+
+
+​16​                                                                          ​WhatsApp Agent Platform. Developer Manual​
+​AUGUST 25, 2026​
+
+
+  ​Field​                          ​Type​       ​Description​                            ​Example value​
+
+  typing_indicator​
+  ​                                ​object​     ​Optional.​​Send​​  {"type":​            {"type": "text"}​
+                                                                                         ​
+                                                 "text"}​​to show a typing​
+                                                 ​
+                                                 i​ndicator to the WhatsApp user.​
+                                                  type​i​s required inside the object​
+                                                  ​
+                                                  ​and​​"text"​i​s its only accepted​
+                                                   ​value. Omit the field, or send​
+                                                    ​
+                                                    null​, to mark read without one.​
+
+​You receive HTTP code​​
+                       503​​when the read receipt or the typing indicator is not accepted.​
+
+​The indicator disappears once you reply, or after​​25 seconds​, whichever comes first. For a reply that takes longer than​
+ ​that, repeat the call to refresh the indicator. Show a typing indicator only when you are going to reply.​
+
+
+​Response​
+
+
+
+   {​
+   ​
+        "success": true​
+        ​
+   }​
+   ​
+
+
+​A​​
+   200​​response contains​​            .​
+                          success: true​
+
+
+​Example request​
+
+
+
+   curl 'https://api.whatsapp.com/agent/v1/statuses' \​
+   ​
+   -H 'Content-Type: application/json' \​
+   ​
+   -H 'Authorization: Bearer <ACCESS_TOKEN>' \​
+   ​
+   -d '​
+   ​
+   {​
+   ​
+      "messaging_product": "whatsapp",​
+      ​
+      "status": "read",​
+      ​
+      "message_id": "wamid.HBg..."​
+      ​
+   }'​
+   ​
+
+
+
+​Example request: typing indicator​
+
+
+
+   curl 'https://api.whatsapp.com/agent/v1/statuses' \​
+   ​
+   -H 'Content-Type: application/json' \​
+   ​
+   -H 'Authorization: Bearer <ACCESS_TOKEN>' \​
+   ​
+   -d '​
+   ​
+   {​
+   ​
+
+
+
+
+​17​                                                                              ​WhatsApp Agent Platform. Developer Manual​
+​AUGUST 25, 2026​
+
+
+     "messaging_product": "whatsapp",​
+     ​
+     "status": "read",​
+     ​
+     "message_id": "wamid.HBg...",​
+     ​
+     "typing_indicator": { "type": "text" }​
+     ​
+   }'​
+   ​
+
+
+
+​Example response​
+
+
+
+   {​
+   ​
+        ​
+        "success": true​
+   }​
+   ​
+
+
+
+​4. Media​
+​POST /agent/v1/media​
+​Upload media for use in outbound messages.​
+
+
+​Request syntax​
+
+
+
+   curl 'https://api.whatsapp.com/agent/v1/media' \​
+   ​
+   -H 'Authorization: Bearer <ACCESS_TOKEN>' \​
+   ​
+   -F 'messaging_product=whatsapp' \​
+   ​
+   -F 'type=<MIME_TYPE>' \​
+   ​
+   -F 'file=@<PATH_TO_FILE>'​
+   ​
+
+
+
+​Request parameters​
+
+
+  ​Field​                       ​Type​         ​Description​                                ​Example value​
+
+  messaging_product​
+  ​                             ​string​       ​Required.​​Always​​         .​
+                                                                  "whatsapp"​               whatsapp​
+                                                                                            ​
+
+  file​
+  ​                             ​binary​       ​Required.​​File to upload.​                 @./invoice.pdf​
+                                                                                            ​
+
+  type​
+  ​                             ​string​       ​Optional.​​MIME type of the file.​          application/pdf​
+                                                                                            ​
+                                                ​For example:​​   application/pdf​     .​
+                                                 ​If you omit it, the file part's own​
+                                                  Content-Type​​applies.​
+                                                  ​
+
+
+
+
+​18​                                                                               ​WhatsApp Agent Platform. Developer Manual​
+​AUGUST 25, 2026​
+
+
+​Response​
+
+
+
+   ​
+   {​
+        "id": "<MEDIA_ID>"​
+        ​
+   }​
+   ​
+
+
+​Pass that​​
+           id​​as​​
+                  <type>.id​​on a subsequent​​                      .​
+                                             POST /agent/v1/messages​
+
+
+​Example request​
+
+
+
+   curl 'https://api.whatsapp.com/agent/v1/media' \​
+   ​
+   -H 'Authorization: Bearer <ACCESS_TOKEN>' \​
+   ​
+   ​
+   -F 'messaging_product=whatsapp' \​
+   -F 'type=application/pdf' \​
+   ​
+   -F 'file=@./invoice.pdf'​
+   ​
+
+
+
+​Accepted media types​
+
+​The size limit is​​5 MB​​for an image,​​500 KB​​for a​​sticker, and​​16 MB​​for a video, audio file, document​​or generic binary​
+ ​file. You receive HTTP code​​ 400​​and​​error.code​​     131053​​for a file over the limit for its type, and​
+  error_data.details​​reports the actual size against​​the limit.​
+  ​
+
+​The upload accepts the MIME types listed below, and​​
+                                                     application/octet-stream​​for a generic binary file. You​
+ ​receive HTTP code​​
+                    400​​and​​
+                             error.code​​ 131053​​for a declared MIME type outside that list.​
+
+​The file must also satisfy the codec and profile constraints below.​
+
+​Declare the MIME type in the​​type​​form field. If you omit it, the file part's own​​
+                                                                                     Content-Type​i​s used; when the part​
+ ​supplies none, you receive HTTP code​​400​​and​​ error.code​​    131053​   .​
+
+​Image​
+
+
+
+  ​Format​         ​Extension​       ​MIME type​                                              ​Notes​
+
+  ​JPEG​                 .jpeg​ ​
+                       ,​​
+                   ​jpg​
+                   .            image/jpeg​                                                   ​Preferred for photographs​
+
+  ​PNG​            ​png​
+                   .                 image/png​
+                                     ​                                                        ​Preferred for graphics with​
+                                                                                               ​transparency​
+
+​Images must be​​8-bit, RGB or RGBA​.​
+
+​Keep the total pixel count at or below​​25 megapixels​​— 5000 × 5000, or an equivalent area.​
+
+
+
+
+​19​                                                                                 ​WhatsApp Agent Platform. Developer Manual​
+​AUGUST 25, 2026​
+
+​Video​
+
+
+
+  ​Format​        ​Extension​       ​MIME type​                                           ​Notes​
+
+  ​MP4​           ​mp4​
+                  .                 video/mp4​
+                                    ​                                                     ​Preferred container​
+
+  ​3GPP​          .
+                  ​3gp​             video/3gpp​
+                                    ​                                                     ​—​
+
+​Encode video with the​​H.264​​video codec and​​AAC​​audio, with one audio stream or none.​
+
+​For the widest playback compatibility across WhatsApp clients, target the H.264​​Baseline​​profile, or the​​Main​​profile​
+ ​without B-frames.​
+
+​Write the​​moov​​atom ahead of​​
+                                mdat​​(​ffmpeg -movflags +faststart​
+                                                                   ) so playback can start before the file​
+ ​finishes downloading.​
+
+​Audio​
+
+
+
+  ​Format​        ​Extension​       ​MIME type​                                           ​Notes​
+
+  ​AAC​           ​aac​
+                  .                 audio/aac​
+                                    ​                                                     ​ADTS stream​
+
+  ​MP4 audio​     .
+                  ​m4a​             audio/mp4​
+                                    ​                                                     ​AAC in an MPEG-4 container​
+
+  ​MP3​           ​mp3​
+                  .                 audio/mpeg​
+                                    ​                                                     ​—​
+
+  ​AMR-NB​        ​amr​
+                  .                 ​
+                                    audio/amr​                                            ​AMR-NB only​
+
+  ​Opus in Ogg​   ​ogg​
+                  .                 audio/ogg​
+                                    ​                                                     ​Mono input only​
+
+  ​Opus​          ​opus​
+                  .                 audio/opus​
+                                    ​                                                     ​Stored as​​
+                                                                                                     audio/ogg;​
+                                                                                           codecs=opus​
+                                                                                           ​
+
+​Only Opus is supported in Ogg.​
+
+​Audio is delivered as a plain attachment.​
+
+​Document​
+
+
+
+  ​Format​        ​Extension​       ​MIME type​                                           ​Notes​
+
+  ​PDF​           .
+                  ​pdf​             application/pdf​
+                                    ​                                                     ​—​
+
+  ​Plain text​    ​txt​
+                  .                 text/plain​
+                                    ​                                                     ​—​
+
+  ​Word​          ​doc​
+                  .                 application/msword​
+                                    ​                                                     ​—​
+
+  ​Word​          ​docx​
+                  .                 application/vnd.openxmlformats-offi​
+                                    ​                                                     ​—​
+                                    cedocument.wordprocessingml.documen​
+                                    ​
+                                    t​
+                                    ​
+
+
+
+
+​20​                                                                             ​WhatsApp Agent Platform. Developer Manual​
+​AUGUST 25, 2026​
+
+
+  ​Format​       ​Extension​     ​MIME type​                                         ​Notes​
+
+  ​Excel​        ​xls​
+                 .               application/vnd.ms-excel​
+                                 ​                                                   ​—​
+
+  ​Excel​        ​xlsx​
+                 .               application/vnd.openxmlformats-offi​
+                                 ​                                                   ​—​
+                                 cedocument.spreadsheetml.sheet​
+                                 ​
+
+  ​PowerPoint​   .
+                 ​ppt​           application/vnd.ms-powerpoint​
+                                 ​                                                   ​—​
+
+  ​PowerPoint​   ​pptx​
+                 .               application/vnd.openxmlformats-offi​
+                                 ​                                                   ​—​
+                                 cedocument.presentationml.presentat​
+                                 ​
+                                 ion​
+                                 ​
+
+​Set​​
+     document.filename​​to the file name, including its extension.​
+
+​Sticker​
+
+
+
+  ​Format​       ​Extension​     ​MIME type​                                         ​Notes​
+
+  ​WebP​         ​webp​
+                 .               image/webp​
+                                 ​                                                   ​Static or animated when​
+                                                                                      ​sending; stickers you receive​
+                                                                                       ​are static​
+
+​512 × 512 is the conventional size, and the canvas must be at most 4096 × 4096.​
+
+​Upload a sticker like any other media and pass the returned id as​​         . Captions are not available on​
+                                                                   sticker.id​
+ ​stickers.​
+
+​Captions and filenames​
+
+
+
+  ​Type​                            ​Caption​                                         ​Filename​
+
+  i​mage​                           ​Yes, ≤1024 chars​                                ​—​
+
+  ​video​                           ​Yes, ≤1024 chars​                                ​—​
+
+  ​audio​                           ​—​                                               ​—​
+
+  ​document​                        ​Yes, ≤1024 chars​                                ​Yes​
+
+  ​sticker​                         ​—​                                               ​—​
+
+
+
+​GET /agent/v1/media/<MEDIA_ID>​
+​Fetch metadata for a media object — either one attached to an incoming message, or one you uploaded.​
+
+
+
+
+​21​                                                                        ​WhatsApp Agent Platform. Developer Manual​
+​AUGUST 25, 2026​
+
+
+​Request syntax​
+
+
+
+   ​
+   curl 'https://api.whatsapp.com/agent/v1/media/<MEDIA_ID>' \​
+   ​
+   -H 'Authorization: Bearer <ACCESS_TOKEN>'​
+
+
+
+​Response​
+
+​You receive JSON metadata.​
+
+
+
+  ​Field​                        ​Type​      ​Description​                           ​Example value​
+
+  url​
+  ​                              ​string​    ​URL for the stored bytes. Fetch it​    https://lookaside.fbsbx​
+                                                                                     ​
+                                              ​with your API token in the​           ​
+                                                                                     .com/agent/v1/media/8f3​
+                                               Authorization​​header. When​
+                                               ​                                     ​
+                                                                                     a2b91-5c47-4e0d-9a6b-1d​
+                                               ​you fetch it and the media id is​    ​
+                                                                                     2e3f4a5b6c/content​
+                                                ​unknown or expired, you receive​
+                                                 ​HTTP code​​404​​and​​
+                                                                      error.code​
+                                                  ​  .​
+                                                  100​
+
+  mime_type​
+  ​                              ​string​    ​MIME type of the stored bytes, if​     application/pdf​
+                                                                                     ​
+                                              ​known.​
+
+  sha256​
+  ​                              ​string​    ​SHA-256​​hex​​digest of the stored​    ​
+                                                                                     a8c567fa818c10857e332f3​
+                                              ​bytes. The​​sha256​​on an​            40627bd9b0d4862cb42b12f​
+                                                                                     ​
+                                               i​ncoming media payload is​           a35fbf33a0b12b41a9​
+                                                                                     ​
+                                                ​Base64 of the same digest.​
+
+  file_size​
+  ​                              i​nteger​   ​Size of the stored bytes, in bytes.​   ​
+                                                                                     232145​
+
+  id​
+  ​                              ​string​    ​Echoes the requested media id.​        8f3a2b91-5c47-4e0d-9a6b​
+                                                                                     ​
+                                                                                     -1d2e3f4a5b6c​
+                                                                                     ​
+
+  messaging_product​
+  ​                              ​string​    ​Always​​         .​
+                                                     "whatsapp"​                     ​
+                                                                                     whatsapp​
+
+
+​You receive HTTP code​​
+                       400​​and​​          100​​for an unknown id, and for an id belonging to a different agent.​
+                                error.code​​
+
+
+​Example response​
+
+
+
+   {​
+   ​
+     "url":​
+     ​
+   ​
+   "https://lookaside.fbsbx.com/agent/v1/media/8f3a2b91-5c47-4e0d-9a6b-1d2e3f4a5b6c/co​
+   ntent",​
+   ​
+     "mime_type": "application/pdf",​
+     ​
+     "sha256": "a8c567fa818c10857e332f340627bd9b0d4862cb42b12fa35fbf33a0b12b41a9",​
+     ​
+     "file_size": 232145,​
+     ​
+     "id": "8f3a2b91-5c47-4e0d-9a6b-1d2e3f4a5b6c",​
+     ​
+
+
+
+
+​22​                                                                          ​WhatsApp Agent Platform. Developer Manual​
+​AUGUST 25, 2026​
+
+
+        "messaging_product": "whatsapp"​
+        ​
+   }​
+   ​
+
+
+
+​Download media​
+GET /agent/v1/media/<MEDIA_ID>​​returns a​​
+​                                            . Fetch it with the same API token to download the stored​
+                                          url​
+​bytes.​
+
+
+​Request syntax​
+
+
+
+   curl '<MEDIA_URL>' \​
+   ​
+   -H 'Authorization: Bearer <ACCESS_TOKEN>' \​
+   ​
+   -o '<FILE_NAME>'​
+   ​
+
+
+
+​Response​
+
+​You receive HTTP code​​  , and the body contains the raw media bytes.​
+                       200​
+
+
+​Example request​
+
+
+
+   curl​
+   ​
+   'https://lookaside.fbsbx.com/agent/v1/media/8f3a2b91-5c47-4e0d-9a6b-1d2e3f4a5b6c/co​
+   ​
+   ntent' \​
+   ​
+   -H 'Authorization: Bearer <ACCESS_TOKEN>' \​
+   ​
+   -o 'invoice.pdf'​
+   ​
+
+
+
+​DELETE /agent/v1/media/<MEDIA_ID>​
+​Delete a media object you uploaded, or one that was sent to you.​
+
+
+​Request syntax​
+
+
+
+   curl -X DELETE 'https://api.whatsapp.com/agent/v1/media/<MEDIA_ID>' \​
+   ​
+   -H 'Authorization: Bearer <ACCESS_TOKEN>'​
+   ​
+
+
+
+
+​23​                                                                      ​WhatsApp Agent Platform. Developer Manual​
+​AUGUST 25, 2026​
+
+
+​Response​
+
+
+
+   ​
+   {​
+        "success": true​
+        ​
+   }​
+   ​
+
+
+​A​​
+   200​​response contains​​            .​
+                          success: true​
+
+​You receive HTTP code​​
+                       400​​and​​          100​​for an unknown id, and for an id belonging to a different agent.​
+                                error.code​​
+
+​Media expires 30 days after it is stored.​
+
+
+​5. Errors​
+​Error responses have this shape:​
+
+
+
+   {​
+   ​
+      "error": {​
+      ​
+         "message": "(#131009) Missing or malformed required fields",​
+         ​
+         "type": "OAuthException",​
+         ​
+         "code": 131009,​
+         ​
+         "error_data": {​
+         ​
+           "messaging_product": "whatsapp",​
+           ​
+           "details": "Invalid participant format; expected \"<type>:<int id>\", where​
+           ​
+   ​
+   type = agent|user"​
+         },​
+         ​
+         "fbtrace_id": "AW7bqWj4..."​
+         ​
+      }​
+      ​
+   }​
+   ​
+
+
+
+
+  ​Field​                                         ​Description​
+
+  error.message​
+  ​                                               ​Human-readable summary. Most messages begin with the​
+                                                   ​numeric code as​​ (#code)​ ; a length-cap rejection contains only​
+                                                    ​the field name. The format is not guaranteed — use​
+                                                     error.code​
+                                                     ​            .​
+
+  error.type​
+  ​                                               ​Always​​              , including for errors unrelated to​
+                                                           OAuthException​
+                                                   ​authentication.​
+
+  ​
+  error.code​                                     ​Numeric error code. Codes are listed under​​Error reference​.​
+
+  error.error_data.details​
+  ​                                               ​Human-readable description of the specific problem. The​
+                                                   ​wording is not guaranteed. It is absent when no detail was​
+                                                    ​supplied.​
+
+
+
+
+​24​                                                                         ​WhatsApp Agent Platform. Developer Manual​
+​AUGUST 25, 2026​
+
+
+  ​Field​                                             ​Description​
+
+  error.error_data.messaging_product​ ​Always​​
+  ​                                           whatsapp​​when​​
+                                                             error_data​i​s present.​
+
+  error.fbtrace_id​
+  ​                                                   ​Trace id. Include it in support requests.​
+
+​Use​​
+     error.code​​to identify the failure. The HTTP status indicates its broad class.​
+
+
+​Send a message (POST /agent/v1/messages)​
+
+
+  ​Code​    ​Condition​                                                 ​What to do​
+
+  ​200​     ​The message was accepted. The response includes​           ​—​
+             ​the wamid.​
+
+  ​400​     ​Schema violation — a required field is missing or a​       ​Check that​​messaging_product​    ,​​ ,​​
+                                                                                                             to​ type​
+             ​value is invalid.​                                         ​and the payload object matching​​
+                                                                                                          type​​are​
+                                                                          ​present.​
+
+  ​400​     ​The media id is missing, unknown, or expired.​             ​Upload via​​POST /agent/v1/media​​first and​
+                                                                         ​pass the returned​​ .​
+                                                                                            id​
+
+  ​400​     context.message_id​i​s not a wamid from this​
+            ​                                                           ​Pass a wamid from​​GET​
+            ​conversation.​                                              ​
+                                                                         /agent/v1/updates​   . Omit​​
+                                                                                                     context​​to send​
+                                                                         ​without a quote.​
+
+  ​400​     ​Malformed​​to​​— not a​​ <type>:<id>​i​dentifier, or​      ​Read​​  error_data.details​​for the specific​
+             ​an​​
+                 agent:​i​dentifier.​                                    ​problem. Send​​        , ideally copied from​
+                                                                                        user:<id>​
+                                                                          ​an inbound message.​
+
+  ​400​     type​i​s​​
+            ​                .​
+                     reaction​                                          ​Reactions are receive-only.​
+
+  ​400​     ​The media type named by​​type​​cannot be sent.​            ​Read​​error_data.details​     . Send the content​
+             error.code​i​s​​
+             ​              131009​.​                                    ​as​​   , or as another media type.​
+                                                                             text​
+
+  ​400​     ​The media is larger than the limit for the​​
+                                                        type​​you​      ​Send it as a type whose limit it fits, or upload a​
+             ​are sending it as.​​
+                                 error.code​i​s​​131009​  .​             ​smaller file. Limits are listed under​​Accepted​
+                                                                          ​media types​.​
+
+  ​400​     text.body​i​s over 4096 characters, or a caption is​
+            ​                                                           ​Truncate before sending.​
+            ​over 1024.​
+
+  ​400​     ​The API token is present but not valid.​                   ​Regenerate the token if it was rotated or​
+                                                                         ​revoked.​
+
+  ​401​     ​The​​Authorization​​header is absent or​                   ​Send the token as​​
+                                                                                           Authorization: Bearer​
+             ​malformed.​                                                <ACCESS_TOKEN>​
+                                                                         ​                 .​
+
+  ​403​     ​The recipient is not the agent's creator.​                 ​An agent may only message its creator, and that​
+                                                                         ​account must have the agent API enabled.​
+                                                                          ​Verify​​
+                                                                                  to​​contains the creator's identifier in full,​
+                                                                           ​as​​
+                                                                               user:<id>​  .​
+
+
+
+
+​25​                                                                              ​WhatsApp Agent Platform. Developer Manual​
+​AUGUST 25, 2026​
+
+
+  ​Code​   ​Condition​                                             ​What to do​
+
+  ​429​    ​More than 12 sends per minute.​                        ​Back off exponentially.​
+
+  ​500​    ​Internal server error. The message may or may not​     ​Retry with exponential backoff — see​​Retrying a​
+            ​have been sent.​                                       ​send​. Include​​
+                                                                                    error.fbtrace_id​i​n support​
+                                                                     ​requests.​
+
+  ​503​    ​The message was not accepted for delivery.​            ​Send the message again after backing off — see​
+            error.code​i​s​​
+            ​              131016​.​                                ​Retrying a send​.​
+
+
+
+ ​Get updates (GET /agent/v1/updates)​
+
+
+  ​Code​   ​Condition​                                             ​What to do​
+
+  ​200​    ​You receive one or more entries.​                      ​Process them and store​​
+                                                                                           next_offset​​for the​
+                                                                    ​next poll.​
+
+  ​204​    ​There are no entries at or after​​     .​
+                                             offset​               ​Re-poll with the same​​     .​
+                                                                                          offset​
+
+  ​400​    ​Malformed query parameters. Only a value that is​      ​Out-of-range values are adjusted instead:​​    limit​
+            ​not a plain integer is rejected.​                      ​of​​0​​or less becomes​​50​​and above​​100​
+                                                                     ​becomes​​   100​,​​
+                                                                                        timeout​i​s adjusted into 0–25s,​
+                                                                      ​and a negative​​ offset​​behaves as​​0​.​
+
+  ​401​    ​The​​  Authorization​​header is absent or​             ​Send the token as​​
+                                                                                      Authorization: Bearer​
+            ​malformed. You receive HTTP code​​400​​for a token​    <ACCESS_TOKEN>​
+                                                                    ​                 .​
+             ​that is present but not valid.​
+
+  ​409​    ​A newer poll for this agent replaced this one.​        ​Run one poll at a time for each agent.​
+
+  ​429​    ​More than 15 polls per minute.​                        ​Reuse the prior​​offset​​and back off​
+                                                                    ​exponentially.​
+
+  ​500​    ​Internal server error.​                                ​Reuse the prior​​offset​​and back off​
+                                                                    ​exponentially.​
+
+
+
+​Statuses (POST /agent/v1/statuses)​
+
+
+  ​Code​   ​Condition​                                             ​What to do​
+
+  ​400​    ​A field is missing or malformed. For a​​message_id​ ​Fix the field named in​​                 .​
+                                                                                        error_data.details​
+            ​that is not a wamid issued by this platform,​
+             error_data.details​i​s​​
+             ​                          Field "message_id"​
+             must be a wamid issued by this​
+             ​
+             platform.​
+             ​
+
+  ​400​    typing_indicator​i​s present with a​​
+           ​                                     type​​other​      ​Send​​               , or omit the object.​
+                                                                         {"type": "text"}​
+           ​than​​     , or with​​
+                 "text"​         type​​missing.​
+
+
+
+
+​26​                                                                         ​WhatsApp Agent Platform. Developer Manual​
+​AUGUST 25, 2026​
+
+
+  ​Code​   ​Condition​                                              ​What to do​
+
+  ​401​    ​The​​  Authorization​​header is absent or​              ​Send the token as​​
+                                                                                       Authorization: Bearer​
+            ​malformed. You receive HTTP code​​400​​for a token​     <ACCESS_TOKEN>​
+                                                                     ​                 .​
+             ​that is present but not valid.​
+
+  ​403​    ​The message was not sent by the agent's creator.​       ​Mark as read only messages the agent's creator​
+                                                                     ​sent.​
+
+  ​429​    ​More than 12 requests per minute to this endpoint.​     ​Back off exponentially.​
+
+  ​500​    ​Internal server error. The message may already be​      ​Back off exponentially and send the request​
+            ​marked read.​                                           ​again.​
+
+  ​503​    ​The receipt, or the typing indicator, was not​          ​Retry it.​
+            ​accepted. The two cases are not distinguishable, so​
+             ​the message may already be marked read.​
+
+
+
+​Media​
+
+
+  ​Code​   ​Condition​                                              ​What to do​
+
+  ​200​    GET​​returns metadata,​​
+           ​                      POST​​returns​​
+                                                {"id":​             ​—​
+           "<MEDIA_ID>"}​
+           ​                , and​​
+                                  DELETE​​returns​
+           ​
+           {"success": true}​     .​
+
+  ​400​    ​Invalid upload:​​
+                            messaging_product​​or​​
+                                                  file​i​s​         ​Include the required form fields in the multipart​
+            ​missing.​​
+                      error.code​i​s​​     .​
+                                     131009​                         ​request.​​
+                                                                               type​i​s optional.​
+
+  ​401​    ​The​​  Authorization​​header is absent or​              ​Send the token as​​
+                                                                                       Authorization: Bearer​
+            ​malformed. You receive HTTP code​​400​​for a token​     <ACCESS_TOKEN>​
+                                                                     ​                 .​
+             ​that is present but not valid.​
+
+  ​400​    ​The id is unknown, expired, already deleted, or​        ​Re-request it from the sender, or upload the file​
+            ​belongs to another agent.​​
+                                       error.code​i​s​​100​  .​      ​again. You receive the same response for a​
+                                                                      ​malformed id.​
+
+  ​404​    ​The media id is unknown or expired on a fetch of​       ​Re-request the media from the sender, or upload​
+            ​the​​ url​​from​​
+                             GET​                                    ​the file again.​
+             /agent/v1/media/<MEDIA_ID>​
+             ​                                .​​
+                                                error.code​
+             i​s​​
+                 100​.​
+
+  ​400​    ​The upload exceeds the size limit for its type.​        ​Re-encode or split the file. Limits are listed​
+            error.code​i​s​​
+            ​              131053​ .​                                ​under​​Accepted media types​.​
+
+  ​400​    ​The declared MIME type is not accepted.​                ​Use one of the types listed under​​Accepted​
+            error.code​i​s​​
+            ​              131053​ .​                                ​media types​.​
+
+  ​429​    ​More than 12 requests per minute to a single media​     ​Back off exponentially.​
+            ​method.​
+
+  ​500​    ​Internal server error.​                                 ​Retry with exponential backoff.​
+
+
+
+
+​27​                                                                              ​WhatsApp Agent Platform. Developer Manual​
+​AUGUST 25, 2026​
+
+
+​Error reference​
+
+  ​
+  error.code​        ​HTTP​         ​Meaning​
+
+  2​
+  ​                  ​500​          ​Internal server error.​
+
+  100​
+  ​                  ​400​,​​404​   ​The API token is present but not valid, the media id is unknown, or you send​
+                                     text.body​​or a caption over its length cap. For an unknown media id, you​
+                                     ​
+                                     ​receive HTTP code​​  400​​from​​
+                                                                     GET​​or​​
+                                                                             DELETE​
+                                      /agent/v1/media/<MEDIA_ID>​
+                                      ​                                    , and HTTP code​​404​​when you fetch the​
+                                      url​​that​​
+                                      ​         GET​​returns and the media id is unknown or expired. For a length cap,​
+                                      error.message​i​s the field name rather than a sentence.​
+                                      ​
+
+  190​
+  ​                  ​401​          ​The​​
+                                         Authorization​​header is absent or malformed.​
+
+  130429​
+  ​                  ​429​          ​Too many requests.​
+
+  131005​
+  ​                  ​403​          ​The recipient is not the agent's creator on​​
+                                                                                 POST /agent/v1/messages​    , or​
+                                     ​the message being marked read was not sent by the agent's creator on​​
+                                                                                                           POST​
+                                      ​
+                                      /agent/v1/statuses​      .​
+
+  131009​
+  ​                  ​400​          ​A required field is missing or malformed, the recipient is not a WhatsApp user,​
+                                     ​the media type cannot be sent, or the media id you pass to​​POST​
+                                      /agent/v1/messages​i​s unknown or expired.​
+                                      ​
+
+  131016​
+  ​                  ​503​          ​Not accepted for delivery.​
+
+  131053​
+  ​                  ​400​          ​Media rejected at upload — over the size limit for its type, or a MIME type that is​
+                                     ​not accepted (​POST /agent/v1/media​​only).​
+
+  1752041​
+  ​                  ​409​          ​A newer poll replaced this one.​
+
+
+
+​6. Rate limits​
+
+  ​Limit​                                                                ​Value​             ​Scope​
+
+  ​Outbound messages (​POST /agent/v1/messages​
+                                              )​                         ​12/min​            ​Per agent​
+
+  ​Read receipts and typing (​POST /agent/v1/statuses​
+                                                     )​                  ​12/min​            ​Per agent​
+
+  ​Update polls (​GET /agent/v1/updates​
+                                       )​                                ​15/min​            ​Per agent​
+
+  ​Media requests (​POST​
+                        /​GET​
+                             /​DELETE /agent/v1/media​
+                                                     )​                  ​12/min each​       ​Per agent, per method​
+
+​Each method has its own counter over a rolling 60-second window, per agent.​
+
+
+
+
+​28​                                                                           ​WhatsApp Agent Platform. Developer Manual​
+
