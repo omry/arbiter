@@ -1,7 +1,8 @@
 # WhatsApp operations
 
-The optional plugin currently exposes `whatsapp:receive_updates` and
-`whatsapp:send_message`. See [configuration](configure.md) for enrollment and
+The optional plugin currently exposes `whatsapp:receive_updates`,
+`whatsapp:send_message`, `whatsapp:mark_read` and `whatsapp:typing`.
+See [configuration](configure.md) for enrollment and
 [behavior and recovery](behavior.md) for cursor and reply safety.
 
 ## Send a text message
@@ -43,3 +44,22 @@ a retained outcome without another provider submission.
 `send_messages: false` denies the operation, including preflight, before any
 reservation or provider I/O. This text operation does not require media or read
 permissions. All trusted local callers share the same policy and reply state.
+
+## Read receipts and typing
+
+Call `whatsapp:mark_read` with `{"account":"creator","message_id":"wamid.inbound"}`
+to mark a provider message read. It requires `read_receipts`, independently of
+`send_messages` and `typing`.
+
+Call `whatsapp:typing` with
+`{"account":"creator","message_id":"wamid.inbound","active":true}` to start
+the typing indicator. The provider also marks that message read, so both
+`typing` and `read_receipts` must allow the request. It does not require
+`send_messages`. Either operation returns `{"status":"accepted"}` only after
+the provider confirms success. The message ID must be nonempty, contain no
+control characters and fit in 512 UTF-8 bytes.
+
+`active: false` cannot cancel an indicator. With an authorized, ready account,
+it returns `upstream_rejected/typing_reset_unsupported` without submitting a
+request. The indicator expires through the provider's reply or timeout behavior.
+See [status recovery](behavior.md#read-receipts-and-typing).

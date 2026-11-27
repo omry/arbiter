@@ -19,6 +19,7 @@ from .config import EFFECTS, WhatsAppPolicy, plain, register_configs, validate_c
 from .credentials import AccountAdministrator, BindingStore, update_page
 from .messages import SEND_MESSAGE, check_send, send_message
 from .state import StateStore, reference_key
+from .statuses import MARK_READ, TYPING, check_status, submit_status
 from .transport import ProviderClient, failure
 from .updates import RECEIVE_UPDATES, check_receive, receive_updates
 
@@ -139,24 +140,29 @@ class WhatsAppServicePlugin:
     def describe_operations(self, context: ServicePluginContext):
         if self.name not in context.runtimes.keys():
             return ()
-        return (RECEIVE_UPDATES, SEND_MESSAGE)
+        return (RECEIVE_UPDATES, SEND_MESSAGE, MARK_READ, TYPING)
 
     def invoke_operation(self, operation, arguments, context):
-        if operation not in {"receive_updates", "send_message"}:
+        if operation not in {"receive_updates", "send_message", "mark_read", "typing"}:
             raise failure("validation_error", "unknown_operation")
         if not isinstance(context, ServicePluginContext):
             raise failure("plugin_error", "runtime_unavailable")
         runtime = context.runtimes.require(self.name, WhatsAppRuntime)
+        if operation in {"mark_read", "typing"}:
+            return submit_status(runtime, operation, **arguments)
         if operation == "send_message":
             return send_message(runtime, **arguments)
         return receive_updates(runtime, **arguments)
 
     def check_operation(self, operation, arguments, context):
-        if operation not in {"receive_updates", "send_message"}:
+        if operation not in {"receive_updates", "send_message", "mark_read", "typing"}:
             raise failure("validation_error", "unknown_operation")
         if not isinstance(context, ServicePluginContext):
             raise failure("plugin_error", "runtime_unavailable")
         runtime = context.runtimes.require(self.name, WhatsAppRuntime)
+        if operation in {"mark_read", "typing"}:
+            check_status(runtime, operation, **arguments)
+            return None
         if operation == "send_message":
             check_send(runtime, **arguments)
             return None
