@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 import http.client
 import json
 import ssl
+import secrets
+import re
 from time import monotonic
 from urllib.parse import urlencode
 
@@ -76,6 +78,35 @@ class ProviderResponse:
     body: bytes = field(default=b"", repr=False)
 
 
+@dataclass(frozen=True)
+class MediaUpload:
+    content: bytes = field(repr=False)
+    content_type: str
+
+    def encode(self) -> tuple[bytes, str]:
+        if (
+            not isinstance(self.content, bytes)
+            or len(self.content) > 16_000_000
+            or not isinstance(self.content_type, str)
+            or re.fullmatch(r"[a-z0-9.+-]+/[a-z0-9.+-]+", self.content_type) is None
+            or len(self.content_type) > 128
+        ):
+            raise failure("validation_error", "invalid_media")
+        boundary = "arbiter-" + secrets.token_hex(24)
+        while boundary.encode() in self.content:
+            boundary = "arbiter-" + secrets.token_hex(24)
+        prefix = (
+            f'--{boundary}\r\nContent-Disposition: form-data; name="messaging_product"\r\n\r\nwhatsapp\r\n'
+            f'--{boundary}\r\nContent-Disposition: form-data; name="type"\r\n\r\n{self.content_type}\r\n'
+            f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="upload"\r\n'
+            f"Content-Type: {self.content_type}\r\n\r\n"
+        ).encode("ascii")
+        return (
+            prefix + self.content + f"\r\n--{boundary}--\r\n".encode("ascii"),
+            "multipart/form-data; boundary=" + boundary,
+        )
+
+
 class ProviderClient:
     """Fixed HTTPS origin; no proxy, redirect handling or hidden retries."""
 
@@ -95,20 +126,38 @@ class ProviderClient:
         deadline: float | None = None,
         response_limit: int = 4 * 1024 * 1024,
     ) -> ProviderResponse:
-        write = method == "POST" and path in {
-            "/agent/v1/messages",
-            "/agent/v1/statuses",
-        }
+        upload = method == "POST" and path == "/agent/v1/media"
+        write = upload or (
+            method == "POST"
+            and path
+            in {
+                "/agent/v1/messages",
+                "/agent/v1/statuses",
+            }
+        )
         if (
             not (write or (method == "GET" and path == "/agent/v1/updates"))
             or (not write and json_body is not None)
-            or (write and (query or not isinstance(json_body, dict)))
-            or multipart is not None
+            or (write and query)
+            or (
+                write
+                and not upload
+                and (not isinstance(json_body, dict) or multipart is not None)
+            )
+            or (
+                upload
+                and (json_body is not None or not isinstance(multipart, MediaUpload))
+            )
+            or (not write and multipart is not None)
         ):
             raise failure("validation_error", "unsupported_request")
         token_text(credential)
         body = None
-        if write:
+        content_type = "application/json"
+        if upload:
+            assert isinstance(multipart, MediaUpload)
+            body, content_type = multipart.encode()
+        elif write:
             try:
                 body = json.dumps(
                     json_body, sort_keys=True, separators=(",", ":"), allow_nan=False
@@ -146,7 +195,7 @@ class ProviderClient:
                 "Accept": "application/json",
             }
             if write:
-                headers["Content-Type"] = "application/json"
+                headers["Content-Type"] = content_type
             # request() may partially send before raising. Mark before entering it.
             submitted = True
             connection.request(

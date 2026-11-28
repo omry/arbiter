@@ -1,7 +1,8 @@
 # WhatsApp operations
 
 The optional plugin currently exposes `whatsapp:receive_updates`,
-`whatsapp:send_message`, `whatsapp:mark_read` and `whatsapp:typing`.
+`whatsapp:send_message`, `whatsapp:mark_read`, `whatsapp:typing` and
+`whatsapp:upload_media`.
 See [configuration](configure.md) for enrollment and
 [behavior and recovery](behavior.md) for cursor and reply safety.
 
@@ -63,3 +64,42 @@ control characters and fit in 512 UTF-8 bytes.
 it returns `upstream_rejected/typing_reset_unsupported` without submitting a
 request. The indicator expires through the provider's reply or timeout behavior.
 See [status recovery](behavior.md#read-receipts-and-typing).
+
+
+## Upload an existing artifact
+
+Call `whatsapp:upload_media` with an artifact ID and its complete URL from the
+same Arbiter server. Artifacts from another plugin, such as IMAP, are accepted
+when you hold their current one-time capability.
+
+```json
+{
+  "account": "creator",
+  "content": {"id": "artifact-id", "url": "http://localhost:8000/_arbiter/artifacts/artifact-id?nonce=capability"},
+  "media_type": "application/pdf"
+}
+```
+
+Copy both fields from the artifact descriptor. Do not construct a URL or pass a
+host file path. This operation does not fetch arbitrary URLs or upload files
+from your client. It requires `media_egress`, independently
+of `send_messages`. A successful result is `{"media_id":"provider-media-id"}`.
+Uploading does not send a message; media sending arrives in the next slice.
+
+The declared `media_type` must match the stored artifact content type exactly.
+Supported types and decimal byte ceilings are:
+
+| Types | Maximum bytes |
+| --- | ---: |
+| `image/jpeg`, `image/png` | 5,000,000 |
+| `image/webp` (static or animated sticker) | 500,000 |
+| `video/mp4`, `video/3gpp` | 16,000,000 |
+| `audio/aac`, `audio/mp4`, `audio/mpeg`, `audio/amr`, `audio/ogg`, `audio/opus` | 16,000,000 |
+| `application/pdf`, `text/plain`, legacy Word/Excel/PowerPoint MIME types and their OpenXML MIME types | 16,000,000 |
+| `application/octet-stream` | 16,000,000 |
+
+The server's configured artifact byte cap also applies. JPEG/PNG images must
+use RGB/RGBA with 8-bit components and at most 25 megapixels. WebP dimensions
+cannot exceed 4096 by 4096. Pillow validates bounded headers and structure;
+the provider still decides codec suitability. The plugin adds no transcoder.
+See [consumption and retry guidance](behavior.md#media-upload-and-artifact-consumption).
