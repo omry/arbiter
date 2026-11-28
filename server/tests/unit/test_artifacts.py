@@ -13,7 +13,12 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from arbiter_server.artifacts import ArtifactConsumed, ArtifactNotFound, ArtifactStore
+from arbiter_server.artifacts import (
+    ArtifactConsumed,
+    ArtifactError,
+    ArtifactNotFound,
+    ArtifactStore,
+)
 from arbiter_server.errors import OperationError
 
 
@@ -808,3 +813,222 @@ def test_artifact_store_purges_expired_artifact(tmp_path) -> None:
 
     assert store.purge_expired() == 1
     assert not metadata_path.exists()
+
+
+def test_read_once_returns_verified_immutable_bytes_across_plugins(tmp_path):
+    store = ArtifactStore(root=tmp_path, base_url="http://localhost/_arbiter/artifacts")
+    artifact = _create_for_quota(store, plugin="imap", content=b"literal bytes")
+    result = store.for_plugin("whatsapp").read_once(
+        artifact.id, artifact.url, allowed_content_types={"text/plain"}, max_bytes=13
+    )
+    assert result.content == b"literal bytes"
+    assert result.filename is None
+    assert result.size == 13 and result.sha256 == artifact.sha256
+    assert not hasattr(result, "path")
+    assert "literal bytes" not in repr(result)
+    nonce = parse_qs(urlparse(artifact.url).query)["nonce"][0]
+    with pytest.raises(ArtifactConsumed):
+        store.open_once(artifact.id, nonce)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda d: (d.id, d.url.replace("localhost", "foreign.invalid")),
+        lambda d: (d.id, d.url + "&nonce=second"),
+        lambda d: (d.id, d.url + "&other=x"),
+        lambda d: (d.id, d.url + "#fragment"),
+        lambda d: (d.id, d.url.replace("http://", "http://user@")),
+        lambda d: (d.id + "x", d.url),
+        lambda d: ("../" + d.id, d.url),
+        lambda d: (d.id, d.url.replace(d.id, "%252e%252e")),
+        lambda d: (d.id, d.url.replace(d.id, "%2f" + d.id)),
+        lambda d: (d.id, d.url.replace("nonce=", "nonce=wrong")),
+        lambda d: (d.id, "/tmp/payload"),
+        lambda d: (d.id, d.url + "\n"),
+    ],
+)
+def test_read_once_rejects_foreign_or_malformed_capability_without_consumption(
+    tmp_path, change
+):
+    store = ArtifactStore(root=tmp_path, base_url="http://localhost/artifacts")
+    artifact = _create_for_quota(store)
+    with pytest.raises(ArtifactNotFound):
+        store.read_once(
+            *change(artifact), allowed_content_types={"text/plain"}, max_bytes=10000
+        )
+    assert (
+        store.read_once(
+            artifact.id,
+            artifact.url,
+            allowed_content_types={"text/plain"},
+            max_bytes=10000,
+        ).size
+        == 10000
+    )
+
+
+@pytest.mark.parametrize(
+    "fault", ["size", "type", "digest", "length", "payload", "symlink", "access"]
+)
+def test_read_once_preclaim_and_access_faults_return_no_bytes_or_consumption(
+    tmp_path, monkeypatch, fault
+):
+    store = ArtifactStore(
+        root=tmp_path / "root", base_url="https://localhost/artifacts"
+    )
+    artifact = _create_for_quota(store, content=b"original")
+    folder = tmp_path / "root" / "imap" / "artifacts" / artifact.id
+    payload = folder / "payload"
+    original = store._record_access
+    types, limit = {"text/plain"}, 8
+    if fault == "size":
+        limit = 7
+    elif fault == "type":
+        types = {"application/pdf"}
+    elif fault == "digest":
+        payload.write_bytes(b"modified")
+    elif fault == "length":
+        payload.write_bytes(b"too long to admit")
+    elif fault == "payload":
+        payload.unlink()
+    elif fault == "symlink":
+        outside = tmp_path / "outside"
+        outside.write_bytes(b"original")
+        payload.unlink()
+        try:
+            payload.symlink_to(outside)
+        except OSError:
+            pytest.skip("symlinks unavailable on this platform")
+    else:
+
+        def fail(*args, **kwargs):
+            raise OSError("synthetic access publication fault")
+
+        monkeypatch.setattr(store, "_record_access", fail)
+    with pytest.raises(Exception) as caught:
+        store.read_once(
+            artifact.id, artifact.url, allowed_content_types=types, max_bytes=limit
+        )
+    assert isinstance(caught.value, (OperationError, ArtifactNotFound, OSError))
+    assert not (folder / "consumed").exists()
+    assert not json.loads((folder / "metadata.json").read_text())["consumed"]
+    monkeypatch.setattr(store, "_record_access", original)
+    payload.unlink(missing_ok=True)
+    payload.write_bytes(b"original")
+    assert (
+        store.read_once(
+            artifact.id, artifact.url, allowed_content_types={"text/plain"}, max_bytes=8
+        ).content
+        == b"original"
+    )
+
+
+@pytest.mark.parametrize("expired", [False, True])
+def test_read_once_retains_expiry_and_consumption_after_restart(
+    tmp_path, monkeypatch, expired
+):
+    now = [1700000000.0]
+    monkeypatch.setattr("arbiter_server.artifacts.time.time", lambda: now[0])
+    store = ArtifactStore(root=tmp_path, base_url="http://localhost/artifacts")
+    artifact = _create_for_quota(store)
+    if expired:
+        now[0] += 601
+    else:
+        store.read_once(
+            artifact.id,
+            artifact.url,
+            allowed_content_types={"text/plain"},
+            max_bytes=10000,
+        )
+    restarted = ArtifactStore(root=tmp_path, base_url="http://localhost/artifacts")
+    with pytest.raises(ArtifactError):
+        restarted.read_once(
+            artifact.id,
+            artifact.url,
+            allowed_content_types={"text/plain"},
+            max_bytes=10000,
+        )
+
+
+def test_process_race_read_once_http_claim_and_cleanup(tmp_path):
+    # Exercise the three actual store entry points in independent interpreters.
+    # HTTP uses open_once. A claim returns a path by the existing HTTP contract;
+    # the new plugin reader must return bytes while retaining the same lock.
+    store = ArtifactStore(root=tmp_path, base_url="http://localhost/artifacts")
+    artifact = _create_for_quota(store, content=b"one winner")
+    script = """
+import json,sys,time
+from pathlib import Path
+from urllib.parse import parse_qs,urlparse
+from arbiter_server.artifacts import ArtifactStore,ArtifactError
+root,aid,url,mode=sys.argv[1:]
+root=Path(root)
+store=ArtifactStore(root=root,base_url="http://localhost/artifacts")
+(root/(mode+".ready")).touch()
+while not (root/"go").exists(): time.sleep(.001)
+try:
+ if mode=="cleanup":
+  store.purge_expired(); result="cleanup"
+ elif mode=="http":
+  nonce=parse_qs(urlparse(url).query)["nonce"][0]
+  result=store.open_once(aid,nonce).path.read_bytes().decode()
+ else:
+  result=store.for_plugin("whatsapp").read_once(aid,url,allowed_content_types={"text/plain"},max_bytes=10).content.decode()
+except ArtifactError: result="unavailable"
+print(json.dumps(result))
+"""
+    processes = [
+        subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                script,
+                str(tmp_path),
+                artifact.id,
+                artifact.url,
+                mode,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for mode in ("plugin", "http", "cleanup")
+    ]
+    try:
+        deadline = time.monotonic() + 15
+        while len(list(tmp_path.glob("*.ready"))) != 3:
+            assert time.monotonic() < deadline
+            time.sleep(0.001)
+        (tmp_path / "go").touch()
+        results = []
+        for process in processes:
+            stdout, stderr = process.communicate(timeout=15)
+            assert process.returncode == 0, stderr
+            results.append(json.loads(stdout))
+        assert results.count("one winner") == 1
+        assert sorted(results) == ["cleanup", "one winner", "unavailable"]
+    finally:
+        for process in processes:
+            if process.poll() is None:
+                process.kill()
+            process.wait()
+
+
+def test_read_once_preserves_filename_metadata_without_printing_it(tmp_path):
+    store = ArtifactStore(root=tmp_path, base_url="http://localhost/artifacts")
+    artifact = store.create(
+        plugin="imap",
+        content=b"x",
+        filename="filename-canary.pdf",
+        content_type="application/pdf",
+        source={},
+    )
+    result = store.for_plugin("whatsapp").read_once(
+        artifact.id,
+        artifact.url,
+        allowed_content_types={"application/pdf"},
+        max_bytes=1,
+    )
+    assert result.filename == "filename-canary.pdf"
+    assert "filename-canary" not in repr(result)

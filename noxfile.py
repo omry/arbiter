@@ -82,6 +82,7 @@ def install_project(session: nox.Session) -> None:
         "hatchling>=1.24,<2.0",
         "nox>=2024.10,<2026.0",
         "pyrefly>=0.39,<0.40",
+        "Pillow>=12,<14",
         "pytest>=7.4,<9.0",
         "setuptools>=68",
         "tomli>=2.0,<3.0",

@@ -17,6 +17,7 @@ from arbiter_server.version import distribution_version
 
 from .config import EFFECTS, WhatsAppPolicy, plain, register_configs, validate_config
 from .credentials import AccountAdministrator, BindingStore, update_page
+from .media import UPLOAD_MEDIA, check_upload, upload_media
 from .messages import SEND_MESSAGE, check_send, send_message
 from .state import StateStore, reference_key
 from .statuses import MARK_READ, TYPING, check_status, submit_status
@@ -30,6 +31,7 @@ class WhatsAppRuntime:
         storage = context.dependencies.get("plugin_storage")
         if not isinstance(storage, PluginStorage):
             raise failure("plugin_error", "private_state_unavailable")
+        self.artifacts = context.dependencies.get("artifact_store")
         self.state = StateStore(storage)
         self.bindings = BindingStore(self.state)
         self.clock = cast(
@@ -140,14 +142,22 @@ class WhatsAppServicePlugin:
     def describe_operations(self, context: ServicePluginContext):
         if self.name not in context.runtimes.keys():
             return ()
-        return (RECEIVE_UPDATES, SEND_MESSAGE, MARK_READ, TYPING)
+        return (RECEIVE_UPDATES, SEND_MESSAGE, MARK_READ, TYPING, UPLOAD_MEDIA)
 
     def invoke_operation(self, operation, arguments, context):
-        if operation not in {"receive_updates", "send_message", "mark_read", "typing"}:
+        if operation not in {
+            "receive_updates",
+            "send_message",
+            "mark_read",
+            "typing",
+            "upload_media",
+        }:
             raise failure("validation_error", "unknown_operation")
         if not isinstance(context, ServicePluginContext):
             raise failure("plugin_error", "runtime_unavailable")
         runtime = context.runtimes.require(self.name, WhatsAppRuntime)
+        if operation == "upload_media":
+            return upload_media(runtime, **arguments)
         if operation in {"mark_read", "typing"}:
             return submit_status(runtime, operation, **arguments)
         if operation == "send_message":
@@ -155,11 +165,20 @@ class WhatsAppServicePlugin:
         return receive_updates(runtime, **arguments)
 
     def check_operation(self, operation, arguments, context):
-        if operation not in {"receive_updates", "send_message", "mark_read", "typing"}:
+        if operation not in {
+            "receive_updates",
+            "send_message",
+            "mark_read",
+            "typing",
+            "upload_media",
+        }:
             raise failure("validation_error", "unknown_operation")
         if not isinstance(context, ServicePluginContext):
             raise failure("plugin_error", "runtime_unavailable")
         runtime = context.runtimes.require(self.name, WhatsAppRuntime)
+        if operation == "upload_media":
+            check_upload(runtime, **arguments)
+            return None
         if operation in {"mark_read", "typing"}:
             check_status(runtime, operation, **arguments)
             return None

@@ -2,7 +2,7 @@
 
 The optional WhatsApp plugin currently supports account enrollment, credential
 replacement, `whatsapp:receive_updates` and typed text `whatsapp:send_message`.
-Media operations arrive in later implementation slices. See [configuration](configure.md) for
+Artifact media upload is available. Media sending and downloading arrive in later slices. See [configuration](configure.md) for
 setup, private storage and credential recovery.
 
 All trusted local callers share the configured account policy and its normal
@@ -167,3 +167,29 @@ acknowledgement after possible submission has unsafe replay guidance: the
 provider may already have applied the effect. The plugin never retries it
 automatically and does not retain status outcomes as keyed message replies.
 These operations do not change the update cursor or reply reservations.
+
+
+## Media upload and artifact consumption
+
+Upload checks the account policy, binding, declared type and known stored size
+before consuming an artifact. Foreign URLs, mismatched IDs, bad nonces, expired
+and already consumed capabilities return an unavailable error. Unknown types,
+a declared/stored type mismatch and known oversize are rejected before
+consumption or provider I/O. Preflight checks arguments, policy and readiness
+without consuming or contacting the provider; it does not reserve an artifact.
+
+The bounded reader shares the artifact store lock with HTTP consumption and
+cleanup. It reads and verifies size and SHA-256 before committing the existing
+one-time claim and access record. Only then does it return immutable bytes to
+the plugin. A failed read or claim returns no bytes. Access-record publication
+failure uses the store's existing claim rollback. Concurrent HTTP and plugin
+consumers cannot both claim the same capability.
+
+After consumption, local image validation or any provider failure requires a
+fresh artifact. This includes a connection failure before provider submission.
+The original capability remains consumed. Do not treat `retry.replay: unsafe`
+as permission to reuse it or assume a timeout means that the provider created
+nothing. The plugin submits at most one multipart request and never retries
+upload automatically. A malformed or lost success response can leave an
+unreported provider media object. Upload does not change polling or keyed reply
+state. Artifact URLs, filenames and payloads are excluded from diagnostics.

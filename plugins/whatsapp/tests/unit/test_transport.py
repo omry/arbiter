@@ -250,3 +250,57 @@ def test_write_transport_phase_proves_non_submission_only_before_request(
     assert calls[-1] == "close"
     assert "secret" not in json.dumps(error.value.to_dict())
     assert "credential-canary" not in str(error.value)
+
+
+@pytest.mark.parametrize("stage", ["connect", "request", "response"])
+def test_upload_transport_failure_keeps_submission_boundary_and_closes(stage):
+    from arbiter_whatsapp.transport import MediaUpload, WriteNotSubmitted
+
+    calls = []
+
+    class Connection:
+        sock = None
+
+        def connect(self):
+            calls.append("connect")
+            if stage == "connect":
+                raise TimeoutError("private-canary")
+
+        def request(self, method, path, *, body, headers):
+            calls.append("request")
+            assert (method, path) == ("POST", "/agent/v1/media")
+            assert headers["Content-Type"].startswith("multipart/form-data; boundary=")
+            assert b'filename="upload"' in body and b"payload" in body
+            if stage == "request":
+                raise OSError("private-canary")
+
+        def getresponse(self):
+            calls.append("response")
+            raise OSError("private-canary")
+
+        def close(self):
+            calls.append("close")
+
+    with pytest.raises(OperationError) as caught:
+        ProviderClient(connection_factory=lambda *a, **k: Connection()).request(
+            "POST",
+            "/agent/v1/media",
+            "synthetic",
+            query={},
+            multipart=MediaUpload(b"payload", "application/octet-stream"),
+        )
+    assert isinstance(caught.value, WriteNotSubmitted) == (stage == "connect")
+    assert caught.value.replay == ("safe" if stage == "connect" else "unsafe")
+    assert calls.count("connect") == 1 and calls[-1] == "close"
+    assert "private-canary" not in json.dumps(caught.value.to_dict())
+
+
+@pytest.mark.parametrize("multipart", [b"raw", {"content": b"raw"}, None])
+def test_upload_transport_rejects_untyped_payload_before_connection(multipart):
+    def forbidden(*args, **kwargs):
+        pytest.fail("unexpected connection")
+
+    with pytest.raises(OperationError):
+        ProviderClient(connection_factory=forbidden).request(
+            "POST", "/agent/v1/media", "synthetic", query={}, multipart=multipart
+        )
