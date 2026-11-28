@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -13,8 +13,9 @@ import re
 import secrets
 import shutil
 import sys
+import stat
 import time
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit, unquote, parse_qsl
 
 from .storage import ensure_private_dir, plugin_data_dir
 from .errors import OperationError
@@ -116,6 +117,15 @@ class ArtifactRead:
     sha256: str
 
 
+@dataclass(frozen=True)
+class ArtifactBytes:
+    content: bytes = field(repr=False)
+    filename: str | None = field(repr=False)
+    content_type: str
+    size: int
+    sha256: str
+
+
 class PluginArtifactStore:
     def __init__(self, *, plugin: str, store: ArtifactStore) -> None:
         self._plugin = plugin
@@ -132,6 +142,22 @@ class PluginArtifactStore:
     @property
     def max_artifact_count(self) -> int:
         return self._store.max_artifact_count
+
+    def read_once(
+        self,
+        artifact_id: str,
+        url: str,
+        *,
+        allowed_content_types: set[str],
+        max_bytes: int,
+    ) -> ArtifactBytes:
+        """Consume a same-store capability, including ones from another plugin."""
+        return self._store.read_once(
+            artifact_id,
+            url,
+            allowed_content_types=allowed_content_types,
+            max_bytes=max_bytes,
+        )
 
     def create(
         self,
@@ -294,6 +320,115 @@ class ArtifactStore:
             expires_after_idle_seconds=self._idle_ttl_seconds,
             one_time=True,
         )
+
+    def read_once(
+        self,
+        artifact_id: str,
+        url: str,
+        *,
+        allowed_content_types: set[str],
+        max_bytes: int,
+    ) -> ArtifactBytes:
+        """Read bounded verified bytes and consume under the HTTP/cleanup lock.
+
+        Admission or read failures consume nothing. No bytes leave the lock
+        until the existing exclusive claim and access publication succeed.
+        """
+        if type(max_bytes) is not int or max_bytes < 1:
+            raise ValueError("max_bytes must be positive")
+        nonce = self._capability_nonce(artifact_id, url)
+        with self._storage_lock():
+            self._purge_expired()
+            artifact_dir, metadata = self._validated_artifact(artifact_id, nonce)
+            size = metadata.get("size")
+            content_type = metadata.get("content_type")
+            digest = metadata.get("sha256")
+            if (
+                type(size) is not int
+                or size < 0
+                or size > min(max_bytes, self._max_artifact_bytes)
+                or not isinstance(content_type, str)
+                or content_type not in allowed_content_types
+            ):
+                raise OperationError(
+                    "validation_error",
+                    "Artifact type or size is not admitted.",
+                    transient="no",
+                    replay="safe",
+                )
+            payload = artifact_dir / "payload"
+            try:
+                artifact_dir.resolve().relative_to(self._root.resolve())
+                if payload.is_symlink():
+                    raise ValueError
+                flags = (
+                    os.O_RDONLY
+                    | getattr(os, "O_NOFOLLOW", 0)
+                    | getattr(os, "O_BINARY", 0)
+                )
+                with os.fdopen(os.open(payload, flags), "rb") as handle:
+                    info = os.fstat(handle.fileno())
+                    if not stat.S_ISREG(info.st_mode) or info.st_size != size:
+                        raise ValueError
+                    content = handle.read(size + 1)
+                actual = hashlib.sha256(content).hexdigest()
+                if (
+                    len(content) != size
+                    or not isinstance(digest, str)
+                    or actual != digest
+                ):
+                    raise ValueError
+            except (OSError, ValueError):
+                raise ArtifactNotFound("Artifact is unavailable.") from None
+            self._claim_artifact(artifact_dir, artifact_id)
+            try:
+                self._record_access(artifact_dir, metadata, consume=True)
+            except BaseException:
+                (artifact_dir / CONSUMED_MARKER).unlink(missing_ok=True)
+                raise
+            return ArtifactBytes(
+                content,
+                _string_or_none(metadata.get("filename")),
+                content_type,
+                size,
+                actual,
+            )
+
+    def _capability_nonce(self, artifact_id: str, url: str) -> str:
+        try:
+            if (
+                not isinstance(artifact_id, str)
+                or not 1 <= len(artifact_id) <= 128
+                or ARTIFACT_ID_PATTERN.fullmatch(artifact_id) is None
+                or not isinstance(url, str)
+                or len(url) > 8192
+                or "#" in url
+                or any(ord(c) <= 32 or ord(c) == 127 for c in url)
+            ):
+                raise ValueError
+            parsed, base = urlsplit(url), urlsplit(self._base_url)
+            if (
+                (parsed.scheme, parsed.netloc) != (base.scheme, base.netloc)
+                or parsed.username is not None
+                or parsed.fragment
+                or not parsed.path.startswith(base.path + "/")
+            ):
+                raise ValueError
+            segment = parsed.path[len(base.path) + 1 :]
+            if "/" in segment or unquote(segment, errors="strict") != artifact_id:
+                raise ValueError
+            query = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True)
+            if len(query) != 1 or query[0][0] != "nonce":
+                raise ValueError
+            nonce = query[0][1]
+            if (
+                not 1 <= len(nonce) <= 128
+                or ARTIFACT_ID_PATTERN.fullmatch(nonce) is None
+            ):
+                raise ValueError
+            return nonce
+        except (ValueError, UnicodeError):
+            raise ArtifactNotFound("Artifact is unavailable.") from None
 
     def open_once(self, artifact_id: str, nonce: str) -> ArtifactRead:
         with self._storage_lock():
